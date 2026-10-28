@@ -8,30 +8,34 @@
 // It writes nothing and reads nothing: `--allow-net` and no other grant, so what it proves is about the
 // network and cannot be about anything else.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Env, Net, Output } from "std";
 import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../src/proxy.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Net net = sys.net();
+  i32 n = argv.len();
   if (n < 2) {
-    core.warn("usage: tunnel <host> <port>");
+    err.line("usage: tunnel <host> <port>");
     return 2;
   }
-  string host = string.fromBytes(cli.arg(0).wait());
-  string portText = string.fromBytes(cli.arg(1).wait());
+  string host = argv[0];
+  string portText = argv[1];
 
   i32 port = 0;
   u8[] digits = portText.toBytes();
   if (digits.len() == 0) {
-    core.warn("tunnel: the port is empty");
+    err.line("tunnel: the port is empty");
     return 2;
   }
   for (u8 digit in digits) {
     i32 c = digit as i32;
     if (c < '0' || c > '9') {
-      core.warn("tunnel: \{portText} is not a port");
+      err.line("tunnel: \{portText} is not a port");
       return 2;
     }
     port = port * 10 + (c - '0');
@@ -40,32 +44,32 @@ export i32 main(Sys sys) {
   // `HTTP_PROXY` rather than `HTTPS_PROXY`, though this container sets both to the same thing: the
   // variable names which proxy to use for a scheme, and what is being opened here is a tunnel rather
   // than an https request. A caller that wants the other one can say so once there is a reason to.
-  u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
+  u8[]? proxyVar = flatten(env.get("HTTP_PROXY").wait()).orElse(null);
   if (proxyVar is null) {
-    core.warn("tunnel: HTTP_PROXY is not set, so there is no proxy to go through");
+    err.line("tunnel: HTTP_PROXY is not set, so there is no proxy to go through");
     return 1;
   }
   string url = string.fromBytes(proxyVar!);
   ProxyAt? parsed = parseProxy(url);
   if (parsed is null) {
-    core.warn("tunnel: HTTP_PROXY is \{url}, which is not a proxy this can parse");
+    err.line("tunnel: HTTP_PROXY is \{url}, which is not a proxy this can parse");
     return 1;
   }
   ProxyAt at = parsed!;
 
-  Tunnel t = match (connectThrough(cli, at.host, at.port, host, port)) {
+  Tunnel t = match (connectThrough(net, at.host, at.port, host, port)) {
     Ok(open): open,
-    Err(e): return failed(core, "tunnel: \{e}"),
+    Err(e): return failed(err, "tunnel: \{e}"),
   };
   // The leftover count is printed because it is the thing most likely to be zero everywhere it is
   // tried and non-zero somewhere it matters — see the note in `src/proxy.wac`.
-  core.log("open to \{host}:\{port} via \{at.host}:\{at.port}"
+  out.line("open to \{host}:\{port} via \{at.host}:\{at.port}"
     + ", \{t.leftover.len()} byte(s) already through");
-  cli.closeSocket(t.handle);
+  t.socket.close();
   return 0;
 }
 
-i32 failed(Core core, string why) {
-  core.warn(why);
+i32 failed(Output err, string why) {
+  err.line(why);
   return 1;
 }

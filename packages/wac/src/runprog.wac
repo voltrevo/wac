@@ -14,8 +14,10 @@
 //     for everything and letting a host narrow it, which is the difference between a capability hole
 //     and a program that runs with what it asked for.
 
-import { HostChild, Cli, Core, Exec, FileResult, INHERIT_IN, INHERIT_OUT, Pending, faultWords } from "std";
-import { Read } from "core";
+import { Authority, Env, Exec, Files, Launch, Net, Output, Procs, Unsupported } from "std";
+import { reason } from "../../fs/src/words.wac";
+import { askedOfBits, within } from "./grants.wac";
+import { Read, flatten } from "core";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";
@@ -34,18 +36,18 @@ import { manifestIn } from "../../wacc/src/manifest.wac";
  *
  * A leading `--` is dropped, which is what makes a program able to receive the string `--allow-read`.
  */
-export u8[][] programArgs(Cli cli, i32 argc, string entry) {
+export string[] programArgs(string[] argv, i32 argc, string entry) {
   i32 at = -1;
   for (i32 i = 1; i < argc && at < 0; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == entry) { at = i; }
+    if (argv[i] == entry) { at = i; }
   }
-  if (at < 0) { return u8[][](); }
+  if (at < 0) { return string[](); }
   i32 from = at + 1;
-  if (from < argc && string.fromBytes(cli.arg(from).wait()) == "--") { from = from + 1; }
+  if (from < argc && argv[from] == "--") { from = from + 1; }
   i32 n = argc - from;
   if (n < 0) { n = 0; }
-  u8[][] out = u8[][].filled(n, u8[]());
-  for (i32 i = 0; i < n; i++) { out[i] = cli.arg(from + i).wait(); }
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = argv[from + i]; }
   return out;
 }
 
@@ -57,14 +59,14 @@ export u8[][] programArgs(Cli cli, i32 argc, string entry) {
  * argument — `issues/system/0177`. Refused by name instead. The scan stops at `--`, because past that
  * a program may legitimately want the string.
  */
-export string grantAfterEntry(Cli cli, i32 argc, string entry) {
+export string grantAfterEntry(string[] argv, i32 argc, string entry) {
   i32 at = -1;
   for (i32 i = 1; i < argc && at < 0; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == entry) { at = i; }
+    if (argv[i] == entry) { at = i; }
   }
   if (at < 0) { return ""; }
   for (i32 i = at + 1; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--") { return ""; }
     if (a == "--allow-read" || a == "--allow-write" || a == "--allow-net" || a == "--allow-env"
         || a == "--allow-run") {
@@ -82,10 +84,10 @@ export string grantAfterEntry(Cli cli, i32 argc, string entry) {
  * program's own argument. Refused above rather than honoured, and this is the half that makes the
  * refusal meaningful by not reading past the entry either.
  */
-export i32 grantsBefore(Cli cli, i32 argc, string entry) {
+export i32 grantsBefore(string[] argv, i32 argc, string entry) {
   i32 bits = 0;
   for (i32 i = 1; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == entry) { return bits; }
     if (a == "--allow-read") { bits = bits | 1; }
     if (a == "--allow-write") { bits = bits | 2; }
@@ -156,21 +158,20 @@ bool declared(JsonObject table, string name) {
  * the differential rather than approximated. See `declaredGrants` for why the grants come from the
  * module rather than from this command.
  */
-export i32 runModule(Core core, Cli cli, i32 argc, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) {
-    // **The fault's words, not the host's sentence.** `FileResult.error` is "No such file or directory
-    // (os error 2)" under Deno, "ENOENT: no such file or directory, open '…'" under Node and a third
-    // thing on a page — three spellings of one fact, which is what `FileResult.fault` exists to say and
-    // what `faultWords` turns into the one phrase every host uses. The host's own sentence is kept only
-    // for a fault with no category, where it is the only thing that knows.
-    string words = faultWords(f.fault);
-    core.warn("wac: cannot read " + path + " — " + (words == "" ? f.error : words));
-    return 1;
+export i32 runModule(string[] argv, Output err, Files fs, Net net, Env env, Procs procs, i32 argc, string path) {
+  u8[] wasm;
+  match (flatten(fs.readFile(path).wait())) {
+    Ok(bytes): { wasm = bytes; }
+    Err(e): {
+      // **The fault's words, not the host's sentence**: one phrase every host uses for what happened,
+      // rather than three spellings of it. See `reason`.
+      err.line("wac: cannot read " + path + " — " + reason(e));
+      return 1;
+    }
   }
-  u8[][] args = u8[][].filled(argc - 1 < 0 ? 0 : argc - 1, u8[]());
-  for (i32 i = 1; i < argc; i++) { args[i - 1] = cli.arg(i).wait(); }
-  return runBytes(core, cli, f.bytes, args, path);
+  string[] args = string[].filled(argc - 1 < 0 ? 0 : argc - 1, "");
+  for (i32 i = 1; i < argc; i++) { args[i - 1] = argv[i]; }
+  return runBytes(err, fs, net, env, procs, wasm, args, path);
 }
 
 /**
@@ -184,7 +185,7 @@ export i32 runModule(Core core, Cli cli, i32 argc, string path) {
  * app is the executable rather than anything a compiler wrote, and a sentence naming a module the
  * caller has never seen is a sentence about the wrong thing.
  */
-export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
+export i32 runBytes(Output err, Files fs, Net net, Env env, Procs procs, u8[] wasm, string[] args, string shown) {
   i32 grants = declaredGrants(wasm);
   if (grants < 0) {
     // **Name the command, not the API behind it.** This said *"build it with
@@ -196,30 +197,37 @@ export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
     // `compile` is what produces a module with no manifest, so the sentence says which command to
     // use *instead* rather than only which one to use: without that, "build it with `wac build`" is
     // advice about a file whose provenance the reader has to work out for themselves.
-    core.warn("wac: \{shown} carries no wac.manifest section, so it is a raw module rather "
+    err.line("wac: \{shown} carries no wac.manifest section, so it is a raw module rather "
               + "than a program — `wac compile` writes one of these, and `wac build <entry.wac> "
               + "-o <stem>` writes one that can run");
     return 1;
   }
-  HostChild kid = cli.spawn(wasm, args, grants, "", INHERIT_IN | INHERIT_OUT, false).wait();
-  if (kid.unavailable()) {
-    core.warn("wac: this host cannot run a module — it has no form of `spawn`");
-    return 1;
+  return spawnWith(err, Authority(fs, net, env, procs), grants, wasm, args, shown);
+}
+
+/**
+ * `wasm` run as a child holding what `grants` asks for out of `all`, with this program's streams, and its
+ * status once it ends.
+ *
+ * **Inherited both ways, so there is nothing between the program and the terminal.** This relayed
+ * the child's two streams until 2026-08-29, and a parent reading two queues cannot know which was
+ * written first: `echo one; nope; echo two` put the complaint after both lines, 11 runs in 20.
+ * `issues/system/0282c`.
+ * 
+ * The `relay` that did it is **gone** rather than kept for a caller that might want it — there is
+ * none, and `packages/sh/src/exec.wac` has its own loop for the parents that do read their
+ * children. What replaced it is the kernel: a launcher hands over its streams and waits for a
+ * status.
+ */
+export i32 spawnWith(Output err, Authority all, i32 grants, u8[] wasm, string[] args, string shown) {
+  match (flatten(all.procs!.spawn(wasm, args, within(all, askedOfBits(grants)), Launch("", true, true, false)).wait())) {
+    Ok(kid): { return flatten(kid.exit().wait()).orElse(-1); }
+    Err(e): {
+      if (e is Unsupported) { err.line("wac: this host cannot run a module — it has no form of `spawn`"); }
+      else { err.line("wac: cannot run \{shown} — \{e}"); }
+      return 1;
+    }
   }
-  if (kid.handle < 0) {
-    core.warn("wac: cannot run \{shown} — \{kid.error}");
-    return 1;
-  }
-  // **Inherited both ways, so there is nothing between the program and the terminal.** This relayed
-  // the child's two streams until 2026-08-29, and a parent reading two queues cannot know which was
-  // written first: `echo one; nope; echo two` put the complaint after both lines, 11 runs in 20.
-  // `issues/system/0282c`.
-  //
-  // The `relay` that did it is **gone** rather than kept for a caller that might want it — there is
-  // none, and `packages/sh/src/exec.wac` has its own loop for the parents that do read their
-  // children. What replaced it is the kernel: a launcher hands over its streams and waits for a
-  // status.
-  return cli.exitCode(kid.handle).wait();
 }
 
 /**

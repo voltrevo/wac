@@ -31,6 +31,8 @@ import { check as iceCheck, hostPref, priorityOf, reportedAddress, tidOf } from 
 import { checkIntegrity, kindOf } from "./stun_probe.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
+import { flatten } from "core";
+import { ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs, Sys, Datagrams } from "std";
 
 static string ORACLE = "packages/webrtc/test/sdp_oracle.py";
 static string SOURCE = "packages/webrtc/example/answer.wac";
@@ -46,31 +48,35 @@ string offerText() {
          "\r\na=setup:actpass\r\na=mid:0\r\n";
 }
 
-export string test_the_example_runs_as_a_program(Core core, Cli cli) {
+export string test_the_example_runs_as_a_program(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/answer";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/answer";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   string stem = "\{dir}/answer";
 
-  Exec built = cli.exec(wacBinary(cli),
-                        ["build", SOURCE, "-o", stem, "--allow-net", "--quiet"],
-                        u8[]()).wait();
-  t.isTrue(built.ran(), "the wac binary ran — \{built.error}");
-  t.eqI32(built.status, 0, "the example did not build: \{string.fromBytes(built.stderr)}");
-  if (!built.ran() || built.status != 0) { return t.report(); }
+  auto builtRan = flatten(procs.exec(wacBinary(env), ["build", SOURCE, "-o", stem, "--allow-net", "--quiet"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  t.isTrue((built is not null), "the wac binary ran — \{builtRan.isErr() ? "\{builtRan.err()!}" : ""}");
+  t.eqI32(built!.status, 0, "the example did not build: \{string.fromBytes(built!.stderr)}");
+  if ((built is null) || built!.status != 0) { return t.report(); }
 
   // A port nobody else has. `Held` keeps it until the statement before the program takes it, which
   // is as small as the window gets when the bind happens in another process.
-  Held held = Held.take(cli);
+  Held held = Held.take(net);
   t.isTrue(held.port > 0, "no port could be bound");
   if (held.port < 0) { return t.report(); }
   i32 port = held.port;
 
-  cli.writeFile("\{dir}/offer.sdp", offerText().toBytes()).wait();
-  held.release(cli);
-  Daemon program = start(cli,
-    quoted(wacBinary(cli)) + " " + quoted("\{stem}.wasm") + " 127.0.0.1 \{port}" +
+  fs.writeFile("\{dir}/offer.sdp", offerText().toBytes()).wait();
+  held.release();
+  Daemon program = start(procs, quoted(wacBinary(env)) + " " + quoted("\{stem}.wasm") + " 127.0.0.1 \{port}" +
     " < " + quoted("\{dir}/offer.sdp"), "\{dir}/answer.log");
   t.isTrue(program.ok(), "the program did not start — \{program.error}");
   if (!program.ok()) { return t.report(); }
@@ -78,13 +84,13 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   // It generates a certificate at startup, so the description takes a moment to appear.
   string said = "";
   for (i32 i = 0; i < 400 && !contains(said, "sctp-port"); i++) {
-    said = readIfPresent(cli, "\{dir}/answer.log");
-    if (!contains(said, "sctp-port")) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait(); }
+    said = readIfPresent(fs, "\{dir}/answer.log");
+    if (!contains(said, "sctp-port")) { flatten(procs.exec("/bin/sh", ["-c", "sleep 0.05"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap(); }
   }
   t.isTrue(contains(said, "sctp-port"),
            "the program printed no complete description. It said: \{tail(said, 800)}");
   if (!contains(said, "sctp-port")) {
-    stop(cli, program);
+    stop(procs, program);
     return t.report();
   }
 
@@ -95,7 +101,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   Lines lines = Lines.create();
   lines.add("answer " + string.fromBytes(hexEncode(said.toBytes())) +
             " application UDP/DTLS/SCTP server sha-256 95 1 5000");
-  check(t, cli, "python3", [ORACLE], lines, "aiortc reading the program's answer");
+  check(t, procs, "python3", [ORACLE], lines, "aiortc reading the program's answer");
 
   // **The identity is its own and is fresh.** Nothing here supplied a key: the program made a P-256
   // certificate at startup, and this is its digest.
@@ -111,7 +117,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   string ourPwd = attr(said, "ice-pwd");
   t.isTrue(ourUfrag.len() > 0 && ourPwd.len() > 0, "it advertised no ICE credentials");
   if (ourUfrag.len() == 0 || ourPwd.len() == 0) {
-    stop(cli, program);
+    stop(procs, program);
     return t.report();
   }
 
@@ -122,17 +128,17 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
 
   u8[] answer = u8[]();
   for (i32 attempt = 0; attempt < 20 && answer.len() == 0; attempt++) {
-    HostSocket s = cli.bindDatagram("127.0.0.1", 0).wait();
-    if (s.handle < 0) { break; }
-    cli.sendTo(s.handle, "127.0.0.1", port, request).wait();
-    Pending<Datagram> p = cli.receiveFrom(s.handle);
-    if (core.waitAny([p.id], 700) < 0) {
-      p.drop(p.id);
-      cli.closeSocket(s.handle);
+    auto sBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+    Datagrams? s = sBind.ok();
+    if (s is null) { break; }
+    s!.sendTo("127.0.0.1", port, request).wait();
+    auto pGot = flatten(clock.within(s!.receive(), 700).wait());
+    if (pGot.isErr()) {
+      s!.close();
       continue;
     }
-    Datagram d = p.wait();
-    cli.closeSocket(s.handle);
+    Datagram d = pGot.unwrap();
+    s!.close();
     if (d.error == "" && d.bytes.len() > 0) { answer = d.bytes; }
   }
 
@@ -149,16 +155,16 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
     t.eqStr(dotted(reportedAddress(answer)), "127.0.0.1", "it reported our address");
   }
 
-  stop(cli, program);
-  cli.remove(dir, true).wait();
+  stop(procs, program);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 
-string readIfPresent(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string readIfPresent(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 string tail(string s, i32 n) {

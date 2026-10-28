@@ -34,7 +34,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, startsWith } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import { emitFiles, namesFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Exports, Names, exportedFunctions, importedFunctions, declaredFunctions,
@@ -51,10 +51,10 @@ bool isHelper(string name) {
   return startsWith(name, "$bind$") || name == "$trap$message";
 }
 
-export string test_every_exported_function_is_where_namesfiles_says_and_all_are_named(
-    Core core, Cli cli) {
+export string test_every_exported_function_is_where_namesfiles_says_and_all_are_named(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "names_test");
+  Corpus c = loadCorpus(fs, "names_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 

@@ -6,38 +6,41 @@
 // of its own, and the package's own tests cannot assume a `wac` binary to run one with.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Launch, Procs, Sys } from "std";
 import { binaryPath } from "../../packages/wactest/src/host.wac";
+import { flatten } from "core";
 
 string FIXTURE() { return "tools/wac/webpolicy.wac"; }
 
 /** What a run of the fixture on `which` wrote to stderr, or why it did not run. */
-Exec ran(Cli cli, string which) {
-  return cli.exec(binaryPath(cli), ["run", FIXTURE(), which], u8[]()).wait();
+Exec ran(Env env, Procs procs, string which) {
+  return flatten(procs.exec(binaryPath(env), ["run", FIXTURE(), which], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
-void refuses(T t, Cli cli, string which, string says) {
-  Exec r = ran(cli, which);
+void refuses(T t, Env env, Procs procs, string which, string says) {
+  Exec r = ran(env, procs, which);
   string err = string.fromBytes(r.stderr);
   t.isTrue(r.ran() && r.status != 0 && r.status != 3, which + " was not refused — status \{r.status}: " + err);
   t.isTrue(err.indexOf(says) >= 0, which + " should say `" + says + "`: " + err);
 }
 
-export string test_the_policy_holds_through_both_layers(Core core, Cli cli) {
+export string test_the_policy_holds_through_both_layers(Sys sys) {
+  Env env = sys.env();
+  Procs procs = sys.procs();
   T t = T.create();
   // The canary: the fixture builds and runs, and allows what it should — else every refusal below
   // could be a build failure.
-  Exec ok = ran(cli, "ok");
+  Exec ok = ran(env, procs, "ok");
   t.isTrue(ok.ran() && ok.status == 0, "the allowed case ran — status \{ok.status}: " + string.fromBytes(ok.stderr));
-  refuses(t, cli, "element-handler", "Element.attr: onerror — a handler is listened for");
-  refuses(t, cli, "element-name", "Element.append: img src=x is not an element name");
-  refuses(t, cli, "element-url", "Element.attr: href is a javascript: URL");
-  refuses(t, cli, "element-script", "Element.append: a page cannot make a script element");
-  refuses(t, cli, "html-handler", "htmlOf: onerror — a handler is listened for");
-  refuses(t, cli, "html-name", "htmlOf: img src=x onerror=alert(1) x is not an element name");
-  refuses(t, cli, "html-url", "htmlOf: href is a javascript: URL");
-  refuses(t, cli, "html-script", "htmlOf: a page cannot make a script element");
-  refuses(t, cli, "html-attr-name", "htmlOf: src=x onerror is not an attribute name");
+  refuses(t, env, procs, "element-handler", "Element.attr: onerror — a handler is listened for");
+  refuses(t, env, procs, "element-name", "Element.append: img src=x is not an element name");
+  refuses(t, env, procs, "element-url", "Element.attr: href is a javascript: URL");
+  refuses(t, env, procs, "element-script", "Element.append: a page cannot make a script element");
+  refuses(t, env, procs, "html-handler", "htmlOf: onerror — a handler is listened for");
+  refuses(t, env, procs, "html-name", "htmlOf: img src=x onerror=alert(1) x is not an element name");
+  refuses(t, env, procs, "html-url", "htmlOf: href is a javascript: URL");
+  refuses(t, env, procs, "html-script", "htmlOf: a page cannot make a script element");
+  refuses(t, env, procs, "html-attr-name", "htmlOf: src=x onerror is not an attribute name");
   return t.report();
 }
 

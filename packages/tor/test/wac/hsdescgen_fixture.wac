@@ -14,46 +14,46 @@
 
 import { JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Cli } from "std";
+import { Files } from "std";
 import { jsonFile, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
-JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"); }
+JsonObject top(Files fs) { return jsonFile(fs, "packages/tor/test/data/hsdesc_generated.json"); }
 
 /** A hex field, decoded. */
-u8[] hexField(Cli cli, string key) { return decoded(strOf(top(cli), key)); }
+u8[] hexField(Files fs, string key) { return decoded(strOf(top(fs), key)); }
 
 /** The document tor decoded, byte for byte. */
-export u8[] descriptor(Cli cli) { return strOf(top(cli), "descriptor").toBytes(); }
+export u8[] descriptor(Files fs) { return strOf(top(fs), "descriptor").toBytes(); }
 
-export u8[] cert(Cli cli) { return hexField(cli, "cert"); }
-export u8[] superencrypted(Cli cli) { return hexField(cli, "superencrypted"); }
-export u8[] signSeed(Cli cli) { return hexField(cli, "signSeed"); }
-export u8[] signPublic(Cli cli) { return hexField(cli, "signPublic"); }
-export u8[] identitySeed(Cli cli) { return hexField(cli, "identitySeed"); }
-export u8[] identityPublic(Cli cli) { return hexField(cli, "identityPublic"); }
-export u8[] factor(Cli cli) { return hexField(cli, "factor"); }
-export u8[] blindExpanded(Cli cli) { return hexField(cli, "blindExpanded"); }
-export u8[] blindPublic(Cli cli) { return hexField(cli, "blindPublic"); }
-export u8[] subcred(Cli cli) { return hexField(cli, "subcredential"); }
-export u8[] ephemeral(Cli cli) { return hexField(cli, "ephemeral"); }
-export u8[] salt(Cli cli) { return hexField(cli, "salt"); }
-export u8[] inner(Cli cli) { return hexField(cli, "inner"); }
-export u8[] innerSalt(Cli cli) { return hexField(cli, "innerSalt"); }
-export u8[] linkSpecs(Cli cli) { return hexField(cli, "linkSpecifiers"); }
-export u8[] ipNtor(Cli cli) { return hexField(cli, "ipNtor"); }
-export u8[] ipEnc(Cli cli) { return hexField(cli, "ipEnc"); }
-export u8[] authCert(Cli cli) { return hexField(cli, "authCert"); }
-export u8[] encCert(Cli cli) { return hexField(cli, "encCert"); }
+export u8[] cert(Files fs) { return hexField(fs, "cert"); }
+export u8[] superencrypted(Files fs) { return hexField(fs, "superencrypted"); }
+export u8[] signSeed(Files fs) { return hexField(fs, "signSeed"); }
+export u8[] signPublic(Files fs) { return hexField(fs, "signPublic"); }
+export u8[] identitySeed(Files fs) { return hexField(fs, "identitySeed"); }
+export u8[] identityPublic(Files fs) { return hexField(fs, "identityPublic"); }
+export u8[] factor(Files fs) { return hexField(fs, "factor"); }
+export u8[] blindExpanded(Files fs) { return hexField(fs, "blindExpanded"); }
+export u8[] blindPublic(Files fs) { return hexField(fs, "blindPublic"); }
+export u8[] subcred(Files fs) { return hexField(fs, "subcredential"); }
+export u8[] ephemeral(Files fs) { return hexField(fs, "ephemeral"); }
+export u8[] salt(Files fs) { return hexField(fs, "salt"); }
+export u8[] inner(Files fs) { return hexField(fs, "inner"); }
+export u8[] innerSalt(Files fs) { return hexField(fs, "innerSalt"); }
+export u8[] linkSpecs(Files fs) { return hexField(fs, "linkSpecifiers"); }
+export u8[] ipNtor(Files fs) { return hexField(fs, "ipNtor"); }
+export u8[] ipEnc(Files fs) { return hexField(fs, "ipEnc"); }
+export u8[] authCert(Files fs) { return hexField(fs, "authCert"); }
+export u8[] encCert(Files fs) { return hexField(fs, "encCert"); }
 
-export i32 lifetimeMinutes(Cli cli) { return numOf(top(cli), "lifetimeMinutes"); }
-export i32 revision(Cli cli) { return numOf(top(cli), "revision"); }
+export i32 lifetimeMinutes(Files fs) { return numOf(top(fs), "lifetimeMinutes"); }
+export i32 revision(Files fs) { return numOf(top(fs), "revision"); }
 /** How much of the document tor's signature covers — the length it recorded when it accepted it. */
-export i32 signedSpanLen(Cli cli) { return numOf(top(cli), "signedSpanLen"); }
+export i32 signedSpanLen(Files fs) { return numOf(top(fs), "signedSpanLen"); }
 /** The padded length of the middle layer's plaintext, as tor decrypted it. */
-export i32 middleLen(Cli cli) { return numOf(top(cli), "middleLen"); }
-export i32 innerPlainLen(Cli cli) { return numOf(top(cli), "innerPlainLen"); }
-export i32 periodNum(Cli cli) { return numOf(top(cli), "periodNum"); }
-export i32 periodLength(Cli cli) { return numOf(top(cli), "periodLength"); }
+export i32 middleLen(Files fs) { return numOf(top(fs), "middleLen"); }
+export i32 innerPlainLen(Files fs) { return numOf(top(fs), "innerPlainLen"); }
+export i32 periodNum(Files fs) { return numOf(top(fs), "periodNum"); }
+export i32 periodLength(Files fs) { return numOf(top(fs), "periodLength"); }
 
 export static i32 DECOY_CLIENTS = 16;
 

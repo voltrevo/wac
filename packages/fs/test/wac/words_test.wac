@@ -1,0 +1,36 @@
+// What a failed file operation is called in a message — `src/words.wac`. GNU's words, one per category, so a
+// program prints the same line on every host whatever sentence the host gave.
+
+import { Sys, NotFound, Denied, Exists, NotEmpty, IsDir, NotADir, ReadOnly, NameTooLong, Loop, NoSpace, NotRepresentable,
+         NotGranted, Unsupported, OutputClosed, Other } from "std";
+import { FilesFault, absent, reason } from "../../src/words.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+export string test_each_category_has_gnus_words_and_the_rest_keep_their_own(Sys sys) {
+  T t = T.create();
+  t.eqStr(reason(NotFound("x: gone (os error 2)")), "No such file or directory", "NotFound");
+  t.eqStr(reason(Denied("x")), "Permission denied", "Denied");
+  t.eqStr(reason(Exists("x")), "File exists", "Exists");
+  t.eqStr(reason(NotEmpty("x")), "Directory not empty", "NotEmpty");
+  t.eqStr(reason(IsDir("x")), "Is a directory", "IsDir");
+  t.eqStr(reason(NotADir("x")), "Not a directory", "NotADir");
+  t.eqStr(reason(ReadOnly("x")), "Read-only file system", "ReadOnly");
+  t.eqStr(reason(NameTooLong("x")), "File name too long", "NameTooLong");
+  t.eqStr(reason(Loop("x")), "Too many levels of symbolic links", "Loop");
+  t.eqStr(reason(NoSpace("x")), "No space left on device", "NoSpace");
+  t.eqStr(reason(NotRepresentable("x")), "cannot be named on this host", "NotRepresentable");
+  t.eqStr(reason(NotGranted("x")), "Not granted to this application", "NotGranted");
+  t.eqStr(reason(Unsupported("this host has no chmod")), "this host has no chmod", "Unsupported keeps its own sentence");
+  t.eqStr(reason(Other("the disk said something odd")), "the disk said something odd", "and so does Other");
+  t.eqStr(reason(OutputClosed("the reader has gone")), "the reader has gone", "and OutputClosed");
+  return t.report();
+}
+
+export string test_absent_is_nothing_there_and_nothing_else(Sys sys) {
+  T t = T.create();
+  t.isTrue(absent(NotFound("x")), "not found is absent");
+  t.isTrue(absent(NotADir("x")), "a path through a file is absent");
+  t.isFalse(absent(Denied("x")), "a refusal is not");
+  t.isFalse(absent(IsDir("x")), "nor is a directory");
+  return t.report();
+}

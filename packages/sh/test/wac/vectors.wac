@@ -18,7 +18,8 @@
 // The header is not decoration: an expectation is only as portable as the environment it was taken in,
 // and when a replay disagrees the first question is whether *we* changed or the oracle did.
 
-import { Cli, FileResult } from "std";
+import { Files } from "std";
+import { flatten } from "core";
 
 export struct Vector {
   string script;
@@ -83,8 +84,8 @@ i32 numberIn(string line, string tag) {
  * A missing or unreadable file is an error rather than an empty list: a replay over zero vectors passes,
  * which is the shape this repository keeps finding — a check that stopped checking and said nothing.
  */
-export Vectors load(Cli cli) {
-  FileRead r = readAll(cli);
+export Vectors load(Files fs) {
+  FileRead r = readAll(fs);
   if (!r.ok) {
     return Vectors(Vector[](), 0, "",
                    "cannot read \{vectorsPath()} — run `wac run --allow-read --allow-write " +
@@ -143,7 +144,7 @@ struct FileRead {
   u8[] bytes;
 }
 
-FileRead readAll(Cli cli) {
-  FileResult r = cli.readFile(vectorsPath()).wait();
-  return FileRead(r.ok, r.ok ? r.bytes : u8[]());
+FileRead readAll(Files fs) {
+  u8[]? r = flatten(fs.readFile(vectorsPath()).wait()).ok();
+  return FileRead((r is not null), (r is not null) ? r! : u8[]());
 }

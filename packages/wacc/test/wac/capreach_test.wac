@@ -49,7 +49,7 @@ string viaOf(string table, string path) {
 string[] paths2(string a, string b) { return [a, b]; }
 string[] paths3(string a, string b, string c) { return [a, b, c]; }
 
-export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not(Core core, Cli cli) {
+export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not() {
   T t = T.create();
   string table = capReachFiles(
     paths2("pure.wac", "uses.wac"),
@@ -61,7 +61,7 @@ export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not(C
   return t.report();
 }
 
-export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_struct(Core core, Cli cli) {
+export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_struct() {
   // **The case a signature scan misses, and it is not hypothetical.**
   // `packages/platform/src/stream.wac` has `Cli cli;` in `Sink`, and `packages/fs/src/fs.wac` has an
   // enum variant `Host(Cli cli)`. A file handed one of those holds the entire capability set without
@@ -79,7 +79,7 @@ export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_
   return t.report();
 }
 
-export string test_an_enum_variant_carries_a_capability_as_a_field_does(Core core, Cli cli) {
+export string test_an_enum_variant_carries_a_capability_as_a_field_does() {
   // `Fs.Host(Cli cli)` is the real one. A closure over struct fields alone would clear every holder
   // of an `Fs`, which is most of `packages/box`.
   T t = T.create();
@@ -92,7 +92,7 @@ export string test_an_enum_variant_carries_a_capability_as_a_field_does(Core cor
   return t.report();
 }
 
-export string test_a_method_that_answers_a_capability_makes_its_type_bearing(Core core, Cli cli) {
+export string test_a_method_that_answers_a_capability_makes_its_type_bearing() {
   // Holding the type is enough when a method hands the capability back — `Fs.onHost(Cli, i64)` is the
   // way in and a method answering one would be the way out.
   T t = T.create();
@@ -105,7 +105,7 @@ export string test_a_method_that_answers_a_capability_makes_its_type_bearing(Cor
   return t.report();
 }
 
-export string test_a_type_whose_name_starts_with_cli_is_not_a_capability(Core core, Cli cli) {
+export string test_a_type_whose_name_starts_with_cli_is_not_a_capability() {
   // **The substring trap.** `Cli` is inside `ClientState`, and a scan matching on substrings would
   // report most of `packages/tls` as reaching the host. The list is tab-delimited and searched with
   // the separators, which is the whole reason for that format.
@@ -120,7 +120,7 @@ export string test_a_type_whose_name_starts_with_cli_is_not_a_capability(Core co
   return t.report();
 }
 
-export string test_the_summary_states_the_denominator(Core core, Cli cli) {
+export string test_the_summary_states_the_denominator() {
   // `issues/system/0268a` is what an instrument that reports its hits and not what it looked at
   // costs. This one has to say both, every time — including when the answer is none.
   T t = T.create();
@@ -138,7 +138,7 @@ export string test_the_summary_states_the_denominator(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_analysis_can_say_sealed_at_all(Core core, Cli cli) {
+export string test_the_analysis_can_say_sealed_at_all() {
   // **The canary, and every case above needs it.** An analysis that answered `reaches` for everything
   // would pass four of the five tests here, and one that answered `sealed` for everything would pass
   // the other two. This asserts the two answers both occur in one graph, so neither degenerate

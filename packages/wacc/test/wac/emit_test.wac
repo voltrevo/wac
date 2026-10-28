@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, contains, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
 import { Ran, runEmittedOne, scratchDir, Validated,
          validateAll } from "./artifacts_probe.wac";
 import { emitFiles } from "../../src/api.wac";
@@ -787,7 +787,10 @@ string callExpr(string src, string call) {
 }
 
 
-export string test_rung_4_what_wacc_emits_compiles_and_runs(Core core, Cli cli) {
+export string test_rung_4_what_wacc_emits_compiles_and_runs(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] src = sources();
   string[] call = calls();
@@ -797,7 +800,7 @@ export string test_rung_4_what_wacc_emits_compiles_and_runs(Core core, Cli cli) 
   i32 asked = 0;
   for (i32 i = 0; i < src.len(); i++) { asked = asked + parts(call[i]).len(); }
 
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   i32 at = 0;
   i32 compared = 0;
   string[] wrong = string[].filled(16, "");
@@ -823,7 +826,7 @@ export string test_rung_4_what_wacc_emits_compiles_and_runs(Core core, Cli cli) 
         ? callExpr(src[i], trimmed(cs[j])) + ";"
         : ty + " v = " + callExpr(src[i], trimmed(cs[j])) + ";";
       string driver = src[i] + "\nexport i32 main() { " + body + " return 7; }\n";
-      Ran r = runEmittedOne(cli, ENTRY, driver, dir, "emitcase.wasm");
+      Ran r = runEmittedOne(env, fs, procs, ENTRY, driver, dir, "emitcase.wasm");
       compared = compared + 1;
       if (!r.ok || r.trapped || r.status != 7) {
         if (nWrong < wrong.len()) {
@@ -847,12 +850,15 @@ export string test_rung_4_what_wacc_emits_compiles_and_runs(Core core, Cli cli) 
   return t.report();
 }
 
-export string test_rung_4_the_module_is_well_formed_on_its_own_terms(Core core, Cli cli) {
+export string test_rung_4_the_module_is_well_formed_on_its_own_terms(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // A second opinion about the bytes that is not the reference's — a module can run the one function
   // a test calls and still be malformed elsewhere.
   T t = T.create();
   string[] src = sources();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
 
   // In chunks, because asking the engine is a process: `wac validate` takes a list and compiles each
   // module inside one isolate.
@@ -874,10 +880,10 @@ export string test_rung_4_the_module_is_well_formed_on_its_own_terms(Core core, 
         }
       }
       string at = dir + "/emitwf" + itoa(j) + ".wasm";
-      cli.writeFile(at, wasm).wait();
+      fs.writeFile(at, wasm).wait();
       wrote[j] = at;
     }
-    Validated v = validateAll(cli, wrote);
+    Validated v = validateAll(env, procs, wrote);
     t.isTrue(v.ok, "the engine was asked about this chunk — " + v.error);
     if (!v.ok) { return t.report(); }
     bad = bad + v.rejected.len();

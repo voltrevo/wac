@@ -1,13 +1,13 @@
 // The current time, RFC 3339. The clock is a capability, so this is `Core` at work.
 
-import { Cli, Core } from "std";
+import { Core, Clock, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { format } from "../../../datetime/src/rfc3339.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { flatten } from "core";
 
-export i32 date(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  core.log(string.fromBytes(format(core.nowMillis().wait())));
+export i32 date(Output err, Output out, Clock clock, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  out.line(string.fromBytes(format(flatten(clock.nowMillis().wait()).unwrap())));
   return 0;
 }

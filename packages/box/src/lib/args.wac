@@ -104,23 +104,12 @@ export bool has(Args a, i32 flag) {
 /**
  * The arguments as `box` sees them: index 0 is the applet name, so parsing starts at 1.
  *
- * A standalone build of one applet has no name to skip and uses `parseFrom(cli, 0, "wc")`.
+ * A standalone build of one applet has no name to skip and uses `parseList(argv, 0, "wc")`.
  * The applet itself is identical either way — that is the point of the split, and of
  * `bin/`.
  */
-export Args parseArgs(Cli cli) {
-  return parseFrom(cli, 1, string.fromBytes(cli.arg(0).wait()));
-}
-
-export Args parseFrom(Cli cli, i32 first, string name) {
-  // Materialised, then parsed by the list form below. The parser used to read `cli.arg(i)` inside
-  // its loops, which meant it could only ever parse *this process's* arguments — and the shell
-  // running an applet in-process has a `Vec<string>` of its own to hand over. Same parser, so a
-  // flag cannot come to mean one thing under `box` and another under `sh`.
-  i32 n = cli.argCount().wait();
-  string[] argv = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { argv[i] = string.fromBytes(cli.arg(i).wait()); }
-  return parseList(argv, first, name);
+export Args parseArgs(string[] argv) {
+  return parseList(argv, 1, argv[0]);
 }
 
 /** The same, over arguments somebody already has. `first` is where the applet's own begin. */

@@ -10,10 +10,11 @@
 // required to pick the same members in the same order. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Change, Core, Cli, Exec } from "std";
+import { Change, Exec, ChildEnv, Files, Launch, Procs, Sys } from "std";
 import { Edit, Mutant } from "./mutateoperators.wac";
 import { Rand, fileCount, mulberry32, next, sampleMutants } from "./mutatesample.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 string ORACLE() { return ".cache/mutatesample-oracle.ts"; }
 
@@ -40,8 +41,8 @@ string namesOf(Mutant[] ms) {
 }
 
 /** `""` once the oracle program is on disk, or why not. */
-string writeOracle(Cli cli) {
-  cli.mkdir(".cache", true).wait();
+string writeOracle(Files fs) {
+  fs.mkdir(".cache", true).wait();
   string program =
     "import { sampleMutants } from '../tools/mutate/sample.ts';\n"
     + "const [n, files, want, seed] = Deno.args.map(Number);\n"
@@ -51,18 +52,18 @@ string writeOracle(Cli cli) {
     + "             edits: [{ file: 'f' + (i % files), start: 0, end: 0, replacement: '', was: '' }] });\n"
     + "}\n"
     + "console.log(sampleMutants(pop, want, seed).map((m) => m.name).join(','));\n";
-  Change wrote = cli.writeFile(ORACLE(), program.toBytes()).wait();
-  return wrote.ok() ? "" : wrote.message;
+  auto wrote = flatten(fs.writeFile(ORACLE(), program.toBytes()).wait());
+  return wrote.isOk() ? "" : "\{wrote.isErr() ? "\{wrote.err()!}" : ""}";
 }
 
-string theirs(Cli cli, i32 n, i32 files, i32 want, i32 seed) {
-  Exec r = cli.exec("deno",
-                    [
+string theirs(Procs procs, i32 n, i32 files, i32 want, i32 seed) {
+  auto rRan = flatten(procs.exec("deno", [
                              "run", "-A", "--no-check", "--unstable-sloppy-imports", ORACLE(),
                              itoa(n), itoa(files), itoa(want), itoa(seed)
-                    ], u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "oracle-failed"; }
-  string s = string.fromBytes(r.stdout);
+                    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "oracle-failed"; }
+  string s = string.fromBytes(r!.stdout);
   if (s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n") { s = s.slice(0, s.len() - 1); }
   return s;
 }
@@ -98,9 +99,11 @@ export string test_the_generator_is_in_range_and_deterministic() {
   return t.report();
 }
 
-export string test_the_draw_matches_the_typescript_for_the_same_seed(Core core, Cli cli) {
+export string test_the_draw_matches_the_typescript_for_the_same_seed(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string why = writeOracle(cli);
+  string why = writeOracle(fs);
   t.eqStr(why, "", "the oracle program was written");
   if (why != "") { return t.report(); }
 
@@ -113,7 +116,7 @@ export string test_the_draw_matches_the_typescript_for_the_same_seed(Core core, 
   for (i32 c = 0; c < ns.len(); c++) {
     Mutant[] pop = population(ns[c], fs[c]);
     string got = namesOf(sampleMutants(pop, wants[c], seeds[c]));
-    string want = theirs(cli, ns[c], fs[c], wants[c], seeds[c]);
+    string want = theirs(procs, ns[c], fs[c], wants[c], seeds[c]);
     t.isTrue(want != "oracle-failed", "the oracle ran for case " + itoa(c));
     if (want == "oracle-failed") { continue; }
     t.eqStr(got, want,

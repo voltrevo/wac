@@ -19,7 +19,7 @@
 // against each other — the seam this project keeps being caught by — so they are joined here, and the
 // subcredential tor is handed is the derived one rather than a constant.
 
-import { Core, Cli, Change, Sys } from "std";
+import { Change, Sys, Files, Output } from "std";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import {
   ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded,
@@ -31,6 +31,7 @@ import { signedSpanOf } from "./hsdescgen.wac";
 import { BUILD_OK, Built, IntroPointSecrets, buildDescriptor } from "./hsdescbuild.wac";
 import { ed25519FromCurve25519Public } from "../../crypto/src/ed25519.wac";
 import { x25519Base } from "../../crypto/src/x25519.wac";
+import { flatten } from "core";
 
 /** Two hours, which is what a real service asks for. */
 static i32 LIFETIME_MINUTES = 180;
@@ -49,14 +50,15 @@ static i64 REVISION = 42;
 static i64 REVISION_NEXT = 43;
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: genhsdesc <descriptor-out> <vector-out>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  if (argv.len() < 2) {
+    err.line("usage: genhsdesc <descriptor-out> <vector-out>");
     return 1;
   }
-  string descOut = string.fromBytes(cli.arg(0).wait());
-  string vectorOut = string.fromBytes(cli.arg(1).wait());
+  string descOut = argv[0];
+  string vectorOut = argv[1];
 
   // The service's identity: the key an onion address *is*. Everything else is derived from it.
   u8[] identitySeed = seedFor(21);
@@ -98,7 +100,7 @@ export i32 main(Sys sys) {
   u8[] ipEnc = x25519Base(ipEncSecret);
   u8[]? ipEncEd = ed25519FromCurve25519Public(ipEnc, 0);
   if (ipEncEd is null) {
-    core.warn("genhsdesc: the encryption key does not convert to ed25519");
+    err.line("genhsdesc: the encryption key does not convert to ed25519");
     return 1;
   }
 
@@ -139,7 +141,7 @@ export i32 main(Sys sys) {
   Built bn = buildDescriptor(identitySeed, signSeed, intros, periodNum, periodLength, REVISION_NEXT,
                              LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
   if (b.error != BUILD_OK || bn.error != BUILD_OK) {
-    core.warn("genhsdesc: could not build the descriptor, error \{b.error}/" +
+    err.line("genhsdesc: could not build the descriptor, error \{b.error}/" +
               "\{bn.error}");
     return 1;
   }
@@ -153,15 +155,15 @@ export i32 main(Sys sys) {
   u8[] authCert = b.introAuthCerts[0];
   u8[] encCert = b.introEncCerts[0];
 
-  Change c = cli.writeFile(descOut, doc).wait();
-  if (!c.ok()) {
-    core.warn("genhsdesc: \{descOut}: \{c.message}");
+  auto c = flatten(fs.writeFile(descOut, doc).wait());
+  if (c.isErr()) {
+    err.line("genhsdesc: \{descOut}: \{c.isErr() ? "\{c.err()!}" : ""}");
     return 1;
   }
 
-  Change cn = cli.writeFile("\{descOut}.next", docNext).wait();
-  if (!cn.ok()) {
-    core.warn("genhsdesc: \{descOut}.next: \{cn.message}");
+  auto cn = flatten(fs.writeFile("\{descOut}.next", docNext).wait());
+  if (cn.isErr()) {
+    err.line("genhsdesc: \{descOut}.next: \{cn.isErr() ? "\{cn.err()!}" : ""}");
     return 1;
   }
 
@@ -178,7 +180,7 @@ export i32 main(Sys sys) {
   Built vp = buildDescriptor(identitySeed, signSeed, intros, periodNum + 1, periodLength, REVISION,
                              LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
   if (v2.error != BUILD_OK || v3.error != BUILD_OK || vp.error != BUILD_OK) {
-    core.warn("genhsdesc: could not build the variants");
+    err.line("genhsdesc: could not build the variants");
     return 1;
   }
 
@@ -224,12 +226,12 @@ export i32 main(Sys sys) {
     "  \"variants\": [\n\{variants}\n  ],\n" +
     "  \"descriptor\": \"\{jsonText(doc)}\"\n" +
     "}\n";
-  Change v = cli.writeFile(vectorOut, json.toBytes()).wait();
-  if (!v.ok()) {
-    core.warn("genhsdesc: \{vectorOut}: \{v.message}");
+  auto v = flatten(fs.writeFile(vectorOut, json.toBytes()).wait());
+  if (v.isErr()) {
+    err.line("genhsdesc: \{vectorOut}: \{v.isErr() ? "\{v.err()!}" : ""}");
     return 1;
   }
-  core.warn("genhsdesc: wrote a \{doc.len()}-byte descriptor to \{descOut}");
+  err.line("genhsdesc: wrote a \{doc.len()}-byte descriptor to \{descOut}");
   return 0;
 }
 

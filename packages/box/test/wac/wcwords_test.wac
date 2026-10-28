@@ -15,13 +15,13 @@
 // reads it at all. A box built without the environment falls back to the C locale and counts bytes,
 // which is correct POSIX behaviour and a different question from the one the real `wc` is answering.
 
-import { Cli, Core, Exec } from "std";
+import { Cli, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "core";
+import { Buf, flatten } from "core";
 import { Ran, runApplet } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-wcwords"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-wcwords"; }
 
 /** One code point, and what to call it when it disagrees. */
 struct Cp {
@@ -60,20 +60,24 @@ Cp[] separators() {
  * Written as bytes on both sides rather than compared as text: a lossy decode of either answer would
  * corrupt exactly the differential it was fetched for.
  */
-string realWc(Cli cli, string[] args) {
-  Exec r = cli.exec("wc", args, u8[]()).wait();
-  return string.fromBytes(r.stdout);
+string realWc(Procs procs, string[] args) {
+  auto rRan = flatten(procs.exec("wc", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return string.fromBytes(r!.stdout);
 }
 
-export async string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cli cli) {
+export async string test_wc_w_splits_words_where_the_real_wc_splits_them(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string path = "\{dir}/case.txt";
 
   // **The oracle has to be there**, and a missing `wc` would otherwise make every comparison below
   // agree on the empty string. `Exec.error` is non-empty only when the program could not be started.
-  t.isTrue(cli.exec("wc", ["--version"], u8[]()).wait().error == "", "there is a real wc");
+  t.isTrue(flatten(procs.exec("wc", ["--version"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap().error == "", "there is a real wc");
 
   Cp[] cps = separators();
   for (i32 i = 0; i < cps.len(); i++) {
@@ -86,15 +90,15 @@ export async string test_wc_w_splits_words_where_the_real_wc_splits_them(Core co
       b.pushCodepoint(cps[i].cp);
       if (shape == 0) { b.push(0x62); }        // 'b'
       b.push(0x0a);
-      t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the case");
+      t.isTrue(flatten(fs.writeFile(path, b.bytes()).wait()).isOk(), "wrote the case");
 
-      Ran got = await runApplet(core, cli, dir, ["wc", "-w", path]);
-      t.eqStr(got.out, realWc(cli, ["-w", path]),
+      Ran got = await runApplet(sys, dir, ["wc", "-w", path]);
+      t.eqStr(got.out, realWc(procs, ["-w", path]),
               "wc -w on " + cps[i].name + (shape == 0 ? " between" : " alone"));
     }
   }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -109,10 +113,13 @@ export async string test_wc_w_splits_words_where_the_real_wc_splits_them(Core co
  * All three columns, not just `-w`: a mishandled character can move the byte or the line count too,
  * and a comparison of one number cannot see it.
  */
-export async string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli) {
+export async string test_a_character_broken_across_a_chunk_boundary(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string path = "\{dir}/split.txt";
 
   Cp[] wide = [Cp("em dash", 0x2014), Cp("emoji", 0x1F600)];
@@ -132,15 +139,15 @@ export async string test_a_character_broken_across_a_chunk_boundary(Core core, C
       while (b.len < target) { b.push(word[at % word.len()]); at++; }
       b.pushCodepoint(wide[i].cp);
       b.pushAll(" tail\n".toBytes());
-      t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the split case");
+      t.isTrue(flatten(fs.writeFile(path, b.bytes()).wait()).isOk(), "wrote the split case");
 
-      Ran got = await runApplet(core, cli, dir, ["wc", path]);
-      t.eqStr(got.out, realWc(cli, [path]),
+      Ran got = await runApplet(sys, dir, ["wc", path]);
+      t.eqStr(got.out, realWc(procs, [path]),
               "\{wide[i].name} broken after \{split} byte(s) at the chunk boundary");
     }
   }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -151,17 +158,20 @@ export async string test_a_character_broken_across_a_chunk_boundary(Core core, C
  * actually about — the table above says which code points are separators, and this says the answer
  * still holds over a file nobody chose for its code points.
  */
-export async string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
+export async string test_wc_w_agrees_on_the_tour(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string tour = "\{cli.cwd().wait()}/spec/tour.wac";
-  if (!cli.stat(tour).wait().exists) {
+  string tour = "\{flatten(env.cwd().wait()).unwrap()}/spec/tour.wac";
+  if (!flatten(fs.stat(tour).wait()).isOk()) {
     // Not a silent skip: this test is about a specific file, and if it is not there the run proved
     // nothing rather than proving the counts agree.
     t.fail("spec/tour.wac is not at \{tour} — this must run from the repository root");
     return t.report();
   }
 
-  Ran got = await runApplet(core, cli, cli.cwd().wait(), ["wc", "-w", tour]);
-  t.eqStr(got.out, realWc(cli, ["-w", tour]), "wc -w on spec/tour.wac");
+  Ran got = await runApplet(sys, flatten(env.cwd().wait()).unwrap(), ["wc", "-w", tour]);
+  t.eqStr(got.out, realWc(procs, ["-w", tour]), "wc -w on spec/tour.wac");
   return t.report();
 }

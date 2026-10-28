@@ -17,7 +17,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /** Three trivially passing test files, so the counts below are about the flag and nothing else. */
 string ONE() { return "export string test_one() { return \"\"; }\n"; }
@@ -28,14 +29,14 @@ struct Dir {
   string what;
 }
 
-Dir workspace(Cli cli) {
-  string dir = scratch(cli, "test-ignore");
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return Dir(false, "", "a working directory: \{made.message}"); }
+Dir workspace(Env env, Files fs) {
+  string dir = scratch(env, "test-ignore");
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) { return Dir(false, "", "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}"); }
   string[] names = ["a_test.wac", "b_test.wac", "c_test.wac"];
   for (i32 i = 0; i < names.len(); i++) {
-    Change w = cli.writeFile("\{dir}/\{names[i]}", ONE().toBytes()).wait();
-    if (!w.ok()) { return Dir(false, "", "\{names[i]}: \{w.message}"); }
+    auto w = flatten(fs.writeFile("\{dir}/\{names[i]}", ONE().toBytes()).wait());
+    if (w.isErr()) { return Dir(false, "", "\{names[i]}: \{w.isErr() ? "\{w.err()!}" : ""}"); }
   }
   return Dir(true, dir, "");
 }
@@ -46,29 +47,33 @@ struct Ran {
   string out;
 }
 
-Ran wacTest(Cli cli, string[] args) {
+Ran wacTest(Env env, Procs procs, string[] args) {
   string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = "test";
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
-  Exec r = cli.exec(binaryPath(cli), argv, u8[]()).wait();
-  if (!r.ran()) { return Ran(false, -1, r.error); }
-  return Ran(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+  auto rRan = flatten(procs.exec(binaryPath(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Ran(false, -1, "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  return Ran(true, r!.status, string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr));
 }
 
-export string test_a_named_file_is_dropped_and_the_count_says_so_6vp2knq(Core core, Cli cli) {
+export string test_a_named_file_is_dropped_and_the_count_says_so_6vp2knq(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Dir d = workspace(cli);
+  Dir d = workspace(env, fs);
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
-  Ran all = wacTest(cli, [d.path]);
+  Ran all = wacTest(env, procs, [d.path]);
   t.isTrue(all.started, "the binary started");
   if (!all.started) { return t.report(); }
   t.eqI32(all.status, 0, "the baseline passes — \{all.out}");
   t.isTrue(contains(all.out, "3 files: 3 ok"), "three files without the flag — got \"\{all.out}\"");
   t.isFalse(contains(all.out, "--ignore"), "and the summary does not mention a flag nobody passed");
 
-  Ran less = wacTest(cli, ["--ignore", "\{d.path}/b_test.wac", d.path]);
+  Ran less = wacTest(env, procs, ["--ignore", "\{d.path}/b_test.wac", d.path]);
   t.eqI32(less.status, 0, "it still passes — \{less.out}");
   // Both halves: what ran, and what did not. A flag that dropped a file and said `2 files: 2 ok`
   // would satisfy the first and be the bug this is here for.
@@ -77,14 +82,17 @@ export string test_a_named_file_is_dropped_and_the_count_says_so_6vp2knq(Core co
   return t.report();
 }
 
-export string test_a_directory_excludes_what_is_under_it_6vp2knq(Core core, Cli cli) {
+export string test_a_directory_excludes_what_is_under_it_6vp2knq(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Dir d = workspace(cli);
+  Dir d = workspace(env, fs);
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
   // A prefix match, as `deno test --ignore` is — naming the directory takes everything in it.
-  Ran none = wacTest(cli, ["--ignore", d.path, d.path]);
+  Ran none = wacTest(env, procs, ["--ignore", d.path, d.path]);
   t.isTrue(none.started, "the binary started");
   if (!none.started) { return t.report(); }
   // **Excluding everything is its own message.** "No tests under <dir>" would be a wrong answer —
@@ -96,17 +104,20 @@ export string test_a_directory_excludes_what_is_under_it_6vp2knq(Core core, Cli 
   return t.report();
 }
 
-export string test_the_flag_is_read_wherever_it_is_written_6vp2knq(Core core, Cli cli) {
+export string test_the_flag_is_read_wherever_it_is_written_6vp2knq(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Dir d = workspace(cli);
+  Dir d = workspace(env, fs);
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
   // Before the path and after it. `wac test` already had this rule for `--filter` and the flags
   // before it; a value-carrying flag is where it gets broken, because skipping the flag without its
   // value leaves the value looking like a target.
-  Ran before = wacTest(cli, ["--ignore", "\{d.path}/b_test.wac", d.path]);
-  Ran after = wacTest(cli, [d.path, "--ignore", "\{d.path}/b_test.wac"]);
+  Ran before = wacTest(env, procs, ["--ignore", "\{d.path}/b_test.wac", d.path]);
+  Ran after = wacTest(env, procs, [d.path, "--ignore", "\{d.path}/b_test.wac"]);
   t.eqI32(after.status, before.status, "the same status either way");
   t.isTrue(contains(after.out, "2 files: 2 ok"), "and the same run — got \"\{after.out}\"");
   t.isTrue(contains(after.out, "1 not run (--ignore)"), "with the same count");
@@ -116,9 +127,12 @@ export string test_the_flag_is_read_wherever_it_is_written_6vp2knq(Core core, Cl
   return t.report();
 }
 
-export string test_a_single_named_file_is_not_a_way_around_it_6vp2knq(Core core, Cli cli) {
+export string test_a_single_named_file_is_not_a_way_around_it_6vp2knq(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Dir d = workspace(cli);
+  Dir d = workspace(env, fs);
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
@@ -128,11 +142,11 @@ export string test_a_single_named_file_is_not_a_way_around_it_6vp2knq(Core core,
   // from one source must not get a different answer for naming a file than for naming its
   // directory.
   string one = "\{d.path}/a_test.wac";
-  Ran plain = wacTest(cli, [one]);
+  Ran plain = wacTest(env, procs, [one]);
   t.eqI32(plain.status, 0, "the file passes when it is not excluded — \{plain.out}");
   t.isTrue(contains(plain.out, "1 passed"), "and runs — got \"\{plain.out}\"");
 
-  Ran skipped = wacTest(cli, ["--ignore", one, one]);
+  Ran skipped = wacTest(env, procs, ["--ignore", one, one]);
   t.eqI32(skipped.status, 0, "excluding it is not a failure — \{skipped.out}");
   t.isTrue(contains(skipped.out, "not run (--ignore)"),
            "and it says the file was excluded — got \"\{skipped.out}\"");

@@ -7,13 +7,13 @@
 // than an oracle: it never stops on its own and is ended by closing the pipe it writes to, which a
 // frame run does not have. It stays where a real process is.
 
-import { Cli, Core, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "core";
+import { Buf, flatten } from "core";
 import { Ran, differs, runApplet, runAppletIn, splitOn, trimEnd } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-batch"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-batch"; }
 
 /**
  * `sponge`: the applet that only exists because of the atomic write.
@@ -22,19 +22,21 @@ string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-batch"; }
  * `sort` has read a byte of it. That is the whole point, and the second assertion — that no temporary
  * file survived — is the half that says *how* it works rather than that it did.
  */
-export async string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, Cli cli) {
+export async string test_sponge_writes_in_place_and_leaves_nothing_behind(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string target = "\{dir}/inplace";
 
-  t.isTrue(cli.writeFile(target, "delta\nalpha\ncharlie\nbravo\n".toBytes()).wait().ok(), "wrote it");
-  Ran sorted = await runApplet(core, cli, dir, ["sort", target]);
+  t.isTrue(flatten(fs.writeFile(target, "delta\nalpha\ncharlie\nbravo\n".toBytes()).wait()).isOk(), "wrote it");
+  Ran sorted = await runApplet(sys, dir, ["sort", target]);
   t.eqI32(sorted.status, 0, "sort ran: \{sorted.err}");
 
-  Ran soak = await runAppletIn(core, cli, dir, ["sponge", target], sorted.outBytes);
+  Ran soak = await runAppletIn(sys, dir, ["sponge", target], sorted.outBytes);
   t.eqI32(soak.status, 0, "sponge ran: \{soak.err}");
-  t.eqStr(string.fromBytes(cli.readFile(target).wait().bytes), "alpha\nbravo\ncharlie\ndelta\n",
+  t.eqStr(string.fromBytes(flatten(fs.readFile(target).wait()).orElse(u8[]())), "alpha\nbravo\ncharlie\ndelta\n",
           "sorted in place");
 
   // **One entry, and it is the target.** `sponge` writes beside the file and renames, so a run that
@@ -43,36 +45,38 @@ export async string test_sponge_writes_in_place_and_leaves_nothing_behind(Core c
   //
   // Unwrapped with `!` after the null check, which is what `applets/ls.wac` does — a `string[]?` is not
   // indexable, and an `is null` guard narrows it in neither branch.
-  string[]? listed = cli.readDir(dir).wait();
+  string[]? listed = flatten(fs.readDir(dir).wait()).ok();
   if (listed is null) {
     t.fail("the case directory is not listable");
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
     return t.report();
   }
   string[] left = listed!;
   t.eqI32(left.len(), 1, "left behind: \{left.len()} entries");
   if (left.len() > 0) { t.eqStr(left[0], "inplace", "and it is the target"); }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** `zstd`, the largest package here, round-tripped over a real file. */
-export async string test_zstd_round_trips(Core core, Cli cli) {
+export async string test_zstd_round_trips(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
-  u8[] raw = cli.readFile("\{cli.cwd().wait()}/README.md").wait().bytes;
+  u8[] raw = flatten(fs.readFile("\{flatten(env.cwd().wait()).unwrap()}/README.md").wait()).orElse(u8[]());
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
-  Ran squeezed = await runAppletIn(core, cli, dir, ["zstd"], raw);
+  Ran squeezed = await runAppletIn(sys, dir, ["zstd"], raw);
   t.eqI32(squeezed.status, 0, "zstd ran: \{squeezed.err}");
   t.isTrue(squeezed.outBytes.len() < raw.len(), "zstd did not compress");
-  t.eqStr(differs((await runAppletIn(core, cli, dir, ["unzstd"], squeezed.outBytes)).outBytes, raw), "",
+  t.eqStr(differs((await runAppletIn(sys, dir, ["unzstd"], squeezed.outBytes)).outBytes, raw), "",
           "zstd round trip");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -83,28 +87,28 @@ export async string test_zstd_round_trips(Core core, Cli cli) {
  * having on a pipe rather than as a pretty-printer. Without `-c` it is a validator: silent and 0, so
  * it composes.
  */
-export async string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli cli) {
+export async string test_json_canonicalises_and_reports_a_parse_error(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
-  Ran canon = await runAppletIn(core, cli, dir, ["json", "-c"],
-                          "{\"b\":1,\"a\":[2, 3 ],\"c\":\"x\"}".toBytes());
+  Ran canon = await runAppletIn(sys, dir, ["json", "-c"], "{\"b\":1,\"a\":[2, 3 ],\"c\":\"x\"}".toBytes());
   t.eqStr(trimEnd(canon.out), "{\"b\":1,\"a\":[2,3],\"c\":\"x\"}", "canonical output");
 
-  Ran spaced = await runAppletIn(core, cli, dir, ["json", "-c"],
-                           "{ \"b\" : 1 , \"a\" : [ 2 , 3 ] , \"c\" : \"x\" }".toBytes());
+  Ran spaced = await runAppletIn(sys, dir, ["json", "-c"], "{ \"b\" : 1 , \"a\" : [ 2 , 3 ] , \"c\" : \"x\" }".toBytes());
   t.eqStr(spaced.out, canon.out, "two spellings canonicalise the same");
 
-  Ran valid = await runAppletIn(core, cli, dir, ["json"], "[1,2,3]".toBytes());
+  Ran valid = await runAppletIn(sys, dir, ["json"], "[1,2,3]".toBytes());
   t.eqI32(valid.status, 0, "a valid document is 0");
   t.eqI32(valid.outBytes.len(), 0, "a validator says nothing");
 
-  Ran bad = await runAppletIn(core, cli, dir, ["json"], "{\"a\":}".toBytes());
+  Ran bad = await runAppletIn(sys, dir, ["json"], "{\"a\":}".toBytes());
   t.eqI32(bad.status, 1, "an invalid document is 1");
   t.isTrue(bad.err.indexOf("invalid JSON: unexpected at byte 5") >= 0, bad.err);
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -115,16 +119,19 @@ export async string test_json_canonicalises_and_reports_a_parse_error(Core core,
  * system `date` rather than against our own parser, so the two are not one function agreeing with its
  * own inverse.
  */
-export async string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli) {
+export async string test_stat_names_kinds_sizes_and_a_recent_mtime(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string[] fmt = ["-u", "+%Y-%m-%dT%H:%M"];
-  string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
-  t.isTrue(cli.writeFile("\{dir}/sized", "12345".toBytes()).wait().ok(), "wrote five bytes");
+  string before = trimEnd(string.fromBytes(flatten(procs.exec("date", fmt, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap().stdout));
+  t.isTrue(flatten(fs.writeFile("\{dir}/sized", "12345".toBytes()).wait()).isOk(), "wrote five bytes");
 
-  Ran st = await runApplet(core, cli, dir, ["stat", "\{dir}/sized", dir]);
-  string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
+  Ran st = await runApplet(sys, dir, ["stat", "\{dir}/sized", dir]);
+  string after = trimEnd(string.fromBytes(flatten(procs.exec("date", fmt, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap().stdout));
   t.eqI32(st.status, 0, "stat ran: \{st.err}");
   string[] rows = splitOn(trimEnd(st.out), "\n");
   t.eqI32(rows.len(), 2, "two operands, two rows: \{st.out}");
@@ -142,10 +149,10 @@ export async string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cl
              "the file was written now: \{when} between \{before} and \{after}");
   }
 
-  t.eqI32((await runApplet(core, cli, dir, ["stat", "\{dir}/absent"])).status, 1,
+  t.eqI32((await runApplet(sys, dir, ["stat", "\{dir}/absent"])).status, 1,
           "a missing path is an error");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -167,12 +174,14 @@ bool isHex(string s) {
  * the *meaning* — the `4` and the variant nibble — are the ones a generator gets wrong while still
  * producing something that looks like a UUID.
  */
-export async string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
+export async string test_uuid_is_version_4_and_never_repeats(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
-  string[] ids = splitOn(trimEnd((await runApplet(core, cli, dir, ["uuid", "-20"])).out), "\n");
+  string[] ids = splitOn(trimEnd((await runApplet(sys, dir, ["uuid", "-20"])).out), "\n");
   t.eqI32(ids.len(), 20, "twenty asked for");
 
   for (i32 i = 0; i < ids.len(); i++) {
@@ -189,7 +198,7 @@ export async string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli)
     for (i32 k = 0; k < i; k++) { t.isTrue(ids[k] != ids[i], "twenty draws repeated: \{ids[i]}"); }
   }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -202,17 +211,19 @@ export async string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli)
  * every run. Probabilistic in the direction that cannot fail by accident — 200! orders, and this asks
  * only that two of three runs differ. wac-mono 0005.
  */
-export async string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli cli) {
+export async string test_shuf_permutes_and_draws_differently_each_time(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
   Buf b = Buf.create();
   for (i32 i = 0; i < 200; i++) { b.pushAll("line\{i}\n".toBytes()); }
   string path = "\{dir}/lines";
-  t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote 200 lines");
+  t.isTrue(flatten(fs.writeFile(path, b.bytes()).wait()).isOk(), "wrote 200 lines");
 
-  string first = trimEnd((await runApplet(core, cli, dir, ["shuf", path])).out);
+  string first = trimEnd((await runApplet(sys, dir, ["shuf", path])).out);
   string[] shuffled = splitOn(first, "\n");
   t.eqI32(shuffled.len(), 200, "a permutation has the same length");
 
@@ -225,33 +236,37 @@ export async string test_shuf_permutes_and_draws_differently_each_time(Core core
   }
   t.eqI32(seen, 200, "the same lines, each exactly once");
 
-  t.eqI32(splitOn(trimEnd((await runApplet(core, cli, dir, ["shuf", "-5", path])).out), "\n").len(), 5,
+  t.eqI32(splitOn(trimEnd((await runApplet(sys, dir, ["shuf", "-5", path])).out), "\n").len(), 5,
           "and -5 is a sample of five");
 
-  string again = trimEnd((await runApplet(core, cli, dir, ["shuf", path])).out);
-  string third = trimEnd((await runApplet(core, cli, dir, ["shuf", path])).out);
+  string again = trimEnd((await runApplet(sys, dir, ["shuf", path])).out);
+  string third = trimEnd((await runApplet(sys, dir, ["shuf", path])).out);
   t.isTrue(first != again || first != third || again != third,
            "three shuffles of the same input gave one order: the draw is not random");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** `paste`, against the real one — including the ragged case, where the shorter file runs out. */
-export async string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
+export async string test_paste_agrees_with_the_real_one(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string p1 = "\{dir}/p1";
   string p2 = "\{dir}/p2";
-  t.isTrue(cli.writeFile(p1, "a\nb\n".toBytes()).wait().ok(), "wrote p1");
-  t.isTrue(cli.writeFile(p2, "1\n2\n3\n".toBytes()).wait().ok(), "wrote p2 — one line longer");
+  t.isTrue(flatten(fs.writeFile(p1, "a\nb\n".toBytes()).wait()).isOk(), "wrote p1");
+  t.isTrue(flatten(fs.writeFile(p2, "1\n2\n3\n".toBytes()).wait()).isOk(), "wrote p2 — one line longer");
 
-  Exec theirs = cli.exec("paste", [p1, p2], u8[]()).wait();
-  t.isTrue(theirs.error == "", "there is a real paste: \{theirs.error}");
-  t.eqStr((await runApplet(core, cli, dir, ["paste", p1, p2])).out,
-          string.fromBytes(theirs.stdout), "paste over files of different lengths");
+  auto theirsRan = flatten(procs.exec("paste", [p1, p2], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? theirs = theirsRan.ok();
+  t.isTrue("\{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}" == "", "there is a real paste: \{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}");
+  t.eqStr((await runApplet(sys, dir, ["paste", p1, p2])).out,
+          string.fromBytes(theirs!.stdout), "paste over files of different lengths");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

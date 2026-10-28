@@ -17,10 +17,11 @@
 // one small enough that a disagreement can be read by eye.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { GenStats, Mutant, bumpLiteral, changedWacFiles, generate, isMutationTarget, short }
        from "./mutateoperators.wac";
+import { flatten } from "core";
 
 string[] SUBJECTS() {
   return [
@@ -30,15 +31,15 @@ string[] SUBJECTS() {
   ];
 }
 
-string read(Core core, Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { return ""; }
-  return string.fromBytes(r.bytes);
+string read(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) { return ""; }
+  return string.fromBytes(r!);
 }
 
 /** The port's mutant names for `file`, one per line, in the order it emits them. */
-string oursFor(Core core, Cli cli, string file) {
-  string source = read(core, cli, file);
+string oursFor(Files fs, string file) {
+  string source = read(fs, file);
   if (source == "") { return ""; }
   GenStats stats = GenStats(0, 0, 0);
   Mutant[] got = generate(file, source, ["relational", "literal", "guard", "extreme"],
@@ -58,19 +59,18 @@ string oursFor(Core core, Cli cli, string file) {
  * differ. `--no-check` because the suite type-checks that tree already and this is not the place to
  * find out.
  */
-string theirsFor(Core core, Cli cli, string file) {
+string theirsFor(Output err, Procs procs, string file) {
   string program =
     "import { generate } from './tools/mutate/operators.ts';\n"
     + "const src = await Deno.readTextFile('" + file + "');\n"
     + "for (const m of generate('" + file + "', src)) console.log(m.name);\n";
-  Exec r = cli.exec("deno",
-                    ["run", "-A", "--no-check", "--unstable-sloppy-imports", "-",],
-                    program.toBytes()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("the oracle did not run: " + string.fromBytes(r.stderr));
+  auto rRan = flatten(procs.exec("deno", ["run", "-A", "--no-check", "--unstable-sloppy-imports", "-",], program.toBytes(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("the oracle did not run: " + string.fromBytes(r!.stderr));
     return "";
   }
-  return string.fromBytes(r.stdout);
+  return string.fromBytes(r!.stdout);
 }
 
 /** The next `\n` at or after `from`, or the end. `indexOf` in wac takes no offset. */
@@ -117,13 +117,16 @@ i32 lineCount(string s) {
  * sets and differ in order mean the two walks visit the tokens differently — which is the kind of
  * difference that stays invisible until a sampled operator picks a different member.
  */
-export string test_the_port_agrees_with_the_typescript_it_replaces(Core core, Cli cli) {
+export string test_the_port_agrees_with_the_typescript_it_replaces(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] files = SUBJECTS();
   for (i32 f = 0; f < files.len(); f++) {
     string file = files[f];
-    string ours = oursFor(core, cli, file);
-    string theirs = theirsFor(core, cli, file);
+    string ours = oursFor(fs, file);
+    string theirs = theirsFor(err, procs, file);
     // A pair of empty answers is two failures wearing one face — a file that did not read and a
     // reference that did not run both look like agreement.
     // **A floor with a number in it, not just "non-empty".** One matching line is agreement about

@@ -9,21 +9,25 @@
 // everything between the two crosses as a message, and a copy that never stops can be stopped.
 
 import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.input, html.p, html.span } from "../../web";
-import { HostChild, Sys } from "std";
+import { Authority, Child, Input, Launch, Output, Sys } from "std";
 import { Buf, Read } from "core";
 
 /** What a started copy runs: its input, upper-cased, to its output. Its status is the byte count. */
 export async i32 upper(Sys sys) {
+  Input stdin = sys.stdin();
+  Output stdout = sys.stdout();
   i32 n = 0;
   while (true) {
-    match (await sys.cli.readChunk().ticket()) {
+    auto got = await stdin.chunk();
+    if (got.isErr()) { return 0 - 1; }
+    match (got.unwrap()) {
       Data(bytes): {
-        u8[] out = u8[].filled(bytes.len(), 0);
+        u8[] up = u8[].filled(bytes.len(), 0);
         for (i32 i = 0; i < bytes.len(); i++) {
           u8 b = bytes[i];
-          out[i] = b >= 97 && b <= 122 ? b - 32 : b;
+          up[i] = b >= 97 && b <= 122 ? b - 32 : b;
         }
-        sys.cli.write(out);
+        await stdout.write(up);
         n = n + bytes.len();
       }
       End: { return n; }
@@ -35,27 +39,33 @@ export async i32 upper(Sys sys) {
 
 /** Run `text` through a started copy, and show what came back and how it ended. */
 async void run(Sys sys, string text, State<string> out, State<string> status) {
-  HostChild c = await sys.cli.spawnSelf([] as u8[][], 0, "/", 0, false).ticket();
-  if (c.handle < 0) {
-    status.set("could not start: \{c.error}");
+  auto started = await sys.procs().spawnSelf(string[](), Authority.none(), Launch("/", false, false, false));
+  if (started.isErr()) {
+    status.set("could not start: \{started.err()!}");
     return;
   }
-  await sys.cli.send(c.handle, text.toBytes()).ticket();
-  sys.cli.closeFeed(c.handle);
+  Child c = started.unwrap();
+  Output feeding = c.input();
+  await feeding.write(text.toBytes());
+  await feeding.close();
+  Input said = c.output();
   Buf got = Buf.create();
   bool reading = true;
   while (reading) {
-    match (await sys.cli.recv(c.handle).ticket()) {
+    auto chunk = await said.chunk();
+    if (chunk.isErr()) { reading = false; continue; }
+    match (chunk.unwrap()) {
       Data(bytes): { got.pushAll(bytes); }
       End: { reading = false; }
       Failed(why): { reading = false; }
     }
   }
   out.set(string.fromBytes(got.bytes()));
-  status.set("\{await sys.cli.exitCode(c.handle).ticket()}");
+  auto exited = await c.exit();
+  status.set(exited.isOk() ? "\{exited.unwrap()}" : "\{exited.err()!}");
 }
 
-Node Procs(Ui ui, Sys sys) {
+Node Runs(Ui ui, Sys sys) {
   auto text = ui.state("hello from the page");
   auto out = ui.state("");
   auto status = ui.state("");
@@ -70,6 +80,6 @@ Node Procs(Ui ui, Sys sys) {
 export async i32 main(Page page) {
   page.title("procs");
   Sys sys = page.sys;
-  page.mount((Ui ui) => Procs(ui, sys));
+  page.mount((Ui ui) => Runs(ui, sys));
   return 0;
 }

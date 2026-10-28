@@ -26,7 +26,8 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, HostSocket } from "std";
+import { HostSocket, Env, Files, Net, Procs, Sys, Datagrams, Clock } from "std";
+import { flatten } from "core";
 import { Server, ask, firstHeard, handshake, heardCount, receiveWithin, startServer,
          stopServer } from "./peer.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
@@ -44,17 +45,23 @@ string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 
 // ── The tests ─────────────────────────────────────────────────────────────────
 
-export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core core, Cli cli) {
+export string test_a_real_quic_server_reads_a_stream_this_client_opened(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Server s = startServer(cli, "stream-read", false);
+  Server s = startServer(env, fs, procs, "stream-read", false);
   t.isTrue(s.ok, s.error);
-  if (!s.ok) { stopServer(cli, s); return t.report(); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+  if (!s.ok) { stopServer(fs, procs, s); return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) { t.fail("our socket did not bind"); stopServer(fs, procs, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
+  u8[] reply = handshake(clock, sock!, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
-  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+  if (reply.len() == 0) { done(fs, net, procs, sock!, s); return t.report(); }
 
   // **Stream 0 with FIN.** RFC 9000 §2.1 numbers streams by their initiator and directionality in
   // the low two bits: 0 is the first client-initiated bidirectional stream, which is the one a
@@ -66,36 +73,42 @@ export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core cor
   if (packet.len() > 0) {
     t.eqI32(packet[0] as i32 & 0x80, 0, "and it is a short header");
   }
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, packet).wait();
+  sock!.sendTo("127.0.0.1", s.port, packet).wait();
 
-  t.isTrue(heardCount(cli, s, 1, 200),
+  t.isTrue(heardCount(fs, procs, s, 1, 200),
            "the server never saw a stream. The packet authenticated or it did not: the 1-RTT keys " +
            "come off the master secret at the transcript through the server's Finished, the id is " +
            "the one the server chose, the packet number is its own space starting at zero, and the " +
            "first byte's low five bits are header-protected. Any of those wrong is silence.");
-  t.eqStr(string.fromBytes(decoded(firstHeard(s.file(cli, "streams.json")))), "hello from wac",
+  t.eqStr(string.fromBytes(decoded(firstHeard(s.file(fs, "streams.json")))), "hello from wac",
           "what the server's application read");
 
-  done(cli, sock, s);
+  done(fs, net, procs, sock!, s);
   return t.report();
 }
 
-export string test_and_answers_on_it_which_this_client_reads_back(Core core, Cli cli) {
+export string test_and_answers_on_it_which_this_client_reads_back(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The other direction. The server is an echo written against Deno's own QUIC API, so the bytes
   // coming back have been through quinn's stream machinery rather than being a datagram we
   // recognise. That is what makes it an answer rather than a reflection of our own frame writer.
   T t = T.create();
-  Server s = startServer(cli, "stream-echo", true);
+  Server s = startServer(env, fs, procs, "stream-echo", true);
   t.isTrue(s.ok, s.error);
-  if (!s.ok) { stopServer(cli, s); return t.report(); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+  if (!s.ok) { stopServer(fs, procs, s); return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) { t.fail("our socket did not bind"); stopServer(fs, procs, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
+  u8[] reply = handshake(clock, sock!, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
-  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+  if (reply.len() == 0) { done(fs, net, procs, sock!, s); return t.report(); }
 
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+  sock!.sendTo("127.0.0.1", s.port,
              streamPacket(reply, dcid(), scid(), NAME, 0, ("hello from wac").toBytes(), true, 0))
      .wait();
 
@@ -105,7 +118,7 @@ export string test_and_answers_on_it_which_this_client_reads_back(Core core, Cli
   string answer = "";
   bool fin = false;
   for (i32 i = 0; i < 40 && answer == ""; i++) {
-    u8[] got = receiveWithin(core, cli, sock, 2000);
+    u8[] got = receiveWithin(clock, sock!, 2000);
     if (got.len() == 0) { continue; }
     u8[] data = streamBytes(reply, got, dcid(), scid(), NAME, 0);
     if (data.len() > 0) {
@@ -119,28 +132,34 @@ export string test_and_answers_on_it_which_this_client_reads_back(Core core, Cli
           "which is the server-direction 1-RTT keys rather than the client's");
   t.isTrue(fin, "and the server said it was finished with the stream");
 
-  done(cli, sock, s);
+  done(fs, net, procs, sock!, s);
   return t.report();
 }
 
-export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
+export string test_an_acknowledgement_the_server_accepts(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // **A malformed ACK is not ignored.** RFC 9000 §19.3 makes an ACK that acknowledges a packet
   // number larger than any the peer has sent a `PROTOCOL_VIOLATION`, and a peer that receives one
   // closes the connection. So "the connection still works afterwards" is a real assertion about the
   // frame rather than a formality. The second stream is what says the connection is alive: sending
   // the ACK and asserting nothing would pass with the ACK never having been read at all.
   T t = T.create();
-  Server s = startServer(cli, "stream-ack", false);
+  Server s = startServer(env, fs, procs, "stream-ack", false);
   t.isTrue(s.ok, s.error);
-  if (!s.ok) { stopServer(cli, s); return t.report(); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+  if (!s.ok) { stopServer(fs, procs, s); return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) { t.fail("our socket did not bind"); stopServer(fs, procs, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
+  u8[] reply = handshake(clock, sock!, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
-  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+  if (reply.len() == 0) { done(fs, net, procs, sock!, s); return t.report(); }
 
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+  sock!.sendTo("127.0.0.1", s.port,
              streamPacket(reply, dcid(), scid(), NAME, 0, ("first").toBytes(), true, 0)).wait();
 
   // The server's own 1-RTT packets, and the number of one we certainly saw.
@@ -153,7 +172,7 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
   // is a PROTOCOL_VIOLATION, so one number we certainly saw is enough. `issues/system/0156`.
   i32 largest = -1;
   for (i32 i = 0; i < 40 && largest < 0; i++) {
-    u8[] got = receiveWithin(core, cli, sock, 500);
+    u8[] got = receiveWithin(clock, sock!, 500);
     if (got.len() == 0) { continue; }
     if ((got[0] & 0x80) != 0) { continue; }        // still a long header: handshake traffic
     i32 n = applicationPacketNumber(reply, got, dcid(), scid(), NAME);
@@ -161,7 +180,7 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
   }
   t.isTrue(largest >= 0,
            "the server sent no 1-RTT packet, so there was nothing to acknowledge");
-  if (largest < 0) { done(cli, sock, s); return t.report(); }
+  if (largest < 0) { done(fs, net, procs, sock!, s); return t.report(); }
 
   // **The range must actually reach the frame**, checked on packets that are never sent. The keys
   // come from `reply`, so these two can be built for any `largest` regardless of what the server
@@ -178,22 +197,22 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
 
   // `firstRange` 0: **this packet and nothing below it.** The loop above stops at the first 1-RTT
   // packet it sees, so that number is the only one we can honestly claim.
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+  sock!.sendTo("127.0.0.1", s.port,
              ackPacket(reply, dcid(), scid(), NAME, largest, 0, 1)).wait();
 
   // Stream 4 is the next client-initiated bidirectional one: the low two bits carry the initiator
   // and the directionality, so client bidi streams are 0, 4, 8.
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+  sock!.sendTo("127.0.0.1", s.port,
              streamPacket(reply, dcid(), scid(), NAME, 4, ("second").toBytes(), true, 2)).wait();
 
-  bool alive = heardCount(cli, s, 2, 200);
+  bool alive = heardCount(fs, procs, s, 2, 200);
   if (!alive) {
     // **Why, not just that.** Nothing arriving is either a server that closed the connection or one
     // that never got scheduled, and the second happens on a machine three agents share. They differ
     // on the wire: a peer that closes sends a CONNECTION_CLOSE naming a code. Issue 0149.
-    i64 code = closeSeen(core, cli, sock, reply, 20);
+    i64 code = closeSeen(clock, sock!, reply, 20);
     t.fail("the connection did not outlive the acknowledgement: heard " +
-           s.file(cli, "streams.json") + ". " +
+           s.file(fs, "streams.json") + ". " +
            (code >= 0
               ? "The server closed with transport error \{code}. 0xa (10) is " +
                 "PROTOCOL_VIOLATION, which an over-generous or malformed ACK provokes — so this is " +
@@ -203,11 +222,16 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
                 "0149); re-run before reading it as one."));
   }
 
-  done(cli, sock, s);
+  done(fs, net, procs, sock!, s);
   return t.report();
 }
 
-export string test_a_dropped_datagram_is_survived(Core core, Cli cli) {
+export string test_a_dropped_datagram_is_survived(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // `design/system/0007` step 5's second done-when clause, and the one that needs a connection
   // rather than a packet: resending means putting the same *frames* in a **new** packet with a new
   // number, because a QUIC packet number is used once — the nonce comes from it, and reusing one
@@ -216,19 +240,20 @@ export string test_a_dropped_datagram_is_survived(Core core, Cli cli) {
   // The loss is real in the only sense a test can make it: the client produced two packets and this
   // sends the second. Nothing on the wire distinguishes that from a path that dropped the first.
   T t = T.create();
-  Server s = startServer(cli, "stream-drop", false);
+  Server s = startServer(env, fs, procs, "stream-drop", false);
   t.isTrue(s.ok, s.error);
-  if (!s.ok) { stopServer(cli, s); return t.report(); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+  if (!s.ok) { stopServer(fs, procs, s); return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) { t.fail("our socket did not bind"); stopServer(fs, procs, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
+  u8[] reply = handshake(clock, sock!, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
-  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+  if (reply.len() == 0) { done(fs, net, procs, sock!, s); return t.report(); }
 
   u8[][] pair = lostThenResent(reply, dcid(), scid(), NAME, 0, ("survived the drop").toBytes());
   t.eqI32(pair.len(), 2, "the connection produced a packet and a retransmission of it");
-  if (pair.len() != 2) { done(cli, sock, s); return t.report(); }
+  if (pair.len() != 2) { done(fs, net, procs, sock!, s); return t.report(); }
   t.isTrue(pair[0].len() > 0, "the connection produced a first packet");
   t.isTrue(pair[1].len() > 0, "and a retransmission of it");
   // **Different bytes, because a different number.** Sending the same packet twice would be reusing
@@ -239,16 +264,16 @@ export string test_a_dropped_datagram_is_survived(Core core, Cli cli) {
           "number — and so the AEAD nonce — was reused");
 
   // The first is thrown on the floor. Only the second goes out.
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, pair[1]).wait();
+  sock!.sendTo("127.0.0.1", s.port, pair[1]).wait();
 
-  t.isTrue(heardCount(cli, s, 1, 200),
+  t.isTrue(heardCount(fs, procs, s, 1, 200),
            "the retransmitted frames never reached the server's application. The frames are the " +
            "same bytes the first packet carried, so this is the new packet: its number, its nonce, " +
            "or its header protection.");
-  t.eqStr(string.fromBytes(decoded(firstHeard(s.file(cli, "streams.json")))), "survived the drop",
+  t.eqStr(string.fromBytes(decoded(firstHeard(s.file(fs, "streams.json")))), "survived the drop",
           "what the server's application read");
 
-  done(cli, sock, s);
+  done(fs, net, procs, sock!, s);
   return t.report();
 }
 
@@ -262,7 +287,12 @@ export string test_and_a_packet_that_was_acknowledged_is_not_resent() {
   return t.report();
 }
 
-export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cli) {
+export string test_an_ack_past_what_the_server_sent_is_refused(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // **The canary for the diagnosis above.** That test distinguishes "the server closed" from "the
   // server never answered" by looking for a CONNECTION_CLOSE — and a signal that has never been seen
   // firing is a signal that might not fire at all. So this provokes one on purpose.
@@ -275,22 +305,23 @@ export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cl
   // ends the connection; nothing checked that, so if quinn had merely ignored one, the message would
   // have been sending readers after a cause that was not there.
   T t = T.create();
-  Server s = startServer(cli, "stream-badack", false);
+  Server s = startServer(env, fs, procs, "stream-badack", false);
   t.isTrue(s.ok, s.error);
-  if (!s.ok) { stopServer(cli, s); return t.report(); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+  if (!s.ok) { stopServer(fs, procs, s); return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) { t.fail("our socket did not bind"); stopServer(fs, procs, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
+  u8[] reply = handshake(clock, sock!, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
-  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+  if (reply.len() == 0) { done(fs, net, procs, sock!, s); return t.report(); }
 
   // Everything from 0 through 1000, all of which is a lie: `firstRange` matches `largest` on
   // purpose here, because claiming the whole range is what this case is provoking.
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+  sock!.sendTo("127.0.0.1", s.port,
              ackPacket(reply, dcid(), scid(), NAME, 1000, 1000, 0)).wait();
 
-  i64 code = closeSeen(core, cli, sock, reply, 40);
+  i64 code = closeSeen(clock, sock!, reply, 40);
   t.isTrue(code >= 0,
            "the server accepted an ACK for a packet it never sent, or closed without saying so — " +
            "either way the CONNECTION_CLOSE the test above relies on did not arrive, and that test " +
@@ -300,14 +331,14 @@ export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cl
             "the close carried transport error \{code} rather than PROTOCOL_VIOLATION");
   }
 
-  done(cli, sock, s);
+  done(fs, net, procs, sock!, s);
   return t.report();
 }
 
 /** The transport error in the first CONNECTION_CLOSE to arrive, or -1. */
-i64 closeSeen(Core core, Cli cli, HostSocket sock, u8[] reply, i32 tries) {
+i64 closeSeen(Clock clock, Datagrams sock, u8[] reply, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
-    u8[] got = receiveWithin(core, cli, sock, 500);
+    u8[] got = receiveWithin(clock, sock, 500);
     if (got.len() == 0) { continue; }
     if ((got[0] & 0x80) != 0) { continue; }
     u8[] payload = openApplication(reply, got, dcid(), scid(), NAME);
@@ -318,7 +349,7 @@ i64 closeSeen(Core core, Cli cli, HostSocket sock, u8[] reply, i32 tries) {
   return -1;
 }
 
-void done(Cli cli, HostSocket sock, Server s) {
-  if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
-  stopServer(cli, s);
+void done(Files fs, Net net, Procs procs, Datagrams sock, Server s) {
+  sock.close();
+  stopServer(fs, procs, s);
 }

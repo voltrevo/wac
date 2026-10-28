@@ -6,11 +6,12 @@
 // `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { ChildEnv, Clock, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { Profiled, Share, WAC_LANE_GRANTS, buildProfile, looksLikeAPoint, shareFrom, shareOf }
   from "./mutatecoverage.wac";
 import { envOf, marker } from "./suitegate.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 string good() {
   return "{\"entry\":\"packages/x/test/wac/a_test.wac\","
@@ -89,15 +90,18 @@ export string test_the_grants_are_the_lanes() {
  * The parsing above is the half that can be tested from a string; this is the half that says the
  * binary is asked the right question and writes what this expects to read.
  */
-export string test_a_real_run_produces_a_profile_this_can_read(Core core, Cli cli) {
+export string test_a_real_run_produces_a_profile_this_can_read(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string root = ".cache/mutatecoverage-fixture";
-  cli.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[]()).wait();
-  cli.mkdir(root + "/test/wac", true).wait();
-  cli.writeFile(root + "/src.wac",
+  procs.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  fs.mkdir(root + "/test/wac", true).wait();
+  fs.writeFile(root + "/src.wac",
                 "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
                   .toBytes()).wait();
-  cli.writeFile(root + "/test/wac/a_test.wac",
+  fs.writeFile(root + "/test/wac/a_test.wac",
                 ("import { T } from \"../../../../packages/wactest/src/assert.wac\";\n"
                  + "import { small } from \"../../src.wac\";\n"
                  + "export string test_small_is_small() {\n"
@@ -106,16 +110,14 @@ export string test_a_real_run_produces_a_profile_this_can_read(Core core, Cli cl
                  + "  return t.report();\n"
                  + "}\n").toBytes()).wait();
 
-  Share s = shareOf(core, cli, cli.cwd().wait() + "/native/v8/target/release/wac",
-                    cli.cwd().wait(), root + "/test/wac/a_test.wac",
-                    cli.cwd().wait() + "/" + root + "-prof");
+  Share s = shareOf(fs, procs, flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac", flatten(env.cwd().wait()).unwrap(), root + "/test/wac/a_test.wac", flatten(env.cwd().wait()).unwrap() + "/" + root + "-prof");
   t.isTrue(s.ok, "the run produced a complete profile — " + s.why);
   if (!s.ok) { return t.report(); }
   t.eqI32(s.tests.len(), 1, "one test");
   t.eqStr(s.tests[0], "test_small_is_small", "named as the export is, with no translation");
   t.isTrue(s.points[0] != "", "and it reached something: " + s.points[0]);
 
-  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + root + "-prof'"], u8[]()).wait();
+  procs.exec("bash", ["-c", "rm -rf '" + root + "' '" + root + "-prof'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   return t.report();
 }
 
@@ -155,15 +157,19 @@ export string test_a_coverage_point_is_a_file_and_a_line() {
  * whether the runner set the marker — so this asserts against that rather than against one of them.
  * `suitegate_test.wac` checks both arms of the decision itself, which is the part a test can pin.
  */
-export string test_a_pass_with_nothing_to_profile_refuses(Core core, Cli cli) {
+export string test_a_pass_with_nothing_to_profile_refuses(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Profiled got = buildProfile(core, cli, "native/v8/target/release/wac", cli.cwd().wait(),
-                              string[].filled(0, ""), ".cache/mutatebuild-empty-prof", "", "");
+  Profiled got = buildProfile(err, clock, env, fs, procs, "native/v8/target/release/wac", flatten(env.cwd().wait()).unwrap(), string[].filled(0, ""), ".cache/mutatebuild-empty-prof", "", "");
   t.isFalse(got.ok, "an empty pass has nothing to narrow against");
   t.isTrue(got.why != "", "and says so rather than answering an empty profile silently");
   t.eqI32(got.p.known.len(), 0, "the profile it carries knows no points");
 
-  bool nested = envOf(cli, marker()) != "";
+  bool nested = envOf(env, marker()) != "";
   if (nested) {
     t.isTrue(got.why.indexOf("inside") >= 0,
              "running under the suite, the nesting guard is what refused: " + got.why);
@@ -186,15 +192,20 @@ export string test_a_pass_with_nothing_to_profile_refuses(Core core, Cli cli) {
  * Under a runner that sets the marker there is no such arm to check, so that case asserts the
  * refusal instead. Both paths assert; neither skips.
  */
-export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core, Cli cli) {
+export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string root = ".cache/mutatebuild-fixture";
-  cli.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[]()).wait();
-  cli.mkdir(root + "/test/wac", true).wait();
-  cli.writeFile(root + "/src.wac",
+  procs.exec("bash", ["-c", "rm -rf '" + root + "'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  fs.mkdir(root + "/test/wac", true).wait();
+  fs.writeFile(root + "/src.wac",
                 "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
                   .toBytes()).wait();
-  cli.writeFile(root + "/test/wac/a_test.wac",
+  fs.writeFile(root + "/test/wac/a_test.wac",
                 ("import { T } from \"../../../../packages/wactest/src/assert.wac\";\n"
                  + "import { small } from \"../../src.wac\";\n"
                  + "export string test_small_is_small() {\n"
@@ -203,12 +214,10 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
                  + "  return t.report();\n"
                  + "}\n").toBytes()).wait();
 
-  string cwd = cli.cwd().wait();
-  Profiled got = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd,
-                              [root + "/test/wac/a_test.wac"], cwd + "/" + root + "-prof",
-                              "", "");
+  string cwd = flatten(env.cwd().wait()).unwrap();
+  Profiled got = buildProfile(err, clock, env, fs, procs, cwd + "/native/v8/target/release/wac", cwd, [root + "/test/wac/a_test.wac"], cwd + "/" + root + "-prof", "", "");
 
-  if (envOf(cli, marker()) != "") {
+  if (envOf(env, marker()) != "") {
     t.isFalse(got.ok, "under the suite this refuses rather than re-entering it");
     t.isTrue(got.why.indexOf("inside") >= 0, "and says which guard: " + got.why);
   } else {
@@ -230,7 +239,7 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
     }
   }
 
-  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + root + "-prof'"], u8[]()).wait();
+  procs.exec("bash", ["-c", "rm -rf '" + root + "' '" + root + "-prof'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   return t.report();
 }
 
@@ -247,25 +256,29 @@ export string test_a_pass_assembles_a_profile_selectTests_can_look_up(Core core,
  * refused, so `ok` being true is proof the answer came from the cache rather than from a run —
  * cheaper and far more direct than timing it.
  */
-export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core core, Cli cli) {
+export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  if (envOf(cli, marker()) != "") {
+  if (envOf(env, marker()) != "") {
     // Under the suite a profile pass refuses outright, so there is no cache behaviour to observe.
     // Asserting the refusal is the honest thing to check here rather than skipping.
-    Profiled nested = buildProfile(core, cli, "x", ".", string[].filled(0, ""), ".", ".", "k");
+    Profiled nested = buildProfile(err, clock, env, fs, procs, "x", ".", string[].filled(0, ""), ".", ".", "k");
     t.isFalse(nested.ok, "under the suite this refuses before it reaches the cache at all");
     return t.report();
   }
 
   string root = ".cache/mutatecache-fixture";
   string cacheDir = root + "-cache";
-  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"],
-           u8[]()).wait();
-  cli.mkdir(root + "/test/wac", true).wait();
-  cli.writeFile(root + "/src.wac",
+  procs.exec("bash", ["-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  fs.mkdir(root + "/test/wac", true).wait();
+  fs.writeFile(root + "/src.wac",
                 "export bool small(i32 n) {\n  if (n < 10) { return true; }\n  return false;\n}\n"
                   .toBytes()).wait();
-  cli.writeFile(root + "/test/wac/a_test.wac",
+  fs.writeFile(root + "/test/wac/a_test.wac",
                 ("import { T } from \"../../../../packages/wactest/src/assert.wac\";\n"
                  + "import { small } from \"../../src.wac\";\n"
                  + "export string test_small_is_small() {\n"
@@ -274,15 +287,13 @@ export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core cor
                  + "  return t.report();\n"
                  + "}\n").toBytes()).wait();
 
-  string cwd = cli.cwd().wait();
+  string cwd = flatten(env.cwd().wait()).unwrap();
   string[] entries = [root + "/test/wac/a_test.wac"];
-  Profiled first = buildProfile(core, cli, cwd + "/native/v8/target/release/wac", cwd, entries,
-                                cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
+  Profiled first = buildProfile(err, clock, env, fs, procs, cwd + "/native/v8/target/release/wac", cwd, entries, cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
   t.isTrue(first.ok, "the first pass profiled — " + first.why);
 
   // No such binary: only the cache can answer this one.
-  Profiled second = buildProfile(core, cli, cwd + "/no/such/binary", cwd, entries,
-                                 cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
+  Profiled second = buildProfile(err, clock, env, fs, procs, cwd + "/no/such/binary", cwd, entries, cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "akey");
   t.isTrue(second.ok,
            "the second pass answered without running anything, which it can only do from the cache");
   if (first.ok && second.ok) {
@@ -295,13 +306,11 @@ export string test_a_second_pass_with_the_same_key_comes_from_the_cache(Core cor
   }
 
   // A different key is a different tree, and must not hit.
-  Profiled other = buildProfile(core, cli, cwd + "/no/such/binary", cwd, entries,
-                                cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "bkey");
+  Profiled other = buildProfile(err, clock, env, fs, procs, cwd + "/no/such/binary", cwd, entries, cwd + "/" + root + "-prof", cwd + "/" + cacheDir, "bkey");
   t.isFalse(other.ok,
             "a key the cache has never seen misses, and the missing binary then fails the run — "
               + "which is the canary that the two hits above were hits");
 
-  cli.exec("bash", ["-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"],
-           u8[]()).wait();
+  procs.exec("bash", ["-c", "rm -rf '" + root + "' '" + cacheDir + "' '" + root + "-prof'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   return t.report();
 }

@@ -6,31 +6,33 @@
 // that ends well. What is left here is what was actually specific to these two applets: the header dump
 // and the exit code.
 
-import { Cli, Core } from "std";
+import { Net, Output } from "std";
+import { flatten } from "core";
 import { get } from "../../../http/src/client.wac";
 import { Incoming } from "../../../http/src/incoming.wac";
 
 /** The exit code the applet should return. */
-export i32 fetch(Core core, Cli cli, string name, string host, string path, i32 port, bool headers) {
-  Incoming response = match (get(cli, host, port, path)) {
+export i32 fetch(Output err, Output out, Net net, string name, string host, string path, i32 port, bool headers) {
+  Incoming response = match (get(net, host, port, path)) {
     Ok(r): r,
-    Err(e): return failed(core, "\{name}: \{e}"),
+    Err(e): return failed(err, "\{name}: \{e}"),
   };
 
   if (headers) {
-    core.log("HTTP \{response.status}");
+    flatten(out.line("HTTP \{response.status}").wait());
     for (i32 i = 0; i < response.headers.count; i++) {
-      core.log(string.fromBytes(response.headers.nameAt(i)) + ": "
-             + string.fromBytes(response.headers.valueAt(i)));
+      flatten(out.line(string.fromBytes(response.headers.nameAt(i)) + ": "
+                       + string.fromBytes(response.headers.valueAt(i))).wait());
     }
-    core.log("");
+    flatten(out.line("").wait());
   }
-  cli.write(response.body);
+  // Waited for, so a caller that closes `out` next closes it after the body, not before.
+  flatten(out.write(response.body).wait());
   // A 4xx or 5xx is a fetch that worked and a request that did not, which is what `wget` reports too.
   return response.status >= 400 ? 1 : 0;
 }
 
-i32 failed(Core core, string why) {
-  core.warn(why);
+i32 failed(Output err, string why) {
+  err.line(why);
   return 1;
 }

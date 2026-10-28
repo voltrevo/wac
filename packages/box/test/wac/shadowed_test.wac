@@ -27,8 +27,9 @@
 // down. `builtinNames()` is an export and the applets are a directory, so both sides can be asked.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core } from "std";
+import { Cli, Files, Sys } from "std";
 import { builtinNames } from "../../../sh/src/exec.wac";
+import { flatten } from "core";
 
 string appletDir() { return "packages/box/src/applets"; }
 
@@ -40,8 +41,8 @@ string appletName(string file) {
 }
 
 /** Every name that is both a builtin and an applet, in `builtinNames()`'s order. */
-string[] shadowed(Cli cli) {
-  string[]? files = cli.readDir(appletDir()).wait();
+string[] shadowed(Files fs) {
+  string[]? files = flatten(fs.readDir(appletDir()).wait()).ok();
   if (files is null) { return string[](); }
   string[] b = builtinNames();
   string[] hit = string[].filled(b.len(), "");
@@ -65,9 +66,10 @@ string[] shadowed(Cli cli) {
  */
 bool knownDivergent(string name) { return name == "mkdir" || name == "rm"; }
 
-export string test_the_shadowed_names_are_the_ones_we_think_they_are(Core core, Cli cli) {
+export string test_the_shadowed_names_are_the_ones_we_think_they_are(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] got = shadowed(cli);
+  string[] got = shadowed(fs);
   // **A floor first**, because the derivation reads a directory and calls an export, and either could
   // stop answering — an empty intersection would otherwise pass every assertion below by vacuity.
   t.isTrue(got.len() >= 4,
@@ -88,9 +90,10 @@ export string test_the_shadowed_names_are_the_ones_we_think_they_are(Core core, 
   return t.report();
 }
 
-export string test_every_known_divergence_is_still_shadowed(Core core, Cli cli) {
+export string test_every_known_divergence_is_still_shadowed(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] got = shadowed(cli);
+  string[] got = shadowed(fs);
   // The same floor as above rather than an early return: a derivation that answered nothing would
   // otherwise satisfy this test by having no rows to disagree about, which is the way a check like
   // this goes quiet without going red.
@@ -112,9 +115,10 @@ export string test_every_known_divergence_is_still_shadowed(Core core, Cli cli) 
   return t.report();
 }
 
-export string test_a_shadowed_name_that_is_not_known_to_diverge_is_named(Core core, Cli cli) {
+export string test_a_shadowed_name_that_is_not_known_to_diverge_is_named(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] got = shadowed(cli);
+  string[] got = shadowed(fs);
   // The same floor as above rather than an early return: a derivation that answered nothing would
   // otherwise satisfy this test by having no rows to disagree about, which is the way a check like
   // this goes quiet without going red.

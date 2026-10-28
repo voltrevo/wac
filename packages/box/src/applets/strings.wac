@@ -3,31 +3,30 @@
 // The run itself is the only thing held, and it carries across a chunk boundary: a string
 // split by a read is one string, not two short ones that both fall under the minimum.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Sink } from "../../../platform/src/stream.wac";
 import { Span, nextSpan } from "../lib/input.wac";
 import { Buf } from "core";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 strings(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 strings(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   i32 at = 0;
   bool opened = false;
-  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+  if (a.badNum != "") { err.line(badNumberMessage(a)); return 1; }
   i32 min = a.hasNum ? a.num : 4;
 
-  Sink out = Sink.create(cli);
+  Sink sink = Sink.to(out);
   Buf run = Buf.create();
   bool failed = false;
   // The feed travels with the span — see `lib/input.wac`.
-  Feed fed = Feed.of(cli, u8[]());
+  Feed fed = Feed.of(u8[]());
   while (true) {
-    Span got = await nextSpan(core, cli, fs, a, at, opened, fed);
+    Span got = await nextSpan(stdin, err, fs, a, at, opened, fed);
     fed = got.fed;
     failed = failed || got.failed;
-    if (!got.ok) { out.flush(); return 1; }
+    if (!got.ok) { sink.flush(); return 1; }
     opened = true;
     at = got.at;
     if (!got.more) { break; }
@@ -35,11 +34,11 @@ export async i32 strings(Core core, Cli cli, Fs fs, Args a) {
     for (i32 i = 0; i < data.len(); i++) {
       i32 b = data[i] as i32;
       if (b >= 32 && b < 127) { run.push(b as@ u8); continue; }
-      emit(out, run, min);
+      emit(sink, run, min);
     }
   }
-  emit(out, run, min);
-  out.flush();
+  emit(sink, run, min);
+  sink.flush();
   return failed ? 1 : 0;
 }
 

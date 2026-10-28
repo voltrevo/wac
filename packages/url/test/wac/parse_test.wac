@@ -175,8 +175,7 @@ export async string test_percent_encoding_by_component(Sys sys) {
     "http://user na:me@h/", "http://h/a?b#c d", "http://h/\{oneByte(1)}\{oneByte(0x1F)}",
     // Multi-byte UTF-8 in each component that allows it.
     "http://h/café", "http://h/?café", "http://h/#café", "http://h/日本", "http://h/😀"
-  ],
-    "", "percent-encoding");
+  ], "", "percent-encoding");
   return t.report();
 }
 
@@ -187,8 +186,7 @@ export async string test_hosts_ipv4_in_all_its_spellings(Sys sys) {
     "http://0x7f.1/", "http://0x7f000001/", "http://0177.0.0.1/", "http://0300.0250.0.1/",
     "http://1.2.3.4./", "http://0/", "http://0x/", "http://256.1.1.1/", "http://1.2.3.4.5/",
     "http://999999999999/", "http://0x100000000/", "http://1.2.3.09/", "http://1.2.3.0x/"
-  ],
-    "", "IPv4");
+  ], "", "IPv4");
   return t.report();
 }
 
@@ -278,8 +276,7 @@ export async string test_edges_the_main_groups_miss(Sys sys) {
     // A file URL whose host is an address rather than a name, which is what makes the `localhost`
     // comparison look at a host it cannot compare as bytes.
     "file://1.2.3.4/x", "file://[::1]/x", "file://localhost/x", "file://LOCALHOST/x"
-  ],
-    "", "coverage edges");
+  ], "", "coverage edges");
   string[] bases = ["file:///c:/a/b", "file:///c:", "file://h/c:/x"];
   string[] refs = ["..", "/x", "x", "../..", "d:/y", "/d:/y"];
   for (i32 i = 0; i < bases.len(); i++) {

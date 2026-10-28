@@ -27,8 +27,8 @@
 // `"blob 99 hello"` — a header that would be refused for a different reason than the one intended.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std";
-import { Vec } from "core";
+import { Cli, Exec, Change, FileResult, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Vec, flatten } from "core";
 import { Buf } from "core";
 import { Kind, Object, nameOf, looseFile, readLoose } from "../../src/object.wac";
 import { Entry, Tree, parseTree, writeTree } from "../../src/tree.wac";
@@ -37,10 +37,10 @@ import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 
 struct Git {
-  Cli cli;
+  Procs procs;
   string dir;
 
-  Exec run(const this, string[] args, u8[] stdin) {
+  Exec run(this, string[] args, u8[] stdin) {
     string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
@@ -49,10 +49,10 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=wac@example.com";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, stdin).wait();
+    return flatten(this.procs.exec("git", full, stdin, ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
   }
 
-  string text(const this, string[] args, u8[] stdin) {
+  string text(this, string[] args, u8[] stdin) {
     return trimmed(string.fromBytes(this.run(args, stdin).stdout));
   }
 }
@@ -82,14 +82,14 @@ string[] splitLines(string s) {
 }
 
 /** A throwaway repository, and a `git` that runs in it. */
-Git repo(T t, Cli cli, string name) {
-  string who = agentDir(cli);
+Git repo(T t, Procs procs, Env env, Files fs, string name) {
+  string who = agentDir(env);
   string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  Git g = Git(cli, dir);
-  if (made.ok()) { g.run(["init", "-q"], u8[]()); }
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  Git g = Git(procs, dir);
+  if (made.isOk()) { g.run(["init", "-q"], u8[]()); }
   return g;
 }
 
@@ -104,9 +104,12 @@ string label(string text) {
   return text.len() > 20 ? "\{text.slice(0, 20)}…" : text;
 }
 
-export string test_an_objects_name_is_the_one_git_gives_it(Core core, Cli cli) {
+export string test_an_objects_name_is_the_one_git_gives_it(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = repo(t, cli, "interop");
+  Git g = repo(t, procs, env, fs, "interop");
   string[] all = blobs();
   for (i32 i = 0; i < all.len(); i++) {
     u8[] bytes = all[i].toBytes();
@@ -122,14 +125,16 @@ export string test_an_objects_name_is_the_one_git_gives_it(Core core, Cli cli) {
   t.isFalse(nameOf(Kind.Blob, "x".toBytes()) == nameOf(Kind.Tag, "x".toBytes()),
             "the object kind reaches the hash");
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 
-export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote(
-    Core core, Cli cli) {
+export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = repo(t, cli, "interop2");
+  Git g = repo(t, procs, env, fs, "interop2");
   string[] all = blobs();
 
   for (i32 i = 0; i < all.len(); i++) {
@@ -138,9 +143,9 @@ export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_
 
     // ── ours, read by git
     string name = nameOf(Kind.Blob, bytes);
-    string whyDir1 = madeDir(cli, "\{g.dir}/.git/objects/\{name.slice(0, 2)}");
+    string whyDir1 = madeDir(fs, "\{g.dir}/.git/objects/\{name.slice(0, 2)}");
     t.isTrue(whyDir1 == "", whyDir1);
-    cli.writeFile("\{g.dir}/.git/objects/\{name.slice(0, 2)}/\{name.slice(2, name.len())}",
+    fs.writeFile("\{g.dir}/.git/objects/\{name.slice(0, 2)}/\{name.slice(2, name.len())}",
                   looseFile(Kind.Blob, bytes)).wait();
     Exec back = g.run(["cat-file", "blob", name], u8[]());
     t.eqI32(back.status, 0, "git read the object we wrote for \{what}");
@@ -148,11 +153,11 @@ export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_
 
     // ── git's, read by us
     string theirs = g.text(["hash-object", "-w", "--stdin"], bytes);
-    FileResult f = cli.readFile("\{g.dir}/.git/objects/\{theirs.slice(0, 2)}/" +
-                                theirs.slice(2, theirs.len())).wait();
-    t.isTrue(f.ok, "git's object file could be read for \{what}");
-    if (!f.ok) { continue; }
-    match (readLoose(f.bytes)) {
+    auto fRead = flatten(fs.readFile("\{g.dir}/.git/objects/\{theirs.slice(0, 2)}/" +
+                                theirs.slice(2, theirs.len())).wait());
+    t.isTrue(fRead.isOk(), "git's object file could be read for \{what}");
+    if (fRead.isErr()) { continue; }
+    match (readLoose(fRead.unwrap())) {
       Unreadable(why): { t.isTrue(false, "we could not read git's object: \{why}"); }
       Loaded(kind, content): {
         t.eqStr(kind.word(), "blob", "we read git's blob as a blob");
@@ -161,37 +166,39 @@ export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_
     }
   }
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 
-export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes(
-    Core core, Cli cli) {
+export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = repo(t, cli, "interop3");
+  Git g = repo(t, procs, env, fs, "interop3");
 
   // These names are chosen for the sort rule rather than for looking like a project: git orders a
   // subtree as though its name ended in `/`, so `a.b` comes before the directory `a` because `.` is
   // 0x2E and `/` is 0x2F. A parser that kept insertion order would pass on almost any other set of
   // names.
-  string whyDir2 = madeDir(cli, "\{g.dir}/a");
+  string whyDir2 = madeDir(fs, "\{g.dir}/a");
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.writeFile("\{g.dir}/a.b", "dot\n".toBytes()).wait();
-  cli.writeFile("\{g.dir}/a/inner", "nested\n".toBytes()).wait();
-  cli.writeFile("\{g.dir}/zz", "last\n".toBytes()).wait();
-  cli.setExecutable("\{g.dir}/zz", true).wait();
+  fs.writeFile("\{g.dir}/a.b", "dot\n".toBytes()).wait();
+  fs.writeFile("\{g.dir}/a/inner", "nested\n".toBytes()).wait();
+  fs.writeFile("\{g.dir}/zz", "last\n".toBytes()).wait();
+  fs.setExecutable("\{g.dir}/zz", true).wait();
   g.run(["add", "-A"], u8[]());
   string name = g.text(["write-tree"], u8[]());
   t.eqI32(name.len(), 40, "git wrote a tree: \{name}");
   if (name.len() != 40) { return t.report(); }
 
-  FileResult f = cli.readFile("\{g.dir}/.git/objects/\{name.slice(0, 2)}/" +
-                              name.slice(2, name.len())).wait();
-  t.isTrue(f.ok, "git's tree object could be read");
-  if (!f.ok) { return t.report(); }
+  auto fRead = flatten(fs.readFile("\{g.dir}/.git/objects/\{name.slice(0, 2)}/" +
+                              name.slice(2, name.len())).wait());
+  t.isTrue(fRead.isOk(), "git's tree object could be read");
+  if (fRead.isErr()) { return t.report(); }
 
   u8[] content = u8[]();
-  match (readLoose(f.bytes)) {
+  match (readLoose(fRead.unwrap())) {
     Unreadable(why): {
       t.isTrue(false, "git's tree object did not read back: \{why}");
       return t.report();
@@ -234,7 +241,7 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
   u8[] rewritten = writeTree(es);
   t.eqBytes(rewritten, content, "the re-serialised tree is git's bytes");
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 

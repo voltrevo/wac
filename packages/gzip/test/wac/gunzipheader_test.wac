@@ -19,9 +19,10 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Launch, Procs, Sys } from "std";
 import { gunzipBytes } from "../../src/inflate.wac";
 import { gzipBest } from "../../src/gzip.wac";
+import { flatten } from "core";
 
 static i32 FEXTRA = 4;
 static i32 FNAME = 8;
@@ -77,11 +78,11 @@ void roundTrips(T t, string name, u8[] gz, u8[] want) {
  * Real bytes rather than a splice. `inflate` already does this with the gzip CLI; python is a
  * different encoder reaching the same path, and needs nothing on the PATH beyond python itself.
  */
-export string test_a_stream_carrying_a_filename_from_python(Core core, Cli cli) {
+export string test_a_stream_carrying_a_filename_from_python(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] text = repeated("the most common gzip header in the world\n", 4);
-  Exec r = cli.exec("python3",
-                    [
+  auto rRan = flatten(procs.exec("python3", [
                              "-c",
                              "import gzip, io, sys\n" +
                              "buf = io.BytesIO()\n" +
@@ -89,14 +90,14 @@ export string test_a_stream_carrying_a_filename_from_python(Core core, Cli cli) 
                              "fileobj=buf, mtime=0) as f:\n" +
                              "    f.write(sys.stdin.buffer.read())\n" +
                              "sys.stdout.buffer.write(buf.getvalue())\n"
-                    ],
-                    text).wait();
-  t.isTrue(r.ran(), "python3 ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "python succeeded: \{string.fromBytes(r.stderr)}");
-  if (r.status != 0) { return t.report(); }
+                    ], text, ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "python3 ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0, "python succeeded: \{string.fromBytes(r!.stderr)}");
+  if (r!.status != 0) { return t.report(); }
 
-  u8[] gz = r.stdout;
+  u8[] gz = r!.stdout;
   t.isTrue(gz.len() > 10 && (gz[3] as i32 & FNAME) != 0,
            "python set FNAME; FLG=\{gz.len() > 3 ? gz[3] as i32 : -1}" +
            " — otherwise the test would prove nothing");

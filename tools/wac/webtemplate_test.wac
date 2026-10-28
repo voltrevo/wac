@@ -15,52 +15,55 @@ import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.w
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { cachePath } from "../../packages/wacpkg/src/cache.wac";
 import { LockEntry, writeLock } from "../../packages/wacpkg/src/lock.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { sha256 } from "../../packages/crypto/src/sha256.wac";
 import { encode, ALPHABET_STANDARD } from "../../packages/codec/src/base64.wac";
+import { flatten } from "core";
 
 static string GIT = "https://github.com/voltrevo/wac";
 /** A commit no fetch made: the cache entry is the test's own, so it cannot collide with a real one. */
 static string COMMIT = "0000000000000000000000000000000000000001";
 
 /** `cp -R from to`, through the shell the suite already has. */
-Exec copyTree(Cli cli, string from, string to) {
-  return cli.exec("/bin/sh", ["-c", "mkdir -p '" + to + "' && cp -R '" + from + "/.' '" + to + "/'"], u8[]()).wait();
+Exec copyTree(Procs procs, string from, string to) {
+  return flatten(procs.exec("/bin/sh", ["-c", "mkdir -p '" + to + "' && cp -R '" + from + "/.' '" + to + "/'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** `wac <args>` in `dir`, with `WAC_HOME` set to `home`. */
-Exec wacIn(Cli cli, string dir, string home, string args) {
-  string line = "cd '" + dir + "' && export WAC_HOME='" + home + "' && exec '" + binaryPath(cli) + "' " + args;
-  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+Exec wacIn(Env env, Procs procs, string dir, string home, string args) {
+  string line = "cd '" + dir + "' && export WAC_HOME='" + home + "' && exec '" + binaryPath(env) + "' " + args;
+  return flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
-export string test_the_template_builds_and_tests_outside_the_repository(Core core, Cli cli) {
+export string test_the_template_builds_and_tests_outside_the_repository(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string root = cli.cwd().wait();
-  string base = scratch(cli, "webtemplate");
-  t.eqStr(freshDir(cli, base), "", "a fresh directory");
+  string root = flatten(env.cwd().wait()).unwrap();
+  string base = scratch(env, "webtemplate");
+  t.eqStr(freshDir(fs, base), "", "a fresh directory");
   string home = base + "/home";
   string project = base + "/myapp";
 
   // The fetch's result, from this checkout.
   string checkout = cachePath(home, GIT, COMMIT);
-  Exec copied = copyTree(cli, root + "/packages/web", checkout + "/packages/web");
+  Exec copied = copyTree(procs, root + "/packages/web", checkout + "/packages/web");
   t.isTrue(copied.ok(), "the package is in the cache — " + said(copied));
-  Exec tpl = copyTree(cli, root + "/templates/webapp", project);
+  Exec tpl = copyTree(procs, root + "/templates/webapp", project);
   t.isTrue(tpl.ok(), "the template is copied — " + said(tpl));
   LockEntry[] locked = [LockEntry("web", GIT, "master", "./packages/web", COMMIT),
                         LockEntry("webbuild", GIT, "master", "./packages/web/tools", COMMIT)];
-  t.isTrue(cli.writeFile(project + "/wac.lock", writeLock(locked)).wait().ok(), "and locked to it");
+  t.isTrue(flatten(fs.writeFile(project + "/wac.lock", writeLock(locked)).wait()).isOk(), "and locked to it");
 
   // The template's build task, spelled out so the binary under test is the one that runs the builder too.
-  Exec built = wacIn(cli, project, home,
-                     "run --allow-read --allow-write --allow-run build.wac src/app.wac dist --wac '" + binaryPath(cli) + "'");
+  Exec built = wacIn(env, procs, project, home, "run --allow-read --allow-write --allow-run build.wac src/app.wac dist --wac '" + binaryPath(env) + "'");
   t.eqI32(built.status, 0, "the page builds — " + said(built));
-  FileResult page = cli.readFile(project + "/dist/index.html").wait();
-  t.isTrue(page.ok, "dist/index.html exists");
-  string html = page.ok ? string.fromBytes(page.bytes) : "";
+  u8[]? page = flatten(fs.readFile(project + "/dist/index.html").wait()).ok();
+  t.isTrue((page is not null), "dist/index.html exists");
+  string html = (page is not null) ? string.fromBytes(page!) : "";
   t.isTrue(contains(html, "host.start()"), "that starts the program");
   // **The one script the page runs as written is the one its policy allows.** The build states the
   // loader's hash rather than computing it — it is a project of its own and has no SHA-256 to import
@@ -73,7 +76,7 @@ export string test_the_template_builds_and_tests_outside_the_repository(Core cor
   t.eqStr(allowed, hash, "the policy allows the loader the page runs — loaderHash() in build.wac should be the right-hand value");
 
   // And its test task.
-  Exec tested = wacIn(cli, project, home, "test test");
+  Exec tested = wacIn(env, procs, project, home, "test test");
   t.eqI32(tested.status, 0, "the template's tests pass — " + said(tested));
   t.isTrue(contains(said(tested), "2 passed"), "both of them — " + said(tested));
   return t.report();

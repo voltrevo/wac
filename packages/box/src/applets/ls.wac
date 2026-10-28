@@ -9,44 +9,39 @@
 // what every applet in this package does with a letter it does not know, and for `ls` that is the
 // difference between "hidden files are not shown" and "you asked for them and were not told no".
 
-import { Cli, Core, Stat } from "std";
+import { Stat, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { cmpBytes, mergeSortWith } from "../lib/lines.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
-export async i32 ls(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 ls(Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   if (a.flags != "") {
-    core.warn("\{a.name}: -\{a.flags}: not implemented — this ls takes no options");
+    err.line("\{a.name}: -\{a.flags}: not implemented — this ls takes no options");
     return 2;
   }
   string path = a.rest.len() < 1 ? "." : a.rest[0];
-  string[]? names = await fs.readDir(path);
+  auto listed = await fs.readDir(path);
+  string[]? names = listed.ok();
   if (names is null) {
-    // Not a directory, not there, or not permitted. The comment here used to say the application could not
-    // tell "by design" — it can now: `Stat` carries a fault, so a path this host cannot name and a path
-    // with nothing at it are different answers rather than the same `exists = false`. wac-mono 0065.
-    Stat st = await fs.stat(path);
+    // Not a directory, not there, or not permitted — and the fault says which.
+    Stat? st = (await fs.stat(path)).ok();
     // **A directory that is there and could not be listed is a failure, not a name.** This said
     // `exists` and printed the path, which is right for a *file* — `ls f` prints `f` — and was wrong
     // for a directory whose listing was refused: `chmod 000 d; ls d` printed `d` and exited 0, where
     // GNU says "cannot open directory 'd': Permission denied" and exits 2. A wrong answer reported as
     // success, from the most ordinary permission a person can set.
-    //
-    // `readDir` cannot say *why* — it answers `string[]?`, and a null carries no reason — so the
-    // reason comes from `stat`, which can. That is the same route this branch already took for a path
-    // that is not there at all.
-    if (st.exists && st.isDir) {
-      core.warn(a.name + ": cannot open directory '" + path + "': " + st.words("Permission denied"));
+    if ((st is not null) && st!.isDir) {
+      err.line(a.name + ": cannot open directory '" + path + "': " + reason(listed.err()!));
       return 2;
     }
-    if (st.exists) { core.log(path); return 0; }
+    if (st is not null) { out.line(path); return 0; }
     // GNU's frame and GNU's words: `ls: cannot access 'f/g': Not a directory`, which the shell's
     // *builtin* `ls` next door has printed since 0067 and this applet did not. It said `ls: f/g: cannot
     // list` — an invented phrase, for a fault the category can name — and `ls` is both a builtin and an
     // applet, so which of the two a person saw depended on how the shell was built.
-    core.warn(a.name + ": cannot access '" + path + "': " + st.words("No such file or directory"));
+    err.line(a.name + ": cannot access '" + path + "': " + reason(listed.err()!));
     return 2;
   }
   string[] found = names!;
@@ -61,6 +56,6 @@ export async i32 ls(Core core, Cli cli, Fs fs, Args a) {
     n++;
   }
   u8[][] sorted = mergeSortWith(shown, n, cmpBytes);
-  for (i32 i = 0; i < n; i++) { core.log(string.fromBytes(sorted[i])); }
+  for (i32 i = 0; i < n; i++) { out.line(string.fromBytes(sorted[i])); }
   return 0;
 }

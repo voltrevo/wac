@@ -7,12 +7,12 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { gzipDynamic, gzipFixed } from "../../src/gzip.wac";
 import { External, gunzip, pythonGzip, roundTrip } from "./external.wac";
 
-string same(Cli cli, u8[] input, string what) {
-  return roundTrip(cli, gzipDynamic(input), what, input);
+string same(Procs procs, u8[] input, string what) {
+  return roundTrip(procs, gzipDynamic(input), what, input);
 }
 
 u8[] repeated(string s, i32 times) {
@@ -36,18 +36,19 @@ export string test_the_block_header_is_bfinal_one_btype_two() {
  * Empty input has no literals and no matches, so both trees are built purely from the padding that
  * `forceTwo` adds. One byte gives a one-symbol literal tree before padding.
  */
-export string test_degenerate_inputs(Core core, Cli cli) {
+export string test_degenerate_inputs(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  t.eqStr(same(cli, u8[](), "empty"), "", "no literals and no matches");
+  t.eqStr(same(procs, u8[](), "empty"), "", "no literals and no matches");
   u8[] one = u8[].filled(1, 0);
   one[0] = 65;
-  t.eqStr(same(cli, one, "one byte"), "", "a one-symbol literal tree");
-  t.eqStr(same(cli, u8[].filled(2, 65), "two identical bytes"), "", "one literal, twice");
-  t.eqStr(same(cli, u8[].filled(3, 65), "three identical bytes"), "", "still under the match minimum");
+  t.eqStr(same(procs, one, "one byte"), "", "a one-symbol literal tree");
+  t.eqStr(same(procs, u8[].filled(2, 65), "two identical bytes"), "", "one literal, twice");
+  t.eqStr(same(procs, u8[].filled(3, 65), "three identical bytes"), "", "still under the match minimum");
   u8[] pair = u8[].filled(2, 0);
   pair[0] = 0;
   pair[1] = 255;
-  t.eqStr(same(cli, pair, "one distinct pair"), "", "two literals at the ends of the alphabet");
+  t.eqStr(same(procs, pair, "one distinct pair"), "", "two literals at the ends of the alphabet");
   return t.report();
 }
 
@@ -57,18 +58,19 @@ export string test_degenerate_inputs(Core core, Cli cli) {
  * Strictly increasing bytes never repeat a 3-byte sequence, so no distance symbol is ever emitted —
  * and a tree with no symbols in it is the case `forceTwo` exists for.
  */
-export string test_no_matches_at_all(Core core, Cli cli) {
+export string test_no_matches_at_all(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] ascending = u8[].filled(256, 0);
   for (i32 i = 0; i < ascending.len(); i++) { ascending[i] = i as@ u8; }
-  t.eqStr(same(cli, ascending, "0..255 ascending"), "", "no three-byte sequence repeats");
+  t.eqStr(same(procs, ascending, "0..255 ascending"), "", "no three-byte sequence repeats");
   u8[] noRepeat = u8[].filled(3000, 0);
   i32 s = 7;
   for (i32 i = 0; i < noRepeat.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
     noRepeat[i] = ((s >> 16) & 0xFF) as@ u8;
   }
-  t.eqStr(same(cli, noRepeat, "pseudo-random 3000"), "", "nothing to match");
+  t.eqStr(same(procs, noRepeat, "pseudo-random 3000"), "", "nothing to match");
   return t.report();
 }
 
@@ -78,7 +80,8 @@ export string test_no_matches_at_all(Core core, Cli cli) {
  * Fibonacci-distributed byte frequencies drive natural code lengths past 15 bits, so this exercises
  * the frequency-scaling rebuild inside a real block rather than only in a unit probe.
  */
-export string test_skewed_frequencies_force_the_fifteen_bit_limit(Core core, Cli cli) {
+export string test_skewed_frequencies_force_the_fifteen_bit_limit(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   i32[] counts = i32[].filled(32, 0);
   counts[0] = 1;
@@ -104,7 +107,7 @@ export string test_skewed_frequencies_force_the_fifteen_bit_limit(Core core, Cli
     parts[i] = parts[j];
     parts[j] = tmp as@ u8;
   }
-  t.eqStr(same(cli, parts, "fibonacci-skewed"), "", "code lengths past fifteen bits");
+  t.eqStr(same(procs, parts, "fibonacci-skewed"), "", "code lengths past fifteen bits");
   return t.report();
 }
 
@@ -115,20 +118,21 @@ export string test_skewed_frequencies_force_the_fifteen_bit_limit(Core core, Cli
  * most of the 286 literal/length lengths at zero, so both appear. Symbol 16 repeats a nonzero length
  * 3–6 times, which needs several symbols sharing a length — a flat distribution over many values.
  */
-export string test_the_code_length_rle_symbols(Core core, Cli cli) {
+export string test_the_code_length_rle_symbols(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] two = u8[].filled(4000, 0);
   for (i32 i = 0; i < two.len(); i++) { two[i] = i % 2 != 0 ? 0x41 : 0x42; }
-  t.eqStr(same(cli, two, "two byte values"), "", "long zero runs — symbols 17 and 18");
+  t.eqStr(same(procs, two, "two byte values"), "", "long zero runs — symbols 17 and 18");
 
   u8[] flat = u8[].filled(256 * 12, 0);
   for (i32 i = 0; i < flat.len(); i++) { flat[i] = (i % 256) as@ u8; }
-  t.eqStr(same(cli, flat, "flat over 256 values"), "", "equal lengths — symbol 16");
+  t.eqStr(same(procs, flat, "flat over 256 values"), "", "equal lengths — symbol 16");
 
   // A gap in the middle of the alphabet, forcing zero runs between used symbols.
   u8[] sparse = u8[].filled(3000, 0);
   for (i32 i = 0; i < sparse.len(); i++) { sparse[i] = ((i % 8) * 32) as@ u8; }
-  t.eqStr(same(cli, sparse, "sparse alphabet"), "", "zero runs between used symbols");
+  t.eqStr(same(procs, sparse, "sparse alphabet"), "", "zero runs between used symbols");
   return t.report();
 }
 
@@ -138,24 +142,25 @@ export string test_the_code_length_rle_symbols(Core core, Cli cli) {
  * Which length symbols get used decides how far HLIT can be trimmed. Short matches only use low
  * length symbols; a 258-byte match uses symbol 285, the very last one, so nothing can be trimmed.
  */
-export string test_hlit_and_hdist_trimming(Core core, Cli cli) {
+export string test_hlit_and_hdist_trimming(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  t.eqStr(same(cli, repeated("abcabcabc", 20), "short matches only"), "", "low length symbols");
-  t.eqStr(same(cli, u8[].filled(2000, 0x5A), "maximum-length matches"), "", "symbol 285, nothing trimmed");
+  t.eqStr(same(procs, repeated("abcabcabc", 20), "short matches only"), "", "low length symbols");
+  t.eqStr(same(procs, u8[].filled(2000, 0x5A), "maximum-length matches"), "", "symbol 285, nothing trimmed");
   return t.report();
 }
 
-export string test_larger_payloads_round_trip(Core core, Cli cli) {
+export string test_larger_payloads_round_trip(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  t.eqStr(same(cli, repeated("The quick brown fox jumps over the lazy dog. ", 2000),
-               "repeated prose"), "", "ninety thousand bytes of prose");
+  t.eqStr(same(procs, repeated("The quick brown fox jumps over the lazy dog. ", 2000), "repeated prose"), "", "ninety thousand bytes of prose");
   u8[] mixed = u8[].filled(150000, 0);
   i32 s = 31337;
   for (i32 i = 0; i < mixed.len(); i++) {
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
     mixed[i] = (i % 1009 == 0 ? (s >> 16) & 0xFF : i % 97) as@ u8;
   }
-  t.eqStr(same(cli, mixed, "150000 mixed"), "", "structure and noise together");
+  t.eqStr(same(procs, mixed, "150000 mixed"), "", "structure and noise together");
   return t.report();
 }
 
@@ -165,7 +170,8 @@ export string test_larger_payloads_round_trip(Core core, Cli cli) {
  * Fifteen per cent worse is allowed; in practice this lands at or just under gzip, because a single
  * block avoids gzip's per-block header overhead on inputs this size.
  */
-export string test_competitive_with_gzip_six(Core core, Cli cli) {
+export string test_competitive_with_gzip_six(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] names = ["prose", "pattern", "zeros", "words"];
   u8[][] samples = u8[][].filled(4, u8[]());
@@ -180,7 +186,7 @@ export string test_competitive_with_gzip_six(Core core, Cli cli) {
 
   for (i32 i = 0; i < samples.len(); i++) {
     i32 ours = gzipDynamic(samples[i]).len();
-    External theirs = pythonGzip(cli, samples[i], 6);
+    External theirs = pythonGzip(procs, samples[i], 6);
     t.isTrue(theirs.ok(), "\{names[i]}: python gzip ran — \{theirs.error}");
     if (!theirs.ok()) { continue; }
     t.isTrue(ours * 100 <= theirs.bytes.len() * 115,
@@ -190,13 +196,14 @@ export string test_competitive_with_gzip_six(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_it_beats_fixed_huffman_on_real_data(Core core, Cli cli) {
+export string test_it_beats_fixed_huffman_on_real_data(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] data = repeated("the quick brown fox jumps over the lazy dog ", 200);
   i32 dyn = gzipDynamic(data).len();
   i32 fix = gzipFixed(data).len();
   t.isTrue(dyn < fix,
            "dynamic (\{dyn}) should beat fixed (\{fix}) on skewed text");
-  t.eqStr(same(cli, data, "skewed text"), "", "and it round trips");
+  t.eqStr(same(procs, data, "skewed text"), "", "and it round trips");
   return t.report();
 }

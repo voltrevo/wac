@@ -22,8 +22,9 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { Store, pemBundle } from "../../src/roots.wac";
+import { flatten } from "core";
 
 static string ORACLE = "packages/tls/test/roots_oracle.ts";
 static string BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
@@ -79,15 +80,17 @@ i32 countBlocks(u8[] pem) {
   return n;
 }
 
-export string test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds(
-    Core core, Cli cli) {
+export string test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  FileResult f = cli.readFile(BUNDLE).wait();
-  if (!f.ok) {
-    core.warn("tls roots test: skipped — no \{BUNDLE}");
+  u8[]? f = flatten(fs.readFile(BUNDLE).wait()).ok();
+  if ((f is null)) {
+    err.line("tls roots test: skipped — no \{BUNDLE}");
     return t.report();
   }
-  u8[] pem = f.bytes;
+  u8[] pem = f!;
 
   // **The shape, asserted.** A bundle of one certificate would exercise none of what this is for: not
   // the second block, not the text between blocks, not the wrapping. Nor would an unwrapped one — the
@@ -107,8 +110,7 @@ export string test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_bui
 
   Lines lines = Lines.create();
   lines.add("roots \{BUNDLE} \{hex(got.der)} \{offsetsCsv(got.offsets)}");
-  check(t, cli, "deno", ["run", "-A", "--no-check", ORACLE], lines,
-        "the reference trust store");
+  check(t, procs, "deno", ["run", "-A", "--no-check", ORACLE], lines, "the reference trust store");
   return t.report();
 }
 

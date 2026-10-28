@@ -7,7 +7,7 @@
 // verdict on the wrong program and look perfectly fine. So: the same documents, the same counts as
 // STATUS.md, every key in MET on a fence, and every in-spec link and anchor landing somewhere.
 
-import { Cli, Core } from "std";
+import { Files, Sys } from "std";
 import { Vec } from "core";
 import { T } from "../../../packages/wactest/src/assert.wac";
 import { Block, Chapter, DocStatus, Inline, Route, SpecSource, Status, chaptersOf, exampleKey, metOf,
@@ -111,9 +111,10 @@ bool has(string[] v, string s) {
   return false;
 }
 
-export string test_the_pages_count_examples_as_the_probe_does_and_their_links_resolve(Core core, Cli cli) {
+export string test_the_pages_count_examples_as_the_probe_does_and_their_links_resolve(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  SpecSource src = readSpec(cli, ".");
+  SpecSource src = readSpec(fs, ".");
   Chapter[] chapters = chaptersOf(src.readme);
   t.isTrue(chapters.len() >= 40, "only \{chapters.len()} chapters read from spec/README.md");
   string[] met = metOf(src.met);

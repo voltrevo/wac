@@ -22,24 +22,28 @@
 // `issues/system/0316b`'s failure printed `0 passed, 6 failed` per file, which is a sentence a status
 // cannot carry.
 
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 string SUBJECT() { return "packages/platform/test/wac/worldarrives_test.wac"; }
 
-export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Core core, Cli cli) {
+export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  if (requireNativeHost(cli, t) == "") { return t.report(); }
+  if (requireNativeHost(env, fs, t) == "") { return t.report(); }
 
-  Exec r = cli.exec(nativeHost(cli),
-                    ["test", "--allow-read", "--allow-write", "--allow-run", SUBJECT()],
-                    u8[]()).wait();
-  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.isTrue(r.ran(), "the wasmtime host ran at all");
-  if (!r.ran()) { return t.report(); }
+  auto rRan = flatten(procs.exec(nativeHost(env), ["test", "--allow-read", "--allow-write", "--allow-run", SUBJECT()], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  string said = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
+  t.isTrue((r is not null), "the wasmtime host ran at all");
+  if ((r is null)) { return t.report(); }
 
   // The sentence itself, named, because it is the one this exists for and a future variant of it
   // would otherwise arrive as an unexplained count.
@@ -72,28 +76,38 @@ static string AWAITS_CLI =
   "  return 0;\n" +
   "}\n";
 
-export string test_an_async_main_awaiting_a_cli_ticket_finishes_on_the_wasmtime_host(Core core, Cli cli) {
+export string test_an_async_main_awaiting_a_cli_ticket_finishes_on_the_wasmtime_host(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  if (requireNativeHost(cli, t) == "") { return t.report(); }
-  string dir = scratch(cli, "awaits-cli");
-  string fresh = freshDir(cli, dir);
+  if (requireNativeHost(env, fs, t) == "") { return t.report(); }
+  string dir = scratch(env, "awaits-cli");
+  string fresh = freshDir(fs, dir);
   t.isTrue(fresh == "", fresh);
   if (fresh != "") { return t.report(); }
-  t.isTrue(cli.writeFile("\{dir}/main.wac", AWAITS_CLI.toBytes()).wait().ok(), "wrote the program");
-  t.isTrue(cli.writeFile("\{dir}/awaited.txt", "here".toBytes()).wait().ok(), "wrote its input");
+  t.isTrue(flatten(fs.writeFile("\{dir}/main.wac", AWAITS_CLI.toBytes()).wait()).isOk(), "wrote the program");
+  t.isTrue(flatten(fs.writeFile("\{dir}/awaited.txt", "here".toBytes()).wait()).isOk(), "wrote its input");
 
-  Exec made = cli.exec(binaryPath(cli),
-                       ["build", "--allow-read", "\{dir}/main.wac", "-o", "\{dir}/main"], u8[]()).wait();
+  auto madeRan = flatten(procs.exec(binaryPath(env), ["build", "--allow-read", "\{dir}/main.wac", "-o", "\{dir}/main"],
+                                    u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  t.isTrue(madeRan.isOk(), "the v8 binary did not start: \{madeRan.isErr() ? "\{madeRan.err()!}" : ""}");
+  if (madeRan.isErr()) { return t.report(); }
+  Exec made = madeRan.unwrap();
   t.eqI32(made.status, 0, "the v8 binary could not build it: \{string.fromBytes(made.stderr)}");
   if (made.status != 0) { return t.report(); }
 
   // `cd` so the relative `awaited.txt` is found; a relative path is also the ordinary case.
-  Exec r = cli.exec("/bin/sh", ["-c", "cd '\{dir}' && '\{nativeHost(cli)}' ./main.wasm 2>&1"], u8[]()).wait();
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cd '\{dir}' && '\{nativeHost(env)}' ./main.wasm 2>&1"], u8[](),
+                                 ChildEnv.inherited(), Launch.plain()).wait());
+  t.isTrue(rRan.isOk(), "the shell did not start: \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if (rRan.isErr()) { return t.report(); }
+  Exec r = rRan.unwrap();
   string said = string.fromBytes(r.stdout);
   t.isTrue(said.indexOf("cannot finish") < 0,
            "the wasmtime host ran `main` on a scheduler `Cli`'s tickets are not on:\n  \{said}");
   t.eqStr(trimmed(said), "read: here", "what the program said");
   t.eqI32(r.status, 0, "its status");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

@@ -20,11 +20,12 @@
 // `buildApp` becomes `wac run --allow-net`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Sys } from "std";
 import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLogWithin }
   from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string ENTRY = "packages/platform/example/whichever.wac";
 
@@ -57,7 +58,7 @@ string joinedWith(string[] all, string sep) {
  * Held open so the *other* recv is still outstanding when the first is collected — that is what makes
  * the second half of the assertion mean anything.
  */
-Daemon serveOnce(Cli cli, i32 port, string delaySeconds, string message, string log) {
+Daemon serveOnce(Procs procs, i32 port, string delaySeconds, string message, string log) {
   string script =
     "import socket,time\n" +
     "s=socket.socket()\n" +
@@ -71,28 +72,33 @@ Daemon serveOnce(Cli cli, i32 port, string delaySeconds, string message, string 
     "time.sleep(0.9)\n" +
     "c.close()\n" +
     "s.close()\n";
-  return start(cli, "python3 -c \{quoted(script)}", log);
+  return start(procs, "python3 -c \{quoted(script)}", log);
 }
 
-export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, Cli cli) {
+export string test_waitany_parks_until_whichever_socket_speaks_first(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/waitany";
-  string whyDir1 = madeDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/waitany";
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
 
   // `quickFree`/`slowFree` rather than `quick`/`slow`: the daemons below want those names, and one
   // name standing for a `Port` up here and a `Daemon` down there is a name whose type depends on
   // which line you are reading. `issues/lang/0174a`.
-  Port quickFree = freePortOr(cli);
-  Port slowFree = freePortOr(cli);
+  Port quickFree = freePortOr(net);
+  Port slowFree = freePortOr(net);
   i32 quickPort = quickFree.port;
   i32 slowPort = slowFree.port;
   t.isTrue((quickPort > 0) && (slowPort > 0) && (quickPort != slowPort),
            "two free ports — \{quickFree.error} \{slowFree.error}");
   if (quickPort <= 0 || slowPort <= 0 || quickPort == slowPort) { return t.report(); }
 
-  Daemon quick = serveOnce(cli, quickPort, "0", "quick", "\{dir}/quick.log");
-  Daemon slow = serveOnce(cli, slowPort, "0.4", "slow", "\{dir}/slow.log");
+  Daemon quick = serveOnce(procs, quickPort, "0", "quick", "\{dir}/quick.log");
+  Daemon slow = serveOnce(procs, slowPort, "0.4", "slow", "\{dir}/slow.log");
   t.isTrue(quick.ok() && slow.ok(), "both listeners started");
   // **Not `waitForPort`.** These listeners accept exactly once, so a readiness probe that dials
   // them spends the connection the test is about and the client gets a reset. The fixtures say
@@ -109,31 +115,32 @@ export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, 
   // that asymmetry turned a gate red the same day — `issues/system/0203`'s eleventh entry. This is
   // the same shape before it costs anybody a run: these are *setup* waits, not the thing under test,
   // so the only thing a short one buys is a faster answer when a fixture is genuinely broken.
-  bool up = waitForLogWithin(core, cli, quick, "listening", 20000) &&
-            waitForLogWithin(core, cli, slow, "listening", 20000);
-  t.isTrue(up, "both listeners are accepting — quick said: \{logOf(cli, quick)}" +
-               " slow said: \{logOf(cli, slow)}");
-  if (!up) { stop(cli, quick); stop(cli, slow); return t.report(); }
+  bool up = waitForLogWithin(clock, fs, quick, "listening", 20000) &&
+            waitForLogWithin(clock, fs, slow, "listening", 20000);
+  t.isTrue(up, "both listeners are accepting — quick said: \{logOf(fs, quick)}" +
+               " slow said: \{logOf(fs, slow)}");
+  if (!up) { stop(procs, quick); stop(procs, slow); return t.report(); }
 
   // Slow port first, so its ticket is index 0 while the *fast* answer is index 1.
-  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
-  Exec r = cli.exec(wac, [
+  string wac = "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
+  auto rRan = flatten(procs.exec(wac, [
                                   "run", "--allow-net", ENTRY, "--",
                                   "\{slowPort}", "\{quickPort}"
-  ], u8[]()).wait();
-  stop(cli, quick);
-  stop(cli, slow);
+  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  stop(procs, quick);
+  stop(procs, slow);
 
-  t.isTrue(r.ran(), "the wac binary ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
-  string[] out = splitLines(string.fromBytes(r.stdout));
+  t.isTrue((r is not null), "the wac binary ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0, string.fromBytes(r!.stderr));
+  string[] out = splitLines(string.fromBytes(r!.stdout));
   t.isTrue(out.len() >= 2, "two answers: " + joinedWith(out, " | "));
   if (out.len() < 2) { return t.report(); }
   t.eqStr(out[0], "first=1 said=quick", "wrong first answer: " + joinedWith(out, " | "));
   // The slower ticket was never cancelled and is still collectable afterwards.
   t.eqStr(out[1], "second=0 said=slow", "wrong second answer: " + joinedWith(out, " | "));
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

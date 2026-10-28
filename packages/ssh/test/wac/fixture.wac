@@ -27,12 +27,13 @@
 // already written down.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, FileResult } from "std";
+import { Cli, Exec, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs, Stat } from "std";
 import { Daemon, Held, start, stop, waitForPortWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { copyPreserving, keygen, publicBlobText, restrict }
   from "../../../wactest/src/keys.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /** Everything a test needs from a running sshd, so the setup is written once. */
 export struct Sshd {
@@ -44,12 +45,12 @@ export struct Sshd {
 }
 
 /** Whether this machine has an sshd to run. Every test here is pointless without one. */
-export bool haveSshd(Cli cli) { return cli.stat("/usr/sbin/sshd").wait().isFile; }
+export bool haveSshd(Files fs) { return flatten(fs.stat("/usr/sbin/sshd").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile; }
 
 /** A scratch directory of our own, emptied first so a previous run cannot supply a file. */
-export string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/\{name}";
-  string why = freshDir(cli, dir);
+export string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -72,12 +73,12 @@ export string freshScratch(T t, Cli cli, string name) {
  * — `/tmp` for the orphans the host-side fixture may already have left on this box — and
  * `reapSelects` is the test that the pattern is not inert.
  */
-void reapAbandoned(Cli cli) {
-  cli.exec("/bin/sh", [
+void reapAbandoned(Procs procs) {
+  flatten(procs.exec("/bin/sh", [
                                "-c", "\{REAP}kill \"$pid\" 2>/dev/null; " +
                                "case \"$dir\" in /tmp/*|*/.cache/*) rm -rf \"$dir\";; esac; " +
                                "done; true"
-  ], u8[]()).wait();
+  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /**
@@ -118,9 +119,10 @@ static string REAP =
   "  dir=${rest#* -D -f }; dir=${dir%%/sshd_config*}; ";
 
 /** Which pids `reapAbandoned` would kill, one per line — for the test that it selects anything. */
-export string reapSelects(Cli cli) {
-  Exec r = cli.exec("/bin/sh", ["-c", "\{REAP}echo \"$pid $dir\"; done"], u8[]()).wait();
-  return string.fromBytes(r.stdout);
+export string reapSelects(Procs procs) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "\{REAP}echo \"$pid $dir\"; done"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return string.fromBytes(r!.stdout);
 }
 
 /**
@@ -130,9 +132,10 @@ export string reapSelects(Cli cli) {
  * other way to get it wrong and the more dangerous one: a pattern that also matched the machine's
  * own sshd would kill it. Literally the same `ours` function `REAP` uses — see `ARMS`.
  */
-export bool wouldReap(Cli cli, string line) {
-  Exec r = cli.exec("/bin/sh", ["-c", "\{ARMS}ours \"$1\"", "sh", line], u8[]()).wait();
-  return r.ran() && r.status == 0;
+export bool wouldReap(Procs procs, string line) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "\{ARMS}ours \"$1\"", "sh", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return (r is not null) && r!.status == 0;
 }
 
 /**
@@ -145,23 +148,23 @@ export bool wouldReap(Cli cli, string line) {
  * A caller must check `ok`: a server that never came up leaves every later assertion measuring a
  * refused connection, which is a different failure wearing the same clothes.
  */
-export Sshd startSshd(T t, Core core, Cli cli, string name) {
-  reapAbandoned(cli);
-  string dir = freshScratch(t, cli, name);
+export Sshd startSshd(T t, Output err, Clock clock, Env env, Files fs, Net net, Procs procs, string name) {
+  reapAbandoned(procs);
+  string dir = freshScratch(t, env, fs, name);
 
-  Held held = Held.take(cli);
+  Held held = Held.take(net);
   if (held.port < 0) { return Sshd(false, "no port could be bound", dir, -1, Daemon(-1, "", "")); }
 
   string[] keys = ["hostkey", "clientkey"];
   for (i32 i = 0; i < keys.len(); i++) {
-    if (!keygen(t, cli, "\{dir}/\{keys[i]}")) {
-      held.release(cli);
+    if (!keygen(t, procs, "\{dir}/\{keys[i]}")) {
+      held.release();
       return Sshd(false, "ssh-keygen failed for \{keys[i]}", dir, held.port, Daemon(-1, "", ""));
     }
-    restrict(cli, "\{dir}/\{keys[i]}");
+    restrict(procs, "\{dir}/\{keys[i]}");
   }
-  copyPreserving(cli, "\{dir}/clientkey.pub", "\{dir}/authorized_keys");
-  restrict(cli, "\{dir}/authorized_keys");
+  copyPreserving(procs, "\{dir}/clientkey.pub", "\{dir}/authorized_keys");
+  restrict(procs, "\{dir}/authorized_keys");
 
   string config =
     "Port \{held.port}\n" +
@@ -173,12 +176,12 @@ export Sshd startSshd(T t, Core core, Cli cli, string name) {
     "PasswordAuthentication no\n" +
     "KbdInteractiveAuthentication no\n" +
     "PidFile none\n";
-  cli.writeFile("\{dir}/sshd_config", config.toBytes()).wait();
+  fs.writeFile("\{dir}/sshd_config", config.toBytes()).wait();
 
   // Released here and nowhere earlier: the next statement is the bind.
-  held.release(cli);
+  held.release();
   // Foreground (`-D`), so killing the child actually stops the server.
-  Daemon d = start(cli, "/usr/sbin/sshd -D -f " + quoted("\{dir}/sshd_config"), "\{dir}/sshd.log");
+  Daemon d = start(procs, "/usr/sbin/sshd -D -f " + quoted("\{dir}/sshd_config"), "\{dir}/sshd.log");
   if (!d.ok()) { return Sshd(false, "sshd did not start — \{d.error}", dir, held.port, d); }
 
   // `waitForPortWithin` connects, which is a real client as far as sshd is concerned — harmless here,
@@ -188,14 +191,14 @@ export Sshd startSshd(T t, Core core, Cli cli, string name) {
   // microseconds, so that was ten milliseconds of patience: fine on an idle box, and it reported "sshd
   // never accepted" on a normally-starting server the moment four `wac test` workers shared the
   // machine. A deadline costs nothing when the server is quick.
-  if (!waitForPortWithin(core, cli, "127.0.0.1", held.port, 5000)) {
+  if (!waitForPortWithin(clock, net, "127.0.0.1", held.port, 5000)) {
     return Sshd(false, "sshd never accepted on \{held.port}", dir, held.port, d);
   }
   return Sshd(true, "", dir, held.port, d);
 }
 
 /** Stop it and remove its directory, whether or not it ever came up. */
-export void stopSshd(Cli cli, Sshd s) {
-  stop(cli, s.daemon);
-  cli.remove(s.dir, true).wait();
+export void stopSshd(Files fs, Procs procs, Sshd s) {
+  stop(procs, s.daemon);
+  fs.remove(s.dir, true).wait();
 }

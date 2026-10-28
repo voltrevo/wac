@@ -23,13 +23,14 @@
 // Fixtures written as *strings* inside tests are deliberately not searched: a test of the resolver is
 // entitled to write a specifier the resolver should refuse, and this reads files as files.
 
-import { Core, Cli, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { splitLines, startsWith, contains } from "../../packages/wactest/src/strings.wac";
 import { isBuiltinSpec } from "../../packages/wacc/src/coretext.wac";
 import { Manifest, matchSpecifier, readManifest } from "../../packages/wacpkg/src/manifest.wac";
+import { flatten } from "core";
 
 /** The specifier of an `import { … } from "…";` line, or empty for a line that is not one. */
 string specifierOf(string line) {
@@ -59,31 +60,34 @@ bool defined(string spec) {
  * repository declares no mappings, but `templates/webapp` is a project of its own that does — its
  * `"web"` is defined, by its manifest.
  */
-bool mapped(Cli cli, string file, string spec) {
+bool mapped(Files fs, string file, string spec) {
   string dir = file;
   while (true) {
     i32 cut = -1;
     for (i32 i = 0; i < dir.len(); i++) { if (dir.slice(i, i + 1) == "/") { cut = i; } }
     if (cut < 0) { return false; }
     dir = dir.slice(0, cut);
-    FileResult m = cli.readFile(dir + "/wac.json5").wait();
-    if (!m.ok) { continue; }
-    Manifest mf = readManifest(m.bytes);
+    u8[]? m = flatten(fs.readFile(dir + "/wac.json5").wait()).ok();
+    if ((m is null)) { continue; }
+    Manifest mf = readManifest(m!);
     return mf.ok && matchSpecifier(mf, spec).found;
   }
 }
 
-export string test_every_import_in_the_repository_is_a_specifier_the_language_defines(
-    Core core, Cli cli) {
+export string test_every_import_in_the_repository_is_a_specifier_the_language_defines(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] files = sourceFiles(core, cli, [".wac"], string[].filled(0, ""));
+  string[] files = sourceFiles(err, procs, [".wac"], string[].filled(0, ""));
   t.isTrue(files.len() > 100, "the walk found " + itoa(files.len()) + " files — did it resolve?");
 
   string[] bad = string[].filled(files.len(), "");
   i32 n = 0;
   i32 imports = 0;
   for (i32 f = 0; f < files.len(); f++) {
-    string text = readFile(core, cli, files[f]);
+    string text = readFile(err, fs, files[f]);
     // **A case that exists to be refused** names what the language does not define on purpose:
     // `0327` imports `core/vec.wac` to show a path below a built-in is refused.
     if (startsWith(files[f], "spec/cases/") && startsWith(text, "// expect: refused")) { continue; }
@@ -92,7 +96,7 @@ export string test_every_import_in_the_repository_is_a_specifier_the_language_de
       string spec = specifierOf(lines[i]);
       if (spec == "") { continue; }
       imports = imports + 1;
-      if (defined(spec) || mapped(cli, files[f], spec)) { continue; }
+      if (defined(spec) || mapped(fs, files[f], spec)) { continue; }
       if (n < bad.len()) { bad[n] = files[f] + ": \"" + spec + "\""; }
       n = n + 1;
     }
@@ -101,7 +105,7 @@ export string test_every_import_in_the_repository_is_a_specifier_the_language_de
   // **The count is asserted too.** A walk that found no imports would pass the check above it while
   // measuring nothing, which is the failure this whole family of repository guards keeps having.
   t.isTrue(imports > 500, "only " + itoa(imports) + " imports found — the reader is not reading");
-  core.log("    imports: " + itoa(imports) + " across " + itoa(files.len()) + " files, " +
+  out.line("    imports: " + itoa(imports) + " across " + itoa(files.len()) + " files, " +
            itoa(n) + " undefined");
   t.eqI32(n, 0, n == 0 ? "" : "these specifiers are neither relative, nor `@/`, nor built-in, so " +
           "spec/spec/imports.md does not say what they name — the first is " + bad[0]);
@@ -109,11 +113,12 @@ export string test_every_import_in_the_repository_is_a_specifier_the_language_de
 }
 
 /** One file, or a trap naming it — a repository guard that cannot read is not a passing guard. */
-string readFile(Core core, Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
-    core.warn("specifiers: cannot read " + path + " — " + r.error);
+string readFile(Output err, Files fs, string path) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("specifiers: cannot read " + path + " — " + "\{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  return string.fromBytes(r.bytes);
+  return string.fromBytes(r!);
 }

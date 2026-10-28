@@ -9,7 +9,7 @@
 // rather than guessed at, because guessing means a nibble-shifted 32-byte root that verifies against
 // nothing and looks like a bad proof.
 
-import { Cli } from "std";
+import { Net } from "std";
 import { call } from "./rpc.wac";
 import { Result } from "core";
 import { JsonValue } from "../../json/src/value.wac";
@@ -61,9 +61,9 @@ export struct Proof {
  * So a hash is looked up with `eth_getBlockByHash` and the proof is taken *at that block's number*. The
  * anchored path therefore answers about the past, deliberately — that is what having a trusted hash means.
  */
-export Result<Proof, string> proofOf(Cli cli, string host, i32 port, string address, string slot, u8[] expectedHash) {
+export Result<Proof, string> proofOf(Net net, string host, i32 port, string address, string slot, u8[] expectedHash) {
   string[] one = [slot];
-  return proofOfSlots(cli, host, port, address, one, expectedHash);
+  return proofOfSlots(net, host, port, address, one, expectedHash);
 }
 
 /**
@@ -73,14 +73,12 @@ export Result<Proof, string> proofOf(Cli cli, string host, i32 port, string addr
  * question from the one put to it, and is refused rather than matched up by key: a caller that indexes by
  * position and a node that reorders is a silent mix-up between two slots of the same contract.
  */
-export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string address,
-                                          string[] slots, u8[] expectedHash) {
+export Result<Proof, string> proofOfSlots(Net net, string host, i32 port, string address, string[] slots, u8[] expectedHash) {
   bool anchored = expectedHash.len() == 32;
   string where = anchored
     ? "[\"0x\{string.fromBytes(hexOf(expectedHash))}\",false]"
     : "[\"latest\",false]";
-  JsonValue block = try call(cli, host, port,
-                             anchored ? "eth_getBlockByHash" : "eth_getBlockByNumber", where);
+  JsonValue block = try call(net, host, port, anchored ? "eth_getBlockByHash" : "eth_getBlockByNumber", where);
   if (block.isNull()) { return failed("this node does not have the block you anchored to"); }
 
   // **The root comes out of a header that was re-encoded and hashed**, not straight out of the JSON. With
@@ -101,7 +99,7 @@ export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string
     list = list + (i > 0 ? "," : "") + "\"" + slots[i] + "\"";
   }
   string params = "[\"\{address}\",[\{list}],\{at}]";
-  JsonValue got = try call(cli, host, port, "eth_getProof", params);
+  JsonValue got = try call(net, host, port, "eth_getProof", params);
 
   u8[][] accountNodes = hexArray(got.member("accountProof") ?? JsonValue.Null);
 

@@ -9,98 +9,108 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, Exec } from "std";
+import { Clock, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
-void put(Cli cli, string path, string text) {
+void put(Files fs, string path, string text) {
   i32 cut = 0 - 1;
   for (i32 k = 0; k < path.len(); k++) { if (path.slice(k, k + 1) == "/") { cut = k; } }
-  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
-  cli.writeFile(path, text.toBytes()).wait();
+  if (cut > 0) { fs.mkdir(path.slice(0, cut), true).wait(); }
+  fs.writeFile(path, text.toBytes()).wait();
 }
 
 /** `wac check <args>` run from `dir`. */
-Exec checkIn(Cli cli, string dir, string args) {
-  return cli.exec("/bin/sh", ["-c", "cd \{dir} && exec \{binaryPath(cli)} check \{args}"], u8[]()).wait();
+Exec checkIn(Env env, Procs procs, string dir, string args) {
+  return flatten(procs.exec("/bin/sh", ["-c", "cd \{dir} && exec \{binaryPath(env)} check \{args}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
-string fresh(Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/\{name}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+string fresh(Env env, Files fs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/\{name}";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
   return dir;
 }
 
-export string test_alone_it_checks_every_project_file_less_its_exclusions_x9xt4fg_2ixx2cu(Core core, Cli cli) {
+export string test_alone_it_checks_every_project_file_less_its_exclusions_x9xt4fg_2ixx2cu(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = fresh(cli, "checkproject-project");
-  put(cli, "\{dir}/wac.json5", "{ check: { exclude: [\"./fixtures/**\"] } }\n");
-  put(cli, "\{dir}/main.wac", "export i32 zero() { return 0; }\n");
-  put(cli, "\{dir}/src/unused.wac", "export i32 one() { return 1; }\n");
-  put(cli, "\{dir}/fixtures/invalid.wac", "i32 broken() { return nonexistent(); }\n");
-  Exec clean = checkIn(cli, dir, "");
+  string dir = fresh(env, fs, "checkproject-project");
+  put(fs, "\{dir}/wac.json5", "{ check: { exclude: [\"./fixtures/**\"] } }\n");
+  put(fs, "\{dir}/main.wac", "export i32 zero() { return 0; }\n");
+  put(fs, "\{dir}/src/unused.wac", "export i32 one() { return 1; }\n");
+  put(fs, "\{dir}/fixtures/invalid.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec clean = checkIn(env, procs, dir, "");
   t.eqI32(clean.status, 0, "the excluded fixture is not discovered — \{said(clean)}");
   t.isTrue(contains(said(clean), ".: 2 file(s), no diagnostics"), "and the two project files are — \{said(clean)}");
 
   // An unreached file outside the exclusion is checked, which is what makes it a project check.
-  put(cli, "\{dir}/src/unused.wac", "i32 broken() { return nonexistent(); }\n");
-  Exec bad = checkIn(cli, dir, "");
+  put(fs, "\{dir}/src/unused.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec bad = checkIn(env, procs, dir, "");
   t.eqI32(bad.status, 1, "an unreached broken file is diagnosed — \{said(bad)}");
   t.isTrue(contains(said(bad), "1 error(s)"), "and counted — \{said(bad)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_files_are_roots_and_turn_discovery_off_2ncb9c8_km2e8t2(Core core, Cli cli) {
+export string test_files_are_roots_and_turn_discovery_off_2ncb9c8_km2e8t2(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = fresh(cli, "checkproject-files");
-  put(cli, "\{dir}/wac.json5", "{}\n");
-  put(cli, "\{dir}/src/lib.wac", "export i32 answer() { return 42; }\n");
-  put(cli, "\{dir}/src/other.wac", "export i32 other() { return 1; }\n");
-  put(cli, "\{dir}/src/neighbour.wac", "i32 broken() { return nonexistent(); }\n");
-  Exec two = checkIn(cli, dir, "src/lib.wac src/other.wac");
+  string dir = fresh(env, fs, "checkproject-files");
+  put(fs, "\{dir}/wac.json5", "{}\n");
+  put(fs, "\{dir}/src/lib.wac", "export i32 answer() { return 42; }\n");
+  put(fs, "\{dir}/src/other.wac", "export i32 other() { return 1; }\n");
+  put(fs, "\{dir}/src/neighbour.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec two = checkIn(env, procs, dir, "src/lib.wac src/other.wac");
   t.eqI32(two.status, 0, "two roots, and the broken neighbour is not discovered — \{said(two)}");
   t.isTrue(contains(said(two), "2 file(s), no diagnostics"), "both roots counted — \{said(two)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_with_no_manifest_the_directory_is_the_project(Core core, Cli cli) {
+export string test_with_no_manifest_the_directory_is_the_project(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The README's own example runs `wac check` over a lone file with no `wac.json5`.
   T t = T.create();
-  string dir = fresh(cli, "checkproject-bare");
-  put(cli, "\{dir}/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
-  Exec r = checkIn(cli, dir, "");
+  string dir = fresh(env, fs, "checkproject-bare");
+  put(fs, "\{dir}/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
+  Exec r = checkIn(env, procs, dir, "");
   t.eqI32(r.status, 1, "diagnosed, not a usage error — \{said(r)}");
   t.isTrue(contains(said(r), "1 file(s), 1 error(s)"), "and it says what it read — \{said(r)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** A project of `k` files that each import `big.wac`, which is `lines` lines of comment and one struct. */
-string importers(Cli cli, string name, i32 k, i32 lines) {
-  string dir = fresh(cli, name);
-  put(cli, "\{dir}/wac.json5", "{}\n");
+string importers(Env env, Files fs, string name, i32 k, i32 lines) {
+  string dir = fresh(env, fs, name);
+  put(fs, "\{dir}/wac.json5", "{}\n");
   u8[] line = "// filler filler filler filler filler filler filler filler filler filler\n".toBytes();
   u8[] head = "export struct Lib { i32 x; }\n".toBytes();
   u8[] big = u8[].filled(head.len() + lines * line.len(), 0);
   big.copyFrom(head, 0, 0, head.len());
   for (i32 i = 0; i < lines; i++) { big.copyFrom(line, 0, head.len() + i * line.len(), line.len()); }
-  cli.writeFile("\{dir}/big.wac", big).wait();
+  fs.writeFile("\{dir}/big.wac", big).wait();
   for (i32 i = 0; i < k; i++) {
-    put(cli, "\{dir}/u\{i}.wac", "import { Lib } from \"./big.wac\";\nexport i32 f\{i}(Lib l) { return l.x; }\n");
+    put(fs, "\{dir}/u\{i}.wac", "import { Lib } from \"./big.wac\";\nexport i32 f\{i}(Lib l) { return l.x; }\n");
   }
   return dir;
 }
 
 /** The best of three `wac check` runs in `dir`, in milliseconds. */
-i64 timeCheck(Core core, Cli cli, string dir) {
+i64 timeCheck(Clock clock, Env env, Procs procs, string dir) {
   i64 best = 0 as i64;
   for (i32 r = 0; r < 3; r++) {
-    i64 t0 = core.monotonicNanos().wait();
-    checkIn(cli, dir, "");
-    i64 d = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
+    i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
+    checkIn(env, procs, dir, "");
+    i64 d = (flatten(clock.monotonicNanos().wait()).unwrap() - t0) / (1000000 as i64);
     if (r == 0 || d < best) { best = d; }
   }
   return best;
@@ -110,16 +120,20 @@ i64 timeCheck(Core core, Cli cli, string dir) {
 // on its own, so a file every other file imports was read and scanned once per importer: checking
 // `packages/box` read 8,630 files to find 423, `bytes/src/slice.wac` 117 times. What a large shared
 // file adds to the check should not grow with the number of files that import it.
-export string test_a_project_check_reads_a_shared_file_once(Core core, Cli cli) {
+export string test_a_project_check_reads_a_shared_file_once(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string few = importers(cli, "checkproject-few", 10, 14000);
-  string many = importers(cli, "checkproject-many", 80, 14000);
-  string fewSmall = importers(cli, "checkproject-few-small", 10, 0);
-  string manySmall = importers(cli, "checkproject-many-small", 80, 0);
-  Exec ok = checkIn(cli, many, "");
+  string few = importers(env, fs, "checkproject-few", 10, 14000);
+  string many = importers(env, fs, "checkproject-many", 80, 14000);
+  string fewSmall = importers(env, fs, "checkproject-few-small", 10, 0);
+  string manySmall = importers(env, fs, "checkproject-many-small", 80, 0);
+  Exec ok = checkIn(env, procs, many, "");
   t.isTrue(contains(said(ok), ".: 81 file(s), no diagnostics"), "the project checks — \{said(ok)}");
-  i64 addedFew = timeCheck(core, cli, few) - timeCheck(core, cli, fewSmall);
-  i64 addedMany = timeCheck(core, cli, many) - timeCheck(core, cli, manySmall);
+  i64 addedFew = timeCheck(clock, env, procs, few) - timeCheck(clock, env, procs, fewSmall);
+  i64 addedMany = timeCheck(clock, env, procs, many) - timeCheck(clock, env, procs, manySmall);
   // **Eighty importers against ten, and a 3× bar, since 2026-10-27.** It was forty against ten with a
   // 1.5× bar, and a 4-worker suite measured 83 ms against 196 on correct code: 2.36×. That is a
   // difference of two timings, so load lands in it twice. Reading the file per importer now costs 8×,
@@ -127,9 +141,9 @@ export string test_a_project_check_reads_a_shared_file_once(Core core, Cli cli) 
   t.isTrue(addedMany < addedFew * (3 as i64),
            "a megabyte imported by 10 files added \{itoa(addedFew as! i32)} ms to the check, and by 80 "
            + "\{itoa(addedMany as! i32)} ms");
-  cli.remove(few, true).wait();
-  cli.remove(many, true).wait();
-  cli.remove(fewSmall, true).wait();
-  cli.remove(manySmall, true).wait();
+  fs.remove(few, true).wait();
+  fs.remove(many, true).wait();
+  fs.remove(fewSmall, true).wait();
+  fs.remove(manySmall, true).wait();
   return t.report();
 }

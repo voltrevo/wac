@@ -19,18 +19,18 @@
 // blanked live code. `newestOf` was reported dead while its own file called it. The case is below.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std";
-import { Vec } from "core";
+import { Env, Files, Output, Sys } from "std";
+import { Vec, flatten } from "core";
 import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
 import { Decl, Scan, scanAt, report } from "./deadexports.wac";
 import { sortStrings } from "./covledger.wac";
 
 /** A tree of files under `.cache`, and the directory it was written to. */
-string fixture(T t, Cli cli, string[] paths, string[] texts) {
-  string dir = cli.cwd().wait() + "/.cache/deadexports-fixture";
-  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+string fixture(T t, Env env, Files fs, string[] paths, string[] texts) {
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/deadexports-fixture";
+  t.isTrue(freshDir(fs, dir) == "", "the fixture directory could not be made");
   for (i32 i = 0; i < paths.len(); i++) {
-    t.isTrue(putFile(cli, dir + "/" + paths[i], texts[i]) == "", "could not write " + paths[i]);
+    t.isTrue(putFile(fs, dir + "/" + paths[i], texts[i]) == "", "could not write " + paths[i]);
   }
   return dir;
 }
@@ -48,28 +48,29 @@ string namesOf(Vec<Decl> all, bool[] live) {
 }
 
 /** The dead *exports* of a fixture tree. */
-string deadNames(T t, Core core, Cli cli, string[] paths, string[] texts) {
-  string dir = fixture(t, cli, paths, texts);
-  Scan s = scanAt(core, cli, dir);
+string deadNames(T t, Output err, Env env, Files fs, string[] paths, string[] texts) {
+  string dir = fixture(t, env, fs, paths, texts);
+  Scan s = scanAt(err, fs, dir);
   string out = namesOf(s.decls, s.declLive);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return out;
 }
 
 /** The dead *private* functions of a fixture tree. */
-string deadPrivateNames(T t, Core core, Cli cli, string[] paths, string[] texts) {
-  string dir = fixture(t, cli, paths, texts);
-  Scan s = scanAt(core, cli, dir);
+string deadPrivateNames(T t, Output err, Env env, Files fs, string[] paths, string[] texts) {
+  string dir = fixture(t, env, fs, paths, texts);
+  Scan s = scanAt(err, fs, dir);
   string out = namesOf(s.privates, s.privLive);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return out;
 }
 
-export string test_an_export_with_a_caller_is_not_dead_and_one_without_is(Core core, Cli cli) {
+export string test_an_export_with_a_caller_is_not_dead_and_one_without_is(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "export i32 used() { return 1; }\n"
              + "export i32 unused() { return 2; }\n"
              + "export i32 caller() { return used(); }\n"
@@ -79,13 +80,14 @@ export string test_an_export_with_a_caller_is_not_dead_and_one_without_is(Core c
   return t.report();
 }
 
-export string test_shape_1_a_function_passed_as_a_value_counts_as_used(Core core, Cli cli) {
+export string test_shape_1_a_function_passed_as_a_value_counts_as_used(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // `boxRun` and `boxNames` were reported dead while a shell in a browser ran sixty programs through
   // them. Passing a function is how every capability in this repo is wired.
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "export i32 handler() { return 1; }\n"
              + "export i32 alsoHandler() { return 2; }\n"
              + "export void wire(Shell sh) { sh.external = handler; }\n"
@@ -95,11 +97,12 @@ export string test_shape_1_a_function_passed_as_a_value_counts_as_used(Core core
   return t.report();
 }
 
-export string test_shape_2_an_alias_counts_as_a_call_of_the_original(Core core, Cli cli) {
+export string test_shape_2_an_alias_counts_as_a_call_of_the_original(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/demo/src/other.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/demo/src/other.wac"], [
                "export i32 masked() { return 1; }\n",
                "import { masked as bits } from \"./lib.wac\";\n"
              + "export i32 use() { return bits(); }\n"
@@ -108,11 +111,12 @@ export string test_shape_2_an_alias_counts_as_a_call_of_the_original(Core core, 
   return t.report();
 }
 
-export string test_shape_3_entry_in_typescript_names_an_export(Core core, Cli cli) {
+export string test_shape_3_entry_in_typescript_names_an_export(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/demo/test/t.test.ts"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/demo/test/t.test.ts"], [
                "export i32 upperCase() { return 1; }\n",
                "wacTransformStream({ src: \"x\", entry: \"upperCase\" });\n"
       ]),
@@ -120,11 +124,12 @@ export string test_shape_3_entry_in_typescript_names_an_export(Core core, Cli cl
   return t.report();
 }
 
-export string test_shape_4_a_method_call_on_a_bound_module_counts(Core core, Cli cli) {
+export string test_shape_4_a_method_call_on_a_bound_module_counts(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/demo/bench/b.ts"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/demo/bench/b.ts"], [
                "export i32 scanKeys(i32 a) { return a; }\n",
                "const mod = await wacBind(); mod.scanKeys(8, 10_000);\n"
       ]),
@@ -132,13 +137,14 @@ export string test_shape_4_a_method_call_on_a_bound_module_counts(Core core, Cli
   return t.report();
 }
 
-export string test_shape_5_a_bound_function_taken_as_a_value(Core core, Cli cli) {
+export string test_shape_5_a_bound_function_taken_as_a_value(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // The one that survived the fix for shape 4: gzip's `cov.ts` takes the function as a value first,
   // so `.inflate(` never appears in the file at all.
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/demo/cov.ts"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/demo/cov.ts"], [
                "export u8[] inflate(u8[] d) { return d; }\n",
                "import { instrument } from \"../../harness/wacCoverage.ts\";\n"
              + "const inf = await instrument(\"packages/demo/src/lib.wac\");\n"
@@ -149,14 +155,15 @@ export string test_shape_5_a_bound_function_taken_as_a_value(Core core, Cli cli)
   return t.report();
 }
 
-export string test_a_same_named_method_in_another_package_is_not_a_caller(Core core, Cli cli) {
+export string test_a_same_named_method_in_another_package_is_not_a_caller(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // The precision half, and why the search is confined by locality: `.write(` and `.done(` are
   // ordinary method names, and matching them everywhere would hide real dead exports behind
   // unrelated TypeScript.
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/elsewhere/test/t.test.ts"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/elsewhere/test/t.test.ts"], [
                "export i32 write(i32 a) { return a; }\n",
                "const f = await Deno.open('x'); f.write(new Uint8Array());\n"
       ]),
@@ -164,11 +171,12 @@ export string test_a_same_named_method_in_another_package_is_not_a_caller(Core c
   return t.report();
 }
 
-export string test_a_doc_comment_naming_its_function_is_not_a_use(Core core, Cli cli) {
+export string test_a_doc_comment_naming_its_function_is_not_a_use(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "/** `orphan()` returns one. Called by nothing. */\n"
              + "// orphan() is mentioned here too\n"
              + "export i32 orphan() { return 1; }\n"
@@ -177,11 +185,12 @@ export string test_a_doc_comment_naming_its_function_is_not_a_use(Core core, Cli
   return t.report();
 }
 
-export string test_a_name_inside_a_string_is_text_not_a_reference(Core core, Cli cli) {
+export string test_a_name_inside_a_string_is_text_not_a_reference(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "export i32 wrap() { return 1; }\n"
              + "export string css() { return \"#wrap { color: red; }\"; }\n"
       ]),
@@ -189,11 +198,12 @@ export string test_a_name_inside_a_string_is_text_not_a_reference(Core core, Cli
   return t.report();
 }
 
-export string test_a_stale_import_is_not_a_use(Core core, Cli cli) {
+export string test_a_stale_import_is_not_a_use(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/demo/src/other.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/demo/src/other.wac"], [
                "export i32 gone() { return 1; }\n",
                "import { gone } from \"./lib.wac\";\n"
              + "export i32 use() { return 2; }\n"
@@ -202,14 +212,15 @@ export string test_a_stale_import_is_not_a_use(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_probes_size_entries_and_client_entry_are_skipped(Core core, Cli cli) {
+export string test_probes_size_entries_and_client_entry_are_skipped(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadNames(t, core, cli,
-      [
+  t.eqStr(deadNames(t, err, env, fs, [
                "packages/demo/test/wac/probe.wac", "packages/demo/size/small.wac",
                "packages/demo/src/client_entry.wac", "packages/demo/src/lib.wac"
-      ],
-      [
+      ], [
                "export i32 probeThing() { return 1; }\n",
                "export i32 sizeThing() { return 1; }\n",
                "export i32 entryThing() { return 1; }\n",
@@ -219,7 +230,10 @@ export string test_probes_size_entries_and_client_entry_are_skipped(Core core, C
   return t.report();
 }
 
-export string test_a_file_may_exempt_its_own_exports(Core core, Cli cli) {
+export string test_a_file_may_exempt_its_own_exports(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   string[] paths = ["packages/demo/src/table.wac", "packages/demo/src/lib.wac"];
   string[] texts = [
@@ -228,10 +242,10 @@ export string test_a_file_may_exempt_its_own_exports(Core core, Cli cli) {
                           + "export i32 kTwo() { return 2; }\n",
                             "export i32 stillDead() { return 1; }\n"
   ];
-  t.eqStr(deadNames(t, core, cli, paths, texts), "stillDead", "the exemption leaked to another file");
+  t.eqStr(deadNames(t, err, env, fs, paths, texts), "stillDead", "the exemption leaked to another file");
 
-  string dir = fixture(t, cli, paths, texts);
-  Scan s = scanAt(core, cli, dir);
+  string dir = fixture(t, env, fs, paths, texts);
+  Scan s = scanAt(err, fs, dir);
   t.eqI32(s.exemptFile.len(), 1, "one file exempts itself");
   if (s.exemptFile.len() == 1) {
     t.eqStr(s.exemptWhy.get(0), "mirrors an external enumeration", "the reason is kept");
@@ -242,34 +256,36 @@ export string test_a_file_may_exempt_its_own_exports(Core core, Cli cli) {
   // Before the verdict, so a reader cannot read "no dead exports" without seeing what was skipped.
   t.isTrue(text.indexOf("exempt") < text.indexOf("that no wac code calls"),
            "the exemption is printed after the verdict");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_report_names_the_file_and_line(Core core, Cli cli) {
+export string test_the_report_names_the_file_and_line(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = fixture(t, cli, ["packages/demo/src/lib.wac"],
-                       ["\nexport i32 orphan() { return 1; }\n"]);
-  string text = report(scanAt(core, cli, dir));
+  string dir = fixture(t, env, fs, ["packages/demo/src/lib.wac"], ["\nexport i32 orphan() { return 1; }\n"]);
+  string text = report(scanAt(err, fs, dir));
   t.isTrue(text.indexOf("packages/demo/src/lib.wac") >= 0, "the file is missing: " + text);
   t.isTrue(text.indexOf(":2") >= 0, "the line number is missing: " + text);
   t.isTrue(text.indexOf("1 exported function(s)") == 0, "the count does not lead: " + text);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
   // And the clean case says how much it looked at, so "no dead exports" cannot be a scan of nothing.
-  string two = fixture(t, cli, ["packages/demo/src/lib.wac"],
-      ["export i32 a() { return b(); }\nexport i32 b() { return a(); }\n"]);
-  t.isTrue(report(scanAt(core, cli, two)).indexOf("no dead exports across 2 exported functions") >= 0,
+  string two = fixture(t, env, fs, ["packages/demo/src/lib.wac"], ["export i32 a() { return b(); }\nexport i32 b() { return a(); }\n"]);
+  t.isTrue(report(scanAt(err, fs, two)).indexOf("no dead exports across 2 exported functions") >= 0,
            "the clean report does not say how many exports it looked at");
-  cli.remove(two, true).wait();
+  fs.remove(two, true).wait();
   return t.report();
 }
 
-export string test_an_unexported_function_its_file_never_calls_is_dead(Core core, Cli cli) {
+export string test_an_unexported_function_its_file_never_calls_is_dead(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadPrivateNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadPrivateNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "i32 helper() { return 1; }\n"
              + "i32 orphan() { return 2; }\n"
              + "export i32 api() { return helper(); }\n"
@@ -278,13 +294,14 @@ export string test_an_unexported_function_its_file_never_calls_is_dead(Core core
   return t.report();
 }
 
-export string test_a_caller_in_another_file_does_not_save_a_private(Core core, Cli cli) {
+export string test_a_caller_in_another_file_does_not_save_a_private(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // wac has no way to reach another file's private function, so a same-named call elsewhere is a
   // different symbol. Counting it would hide exactly the shape worth finding.
-  t.eqStr(deadPrivateNames(t, core, cli,
-      ["packages/demo/src/lib.wac", "packages/demo/src/other.wac"],
-      [
+  t.eqStr(deadPrivateNames(t, err, env, fs, ["packages/demo/src/lib.wac", "packages/demo/src/other.wac"], [
                "i32 helper() { return 1; }\n",
                "export i32 api() { return helper(); }\n"
       ]),
@@ -292,13 +309,14 @@ export string test_a_caller_in_another_file_does_not_save_a_private(Core core, C
   return t.report();
 }
 
-export string test_a_structs_methods_are_not_private_functions(Core core, Cli cli) {
+export string test_a_structs_methods_are_not_private_functions(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // A method is reachable through any value of the struct, and the declaration looks identical apart
   // from the indentation — which is why the pattern is anchored at column 0.
-  t.eqStr(deadPrivateNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadPrivateNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "export struct S {\n"
              + "  i32 value;\n"
              + "  i32 twice(this) { return this.value * 2; }\n"
@@ -308,11 +326,12 @@ export string test_a_structs_methods_are_not_private_functions(Core core, Cli cl
   return t.report();
 }
 
-export string test_a_private_function_passed_as_a_value_counts(Core core, Cli cli) {
+export string test_a_private_function_passed_as_a_value_counts(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadPrivateNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadPrivateNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "i32 double(i32 x) { return x * 2; }\n"
              + "export i32 run(i32 x) { fn<i32(i32)> f = double; return f(x); }\n"
       ]),
@@ -320,16 +339,20 @@ export string test_a_private_function_passed_as_a_value_counts(Core core, Cli cl
   return t.report();
 }
 
-export string test_a_probe_is_exempt_from_the_private_check_too(Core core, Cli cli) {
+export string test_a_probe_is_exempt_from_the_private_check_too(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(deadPrivateNames(t, core, cli,
-      ["packages/demo/test/wac/probe.wac"],
-      ["i32 unusedHelper() { return 1; }\n"]),
+  t.eqStr(deadPrivateNames(t, err, env, fs, ["packages/demo/test/wac/probe.wac"], ["i32 unusedHelper() { return 1; }\n"]),
       "", "test fixtures exist to be driven from TypeScript, and their helpers are theirs");
   return t.report();
 }
 
-export string test_a_line_comment_holding_a_block_opener_does_not_blank_the_code(Core core, Cli cli) {
+export string test_a_line_comment_holding_a_block_opener_does_not_blank_the_code(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // **The defect this port found in the original.** Its `codeLines` blanks `/* … */` before it drops
   // `//` tails, so a line comment mentioning a path glob — `` `seed/*.wasm` `` — opens a block comment
@@ -340,9 +363,7 @@ export string test_a_line_comment_holding_a_block_opener_does_not_blank_the_code
   // difference visible: a fixture where the phantom block closes on the following line blanks
   // nothing, and passes under both implementations. Run against the original, this fixture answers
   // `last,target` — `target` is called on the line the phantom block ate.
-  t.eqStr(deadNames(t, core, cli,
-      ["packages/demo/src/lib.wac"],
-      [
+  t.eqStr(deadNames(t, err, env, fs, ["packages/demo/src/lib.wac"], [
              "export i32 target() { return 1; }\n"
              + "// a path glob in a comment: `native/v8/seed/*.wasm` is written by every build\n"
              + "export i32 caller() { return target(); }\n"

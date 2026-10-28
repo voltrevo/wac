@@ -27,11 +27,11 @@
 // `tools/wac/shvectors.wac` writes from that file — because it could not read wac data. This reads
 // the source.
 
-import { Core, Cli, Exec, Sys } from "std";
+import { Cli, Exec, Sys, ChildEnv, Env, Files, Output, Procs, Launch } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
-import { Vec, Map, hashString, stringEq } from "core";
+import { Vec, Map, hashString, stringEq, flatten } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
@@ -72,8 +72,8 @@ struct Run {
  * ranges and collation are identical too because glibc's `C.UTF-8` orders by code point, and `box`
  * has no `sed` — which is the one tool that does differ. `issues/system/0145`.
  */
-string[] childEnv(Cli cli, string dir) {
-  u8[]? path = cli.env("PATH").wait();
+string[] childEnv(Env env, string dir) {
+  u8[]? path = flatten(env.get("PATH").wait()).orElse(null);
   return [
                   "LC_ALL=C.UTF-8",
                   "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!)),
@@ -82,9 +82,8 @@ string[] childEnv(Cli cli, string dir) {
 }
 
 /** One script, on one shell, in `dir`, with a bound on how long it may take. */
-Run runOne(Cli cli, string cmd, string script, string dir, string[] env) {
-  Exec r = cli.execWithIn("timeout", [seconds(), cmd, "-c", script], u8[](),
-                          env, true, false, dir).wait();
+Run runOne(Procs procs, string cmd, string script, string dir, string[] env) {
+  Exec r = flatten(procs.exec("timeout", [seconds(), cmd, "-c", script], u8[](), ChildEnv(true, env), Launch(dir, false, false, false)).wait()).unwrap();
   if (!r.ran()) { return Run("", 0 - 1, false); }
   return Run(string.fromBytes(r.stdout), r.status, r.status == KILLED);
 }
@@ -115,37 +114,41 @@ string about(string script) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string shell = "";
   bool trace = false;
   bool verbose = false;
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--trace") { trace = true; }
     else if (a == "--verbose") { verbose = true; }
     else if (shell == "" && !startsWith(a, "--")) { shell = a; }
   }
   if (shell == "") {
-    core.warn("usage: wac task corpus:through <shell-binary>");
-    core.warn("  wac build --allow-read --allow-write -o /tmp/boxsh packages/box/src/bin/sh.wac");
+    err.line("usage: wac task corpus:through <shell-binary>");
+    err.line("  wac build --allow-read --allow-write -o /tmp/boxsh packages/box/src/bin/sh.wac");
     return 2;
   }
 
   // Per agent, like every other scratch directory here — three of us share this machine.
-  string dir = scratch(cli, "corpus-through");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
-  string[] env = childEnv(cli, dir);
+  string dir = scratch(env, "corpus-through");
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
+  string[] env = childEnv(env, dir);
 
   string[] scripts = corpus();
   Vec<string> differ = Vec<string>.create();
   Vec<string> hung = Vec<string>.create();
   for (i32 i = 0; i < scripts.len(); i++) {
-    if (trace) { core.warn("... " + scripts[i]); }
-    Run theirs = runOne(cli, "bash", scripts[i], dir, env);
-    Run ours = runOne(cli, shell, scripts[i], dir, env);
+    if (trace) { err.line("... " + scripts[i]); }
+    Run theirs = runOne(procs, "bash", scripts[i], dir, env);
+    Run ours = runOne(procs, shell, scripts[i], dir, env);
     if (ours.hung && !theirs.hung) {
       hung.push(scripts[i]);
       differ.push(scripts[i]);
@@ -154,12 +157,12 @@ export i32 main(Sys sys) {
     if (ours.out != theirs.out || ours.status != theirs.status) { differ.push(scripts[i]); }
   }
 
-  core.log(itoa(scripts.len() - differ.len()) + "/" + itoa(scripts.len())
+  out.line(itoa(scripts.len() - differ.len()) + "/" + itoa(scripts.len())
            + " agree with bash through " + shell);
 
   if (hung.len() > 0) {
-    core.log("  " + itoa(hung.len()) + " of them never finished, where bash did:");
-    for (i32 i = 0; i < hung.len(); i++) { core.log("      " + hung.get(i)); }
+    out.line("  " + itoa(hung.len()) + " of them never finished, where bash did:");
+    for (i32 i = 0; i < hung.len(); i++) { out.line("      " + hung.get(i)); }
   }
 
   // Grouped by what each script is about, biggest group first — the shape of the gap rather than its
@@ -179,21 +182,21 @@ export i32 main(Sys sys) {
       if (n > most) { most = n; best = seen.get(i); }
     }
     if (best == "") { break; }
-    core.log("  " + rightly(itoa(most), 3) + "  " + best);
+    out.line("  " + rightly(itoa(most), 3) + "  " + best);
     counts.set(best, 0);
   }
 
   if (verbose) {
     for (i32 i = 0; i < differ.len(); i++) {
-      Run theirs = runOne(cli, "bash", differ.get(i), dir, env);
-      Run ours = runOne(cli, shell, differ.get(i), dir, env);
-      core.log("\n" + differ.get(i));
-      core.log("  theirs(" + itoa(theirs.status) + ") " + cut(theirs.out));
-      core.log("  ours(" + itoa(ours.status) + ")   " + cut(ours.out));
+      Run theirs = runOne(procs, "bash", differ.get(i), dir, env);
+      Run ours = runOne(procs, shell, differ.get(i), dir, env);
+      out.line("\n" + differ.get(i));
+      out.line("  theirs(" + itoa(theirs.status) + ") " + cut(theirs.out));
+      out.line("  ours(" + itoa(ours.status) + ")   " + cut(ours.out));
     }
   }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return 0;
 }
 

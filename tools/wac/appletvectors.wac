@@ -15,8 +15,8 @@
 // replay keeps a handful of cases live as a canary, which is what a wholesale change of environment would
 // trip; a subtler one is caught when somebody re-runs this and reads the diff.
 
-import { Change, Cli, Core, Exec, Sys } from "std";
-import { Buf } from "core";
+import { Change, Cli, Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Buf, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { ErrCase, Fixture, cases, fixtures, operandCases, operandErrorCases, operandErrorFixtures,
          appletCases, appletFixtures, notDirCases, notDirFixtures, operandFixtures } from "../../packages/box/test/wac/cases.wac";
@@ -56,21 +56,20 @@ i32 maxBytes() { return 8192; }
  * says or files an applet opens, where `C` is the right question and the one every other differential in
  * the repository asks.
  */
-export Exec askBash(Cli cli, string dir, string script) {
-  return cli.exec("env",
-                  [
+export Exec askBash(Procs procs, string dir, string script) {
+  return flatten(procs.exec("env", [
                            "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                            "LC_ALL=C", "HOME=" + dir,
                            "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                            "bash", dir, script
-                  ],
-                  u8[]()).wait();
+                  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
-string versionOf(Cli cli, string program, string flag) {
-  Exec r = cli.exec(program, [flag], u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "(absent)"; }
-  string all = string.fromBytes(r.stdout);
+string versionOf(Procs procs, string program, string flag) {
+  auto rRan = flatten(procs.exec(program, [flag], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "(absent)"; }
+  string all = string.fromBytes(r!.stdout);
   i32 nl = all.indexOf("\n");
   return nl < 0 ? all : all.slice(0, nl);
 }
@@ -87,57 +86,59 @@ void field(Buf out, string tag, u8[] bytes) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 a = capture(core, cli, cases(), fixtures(), behaviourVectors());
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  i32 a = capture(err, out, fs, procs, cases(), fixtures(), behaviourVectors());
   if (a != 0) { return a; }
-  i32 b = capture(core, cli, operandCases(), operandFixtures(), operandVectors());
+  i32 b = capture(err, out, fs, procs, operandCases(), operandFixtures(), operandVectors());
   if (b != 0) { return b; }
   ErrCase[] errs = operandErrorCases();
   string[] scripts = string[].filled(errs.len(), "");
   for (i32 i = 0; i < errs.len(); i++) { scripts[i] = errs[i].script; }
-  i32 c = capture(core, cli, scripts, operandErrorFixtures(), operandErrorVectors());
+  i32 c = capture(err, out, fs, procs, scripts, operandErrorFixtures(), operandErrorVectors());
   if (c != 0) { return c; }
-  i32 d = capture(core, cli, notDirCases(), notDirFixtures(), notDirVectors());
+  i32 d = capture(err, out, fs, procs, notDirCases(), notDirFixtures(), notDirVectors());
   if (d != 0) { return d; }
-  return capture(core, cli, appletCases(), appletFixtures(), appletVectors());
+  return capture(err, out, fs, procs, appletCases(), appletFixtures(), appletVectors());
 }
 
 /** One sweep: every case asked of the real tools, written to `path`. */
-i32 capture(Core core, Cli cli, string[] list, Fixture[] fs, string path) {
+i32 capture(Output err, Output out, Files fs, Procs procs, string[] list, Fixture[] fixtures, string path) {
   string dir = ".cache/wac-appletvectors";
 
-  Buf out = Buf.create();
-  out.pushAll("wac-applet-vectors 1\n".toBytes());
-  out.pushAll(("bash: " + versionOf(cli, "bash", "--version") + "\n").toBytes());
-  out.pushAll(("coreutils: " + versionOf(cli, "cp", "--version") + "\n").toBytes());
-  out.pushAll("locale: LC_ALL=C\n".toBytes());
-  out.pushAll(("count: " + itoa(list.len()) + "\n").toBytes());
+  Buf held = Buf.create();
+  held.pushAll("wac-applet-vectors 1\n".toBytes());
+  held.pushAll(("bash: " + versionOf(procs, "bash", "--version") + "\n").toBytes());
+  held.pushAll(("coreutils: " + versionOf(procs, "cp", "--version") + "\n").toBytes());
+  held.pushAll("locale: LC_ALL=C\n".toBytes());
+  held.pushAll(("count: " + itoa(list.len()) + "\n").toBytes());
 
   for (i32 i = 0; i < list.len(); i++) {
-    cli.remove(dir, true).wait();
-    if (!layFixtures(cli, dir, fs)) {
-      core.warn("appletvectors: cannot lay the fixtures in " + dir);
+    fs.remove(dir, true).wait();
+    if (!layFixtures(fs, dir, fixtures)) {
+      err.line("appletvectors: cannot lay the fixtures in " + dir);
       return 1;
     }
-    Exec got = askBash(cli, dir, list[i]);
+    Exec got = askBash(procs, dir, list[i]);
     if (!got.ran()) {
-      core.warn("appletvectors: bash would not start: " + got.error);
+      err.line("appletvectors: bash would not start: " + got.error);
       return 1;
     }
-    field(out, "S", list[i].toBytes());
-    out.pushAll(("X " + itoa(got.status) + "\n").toBytes());
-    field(out, "O", got.stdout);
-    field(out, "E", got.stderr);
+    field(held, "S", list[i].toBytes());
+    held.pushAll(("X " + itoa(got.status) + "\n").toBytes());
+    field(held, "O", got.stdout);
+    field(held, "E", got.stderr);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
-  Change wrote = cli.writeFile(path, out.bytes()).wait();
-  if (!wrote.ok()) {
-    core.warn("appletvectors: cannot write " + path + " — " + wrote.message);
+  auto wrote = flatten(fs.writeFile(path, held.bytes()).wait());
+  if (wrote.isErr()) {
+    err.line("appletvectors: cannot write " + path + " — \{wrote.err()!}");
     return 1;
   }
-  core.log(path + ": " + itoa(list.len()) + " cases, " + itoa(out.len / 1024) + " KB");
+  out.line(path + ": " + itoa(list.len()) + " cases, " + itoa(held.len / 1024) + " KB");
   return 0;
 }
 

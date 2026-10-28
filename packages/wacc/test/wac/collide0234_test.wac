@@ -26,9 +26,10 @@
 // still *works* with the colliding name in the link rather than merely compiling.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { putFile } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /**
  * The two files, with `name` as the colliding struct.
@@ -39,9 +40,8 @@ import { putFile } from "../../../wactest/src/host.wac";
  * *writes* and at this issue's subject, neither of which would be what was wrong.
  * `issues/system/0229`.
  */
-string writeTree(Cli cli, string dir, string name) {
-  string why = putFile(cli, dir + "/one.wac",
-      "export struct " + name + " { i32 x; }\nexport i32 one() { return 1; }\n");
+string writeTree(Files fs, string dir, string name) {
+  string why = putFile(fs, dir + "/one.wac", "export struct " + name + " { i32 x; }\nexport i32 one() { return 1; }\n");
   if (why != "") { return why; }
   // `../..` from `.cache/<dir>/` back to the repository root, then into the compiler's own source.
   // The entry answers 0 when the library discriminated, so the exit status is the assertion.
@@ -51,8 +51,7 @@ string writeTree(Cli cli, string dir, string name) {
   // test about the *linker*. What this file needs of the library is that it can tell a broken program
   // from a clean one, so that is what it asks: some diagnostics for one, none for the other. A library
   // that returned a constant, or an empty array, fails both halves.
-  return putFile(cli, dir + "/agg.wac",
-      "import { one } from \"./one.wac\";\n" +
+  return putFile(fs, dir + "/agg.wac", "import { one } from \"./one.wac\";\n" +
       "import { dumpTypeErrors } from \"../../packages/wacc/src/api.wac\";\n" +
       "export i32 main() {\n" +
       "  i32 bad = dumpTypeErrors(\"export i32 f(string s) { return s - 1; }\".toBytes()).len();\n" +
@@ -61,18 +60,16 @@ string writeTree(Cli cli, string dir, string name) {
       "}\n");
 }
 
-string buildIn(Cli cli, string dir) {
-  Exec r = cli.exec("/bin/sh",
-    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' build agg.wac -o m 2>&1"],
-    u8[]()).wait();
-  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+string buildIn(Env env, Procs procs, string dir) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cd '" + dir + "' && '" + wacBinary(env) + "' build agg.wac -o m 2>&1"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
 }
 
-i32 runIn(Cli cli, string dir) {
-  Exec r = cli.exec("/bin/sh",
-    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' run agg.wac > /dev/null 2>&1; echo $?"],
-    u8[]()).wait();
-  string out = string.fromBytes(r.stdout);
+i32 runIn(Env env, Procs procs, string dir) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cd '" + dir + "' && '" + wacBinary(env) + "' run agg.wac > /dev/null 2>&1; echo $?"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  string out = string.fromBytes(r!.stdout);
   return out.indexOf("0") == 0 ? 0 : 1;
 }
 
@@ -84,20 +81,23 @@ i32 runIn(Cli cli, string dir) {
  * 227; `JsxAttr` at 106 and 222. Both earlier uses are enum variant payloads, which is the record whose
  * type was not re-resolved. The other three of the five are `Param`, `Stmt` and `Lvalue`.
  */
-export string test_structs_named_like_ones_the_library_uses_do_not_break_it(Core core, Cli cli) {
+export string test_structs_named_like_ones_the_library_uses_do_not_break_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] names = ["Arm", "JsxAttr"];
   for (i32 i = 0; i < names.len(); i++) {
-    string dir = cli.cwd().wait() + "/.cache/collide0234-" + names[i];
-    cli.remove(dir, true).wait();
-    string whyTree = writeTree(cli, dir, names[i]);
+    string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/collide0234-" + names[i];
+    fs.remove(dir, true).wait();
+    string whyTree = writeTree(fs, dir, names[i]);
     t.isTrue(whyTree == "", whyTree);
-    string built = buildIn(cli, dir);
+    string built = buildIn(env, procs, dir);
     t.isTrue(built.indexOf("cannot emit") < 0,
         "declaring `" + names[i] + "` broke the library again — 0234a: " + built);
-    t.eqI32(runIn(cli, dir), 0,
+    t.eqI32(runIn(env, procs, dir), 0,
         names[i] + ": it built but the library answered wrongly, which is worse");
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
   }
   return t.report();
 }
@@ -108,15 +108,18 @@ export string test_structs_named_like_ones_the_library_uses_do_not_break_it(Core
  * A name the compiler does not declare anywhere. If this ever fails the harness is broken rather than
  * the compiler, and the test above would have been passing for no reason.
  */
-export string test_the_same_program_with_a_name_the_compiler_never_declares(Core core, Cli cli) {
+export string test_the_same_program_with_a_name_the_compiler_never_declares(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/collide0234-ok";
-  cli.remove(dir, true).wait();
-  string whyTree = writeTree(cli, dir, "Zork");
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/collide0234-ok";
+  fs.remove(dir, true).wait();
+  string whyTree = writeTree(fs, dir, "Zork");
   t.isTrue(whyTree == "", whyTree);
-  string built = buildIn(cli, dir);
+  string built = buildIn(env, procs, dir);
   t.isTrue(built.indexOf("cannot emit") < 0, "the control did not build: " + built);
-  t.eqI32(runIn(cli, dir), 0, "the control answered wrongly, so the harness is what is wrong");
-  cli.remove(dir, true).wait();
+  t.eqI32(runIn(env, procs, dir), 0, "the control answered wrongly, so the harness is what is wrong");
+  fs.remove(dir, true).wait();
   return t.report();
 }

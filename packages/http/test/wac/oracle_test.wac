@@ -36,7 +36,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { Outcome, oracle, outcomeOf } from "./nodeoracle.wac";
 
 /** The target an accepted case reported, or `""`. */
@@ -47,8 +47,8 @@ string targetOf(Outcome o) {
   }
 }
 
-export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case(
-    Core core, Cli cli) {
+export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // Interleaved deliberately, so a result recorded against a neighbour is visible whichever
   // direction it slipped.
@@ -74,7 +74,7 @@ export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_wi
     for (i32 i = 0; i < texts.len(); i++) { cases[rep * texts.len() + i] = texts[i].toBytes(); }
   }
 
-  Outcome[] got = oracle(t, cli, cases, -1);
+  Outcome[] got = oracle(t, procs, cases, -1);
   t.eqI32(got.len(), n, "one answer per case");
   if (got.len() != n) { return t.report(); }
 
@@ -109,15 +109,15 @@ string[] clockCases() {
   ];
 }
 
-export string test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(
-    Core core, Cli cli) {
+export string test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] texts = clockCases();
   u8[][] cases = u8[][].filled(texts.len(), u8[]());
   for (i32 i = 0; i < texts.len(); i++) { cases[i] = texts[i].toBytes(); }
 
-  Outcome[] hurried = oracle(t, cli, cases, -1);
-  Outcome[] patient = oracle(t, cli, cases, 0);
+  Outcome[] hurried = oracle(t, procs, cases, -1);
+  Outcome[] patient = oracle(t, procs, cases, 0);
   t.eqI32(hurried.len(), texts.len(), "the hurried run answered every case");
   t.eqI32(patient.len(), texts.len(), "the patient run answered every case");
   if (hurried.len() != texts.len() || patient.len() != texts.len()) { return t.report(); }

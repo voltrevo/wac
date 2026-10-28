@@ -19,8 +19,9 @@
 // "nothing" quietly — and every caller should still put a floor under the count, because git
 // succeeding with a short list is a different way to get the same wrong answer.
 
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Launch, Output, Procs } from "std";
 import { startsWith } from "./strings.wac";
+import { flatten } from "core";
 
 /** Every path git tracks, in git's order. Traps if git cannot say. */
 /**
@@ -35,13 +36,14 @@ import { startsWith } from "./strings.wac";
  * Raw is still right for some: a conflict-marker check wants every tracked file, vision included.
  * The rule is whether the guard has an *opinion* about the file or is only looking at its bytes.
  */
-export string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", ["ls-files"], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("repo: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+export string[] tracked(Output err, Procs procs) {
+  auto rRan = flatten(procs.exec("git", ["ls-files"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("repo: git ls-files failed: " + ((r is not null) ? string.fromBytes(r!.stderr) : "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"));
     trap;
   }
-  return nonEmptyLines(string.fromBytes(r.stdout));
+  return nonEmptyLines(string.fromBytes(r!.stdout));
 }
 
 /** `s` cut at newlines with the empty pieces dropped, which is what a command's output needs. */
@@ -99,8 +101,8 @@ bool isVision(string path) { return path == "vision" || startsWith(path, "vision
  * `"core/ticket.wac"` naming a file in `vision/core`. One exclusion in the walk is what the operator
  * asked for — the alternative is a clause per guard and a new one every time a guard is written.
  */
-export string[] sourceFiles(Core core, Cli cli, string[] exts, string[] skip) {
-  string[] all = tracked(core, cli);
+export string[] sourceFiles(Output err, Procs procs, string[] exts, string[] skip) {
+  string[] all = tracked(err, procs);
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (hasExtension(all[i], exts) && !under(all[i], skip) && !isVision(all[i])) { n = n + 1; }

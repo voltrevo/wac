@@ -3,69 +3,72 @@
 //     wac test --allow-read --allow-write packages/box/test/wac/grants_test.wac
 //
 // From `box.test.ts`, where five tests each built and spawned a real executable for one reason: an
-// in-process frame could not be given *fewer* grants than the test process holds. `childCli` hands the
-// parent's capabilities through untouched — right for the shell, where a child is as trusted as the
-// shell that spawned it (`issues/system/0028`) — so there was no argument that would say less.
+// in-process run could not be given *fewer* grants than the test process holds.
 //
-// `childCliGranted` is that argument. `Cli` is a struct of function fields, so it replaces the few that
-// matter rather than restating all forty-two, and each withheld one answers exactly what a host answers
-// an ungranted program: `FAULT_NOT_GRANTED` and *"Not granted to this application"*.
+// It can now, because an applet is handed a `Files` rather than reaching for the host's: `readOnly`
+// refuses every change, `writeOnly` every look, and the two together leave nothing. Each refusal is a
+// `NotGranted`, which is the fault a host answers an ungranted program with — so an applet takes the
+// same branch here as it does when a real host refuses it.
 //
-// **The sentence is the claim, not the status.** A test that withheld a capability and got some other
-// message would prove that the *helper* refuses, not that the applet behaves as it does when a real
-// host refuses it — and every refusal in `box` is checked by its words.
+// **The sentence is the claim, not the status.** `packages/fs`'s `reason` words every `NotGranted` as a
+// host words one — "Not granted to this application" — whatever the narrowing's own message said, so
+// an applet refused here prints what it prints when a real host refuses it. Every refusal in `box` is
+// checked by its words.
 //
-// **Which is why one spawned test stays in `box.test.ts` and must not be tidied away.** Everything
-// here compares an applet against a sentence `childCliGranted` hard-codes. "a file still needs the
-// grant, and says so" compares it against the sentence a real host produces. Without it this file is
-// an oracle agreeing with itself: the helper could drift from all four hosts and every assertion below
-// would stay green.
+// **Which is why one spawned test stays in `box.test.ts` and must not be tidied away.** Everything here
+// compares an applet against a sentence `reason` hard-codes. "a file still needs the grant, and says
+// so" compares it against the sentence a real host produces. Without it this file is an oracle
+// agreeing with itself: `reason` could drift from all four hosts and every assertion below would stay
+// green.
 
-import { Cli, Core } from "std";
+import { Env, Files, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Frame, Grants, childCliGranted, childCore } from "../../../platform/src/frame.wac";
-import { UNKNOWN, dispatch } from "../../src/box.wac";
+import { Kept } from "../../../platform/src/stream.wac";
+import { bytesInput } from "../../../fs/src/trees.wac";
+import { dispatch } from "../../src/box.wac";
 import { parseList } from "../../src/lib/args.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 import { Ran } from "./replay.wac";
+import { flatten } from "core";
 
-/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-grants"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-grants"; }
 
-/** One applet, in a frame holding exactly `g` and nothing more. */
-async Ran runGranted(Core core, Cli cli, string dir, string[] argv, Grants g) {
-  Frame f = Frame.of(argv, u8[](), dir, false);
-  Core c = childCore(f, core);
-  Cli l = childCliGranted(f, cli, g);
-  i32 status = await dispatch(c, l, Fs.onHost(l, 0), parseList(argv, 1, argv[0]), argv[0]);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+/** One applet, standing in `dir`, handed exactly `fs` and nothing more. */
+async Ran runGranted(Sys sys, Files fs, string dir, string[] argv) {
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  i32 status = await dispatch(argv, bytesInput(u8[]()), err.out, out.out, sys.clock(), sys.random(), sys.env(),
+                              fs.relativeTo(dir), sys.net(), sys.procs(), () => false,
+                              parseList(argv, 1, argv[0]), argv[0]);
+  return Ran(string.fromBytes(out.bytes()), string.fromBytes(err.bytes()), status, out.bytes());
 }
 
 /**
  * A read the program was never granted says why, and fails.
  *
  * The message shape is the point rather than the status: a denied read must say *why*, which a
- * bool-returning `openInput` could not, and that is why `FileResult` carries a fault and a sentence.
+ * bool-returning `openInput` could not, and that is why a refusal is a fault carrying a sentence.
  */
-export async string test_a_denied_read_says_why(Core core, Cli cli) {
+export async string test_a_denied_read_says_why(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string path = "\{dir}/readable";
-  t.isTrue(cli.writeFile(path, "alpha beta\n".toBytes()).wait().ok(), "wrote a readable file");
+  t.isTrue(flatten(fs.writeFile(path, "alpha beta\n".toBytes()).wait()).isOk(), "wrote a readable file");
 
   // **The control comes first**, and it is not decoration: it says the file is there and `cat` works,
   // so the refusal below is about the grant and not about the fixture or the applet.
-  Ran granted = await runGranted(core, cli, dir, ["cat", path], Grants.everything());
+  Ran granted = await runGranted(sys, fs, dir, ["cat", path]);
   t.eqI32(granted.status, 0, "cat with the grant: \{granted.err}");
   t.eqStr(granted.out, "alpha beta\n", "and it reads the file");
 
-  Ran denied = await runGranted(core, cli, dir, ["cat", path], Grants.nothing());
+  Ran denied = await runGranted(sys, fs.readOnly().writeOnly(), dir, ["cat", path]);
   t.eqI32(denied.status, 1, "cat without the read grant fails");
   t.isTrue(denied.err.indexOf("Not granted to this application") >= 0, denied.err);
   t.eqI32(denied.outBytes.len(), 0, "and writes nothing: \{denied.out}");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -77,24 +80,25 @@ export async string test_a_denied_read_says_why(Core core, Cli cli) {
  * GitHub wac-mono#17 was about, where `remove` answered a bool and "no such file" and "not permitted"
  * arrived identically.
  */
-export async string test_rm_f_without_the_write_grant_is_a_denial(Core core, Cli cli) {
+export async string test_rm_f_without_the_write_grant_is_a_denial(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string doomed = "\{dir}/doomed";
-  t.isTrue(cli.writeFile(doomed, "x".toBytes()).wait().ok(), "wrote the file");
+  t.isTrue(flatten(fs.writeFile(doomed, "x".toBytes()).wait()).isOk(), "wrote the file");
 
-  Grants readOnly = Grants(true, false, true);
-  Ran denied = await runGranted(core, cli, dir, ["rm", "-f", doomed], readOnly);
+  Ran denied = await runGranted(sys, fs.readOnly(), dir, ["rm", "-f", doomed]);
   t.eqI32(denied.status, 1, "no write grant is denial, not silence: \{denied.err}");
-  t.isTrue(cli.stat(doomed).wait().exists, "and the file is still there");
+  t.isTrue(flatten(fs.stat(doomed).wait()).isOk(), "and the file is still there");
 
   // With the grant it goes, so the refusal above is the grant talking and not `rm` being broken.
-  t.eqI32((await runGranted(core, cli, dir, ["rm", "-f", doomed], Grants.everything())).status, 0,
+  t.eqI32((await runGranted(sys, fs, dir, ["rm", "-f", doomed])).status, 0,
           "and with the grant it is removed");
-  t.isFalse(cli.stat(doomed).wait().exists, "the file is gone");
+  t.isFalse(flatten(fs.stat(doomed).wait()).isOk(), "the file is gone");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -109,22 +113,23 @@ export async string test_rm_f_without_the_write_grant_is_a_denial(Core core, Cli
  * anyway would pass on the status alone, and that is the failure mode a capability check has: the
  * answer is right and the effect happened.
  */
-export async string test_without_the_write_grant_nothing_is_made(Core core, Cli cli) {
+export async string test_without_the_write_grant_nothing_is_made(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string wanted = "\{dir}/denied";
 
-  Grants readOnly = Grants(true, false, true);
-  Ran denied = await runGranted(core, cli, dir, ["mkdir", wanted], readOnly);
+  Ran denied = await runGranted(sys, fs.readOnly(), dir, ["mkdir", wanted]);
   t.eqI32(denied.status, 1, "mkdir without the grant should fail: \{denied.err}");
-  t.isFalse(cli.stat(wanted).wait().exists, "and should make nothing");
+  t.isFalse(flatten(fs.stat(wanted).wait()).isOk(), "and should make nothing");
 
   // The control: the same command with the grant does make it, so the refusal is the grant talking.
-  t.eqI32((await runGranted(core, cli, dir, ["mkdir", wanted], Grants.everything())).status, 0,
+  t.eqI32((await runGranted(sys, fs, dir, ["mkdir", wanted])).status, 0,
           "and with the grant it is made");
-  t.isTrue(cli.stat(wanted).wait().exists, "the directory is there");
+  t.isTrue(flatten(fs.stat(wanted).wait()).isOk(), "the directory is there");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

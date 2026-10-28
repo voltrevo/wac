@@ -18,9 +18,10 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Cli, Core, Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { isBuiltinSpec } from "../../src/coretext.wac";
+import { flatten } from "core";
 
 /** Only the entry. Whatever the tree contributes has to come from inside the compiler. */
 string[] paths() { return ["main.wac"]; }
@@ -86,13 +87,15 @@ export string test_a_path_below_a_builtin_is_refused() {
 }
 
 /** `wac check <entry>` run with the working directory somewhere the repository is not. */
-Exec checkFrom(Cli cli, string dir, string entry) {
-  return cli.exec("/bin/sh",
-                  ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " check " + entry],
-                  u8[]()).wait();
+Exec checkFrom(Env env, Procs procs, string dir, string entry) {
+  return flatten(procs.exec("/bin/sh", ["-c", "cd " + dir + " && exec " + binaryPath(env) + " check " + entry], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
-export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli) {
+export string test_the_cli_serves_the_tree_from_any_directory(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The three cases above go through the compiler, which does no I/O; this one goes through the
   // command, which is all of it.** The distinction is the whole point of the test: the file-reading
   // walk in `example/wacc.wac` used to hand a built-in specifier to `readFile` like any other, and
@@ -101,10 +104,10 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   // runs from the root and every one of them agreed. From anywhere else the command answered
   // *`wacc: cannot read core/result.wac`*, which is the opposite of what an embedded tree is for.
   T t = T.create();
-  string dir = scratch(cli, "builtinspec");
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "builtinspec");
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   // One file per spelling, so a failure names which one rather than "the directory".
   //
@@ -124,13 +127,13 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
     "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n"
   ];
   for (i32 i = 0; i < names.len(); i++) {
-    Change w = cli.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait();
-    t.isTrue(w.ok(), "could not write " + names[i] + " — " + w.message);
-    if (!w.ok()) { return t.report(); }
+    auto w = flatten(fs.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait());
+    t.isTrue(w.isOk(), "could not write " + names[i] + " — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
+    if (w.isErr()) { return t.report(); }
   }
 
   for (i32 i = 0; i < names.len(); i++) {
-    Exec r = checkFrom(cli, dir, names[i]);
+    Exec r = checkFrom(env, procs, dir, names[i]);
     t.isTrue(r.ran(), names[i] + ": the command did not run — " + r.error);
     if (!r.ran()) { continue; }
     t.eqI32(r.status, 0,
@@ -141,17 +144,17 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   // The canary, and it is the one that matters here: a walk that answered *every* unreadable path
   // out of the tree would pass the cases above and accept a specifier naming nothing. This one has to
   // still fail, from the same directory, by the same command.
-  Change w = cli.writeFile(dir + "/absent.wac",
+  auto w = flatten(fs.writeFile(dir + "/absent.wac",
                            ("import { Nope } from \"core/nope.wac\";\n" +
-                            "export i32 main() { return 0; }\n").toBytes()).wait();
-  t.isTrue(w.ok(), "could not write absent.wac — " + w.message);
-  if (w.ok()) {
-    Exec r = checkFrom(cli, dir, "absent.wac");
+                            "export i32 main() { return 0; }\n").toBytes()).wait());
+  t.isTrue(w.isOk(), "could not write absent.wac — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
+  if (w.isOk()) {
+    Exec r = checkFrom(env, procs, dir, "absent.wac");
     t.isTrue(r.ran() && r.status != 0, "a specifier the tree does not have was accepted");
   }
 
-  cli.remove(dir, true).wait();
-  core.log("    checked three programs from " + dir);
+  fs.remove(dir, true).wait();
+  out.line("    checked three programs from " + dir);
   return t.report();
 }
 
@@ -167,21 +170,24 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
  * So this compares the text. A bare word is what somebody typed out of habit, so the message has to
  * carry the fix rather than the category, and it has to carry it whichever compiler they ran.
  */
-export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Core core, Cli cli) {
+export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "barespec");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "barespec");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  Change w = cli.writeFile(dir + "/root_bare.wac",
+  auto w = flatten(fs.writeFile(dir + "/root_bare.wac",
                            ("import { Read } from core;\n" +
-                            "export i32 main() { Read r = Read.End; return 0; }\n").toBytes()).wait();
-  t.isTrue(w.ok(), "could not write root_bare.wac — " + w.message);
-  if (!w.ok()) { return t.report(); }
+                            "export i32 main() { Read r = Read.End; return 0; }\n").toBytes()).wait());
+  t.isTrue(w.isOk(), "could not write root_bare.wac — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
+  if (w.isErr()) { return t.report(); }
 
-  Exec waccSaid = checkFrom(cli, dir, "root_bare.wac");
+  Exec waccSaid = checkFrom(env, procs, dir, "root_bare.wac");
   t.isTrue(waccSaid.ran(), "wac did not run — " + waccSaid.error);
   if (waccSaid.ran()) {
     string said = string.fromBytes(waccSaid.stderr) + string.fromBytes(waccSaid.stdout);
@@ -197,12 +203,12 @@ export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Co
   // two wordings, because a bare `core` is a habit and a bare anything-else is a mistake. wacc used
   // to answer this one with *that file does not export this name*, pointed at the imported name
   // rather than the specifier, which sends a reader to check a spelling that was never wrong.
-  Change w2 = cli.writeFile(dir + "/other_bare.wac",
+  auto w2 = flatten(fs.writeFile(dir + "/other_bare.wac",
                             ("import { X } from nope;\n" +
-                             "export i32 main() { return 0; }\n").toBytes()).wait();
-  t.isTrue(w2.ok(), "could not write other_bare.wac — " + w2.message);
-  if (w2.ok()) {
-    Exec r2 = checkFrom(cli, dir, "other_bare.wac");
+                             "export i32 main() { return 0; }\n").toBytes()).wait());
+  t.isTrue(w2.isOk(), "could not write other_bare.wac — " + "\{w2.isErr() ? "\{w2.err()!}" : ""}");
+  if (w2.isOk()) {
+    Exec r2 = checkFrom(env, procs, dir, "other_bare.wac");
     t.isTrue(r2.ran(), "wac did not run — " + r2.error);
     if (r2.ran()) {
       string said2 = string.fromBytes(r2.stderr) + string.fromBytes(r2.stdout);
@@ -215,7 +221,7 @@ export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Co
                 "wacc still blames the import list for a specifier problem — " + said2);
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -247,26 +253,30 @@ export string test_the_builtin_test_answers_for_the_two_names() {
  * refusal is right, but its message is about mappings, and for a `core/` prefix a mapping is not the
  * question. Since `core` and `std` are named whole, the fix is the same for every path below them.
  */
-export string test_a_path_below_a_builtin_names_the_package_to_import(Core core, Cli cli) {
+export string test_a_path_below_a_builtin_names_the_package_to_import(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "builtin-typo");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "builtin-typo");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change w = cli.writeFile(dir + "/m.wac",
-      ("import { Result } from \"core/result.wac\";\nexport i32 main() { return 0; }\n").toBytes()).wait();
-  t.isTrue(w.ok(), "wrote the program — " + w.message);
+  auto w = flatten(fs.writeFile(dir + "/m.wac",
+      ("import { Result } from \"core/result.wac\";\nexport i32 main() { return 0; }\n").toBytes()).wait());
+  t.isTrue(w.isOk(), "wrote the program — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
 
-  Exec r = cli.exec(binaryPath(cli), ["check", dir + "/m.wac"], u8[]()).wait();
-  t.isTrue(r.ran(), "wac did not run — " + r.error);
-  if (r.ran()) {
-    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-    t.isTrue(r.status != 0, "core/result.wac was accepted: " + said);
+  auto rRan = flatten(procs.exec(binaryPath(env), ["check", dir + "/m.wac"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "wac did not run — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is not null)) {
+    string said = string.fromBytes(r!.stderr) + string.fromBytes(r!.stdout);
+    t.isTrue(r!.status != 0, "core/result.wac was accepted: " + said);
     t.isTrue(contains(said, "import from \"core\""),
              "the refusal did not name the package to import: " + said);
     t.isTrue(!contains(said, "names no mapping"),
              "a built-in prefix was refused as a mapping candidate: " + said);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -282,20 +292,22 @@ export string test_a_path_below_a_builtin_names_the_package_to_import(Core core,
  * caller can supply any text it likes for `std`, and what is being checked here is that
  * the *embedded* copy is what answers. So the name is one no version of that file has ever had.
  */
-export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_the_file(
-    Core core, Cli cli) {
+export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_the_file(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "builtin-stale");
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
-  Change w = cli.writeFile(dir + "/stale.wac",
+  string dir = scratch(env, "builtin-stale");
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
+  auto w = flatten(fs.writeFile(dir + "/stale.wac",
                            ("import { Core, Cli, notInAnyVersionOfPlatform } "
                             + "from \"std\";\n"
-                            + "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n").toBytes()).wait();
-  t.isTrue(w.ok(), "could not write stale.wac — " + w.message);
-  if (w.ok()) {
-    Exec r = checkFrom(cli, dir, "stale.wac");
+                            + "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n").toBytes()).wait());
+  t.isTrue(w.isOk(), "could not write stale.wac — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
+  if (w.isOk()) {
+    Exec r = checkFrom(env, procs, dir, "stale.wac");
     t.isTrue(r.ran(), "wac did not run — " + r.error);
     if (r.ran()) {
       string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -308,6 +320,6 @@ export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_t
                "wacc did not name the command that fixes it — " + said);
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

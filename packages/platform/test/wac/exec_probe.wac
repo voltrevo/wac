@@ -1,4 +1,4 @@
-// What `Cli.execWith`'s three parameters do, from inside a program, as a transcript.
+// What `Procs.exec`'s environment and inheritance do, from inside a program, as a transcript.
 //
 // Two callers, for two reasons that need the same program. `exec_test.wac` runs it because the
 // *inherited* case cannot be checked by the program that asks for it — a child writes to this
@@ -16,31 +16,29 @@
 // variables differs between a program launched by `deno` and one launched by `node`, and neither
 // number is the claim. "Did the name we passed arrive" is.
 
-import { Cli, Core, Exec, Sys } from "std";
+import { Exec, Sys, ChildEnv, Launch, Output, Procs } from "std";
+import { flatten } from "core";
 
 string yn(bool b) { return b ? "yes" : "no"; }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   // Inherited: the line below arrives on *this* program's stdout, and the answer carries none of it.
-  Exec a = cli.execWith("/bin/echo", ["from the grandchild"], u8[](), string[](),
-                        false, true).wait();
-  cli.writeErr(("inherit: ran=\{yn(a.ran())} status=\{a.status}" +
+  Exec a = flatten(procs.exec("/bin/echo", ["from the grandchild"], u8[](), ChildEnv(false, string[]()), Launch("", false, true, false)).wait()).unwrap();
+  err.write(("inherit: ran=\{yn(a.ran())} status=\{a.status}" +
                 " buffered=\{a.stdout.len()}/\{a.stderr.len()}\n").toBytes());
 
   // Handed a name, and the environment it would have had anyway is still there.
-  Exec b = cli.execWith("/usr/bin/printenv", string[](), u8[](),
-                        ["WAC_EXEC_PROBE=handed over"], false, false).wait();
+  Exec b = flatten(procs.exec("/usr/bin/printenv", string[](), u8[](), ChildEnv(false, ["WAC_EXEC_PROBE=handed over"]), Launch("", false, false, false)).wait()).unwrap();
   string had = string.fromBytes(b.stdout);
-  cli.writeErr(("env: ran=" + yn(b.ran()) +
+  err.write(("env: ran=" + yn(b.ran()) +
                 " handed=" + yn(had.indexOf("WAC_EXEC_PROBE=handed over") >= 0) +
                 " kept-others=" + yn(had.indexOf("PATH=") >= 0) + "\n").toBytes());
 
   // Cleared: exactly what was passed, which is `issues/system/0198`'s end state.
-  Exec c = cli.execWith("/usr/bin/printenv", string[](), u8[](),
-                        ["WAC_EXEC_PROBE=only this"], true, false).wait();
-  cli.writeErr(("cleared: ran=" + yn(c.ran()) + " only-what-was-passed=" +
+  Exec c = flatten(procs.exec("/usr/bin/printenv", string[](), u8[](), ChildEnv(true, ["WAC_EXEC_PROBE=only this"]), Launch("", false, false, false)).wait()).unwrap();
+  err.write(("cleared: ran=" + yn(c.ran()) + " only-what-was-passed=" +
                 yn(string.fromBytes(c.stdout) == "WAC_EXEC_PROBE=only this\n") + "\n").toBytes());
 
   // **A child that died by signal, which every host answers `-1` for and none of them was checked on.**
@@ -53,14 +51,12 @@ export i32 main(Sys sys) {
   // `ran=yes` is the other half of the claim and the easier one to get wrong: the program started, so
   // this is not `error`'s business — a signal is how it *ended*. `issues/system/0184` wants exactly
   // this distinction one level up, for a wasm trap.
-  Exec d = cli.execWith("/bin/sh", ["-c", "kill -9 $$"], u8[](), string[](), false, true)
-              .wait();
-  cli.writeErr(("signalled: ran=\{yn(d.ran())} status=\{d.status}" +
+  Exec d = flatten(procs.exec("/bin/sh", ["-c", "kill -9 $$"], u8[](), ChildEnv(false, string[]()), Launch("", false, true, false)).wait()).unwrap();
+  err.write(("signalled: ran=\{yn(d.ran())} status=\{d.status}" +
                 " signalled=\{yn(d.signalled())}\n").toBytes());
 
-  Exec e = cli.execWith("/bin/sh", ["-c", "exit 255"], u8[](), string[](), false, true)
-              .wait();
-  cli.writeErr(("exited: ran=\{yn(e.ran())} status=\{e.status}" +
+  Exec e = flatten(procs.exec("/bin/sh", ["-c", "exit 255"], u8[](), ChildEnv(false, string[]()), Launch("", false, true, false)).wait()).unwrap();
+  err.write(("exited: ran=\{yn(e.ran())} status=\{e.status}" +
                 " signalled=\{yn(e.signalled())}\n").toBytes());
   return 0;
 }

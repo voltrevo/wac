@@ -27,14 +27,14 @@ import { b64Unpadded, descriptorIdentity } from "../../src/routerdesc.wac";
 import { jsonFile, strOf, numOf, num64Of, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Files, Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 
 static string ORACLE = "packages/tor/test/oracle.mjs";
 
 /** The one real vote: the document, and the signature its embedded signing key made. */
-JsonObject theVote(Cli cli) {
-  return arrayOf(jsonFile(cli, "packages/tor/test/data/vote_vectors.json"),
+JsonObject theVote(Files fs) {
+  return arrayOf(jsonFile(fs, "packages/tor/test/data/vote_vectors.json"),
                           "votes").get(0).object()!;
 }
 
@@ -59,15 +59,17 @@ u8[] rLines(u8[] doc) {
   return out.toBytes();
 }
 
-export string test_the_signed_span_is_tors(Core core, Cli cli) {
+export string test_the_signed_span_is_tors(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonObject v = theVote(cli);
+  JsonObject v = theVote(fs);
   u8[] vote = strOf(v, "vote").toBytes();
   t.isTrue(vote.len() > 3000, "the vote is a whole document");
 
   Lines lines = Lines.create();
   lines.add("rsarecoverder " + strOf(v, "signingKeyDer") + " " + strOf(v, "signature"));
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "what the embedded signing key recovers");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "what the embedded signing key recovers");
   if (!a.ok) { return t.report(); }
   u8[] want = decoded(word(a.lines[0], 1));
   t.eqI32(want.len(), 20, "the signing key recovered a SHA-1 digest");
@@ -97,12 +99,13 @@ export string test_the_signed_span_is_tors(Core core, Cli cli) {
 }
 
 
-export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli) {
+export string test_the_entries_are_ordered_by_identity_digest(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The same relays' descriptors, from the router-status vector. Kept separate from the vote
   // because that vector is paired by digest and this one is a whole document; the two together are
   // what let the ordering rule be checked against the order tor's authority actually wrote.
-  JsonArray cases = arrayOf(jsonFile(cli, "packages/tor/test/data/votestatus_vectors.json"),
+  JsonArray cases = arrayOf(jsonFile(fs, "packages/tor/test/data/votestatus_vectors.json"),
                             "cases");
   i32 n = cases.len();
   t.isTrue(n >= 3, "several relays, so the order is a real question");
@@ -119,7 +122,7 @@ export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli
   for (i32 i = 0; i < n; i++) {
     joined = i == 0 ? lines[i] : concat(concat(joined, "\n".toBytes()), lines[i]);
   }
-  t.eqBytes(joined, rLines(strOf(theVote(cli), "vote").toBytes()),
+  t.eqBytes(joined, rLines(strOf(theVote(fs), "vote").toBytes()),
             "our entry order is the order tor's authority wrote");
 
   // And the order really is ascending by digest, asserted directly so a failure names the rule.
@@ -166,7 +169,7 @@ u8[] stubDescriptor(string nickname, string fingerprintHex) {
           "router-signature\n").toBytes();
 }
 
-export string test_the_order_is_on_bytes_not_on_the_base64(Core core, Cli cli) {
+export string test_the_order_is_on_bytes_not_on_the_base64() {
   T t = T.create();
 
   // Two identities that the two orderings disagree about. Base64's alphabet is `A-Z a-z 0-9 + /` by
@@ -207,9 +210,10 @@ u8[] nicknameOf(u8[] line) {
   return out;
 }
 
-export string test_the_vote_tor_accepted_is_reproduced(Core core, Cli cli) {
+export string test_the_vote_tor_accepted_is_reproduced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject g = jsonFile(cli, "packages/tor/test/data/vote_generated.json");
+  JsonObject g = jsonFile(fs, "packages/tor/test/data/vote_generated.json");
 
   AuthorityKeys k = AuthorityKeys(
     decoded(strOf(g, "identityN")), decoded(strOf(g, "identityE")), decoded(strOf(g, "identityD")),

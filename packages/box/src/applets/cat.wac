@@ -12,24 +12,23 @@
 // still what runs, because that is the property `cat` is for. GNU's bundles are `-A` = `-vET`,
 // `-e` = `-vE`, `-t` = `-vT`, and `-b` overrides `-n`.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";
+import { Opened, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { Buf } from "core";
-import { Fs } from "../../../fs/src/fs.wac";
+import { Buf, flatten } from "core";
 
-export async i32 cat(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 cat(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   // Every letter GNU has, so an unknown one is the caller's mistake and gets GNU's own sentence. `-u` is
   // accepted and does nothing there too — it means "unbuffered", and this is.
   u8[] flags = a.flags.toBytes();
   for (u8 flag in flags) {
     if (!known(flag as i32)) {
       u8[] one = u8[].filled(1, flag);
-      core.warn("\{a.name}: invalid option -- '\{string.fromBytes(one)}'");
-      core.warn("Try '\{a.name} --help' for more information.");
+      err.line("\{a.name}: invalid option -- '\{string.fromBytes(one)}'");
+      err.line("Try '\{a.name} --help' for more information.");
       return 1;
     }
   }
@@ -42,21 +41,21 @@ export async i32 cat(Core core, Cli cli, Fs fs, Args a) {
   bool numberFilled = has(a, 'b');
   bool squeeze = has(a, 's');
 
-  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return await copy(core, cli, fs, a); }
+  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return await copy(stdin, err, out, fs, a); }
 
   // Numbering and squeezing run *across* the operands, as GNU's do: `cat -n f g` keeps counting.
   i32 count = 0;
   bool wasBlank = false;
   i32 files = operandCount(a, 0);
   i32 many = files == 0 ? 1 : files;
-  Sink out = Sink.create(cli);
+  Sink sink = Sink.to(out);
   i32 status = 0;
   for (i32 f = 0; f < many; f++) {
     // Flushed *before* opening, because the diagnostic goes straight to standard error while output is
     // block-buffered here — so without this, `a` arrives after the complaint about the file between it
     // and `b`. GNU's `error()` flushes standard output for exactly this reason.
-    out.flush();
-    Input in = await openStream(core, cli, fs, a, f, -1);
+    sink.flush();
+    Opened in = await openStream(stdin, err, fs, a, f);
     // **An operand that will not open does not end the run.** GNU reports it, carries on with the next
     // file and exits 1 at the end — `cat a missing b` prints both `a` and `b` — and stopping here meant
     // every file after the first bad one silently produced nothing. Found by moving `backingsprocess_test.wac`
@@ -101,24 +100,24 @@ export async i32 cat(Core core, Cli cli, Fs fs, Args a) {
       // `-E` marks a line *end*, and a last line that arrived without a newline has none: `printf x |
       // cat -A` is `x`, not `x$`. The flag shows what is there rather than asserting where lines stop.
       if (ends && l.nl) { line.push('$'); }
-      if (!emitTo(out, line.take(), l.nl)) { out.flush(); return status; }
+      if (!emitTo(sink, line.take(), l.nl)) { sink.flush(); return status; }
     }
   }
-  out.flush();
+  sink.flush();
   return status;
 }
 
 /** The plain path: bytes through, a chunk at a time, which is what `cat` is for. */
-async i32 copy(Core core, Cli cli, Fs fs, Args a) {
+async i32 copy(Input stdin, Output err, Output out, Files fs, Args a) {
   i32 at = 0;
   bool opened = false;
   // An operand that would not open is skipped and remembered: the status at the end, not a stop.
   bool failed = false;
   // The feed travels with the span: it changes when the run moves to the next operand, and on anything
   // but a host mount it is serving bytes rather than pulling on the process's own input.
-  Feed fed = Feed.of(cli, u8[]());
+  Feed fed = Feed.of(u8[]());
   while (true) {
-    Span got = await nextSpan(core, cli, fs, a, at, opened, fed);
+    Span got = await nextSpan(stdin, err, fs, a, at, opened, fed);
     fed = got.fed;
     failed = failed || got.failed;
     if (!got.ok) { return 1; }
@@ -128,7 +127,7 @@ async i32 copy(Core core, Cli cli, Fs fs, Args a) {
     // `write` answers false when the other end has gone, which is the only signal there is — this
     // used to discard it and keep reading, so `cat` of an endless source went on for ever after
     // whatever was reading it had exited. Success, as it is for every filter.
-    if (!cli.write(got.bytes)) { return failed ? 1 : 0; }
+    if (!flatten(out.write(got.bytes).wait()).isOk()) { return failed ? 1 : 0; }
   }
   return failed ? 1 : 0;
 }

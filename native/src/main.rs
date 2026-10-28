@@ -1889,16 +1889,18 @@ fn dispatch(
                 _ => 0,
             };
             let cwd = read_string(caller, &params[3])?;
-            // The `INHERIT_*` mask; only the input bit is the host's — `DETACHED` (4) is std's
-            // `Cli.of`'s business. `issues/system/0312b`.
-            let inherit = matches!(arg(4), Val::I32(n) if n & 1 != 0);
+            // The `INHERIT_*` mask: the input and output bits are the host's — `DETACHED` (4) is std's
+            // business. `issues/system/0312b`.
+            let inherit_bits = match arg(4) { Val::I32(n) => n, _ => 0 };
+            let inherit = inherit_bits & 1 != 0;
+            let inherit_out = inherit_bits & 2 != 0;
             // Whether this program promises to answer the child's filesystem questions — see
             // `spawnSelf` in platform.wac. Not a grant: it widens nothing.
             let serve_fs = matches!(arg(5), Val::I32(n) if n != 0);
             let Some(world) = caller.data().world.clone() else {
                 return no_spawn_here(caller, results);
             };
-            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, false, results);
+            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out, results);
         }
         // **Synchronous, unlike almost everything here.** Nothing is submitted and no ticket comes
         // back: instantiating a module and calling one of its exports both finish before the host call
@@ -3134,8 +3136,9 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
     // empty, exiting 0. `issues/system/0277c`.
     //
     // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
-    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
-    // redirects, as it does on the host: a child that says its output is a file gets a file."*
+    // `Frame`'s capture, and `packages/platform`'s frame (gone since design/system/0013 step 5) stated
+    // the answer: *"`openOutput` redirects, as it does on the host: a child that says its output is a
+    // file gets a file."*
     if !to_stderr {
         // A redirected output is only standard output's: the error stream is where a program says
         // what went wrong, and sending that to the file being written would hide it.

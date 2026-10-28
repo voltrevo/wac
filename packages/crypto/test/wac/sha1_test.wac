@@ -20,7 +20,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { sha1, Sha1 } from "../../src/sha1.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -28,8 +28,8 @@ import { decoded } from "../../../codec/src/hex.wac";
 static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** Ask node — a `sha1 <msg> <claimed>` line per digest this file computed. */
-void checkSha1(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", [ORACLE], lines, what);
+void checkSha1(T t, Procs procs, Lines lines, string what) {
+  check(t, procs, "node", [ORACLE], lines, what);
 }
 
 /** A `sha1` line: the message, and what we say its digest is. */
@@ -56,7 +56,8 @@ export string test_the_published_vectors() {
   return t.report();
 }
 
-export string test_every_length_through_two_blocks(Core core, Cli cli) {
+export string test_every_length_through_two_blocks(Sys sys) {
+  Procs procs = sys.procs();
   // Every length rather than the boundaries, since it is cheap and picking cleverly is a
   // chance to pick wrongly. 0 to 130 covers both block edges and the padding cases either
   // side of 56.
@@ -67,11 +68,12 @@ export string test_every_length_through_two_blocks(Core core, Cli cli) {
     claim(lines, m, sha1(m));
   }
   t.eqI32(lines.n, 131, "one claim per length");
-  checkSha1(t, cli, lines, "every length through two blocks");
+  checkSha1(t, procs, lines, "every length through two blocks");
   return t.report();
 }
 
-export string test_the_incremental_form_matches_the_one_shot(Core core, Cli cli) {
+export string test_the_incremental_form_matches_the_one_shot(Sys sys) {
+  Procs procs = sys.procs();
   // Split at every offset, because a buffer that mishandles a partial block is right for
   // whole-block feeds and wrong for the rest — which is exactly how Tor will use it, one
   // 509-byte cell payload at a time into a 64-byte block.
@@ -92,11 +94,12 @@ export string test_the_incremental_form_matches_the_one_shot(Core core, Cli cli)
   Sha1 one = Sha1.create();
   for (i32 i = 0; i < msg.len(); i++) { one.update(slice(msg, i, i + 1)); }
   claim(lines, msg, one.finish());
-  checkSha1(t, cli, lines, "the incremental form");
+  checkSha1(t, procs, lines, "the incremental form");
   return t.report();
 }
 
-export string test_peek_does_not_end_the_stream(Core core, Cli cli) {
+export string test_peek_does_not_end_the_stream(Sys sys) {
+  Procs procs = sys.procs();
   // The property Tor depends on. After hashing a prefix, `peek` must give that prefix's
   // digest *and* leave the state able to continue — an implementation that finalised in
   // place would give a correct first answer and rubbish after it.
@@ -116,11 +119,12 @@ export string test_peek_does_not_end_the_stream(Core core, Cli cli) {
   claim(lines, both, s.peek());                 // the stream continued correctly past it
   u8[] finished = s.finish();
   claim(lines, both, finished);                 // finish agrees with the last peek
-  checkSha1(t, cli, lines, "peek");
+  checkSha1(t, procs, lines, "peek");
   return t.report();
 }
 
-export string test_a_long_message_crosses_many_blocks(Core core, Cli cli) {
+export string test_a_long_message_crosses_many_blocks(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Lines lines = Lines.create();
   i32[] lens = [511, 512, 513, 1000, 4096];
@@ -128,6 +132,6 @@ export string test_a_long_message_crosses_many_blocks(Core core, Cli cli) {
     u8[] m = fill(lens[i], i);
     claim(lines, m, sha1(m));
   }
-  checkSha1(t, cli, lines, "long messages");
+  checkSha1(t, procs, lines, "long messages");
   return t.report();
 }

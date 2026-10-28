@@ -10,38 +10,41 @@
 // sealed session does not — is `backingsprocess_test.wac`'s canary, which still spawns, and is what stops all of
 // this being three identical things agreeing with each other.
 
-import { Cli, Core } from "std";
+import { Env, Files, Stat, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runImaged, show } from "./replay.wac";
+import { flatten } from "core";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string workDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-imaged"; }
+string workDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-imaged"; }
 
 /** A fresh directory with nothing in it, so "what appeared beside the image" is answerable. */
-bool freshDir(Cli cli, string dir) {
-  cli.remove(dir, true).wait();
-  return cli.mkdir(dir, true).wait().ok();
+bool freshDir(Files fs, string dir) {
+  fs.remove(dir, true).wait();
+  return flatten(fs.mkdir(dir, true).wait()).isOk();
 }
 
-export async string test_what_one_session_writes_the_next_one_reads(Core core, Cli cli) {
+export async string test_what_one_session_writes_the_next_one_reads(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = workDir(cli);
-  t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
+  string dir = workDir(env);
+  t.isTrue(freshDir(fs, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  Ran first = await runImaged(core, cli, image, "mkdir /data; mkdir /data/deep; echo one > /data/notes");
+  Ran first = await runImaged(sys, image, "mkdir /data; mkdir /data/deep; echo one > /data/notes");
   t.eqI32(first.status, 0, "first run: \{first.err}");
 
   // A second session. Nothing carried over but the file.
-  Ran second = await runImaged(core, cli, image, "ls /data; cat /data/notes");
+  Ran second = await runImaged(sys, image, "ls /data; cat /data/notes");
   t.eqI32(second.status, 0, "second run: \{second.err}");
   t.eqStr(second.out, "deep\nnotes\none\n", show(second.out));
 
   // And a third, so that saving is not something that only works on a filesystem loaded from nothing.
-  Ran third = await runImaged(core, cli, image, "echo two >> /data/notes; cat /data/notes");
+  Ran third = await runImaged(sys, image, "echo two >> /data/notes; cat /data/notes");
   t.eqI32(third.status, 0, "third run: \{third.err}");
-  t.eqStr((await runImaged(core, cli, image, "cat /data/notes")).out, "one\ntwo\n", "the fourth session");
-  cli.remove(dir, true).wait();
+  t.eqStr((await runImaged(sys, image, "cat /data/notes")).out, "one\ntwo\n", "the fourth session");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -52,40 +55,44 @@ export async string test_what_one_session_writes_the_next_one_reads(Core core, C
  * host, because that path streams through `openOutput`. It does, but only in a world that can spawn, and
  * neither shell is built with one.
  */
-export async string test_a_redirection_lands_in_the_image_and_not_on_the_host(Core core, Cli cli) {
+export async string test_a_redirection_lands_in_the_image_and_not_on_the_host(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = workDir(cli);
-  t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
+  string dir = workDir(env);
+  t.isTrue(freshDir(fs, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  await runImaged(core, cli, image, "mkdir /d");
-  Ran run = await runImaged(core, cli, image, "echo hello | cat > /d/up; echo plain > /d/flat");
+  await runImaged(sys, image, "mkdir /d");
+  Ran run = await runImaged(sys, image, "echo hello | cat > /d/up; echo plain > /d/flat");
   t.eqI32(run.status, 0, run.err);
 
-  Ran back = await runImaged(core, cli, image, "cat /d/up; cat /d/flat");
+  Ran back = await runImaged(sys, image, "cat /d/up; cat /d/flat");
   t.eqStr(back.out, "hello\nplain\n", show(back.out));
 
   // Nothing of the sort appeared beside the image on the real disk.
-  string[]? beside = cli.readDir(dir).wait();
+  string[]? beside = flatten(fs.readDir(dir).wait()).ok();
   t.eqStr(joined(beside), "session.wacimg", "something was written to the host");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export async string test_a_new_image_is_an_empty_world_not_an_error(Core core, Cli cli) {
+export async string test_a_new_image_is_an_empty_world_not_an_error(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = workDir(cli);
-  t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
+  string dir = workDir(env);
+  t.isTrue(freshDir(fs, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  Ran run = await runImaged(core, cli, image, "ls /");
+  Ran run = await runImaged(sys, image, "ls /");
   t.eqI32(run.status, 0, run.err);
   // `/dev`, `/proc` and `/bin` are there from the start — design/0001 steps 6 and 7 — and none of them
   // holds anything that is saved, so an empty session is one with nothing *of its own* in it.
   t.eqStr(run.out, "bin\ndev\nproc\n", "a fresh session was not empty: \{show(run.out)}");
   // And it saved one, so the next run is a load rather than another empty start.
-  t.isTrue(cli.stat(image).wait().size > 0, "no image was written for an empty session");
-  cli.remove(dir, true).wait();
+  t.isTrue(flatten(fs.stat(image).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).size > 0, "no image was written for an empty session");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -95,16 +102,18 @@ export async string test_a_new_image_is_an_empty_world_not_an_error(Core core, C
  * The session whose work is most worth keeping is the one that ended badly. A shell that saved only on
  * success would lose exactly that.
  */
-export async string test_a_session_that_fails_still_saves_what_it_did(Core core, Cli cli) {
+export async string test_a_session_that_fails_still_saves_what_it_did(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = workDir(cli);
-  t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
+  string dir = workDir(env);
+  t.isTrue(freshDir(fs, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  Ran run = await runImaged(core, cli, image, "mkdir /kept; nosuchcommand");
+  Ran run = await runImaged(sys, image, "mkdir /kept; nosuchcommand");
   t.isTrue(run.status != 0, "the failing script reported success");
-  t.eqStr((await runImaged(core, cli, image, "ls /")).out, "bin\ndev\nkept\nproc\n", "what the failed session kept");
-  cli.remove(dir, true).wait();
+  t.eqStr((await runImaged(sys, image, "ls /")).out, "bin\ndev\nkept\nproc\n", "what the failed session kept");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -114,14 +123,16 @@ export async string test_a_session_that_fails_still_saves_what_it_did(Core core,
  * Starting empty would be worse than stopping: the session would then *save over* the image it could not
  * read, turning one unreadable file into no file at all.
  */
-export async string test_an_unreadable_image_is_refused_rather_than_overwritten(Core core, Cli cli) {
+export async string test_an_unreadable_image_is_refused_rather_than_overwritten(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = workDir(cli);
-  t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
+  string dir = workDir(env);
+  t.isTrue(freshDir(fs, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  await runImaged(core, cli, image, "mkdir /precious");
-  u8[] good = cli.readFile(image).wait().bytes;
+  await runImaged(sys, image, "mkdir /precious");
+  u8[] good = flatten(fs.readFile(image).wait()).orElse(u8[]());
   t.isTrue(good.len() > 0, "no image to damage");
   if (good.len() == 0) { return t.report(); }
 
@@ -129,15 +140,15 @@ export async string test_an_unreadable_image_is_refused_rather_than_overwritten(
   for (i32 i = 0; i < good.len(); i++) { damaged[i] = good[i]; }
   i32 at = good.len() / 2;
   damaged[at] = damaged[at] ^ 0xff;
-  t.isTrue(cli.writeFile(image, damaged).wait().ok(), "cannot write the damaged image");
+  t.isTrue(flatten(fs.writeFile(image, damaged).wait()).isOk(), "cannot write the damaged image");
 
-  Ran run = await runImaged(core, cli, image, "ls /");
+  Ran run = await runImaged(sys, image, "ls /");
   t.isTrue(run.status != 0, "a damaged image was accepted");
   t.isTrue(run.err.indexOf("damaged") >= 0, run.err);
   // And it did not save over it: the bytes on disk are still the ones that could not be read.
-  u8[] after = cli.readFile(image).wait().bytes;
+  u8[] after = flatten(fs.readFile(image).wait()).orElse(u8[]());
   t.eqI32(after.len(), damaged.len(), "the unreadable image was overwritten");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 

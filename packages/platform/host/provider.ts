@@ -753,8 +753,8 @@ export function cliOf(
       args: Uint8Array[],
       grants: number,
       cwd: string,
-      // The `INHERIT_*` mask, as `spawn` takes: `DETACHED` (4) is the program's own business — std's
-      // `Cli.of` keeps the ticket from stopping the child — so only the input bit is the host's.
+      // The `INHERIT_*` mask, as `spawn` takes: `DETACHED` (4) is the program's own business — std
+      // keeps the ticket from stopping the child — so the input and output bits are the host's, in one byte.
       inherit: number,
       serveFs: boolean,
     ) =>
@@ -762,7 +762,7 @@ export function cliOf(
         send(OP.SPAWN_SELF,
           headed(
             i32le(grants),
-            headed(argvBytes(args), prefixed(str(cwd), headed(flag((inherit & 1) !== 0), flag(serveFs)))),
+            headed(argvBytes(args), prefixed(str(cwd), headed(new Uint8Array([inherit & 3]), flag(serveFs)))),
           ),
         ),
       ),
@@ -968,8 +968,9 @@ export function cliOf(
 /**
  * The modules this program has loaded, by handle — `issues/system/0240c`.
  *
- * **Module-scope rather than per `Cli`**, because a frame forwards `load`/`call`/`unload` unchanged
- * (`packages/platform/src/frame.wac`), so a handle taken through one `Cli` is used through another.
+ * **Module-scope rather than per `Cli`**, because nothing ties a handle to the `Cli` that took it: a
+ * frame used to forward `load`/`call`/`unload` unchanged, so one taken through one `Cli` was used
+ * through another, and the table should not care which.
  * One program is one realm here: a worker runs one program at a time, and a spawned child is a
  * different worker with its own copy of this module.
  */

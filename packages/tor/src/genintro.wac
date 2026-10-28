@@ -10,21 +10,24 @@
 //
 // Keys are derived from fixed seeds, so a change in the output is a change in the generator.
 
-import { Core, Cli, Change, FileResult, Sys } from "std";
+import { Change, Sys, Files, Output } from "std";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import { ed25519PublicKey } from "../../crypto/src/ed25519.wac";
 import { decode as hexDecode } from "../../codec/src/hex.wac";
 import { Introduce2, establishIntroCell, macSpanOf, parseIntroduce2, sigSpanOf } from "./hsservice.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: genintro <cell-out> <vector-out>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  if (argv.len() < 2) {
+    err.line("usage: genintro <cell-out> <vector-out>");
     return 1;
   }
-  string cellOut = string.fromBytes(cli.arg(0).wait());
-  string vectorOut = string.fromBytes(cli.arg(1).wait());
+  string cellOut = argv[0];
+  string vectorOut = argv[1];
 
   u8[] authSeed = seedFor(11);
   u8[] authPublic = ed25519PublicKey(authSeed);
@@ -36,13 +39,13 @@ export i32 main(Sys sys) {
 
   u8[] cell = establishIntroCell(authPublic, authSeed, khShort);
   if (cell.len() == 0) {
-    core.warn("genintro: could not build the cell");
+    err.line("genintro: could not build the cell");
     return 1;
   }
 
-  Change c = cli.writeFile(cellOut, cell).wait();
-  if (!c.ok()) {
-    core.warn("genintro: \{cellOut}: \{c.message}");
+  auto c = flatten(fs.writeFile(cellOut, cell).wait());
+  if (c.isErr()) {
+    err.line("genintro: \{cellOut}: \{c.isErr() ? "\{c.err()!}" : ""}");
     return 1;
   }
 
@@ -56,40 +59,41 @@ export i32 main(Sys sys) {
     "  \"macSpanLen\": \{macSpanOf(cell).len()},\n" +
     "  \"sigSpanLen\": \{sigSpanOf(cell).len()}\n" +
     "}\n";
-  Change v = cli.writeFile(vectorOut, json.toBytes()).wait();
-  if (!v.ok()) {
-    core.warn("genintro: \{vectorOut}: \{v.message}");
+  auto v = flatten(fs.writeFile(vectorOut, json.toBytes()).wait());
+  if (v.isErr()) {
+    err.line("genintro: \{vectorOut}: \{v.isErr() ? "\{v.err()!}" : ""}");
     return 1;
   }
-  core.warn("genintro: wrote a \{cell.len()}-byte cell to \{cellOut}");
+  err.line("genintro: wrote a \{cell.len()}-byte cell to \{cellOut}");
 
   // Three more arguments turn this into the other half: read an INTRODUCE2 cell — one tor built — and
   // report what our service recovers from it. The comparison is against the values tor was *given*,
   // which is what makes it a check across the seam rather than a round trip through our own code.
-  if (cli.argCount().wait() >= 5) {
-    string cellPath = string.fromBytes(cli.arg(2).wait());
-    u8[] encSecret = fromHex(cli.arg(3).wait());
-    u8[] subcred = fromHex(cli.arg(4).wait());
+  if (argv.len() >= 5) {
+    string cellPath = argv[2];
+    u8[] encSecret = fromHex(argv[3].toBytes());
+    u8[] subcred = fromHex(argv[4].toBytes());
     if (encSecret.len() != 32 || subcred.len() != 32) {
-      core.warn("genintro: the secret and subcredential must each be 32 bytes of hex");
+      err.line("genintro: the secret and subcredential must each be 32 bytes of hex");
       return 1;
     }
-    FileResult f = cli.readFile(cellPath).wait();
-    if (!f.ok) {
-      core.warn("genintro: \{cellPath}: \{f.error}");
+    auto fRead = flatten(fs.readFile(cellPath).wait());
+    u8[]? f = fRead.ok();
+    if ((f is null)) {
+      err.line("genintro: \{cellPath}: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
       return 1;
     }
-    Introduce2 got = parseIntroduce2(f.bytes, authPublic, encSecret, subcred);
+    Introduce2 got = parseIntroduce2(f!, authPublic, encSecret, subcred);
     if (!got.ok) {
-      cli.write("PARSE_FAILED\n".toBytes());
+      out.write("PARSE_FAILED\n".toBytes());
       return 1;
     }
-    cli.write("authKey \{hex(got.authKey)}\n".toBytes());
-    cli.write("clientPublic \{hex(got.clientPublic)}\n".toBytes());
-    cli.write("rendCookie \{hex(got.rendCookie)}\n".toBytes());
-    cli.write("rendOnionKey \{hex(got.rendOnionKey)}\n".toBytes());
-    cli.write("linkSpecifiers \{hex(got.linkSpecifiers)}\n".toBytes());
-    cli.write("PARSED\n".toBytes());
+    out.write("authKey \{hex(got.authKey)}\n".toBytes());
+    out.write("clientPublic \{hex(got.clientPublic)}\n".toBytes());
+    out.write("rendCookie \{hex(got.rendCookie)}\n".toBytes());
+    out.write("rendOnionKey \{hex(got.rendOnionKey)}\n".toBytes());
+    out.write("linkSpecifiers \{hex(got.linkSpecifiers)}\n".toBytes());
+    out.write("PARSED\n".toBytes());
   }
   return 0;
 }

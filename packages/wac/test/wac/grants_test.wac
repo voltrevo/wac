@@ -8,13 +8,13 @@
 //
 // **This is a refusal test, so it needs a canary.** "The shell could not read the file" is what a
 // broken narrowing and a working one both look like from outside; what distinguishes them is that
-// the *granted* case can. Every denial below is paired with the same call through a `Cli` that asked
-// for the capability, against the real host — so a narrowing that refused everything unconditionally
-// would fail here rather than pass.
+// the *granted* case can. Every denial below is paired with the same call through handles that asked
+// for the capability — so a narrowing that refused everything unconditionally would fail here rather
+// than pass.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FAULT_NOT_GRANTED, FAULT_NONE } from "std";
-import { Asked, Command, Parsed, askedFrom, commandNamed, forCommand, narrowed } from "../../src/grants.wac";
+import { Authority, Files, MemoryStore, NotGranted, Sys } from "std";
+import { Asked, Command, Parsed, askedFrom, authorityOf, commandNamed, filesFor, forCommand, within } from "../../src/grants.wac";
 
 /** The flags are read in order and stop at the first word that is not one. */
 export string test_the_grant_flags_are_read_and_the_rest_is_the_shells() {
@@ -63,75 +63,72 @@ export string test_the_flags_end_at_the_first_ordinary_word() {
 /**
  * The filesystem: refused when sealed, and — the canary — answered when asked for.
  *
- * **The file is written by the test, through a granted `Cli`, at an absolute path.** The first
- * version read `wac.json5` from the working directory on the grounds that every host runs from the
- * repository root; there is no such file, so the canary failed with `FAULT_NOT_FOUND` and would have
- * reported the narrowing broken if there had been one. A refusal test whose canary depends on the
- * layout of the checkout is measuring the checkout.
+ * Over a store in memory rather than the disk: what is measured is `filesFor`'s narrowing, and the store
+ * answers every operation that was not refused, so a narrowing that refused everything would fail here.
  */
-export string test_a_sealed_world_refuses_the_filesystem_and_a_granted_one_does_not(Core core,
-                                                                                    Cli cli) {
+export async string test_a_sealed_world_refuses_the_filesystem_and_a_granted_one_does_not(Sys sys) {
   T t = T.create();
-  string path = "/tmp/wac-grants-canary.txt";
+  Files store = MemoryStore.create(sys.clock()).asUser("root");
+  string path = "/canary.txt";
 
-  // Written through a world granted write, which is the first half of the canary: if this fails the
-  // rest of the test is about a file that is not there.
+  // Written through files granted write, the first half of the canary: if this fails the rest of the test
+  // is about a file that is not there.
   Asked writing = Asked.none();
   writing.write = true;
-  Cli writer = narrowed(cli, writing);
-  t.eqI32(writer.writeFile(path, "sealed".toBytes()).wait().fault, FAULT_NONE(),
-          "a world granted write reaches the filesystem");
+  t.isTrue((await filesFor(store, writing).writeFile(path, "sealed".toBytes())).isOk(),
+           "files granted write reach the store");
 
-  Cli sealed = narrowed(cli, Asked.none());
-  t.eqI32(sealed.readFile(path).wait().fault, FAULT_NOT_GRANTED(),
-          "a sealed world refuses a read with the code the hosts use");
-  t.eqBool(sealed.stat(path).wait().exists, false, "and will not say whether a path exists");
-  string[]? listed = sealed.readDir("/tmp").wait();
-  t.eqBool(listed is null, true, "and lists no directory");
+  Files sealed = filesFor(store, Asked.none());
+  match (await sealed.readFile(path)) {
+    Ok(b): { t.fail("sealed files read the canary"); }
+    Err(e): { t.isTrue(e is NotGranted, "sealed files refuse a read as NotGranted"); }
+  }
+  t.isTrue((await sealed.stat(path)).isErr(), "and will not say whether a path exists");
+  t.isTrue((await sealed.readDir("/")).isErr(), "and list no directory");
+  t.isTrue((await sealed.writeFile(path, "x".toBytes())).isErr(), "and write nothing");
 
-  // The second half. Same call, same file, through a `Cli` that asked — this must succeed, or the
-  // three assertions above are measuring nothing.
+  // The second half: the same call on the same file, through files that asked — this must succeed, or the
+  // assertions above are measuring nothing.
   Asked reading = Asked.none();
   reading.read = true;
-  Cli reader = narrowed(cli, reading);
-  t.eqI32(reader.readFile(path).wait().fault, FAULT_NONE(),
-          "a world granted read reaches the file, so the refusals above are the narrowing");
-  t.eqStr(string.fromBytes(reader.readFile(path).wait().bytes), "sealed",
-          "and reads back what the granted writer put there");
-
+  Files reader = filesFor(store, reading);
+  t.eqStr(string.fromBytes((await reader.readFile(path)).orElse(u8[]())), "sealed",
+          "files granted read reach the canary, so the refusals above are the narrowing");
   // Reading was asked for and writing was not: the grants are separate, not one switch.
-  t.eqI32(reader.writeFile(path, "no".toBytes()).wait().fault, FAULT_NOT_GRANTED(),
-          "read does not carry write with it");
+  match (await reader.writeFile(path, "no".toBytes())) {
+    Ok(v): { t.fail("read carried write with it"); }
+    Err(e): { t.isTrue(e is NotGranted, "read does not carry write with it"); }
+  }
   return t.report();
 }
 
-/** The network and the environment, refused the same way and for the same reason. */
-export string test_a_sealed_world_refuses_the_network_and_the_environment(Core core, Cli cli) {
+/** The network, the environment and running programs: not handed to a child that did not ask. */
+export string test_a_sealed_child_is_handed_no_network_environment_or_programs(Sys sys) {
   T t = T.create();
-  Cli sealed = narrowed(cli, Asked.none());
-  t.eqI32(sealed.connect("127.0.0.1", 9).wait().fault, FAULT_NOT_GRANTED(),
-          "a sealed world refuses to connect");
-  u8[]? path = sealed.env("PATH").wait();
-  t.eqBool(path is null, true,
-           "and answers null for an environment variable, which is what `Cli.env`'s type says " +
-           "`no value` is — see issues/system/0256c on the hosts disagreeing about this");
+  Authority sealed = authorityOf(Asked.none(), sys.files(), sys.net(), sys.env(), sys.procs());
+  t.isTrue(sealed.files is null, "no files");
+  t.isTrue(sealed.net is null, "no network");
+  t.isTrue(sealed.env is null, "no environment");
+  t.isTrue(sealed.procs is null, "no programs");
+  t.eqI32(sealed.grants(), 0, "and so no grant bits for the host");
+  Authority all = authorityOf(Asked(true, true, true, true, true), sys.files(), sys.net(), sys.env(), sys.procs());
+  t.isTrue((all.files is not null) && (all.net is not null) && (all.env is not null) && (all.procs is not null),
+           "the canary: asking for everything is handed everything this program holds");
   return t.report();
 }
 
 /**
  * Narrowing cannot widen, which is the property that makes the flags safe.
  *
- * `run_shell` had to check the asked-for grants against the payload's manifest, because a flag that
- * widened would be a hole. This cannot: what it passes on is the capability *this program* was
- * handed, so narrowing twice is still narrow.
+ * What is passed on is a handle *this program* holds, so narrowing twice is still narrow: asking a sealed
+ * authority for everything gets nothing.
  */
-export string test_narrowing_a_narrowed_world_does_not_widen_it(Core core, Cli cli) {
+export string test_narrowing_a_narrowed_world_does_not_widen_it(Sys sys) {
   T t = T.create();
-  Cli sealed = narrowed(cli, Asked.none());
-  Asked everything = Asked(true, true, true, true, true);
-  Cli asked = narrowed(sealed, everything);
-  t.eqI32(asked.readFile("/tmp/wac-grants-canary.txt").wait().fault, FAULT_NOT_GRANTED(),
-          "asking for everything from a sealed world still gets nothing");
+  Authority sealed = authorityOf(Asked.none(), sys.files(), sys.net(), sys.env(), sys.procs());
+  Authority asked = within(sealed, Asked(true, true, true, true, true));
+  t.isTrue((asked.files is null) && (asked.net is null) && (asked.env is null) && (asked.procs is null),
+           "asking for everything from a sealed authority still gets nothing");
   return t.report();
 }
 
@@ -180,29 +177,14 @@ export string test_an_unknown_command_word_is_no_command() {
   return t.report();
 }
 
-/**
- * ...and the policy is enforced, not merely tabulated.
- *
- * **The canary is conditional on this test's own world**, which is the honest shape here: if the
- * suite ran without `--allow-net` then *everything* is refused and the assertion below would pass
- * for the wrong reason. So the ambient capability is measured first, and the canary only runs when
- * there is a capability to narrow. A connection *refused* is not a connection *not granted*, and
- * telling those apart is the whole point of `FAULT_NOT_GRANTED` existing.
- */
-export string test_a_build_cannot_open_a_socket(Core core, Cli cli) {
+/** ...and the policy is enforced, not merely tabulated: what a command hands on is what the table says. */
+export string test_a_build_cannot_open_a_socket(Sys sys) {
   T t = T.create();
-  Cli building = narrowed(cli, forCommand(Command.Build));
-  t.eqI32(building.connect("127.0.0.1", 9).wait().fault, FAULT_NOT_GRANTED(),
-          "a `wac build` is refused the network by the command's own policy");
-
-  i32 ambient = cli.connect("127.0.0.1", 9).wait().fault;
-  if (ambient == FAULT_NOT_GRANTED()) {
-    // Nothing to narrow, so nothing was proved above beyond the shape. Said out loud rather than
-    // passed quietly: a refusal test whose canary could not run has measured less than it looks.
-    return t.report();
-  }
-  Cli updating = narrowed(cli, forCommand(Command.Update));
-  t.eqBool(updating.connect("127.0.0.1", 9).wait().fault != FAULT_NOT_GRANTED(), true,
-           "`wac update` keeps the network this world has, so the refusal above is the policy");
+  // What a build hands on has no network in it, whatever this program holds; the canary is that `update`'s
+  // does, out of the same handles.
+  Authority building = authorityOf(forCommand(Command.Build), sys.files(), sys.net(), sys.env(), sys.procs());
+  t.isTrue(building.net is null, "a `wac build` holds no network by the command's own policy");
+  Authority updating = authorityOf(forCommand(Command.Update), sys.files(), sys.net(), sys.env(), sys.procs());
+  t.isTrue(updating.net is not null, "`wac update` keeps the network this program has, so the refusal above is the policy");
   return t.report();
 }

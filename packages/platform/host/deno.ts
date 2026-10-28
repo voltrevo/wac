@@ -1133,8 +1133,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       if (selfSource === undefined) {
         return noSpawnHere("this launcher did not pass the program its own source");
       }
-      const { args, cwd, inheritIn, serveFs } = unpackSpawnSelf(p);
-      return startChild(selfSource, args, want(p), cwd, inheritIn, serveFs);
+      const { args, cwd, inheritIn, serveFs, inheritOut } = unpackSpawnSelf(p);
+      return startChild(selfSource, args, want(p), cwd, inheritIn, serveFs, inheritOut);
     },
 
     [OP.CLOSE_FEED]: (p) => {

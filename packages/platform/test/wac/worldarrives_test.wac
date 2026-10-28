@@ -14,14 +14,16 @@
 // So this asserts the two things a refused world cannot fake: that it arrived, and that a capability
 // on it answers.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Env, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
+import { flatten } from "core";
 
-export string test_a_test_is_handed_a_world_that_answers(Core core, Cli cli) {
+export string test_a_test_is_handed_a_world_that_answers(Sys sys) {
+  Env env = sys.env();
   T t = T.create();
   // `cwd` because every host has one and it needs no grant — a refusal here would be about the world
   // rather than about what this run was allowed to do.
-  string here = cli.cwd().wait();
+  string here = flatten(env.cwd().wait()).unwrap();
   t.isTrue(here.len() > 0, "the world arrived and `cwd` answered with something");
   return t.report();
 }

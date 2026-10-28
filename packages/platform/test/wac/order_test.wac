@@ -23,13 +23,14 @@
 // be careful about are the three things this is careful about, for the same reasons.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, Files, Sys } from "std";
 import { joined } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
-string sourceOf(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { trap; }
-  return string.fromBytes(f.bytes);
+string sourceOf(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  if ((f is null)) { trap; }
+  return string.fromBytes(f!);
 }
 
 bool isWordByte(i32 c) {
@@ -260,11 +261,11 @@ string[] providerOrder(T t, string src, string name) {
   return out;
 }
 
-export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order(
-    Core core, Cli cli) {
+export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string wac = sourceOf(cli, "std/platform.wac");
-  string prov = sourceOf(cli, "packages/platform/host/provider.ts");
+  string wac = sourceOf(fs, "std/platform.wac");
+  string prov = sourceOf(fs, "packages/platform/host/provider.ts");
 
   string[] structs = ["Cli", "Core"];
   for (i32 i = 0; i < structs.len(); i++) {

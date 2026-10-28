@@ -11,8 +11,9 @@
 // construct — `design/system/0009` D4 — so a run of this is a worklist rather than a verdict.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Files, Output, Sys } from "std";
 import { Stripped, strip } from "../../src/strip.wac";
+import { flatten } from "core";
 
 /** The bridge, in the order `wc -l` puts them: the biggest first, so a failure surfaces early. */
 string[] hostFiles() {
@@ -37,48 +38,52 @@ string[] hostFiles() {
   ];
 }
 
-export string test_the_bridge_strips(Core core, Cli cli) {
+export string test_the_bridge_strips(Sys sys) {
+  Output out = sys.stdout();
+  Files fs = sys.files();
   T t = T.create();
   string[] files = hostFiles();
   i32 ok = 0;
   i32 bytes = 0;
   string failures = "";
   for (i32 i = 0; i < files.len(); i++) {
-    FileResult f = cli.readFile(files[i]).wait();
-    if (!f.ok) {
-      failures = failures + "\n  \{files[i]}: cannot read — \{f.error}";
+    auto fRead = flatten(fs.readFile(files[i]).wait());
+    u8[]? f = fRead.ok();
+    if ((f is null)) {
+      failures = failures + "\n  \{files[i]}: cannot read — \{fRead.isErr() ? "\{fRead.err()!}" : ""}";
       continue;
     }
-    Stripped s = strip(f.bytes);
+    Stripped s = strip(f!);
     if (s.error != "") {
       failures = failures + "\n  \{files[i]}:\{s.line}:\{s.col}"
                + ": \{s.error}";
       continue;
     }
     // D1: the output occupies the input's bytes, so every position still points at the source.
-    if (s.out.len() != f.bytes.len()) {
+    if (s.out.len() != f!.len()) {
       failures = failures + "\n  \{files[i]}: output is \{s.out.len()}"
-               + " bytes against \{f.bytes.len()} in — positions have moved";
+               + " bytes against \{f!.len()} in — positions have moved";
       continue;
     }
     ok = ok + 1;
-    bytes = bytes + f.bytes.len();
+    bytes = bytes + f!.len();
   }
-  core.log("   stripped \{ok} of \{files.len()} files, "
+  out.line("   stripped \{ok} of \{files.len()} files, "
            + "\{bytes / 1024} KB");
   t.eqStr(failures, "",
           "these are the constructs left to handle, or the places the extent scan is wrong");
   return t.report();
 }
 
-export string test_nothing_that_looks_like_a_type_survives(Core core, Cli cli) {
+export string test_nothing_that_looks_like_a_type_survives(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // A weak but load-bearing check: after stripping, no line may still end in a bare type
   // annotation. It cannot prove correctness — only the differential in step 3 can — but it catches
   // a whole class of "the extent scan stopped early" without needing an oracle.
-  FileResult f = cli.readFile("packages/platform/host/ops.ts").wait();
-  if (!f.ok) { t.isTrue(false, "cannot read ops.ts"); return t.report(); }
-  Stripped s = strip(f.bytes);
+  u8[]? f = flatten(fs.readFile("packages/platform/host/ops.ts").wait()).ok();
+  if ((f is null)) { t.isTrue(false, "cannot read ops.ts"); return t.report(); }
+  Stripped s = strip(f!);
   t.eqStr(s.error, "", "it strips");
   if (s.error != "") { return t.report(); }
   string out = string.fromBytes(s.out);

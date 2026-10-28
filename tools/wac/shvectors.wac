@@ -14,8 +14,8 @@
 // the point — a refresh is a task somebody runs, and the git diff is the review. The replays keep ten
 // cases live as a canary, so a wholesale change of environment is still caught.
 
-import { Change, Cli, Core, Exec, Sys } from "std";
-import { Buf } from "core";
+import { Change, Cli, Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Buf, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { corpus, programs } from "../../packages/sh/test/wac/corpus.wac";
 
@@ -32,33 +32,32 @@ string vectorsPath() { return "packages/sh/test/vectors.txt"; }
  * directory** — `issues/system/0182`. `-i` clears, `-C` enters the directory, and the rest is the world
  * the expectation was taken in, which the header records.
  */
-Exec askBash(Cli cli, string dir, string script) {
+Exec askBash(Procs procs, string dir, string script) {
   // **Two bashes, and the inner one is the oracle.** `env` execs the program it resolves, so its argv[0]
   // is `/usr/bin/bash` — and bash prefixes its diagnostics with argv[0], which put `/usr/bin/bash: line
   // 1: …` in the expectations where every other route says `bash: …`. The outer shell enters the
   // directory and `exec`s the inner one *by name*, which is what the differential's `bash -c` gave.
-  return cli.exec("env",
-                  [
+  return flatten(procs.exec("env", [
                            "-i",
                            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                            "LC_ALL=C.UTF-8", "HOME=" + dir,
                            "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                            "bash", dir, script
-                  ],
-                  u8[]()).wait();
+                  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** The first line of `<program> --version`, or "(absent)". */
-string versionOf(Cli cli, string program, string flag) {
-  Exec r = cli.exec(program, [flag], u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "(absent)"; }
-  string all = string.fromBytes(r.stdout);
+string versionOf(Procs procs, string program, string flag) {
+  auto rRan = flatten(procs.exec(program, [flag], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "(absent)"; }
+  string all = string.fromBytes(r!.stdout);
   i32 nl = all.indexOf("\n");
   return nl < 0 ? all : all.slice(0, nl);
 }
 
 /** `<tag> <n>\n<bytes>\n`, or `<tag># <n> <sha>` when the bytes are over the cap. */
-void field(Buf out, Cli cli, string tag, u8[] bytes) {
+void field(Buf out, string tag, u8[] bytes) {
   if (bytes.len() > maxBytes()) {
     // Nothing in the corpus reaches this today; the rule is here so a future case cannot quietly put a
     // megabyte in the repository. A hash still fails the replay when the answer changes.
@@ -71,21 +70,23 @@ void field(Buf out, Cli cli, string tag, u8[] bytes) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Output stdout = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string[] scripts = corpus();
   string[] progs = programs();
   string dir = ".cache/wac-shvectors";
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) {
-    core.warn("shvectors: cannot make " + dir + " — " + made.message);
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) {
+    err.line("shvectors: cannot make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
     return 1;
   }
 
   Buf out = Buf.create();
   out.pushAll("wac-sh-vectors 1\n".toBytes());
-  out.pushAll(("bash: " + versionOf(cli, "bash", "--version") + "\n").toBytes());
-  out.pushAll(("coreutils: " + versionOf(cli, "cp", "--version") + "\n").toBytes());
+  out.pushAll(("bash: " + versionOf(procs, "bash", "--version") + "\n").toBytes());
+  out.pushAll(("coreutils: " + versionOf(procs, "cp", "--version") + "\n").toBytes());
   out.pushAll("locale: LC_ALL=C.UTF-8\n".toBytes());
   // The programs box carries, so a consumer of this file needs no second copy of the list: it is what
   // decides which half of the corpus replays a script, and `packages/sh/test/corpus.ts` reads it here.
@@ -101,29 +102,29 @@ export i32 main(Sys sys) {
     // A directory per script, because the corpus writes files and reads them back: sharing one would
     // let a case see the leavings of the case before it, which is the differential's own rule.
     string here = dir + "/c" + itoa(i);
-    cli.mkdir(here, true).wait();
-    Exec r = askBash(cli, here, script);
+    fs.mkdir(here, true).wait();
+    Exec r = askBash(procs, here, script);
     if (!r.ran()) {
-      core.warn("shvectors: bash would not start: " + r.error);
+      err.line("shvectors: bash would not start: " + r.error);
       return 1;
     }
     outBytes = outBytes + r.stdout.len();
     errBytes = errBytes + r.stderr.len();
-    field(out, cli, "S", script.toBytes());
+    field(out, "S", script.toBytes());
     out.pushAll(("P " + (namesProgram(script, progs) ? "1" : "0") + "\n").toBytes());
     out.pushAll(("X " + itoa(r.status) + "\n").toBytes());
-    field(out, cli, "O", r.stdout);
-    field(out, cli, "E", r.stderr);
-    cli.remove(here, true).wait();
+    field(out, "O", r.stdout);
+    field(out, "E", r.stderr);
+    fs.remove(here, true).wait();
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
-  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
-  if (!wrote.ok()) {
-    core.warn("shvectors: cannot write " + vectorsPath() + " — " + wrote.message);
+  auto wrote = flatten(fs.writeFile(vectorsPath(), out.bytes()).wait());
+  if (wrote.isErr()) {
+    err.line("shvectors: cannot write " + vectorsPath() + " — " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  core.log(vectorsPath() + ": " + itoa(scripts.len()) + " scripts, " +
+  stdout.line(vectorsPath() + ": " + itoa(scripts.len()) + " scripts, " +
            itoa(out.len / 1024) + " KB — " + itoa(outBytes) + " bytes of stdout, " +
            itoa(errBytes) + " of stderr");
   return 0;

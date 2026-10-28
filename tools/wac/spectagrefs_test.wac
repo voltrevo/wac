@@ -25,8 +25,8 @@
 // and is skipped. That distinction is the whole reason this cannot be a plain grep in a shell script.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
-import { Vec } from "core";
+import { Files, Sys } from "std";
+import { Vec, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 static string DIR = "spec";
@@ -56,8 +56,8 @@ bool endsWithDash(string s) { return s.len() > 0 && s.slice(s.len() - 1, s.len()
  * appendix D, whose whole content is the old specification's tags, retired or replaced and deliberately
  * declared nowhere here.
  */
-void chapters(Cli cli, string dir, Vec<string> out) {
-  string[]? entries = cli.readDir(dir).wait();
+void chapters(Files fs, string dir, Vec<string> out) {
+  string[]? entries = flatten(fs.readDir(dir).wait()).ok();
   if (entries is null) { return; }
   string[] es = entries!;
   for (i32 i = 0; i < es.len(); i++) {
@@ -65,14 +65,15 @@ void chapters(Cli cli, string dir, Vec<string> out) {
     if (name == "cases" || name.slice(0, 1) == "_" || name.slice(0, 1) == "." || name == "D-tag-migration.md") { continue; }
     string path = dir + "/" + name;
     if (name.len() > 3 && name.slice(name.len() - 3, name.len()) == ".md") { out.push(path); continue; }
-    chapters(cli, path, out);
+    chapters(fs, path, out);
   }
 }
 
-export string test_every_clause_the_spec_refers_to_is_one_it_declares(Core core, Cli cli) {
+export string test_every_clause_the_spec_refers_to_is_one_it_declares(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   Vec<string> found = Vec.create();
-  chapters(cli, DIR, found);
+  chapters(fs, DIR, found);
   string[] names = found.toArray();
   t.isTrue(names.len() > 0, "could not read " + DIR);
 
@@ -87,9 +88,9 @@ export string test_every_clause_the_spec_refers_to_is_one_it_declares(Core core,
   for (i32 pass = 0; pass < 2; pass++) {
     for (i32 i = 0; i < names.len(); i++) {
       string name = names[i];
-      FileResult f = cli.readFile(name).wait();
-      if (!f.ok) { continue; }
-      u8[] b = f.bytes;
+      u8[]? f = flatten(fs.readFile(name).wait()).ok();
+      if ((f is null)) { continue; }
+      u8[] b = f!;
       for (i32 k = 0; k + 1 < b.len(); k++) {
         // `§` is two bytes in UTF-8: 0xC2 0xA7.
         if (b[k] != 0xC2 || b[k + 1] != 0xA7) { continue; }

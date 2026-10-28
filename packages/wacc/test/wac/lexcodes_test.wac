@@ -21,8 +21,9 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, startsWith, trimmed, has } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { diagnoseGraph } from "../../src/api.wac";
+import { flatten } from "core";
 
 /**
  * The codes `lexMessage` in `diag.wac` answers for, into `out`; how many.
@@ -51,16 +52,18 @@ i32 messageCodes(string src, string[] out) {
   return n;
 }
 
-export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli) {
+export string test_lex_errors_the_code_table_itself_is_sound(Sys sys) {
+  Files fs = sys.files();
   // Without this, a code added to `lex.wac` would be compared against nothing.
   T t = T.create();
 
-  FileResult d = cli.readFile("packages/wacc/src/diag.wac").wait();
-  t.isTrue(d.ok, "diag.wac is readable — " + d.error);
-  if (!d.ok) { return t.report(); }
+  auto dRead = flatten(fs.readFile("packages/wacc/src/diag.wac").wait());
+  u8[]? d = dRead.ok();
+  t.isTrue((d is not null), "diag.wac is readable — " + "\{dRead.isErr() ? "\{dRead.err()!}" : ""}");
+  if ((d is null)) { return t.report(); }
 
   string[] declared = string[].filled(64, "");
-  i32 nDeclared = messageCodes(string.fromBytes(d.bytes), declared);
+  i32 nDeclared = messageCodes(string.fromBytes(d!), declared);
   // A floor, because an extraction that stopped matching would find nothing and then agree with a
   // `lex.wac` it had also failed to read.
   t.isTrue(nDeclared >= 7,
@@ -76,13 +79,14 @@ export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli)
     }
   }
 
-  FileResult f = cli.readFile("packages/wacc/src/lex.wac").wait();
-  t.isTrue(f.ok, "lex.wac is readable — " + f.error);
-  if (!f.ok) { return t.report(); }
+  auto fRead = flatten(fs.readFile("packages/wacc/src/lex.wac").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "lex.wac is readable — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
 
   // `err[A-Z]` rather than any `err…`: the latter also matches `errorStride()`, which is a layout
   // constant and not a code, and the count check duly reported eight where the table has seven.
-  string[] lines2 = splitLines(string.fromBytes(f.bytes));
+  string[] lines2 = splitLines(string.fromBytes(f!));
   i32 inSource = 0;
   string[] missing = string[].filled(16, "");
   i32 nMissing = 0;
@@ -133,7 +137,7 @@ export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli)
  * agents share. The two assertions are both needed: bounded, and **not zero** — a lexer that silently
  * gave up on the first bad byte would satisfy the first one perfectly.
  */
-export string test_lex_errors_dense_garbage_is_bounded(Core core, Cli cli) {
+export string test_lex_errors_dense_garbage_is_bounded() {
   T t = T.create();
   // No newline anywhere, which is the half that made the rendering quadratic.
   string junk = "";

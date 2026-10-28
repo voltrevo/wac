@@ -24,21 +24,21 @@
 // `wac task serve` starts it, and what is under test is the routing and the response writer.
 
 import { T, okOf } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { request } from "../../src/client.wac";
-import { Result } from "core";
+import { Result, flatten } from "core";
 import { Incoming } from "../../src/incoming.wac";
 import { jsonFile, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/httpinterop-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/httpinterop-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -67,28 +67,28 @@ i32 numberAfter(string text, string after) {
 }
 
 /** Node's server, on a port it chose, which it prints as `{"port":N}`. */
-Peer startNode(Core core, Cli cli, string dir) {
-  Daemon d = start(cli, "node packages/http/test/nodeserver.js", "\{dir}/node.log");
+Peer startNode(Clock clock, Files fs, Procs procs, string dir) {
+  Daemon d = start(procs, "node packages/http/test/nodeserver.js", "\{dir}/node.log");
   if (!d.ok()) { return Peer(d, -1, "node did not start — \{d.error}"); }
-  if (!waitForLogWithin(core, cli, d, "{\"port\":", 20000)) {
-    stop(cli, d);
-    return Peer(d, -1, "the node server did not start: \{logOf(cli, d)}");
+  if (!waitForLogWithin(clock, fs, d, "{\"port\":", 20000)) {
+    stop(procs, d);
+    return Peer(d, -1, "the node server did not start: \{logOf(fs, d)}");
   }
-  i32 port = numberAfter(logOf(cli, d), "{\"port\":");
-  return Peer(d, port, port > 0 ? "" : "no port in \{logOf(cli, d)}");
+  i32 port = numberAfter(logOf(fs, d), "{\"port\":");
+  return Peer(d, port, port > 0 ? "" : "no port in \{logOf(fs, d)}");
 }
 
 /** Our server, started the way `wac task serve` starts it, on a port it chooses. */
-Peer startWac(Core core, Cli cli, string dir) {
-  Daemon d = start(cli, "deno run -A packages/server/host/serve.ts 0", "\{dir}/wac.log");
+Peer startWac(Clock clock, Files fs, Procs procs, string dir) {
+  Daemon d = start(procs, "deno run -A packages/server/host/serve.ts 0", "\{dir}/wac.log");
   if (!d.ok()) { return Peer(d, -1, "the wac server did not start — \{d.error}"); }
   const string MARK = "listening on http://127.0.0.1:";
-  if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
-    stop(cli, d);
-    return Peer(d, -1, "the wac server never listened: \{logOf(cli, d)}");
+  if (!waitForLogWithin(clock, fs, d, MARK, 20000)) {
+    stop(procs, d);
+    return Peer(d, -1, "the wac server never listened: \{logOf(fs, d)}");
   }
-  i32 port = numberAfter(logOf(cli, d), MARK);
-  return Peer(d, port, port > 0 ? "" : "no port in \{logOf(cli, d)}");
+  i32 port = numberAfter(logOf(fs, d), MARK);
+  return Peer(d, port, port > 0 ? "" : "no port in \{logOf(fs, d)}");
 }
 
 string bodyOf(Incoming r) { return string.fromBytes(r.body); }
@@ -120,162 +120,181 @@ string lowered(string s) {
   return string.fromBytes(out);
 }
 
-Result<Incoming, string> get(Cli cli, i32 port, string path) {
-  return request(cli, ("GET").toBytes(), "127.0.0.1", port, path, u8[](), "");
+Result<Incoming, string> get(Net net, i32 port, string path) {
+  return request(net, ("GET").toBytes(), "127.0.0.1", port, path, u8[](), "");
 }
 
-export string test_wac_client_to_node_server_the_response_parser_against_a_real_server(
-    Core core, Cli cli) {
+export string test_wac_client_to_node_server_the_response_parser_against_a_real_server(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The diagonal that tests the parser. None of these responses was written to please it.
   T t = T.create();
-  string dir = freshScratch(t, cli, "parser");
-  Peer node = startNode(core, cli, dir);
+  string dir = freshScratch(t, env, fs, "parser");
+  Peer node = startNode(clock, fs, procs, dir);
   t.eqStr(node.error, "", "the node server is up");
   if (node.port <= 0) { return t.report(); }
 
-  if (Incoming plain matches okOf(t, get(cli, node.port, "/plain"), "/plain")) {
+  if (Incoming plain matches okOf(t, get(net, node.port, "/plain"), "/plain")) {
     t.eqI32(plain.status, 200, "/plain status");
     t.eqStr(bodyOf(plain), "hello", "/plain body");
   }
 
   // Node chose chunked here, because it did not know the length in advance. That is the coding path,
   // exercised by a server that picked it rather than by a test that asked for it.
-  if (Incoming chunked matches okOf(t, get(cli, node.port, "/chunked"), "/chunked")) {
+  if (Incoming chunked matches okOf(t, get(net, node.port, "/chunked"), "/chunked")) {
     t.eqStr(bodyOf(chunked), "chunked", "/chunked body");
     t.isTrue(hasHeader(chunked, "transfer-encoding"),
              "/chunked was not actually chunked, so this proves nothing");
   }
 
-  if (Incoming empty matches okOf(t, get(cli, node.port, "/empty"), "/empty")) {
+  if (Incoming empty matches okOf(t, get(net, node.port, "/empty"), "/empty")) {
     t.eqI32(empty.status, 204, "/empty status");
     t.eqStr(bodyOf(empty), "", "/empty had a body");
   }
 
   // Rule 5, from a server that really does close the connection to end the message.
-  if (Incoming closed matches okOf(t, get(cli, node.port, "/close"), "/close")) {
+  if (Incoming closed matches okOf(t, get(net, node.port, "/close"), "/close")) {
     t.eqStr(bodyOf(closed), "until close", "/close body");
     t.isTrue(closed.closeDelimited, "/close was not reported as close-delimited");
   }
 
-  if (Incoming headers matches okOf(t, get(cli, node.port, "/headers"), "/headers")) {
+  if (Incoming headers matches okOf(t, get(net, node.port, "/headers"), "/headers")) {
     t.isTrue(hasHeader(headers, "x-one") && hasHeader(headers, "x-two"), "/headers lost fields");
   }
 
-  if (Incoming missing matches okOf(t, get(cli, node.port, "/nope"), "/nope")) {
+  if (Incoming missing matches okOf(t, get(net, node.port, "/nope"), "/nope")) {
     t.eqI32(missing.status, 404, "/nope was not a 404");
   }
-  stop(cli, node.d);
-  cli.remove(dir, true).wait();
+  stop(procs, node.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_wac_client_to_node_server_head_has_no_body_however_long_the_header_says(
-    Core core, Cli cli) {
+export string test_wac_client_to_node_server_head_has_no_body_however_long_the_header_says(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The trap this parser exists to avoid. Node answers HEAD with `Content-Length: 4` and no bytes; a
   // client that waits for four is stuck, and one that reads four takes them from the next response.
   T t = T.create();
-  string dir = freshScratch(t, cli, "head");
-  Peer node = startNode(core, cli, dir);
+  string dir = freshScratch(t, env, fs, "head");
+  Peer node = startNode(clock, fs, procs, dir);
   t.eqStr(node.error, "", "the node server is up");
   if (node.port <= 0) { return t.report(); }
 
-  if (Incoming head matches okOf(t, request(cli, "HEAD".toBytes(), "127.0.0.1", node.port,
-                                             "/echo-method", u8[](), ""), "HEAD")) {
+  if (Incoming head matches okOf(t, request(net, "HEAD".toBytes(), "127.0.0.1", node.port, "/echo-method", u8[](), ""), "HEAD")) {
     t.eqStr(bodyOf(head), "", "HEAD returned a body");
     string cl = headerValue(head, "content-length");
     t.isTrue(cl != "" && cl != "0",
              "the server did not send a non-zero Content-Length, so this proves nothing");
   }
 
-  if (Incoming g matches okOf(t, get(cli, node.port, "/echo-method"), "GET")) {
+  if (Incoming g matches okOf(t, get(net, node.port, "/echo-method"), "GET")) {
     t.eqStr(bodyOf(g), "GET", "GET body");
   }
-  stop(cli, node.d);
-  cli.remove(dir, true).wait();
+  stop(procs, node.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_wac_client_to_wac_server_the_loop_closes(Core core, Cli cli) {
+export string test_wac_client_to_wac_server_the_loop_closes(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // Both ends mine, so this proves less on its own — but it is the whole stack in one call, and it is
   // what "a server and a client written in wac" actually means.
   T t = T.create();
-  string dir = freshScratch(t, cli, "loop");
-  Peer wac = startWac(core, cli, dir);
+  string dir = freshScratch(t, env, fs, "loop");
+  Peer wac = startWac(clock, fs, procs, dir);
   t.eqStr(wac.error, "", "the wac server is up");
   if (wac.port <= 0) { return t.report(); }
 
-  if (Incoming rootPage matches okOf(t, get(cli, wac.port, "/"), "/")) {
+  if (Incoming rootPage matches okOf(t, get(net, wac.port, "/"), "/")) {
     t.eqStr(bodyOf(rootPage), "wac http server\n", "/ body");
   }
-  if (Incoming echo matches okOf(t, get(cli, wac.port, "/echo?a=1&b=two"), "/echo")) {
+  if (Incoming echo matches okOf(t, get(net, wac.port, "/echo?a=1&b=two"), "/echo")) {
     t.eqStr(bodyOf(echo), "{\"a\":\"1\",\"b\":\"two\"}", "/echo body");
   }
-  if (Incoming posted matches okOf(t, request(cli, "POST".toBytes(), "127.0.0.1", wac.port, "/json",
-                                              "{\"z\":[1,2],\"a\":null}".toBytes(), "application/json"),
+  if (Incoming posted matches okOf(t, request(net, "POST".toBytes(), "127.0.0.1", wac.port, "/json", "{\"z\":[1,2],\"a\":null}".toBytes(), "application/json"),
                                    "/json")) {
     t.eqStr(bodyOf(posted), "{\"z\":[1,2],\"a\":null}", "/json body");
   }
-  if (Incoming missing matches okOf(t, get(cli, wac.port, "/nope"), "/nope")) {
+  if (Incoming missing matches okOf(t, get(net, wac.port, "/nope"), "/nope")) {
     t.eqI32(missing.status, 404, "/nope was not a 404");
   }
-  stop(cli, wac.d);
-  cli.remove(dir, true).wait();
+  stop(procs, wac.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_fetch_to_wac_server_the_response_writer_against_a_strict_client(
-    Core core, Cli cli) {
+export string test_fetch_to_wac_server_the_response_writer_against_a_strict_client(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The other diagonal. `fetch` rejects a malformed response outright rather than coping.
   T t = T.create();
-  string dir = freshScratch(t, cli, "fetch");
-  Peer wac = startWac(core, cli, dir);
+  string dir = freshScratch(t, env, fs, "fetch");
+  Peer wac = startWac(clock, fs, procs, dir);
   t.eqStr(wac.error, "", "the wac server is up");
   if (wac.port <= 0) { return t.report(); }
 
-  Exec r = cli.exec("deno",
-    [
+  auto rRan = flatten(procs.exec("deno", [
              "run", "-A", "packages/http/test/strictfetch.ts",
              "http://127.0.0.1:\{wac.port}/time"
-    ], u8[]()).wait();
-  t.isTrue(r.ran(), "strictfetch ran — \{r.error}");
-  string said = string.fromBytes(r.stdout);
-  cli.writeFile("\{dir}/said.json", said.toBytes()).wait();
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "strictfetch ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  string said = string.fromBytes(r!.stdout);
+  fs.writeFile("\{dir}/said.json", said.toBytes()).wait();
   t.isFalse(contains(said, "\"error\""), "fetch refused the response: \{said}");
-  if (contains(said, "\"error\"")) { stop(cli, wac.d); return t.report(); }
+  if (contains(said, "\"error\"")) { stop(procs, wac.d); return t.report(); }
 
-  t.eqI32(numOf(jsonFile(cli, "\{dir}/said.json"), "status"), 200, "status");
+  t.eqI32(numOf(jsonFile(fs, "\{dir}/said.json"), "status"), 200, "status");
   // The body is JSON with a timestamp in it. What is checked is that it parses and dates — the value
   // is a clock reading and two runs would not agree on it.
-  string body = strOf(jsonFile(cli, "\{dir}/said.json"), "body");
+  string body = strOf(jsonFile(fs, "\{dir}/said.json"), "body");
   t.isTrue(contains(body, "\"now\""), "/time did not answer a `now`: \{body}");
   t.isTrue(contains(body, "T") && contains(body, "Z"),
            "/time's answer is not an ISO instant: \{body}");
-  stop(cli, wac.d);
-  cli.remove(dir, true).wait();
+  stop(procs, wac.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_same_request_bytes_are_accepted_by_both_servers(Core core, Cli cli) {
+export string test_the_same_request_bytes_are_accepted_by_both_servers(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The writer, checked by sending its output to two independent servers. A request only one accepts
   // is a request with something wrong in it.
   T t = T.create();
-  string dir = freshScratch(t, cli, "both");
-  Peer node = startNode(core, cli, dir);
-  Peer wac = startWac(core, cli, dir);
+  string dir = freshScratch(t, env, fs, "both");
+  Peer node = startNode(clock, fs, procs, dir);
+  Peer wac = startWac(clock, fs, procs, dir);
   t.eqStr(node.error, "", "the node server is up");
   t.eqStr(wac.error, "", "the wac server is up");
   if (node.port <= 0 || wac.port <= 0) { return t.report(); }
 
   string[] targets = ["/", "/plain", "/nope"];
   for (i32 i = 0; i < targets.len(); i++) {
-    Incoming? fromWac = okOf(t, get(cli, wac.port, targets[i]), "the wac server refused \{targets[i]}");
-    Incoming? fromNode = okOf(t, get(cli, node.port, targets[i]), "the node server refused \{targets[i]}");
+    Incoming? fromWac = okOf(t, get(net, wac.port, targets[i]), "the wac server refused \{targets[i]}");
+    Incoming? fromNode = okOf(t, get(net, node.port, targets[i]), "the node server refused \{targets[i]}");
     if (fromWac is null || fromNode is null) { continue; }
     // Both answered something; the statuses differ because the routes differ, and that is fine.
     t.isTrue(fromWac!.status != 0 && fromNode!.status != 0, "\{targets[i]}: a server did not produce a status");
   }
-  stop(cli, node.d);
-  stop(cli, wac.d);
-  cli.remove(dir, true).wait();
+  stop(procs, node.d);
+  stop(procs, wac.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }

@@ -20,8 +20,8 @@
 // anything slower, because loopback usually delivers a small write whole.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, HostSocket } from "std";
-import { Buf } from "core";
+import { Files, Net, Socket } from "std";
+import { Buf, flatten } from "core";
 import { Framed, Status, frame, minBlock, paddingFor, unframe } from "../../src/packet.wac";
 import { Opened, Plain, aeadPaddingFor, keyLength, open, seal } from "../../src/cipher.wac";
 import { Version, clientVersion, clientVersionLine, scanVersion } from "../../src/version.wac";
@@ -35,7 +35,8 @@ import { ramp, slice } from "./build.wac";
 
 /** A connection with the bytes that have arrived but not yet been parsed. */
 export struct Conn {
-  i32 handle;
+  /** Null when the dial failed. */
+  Socket? sock;
   u8[] buf;
   /** The sequence numbers, which are per-direction and reset at NEWKEYS under strict KEX. */
   i32 outSeq;
@@ -45,41 +46,46 @@ export struct Conn {
   bool ok;
   string error;
 
-  Conn dial(Cli cli, string host, i32 port) {
-    HostSocket s = cli.connect(host, port).wait();
-    if (s.handle < 0) {
-      return Conn(-1, u8[](), 0, 0, u8[](), u8[](), false, "connect: \{s.error}");
+  Conn dial(Net net, string host, i32 port) {
+    auto sDial = flatten(net.connect(host, port).wait());
+    Socket? s = sDial.ok();
+    if (s is null) {
+      return Conn(null, u8[](), 0, 0, u8[](), u8[](), false, "connect: \{sDial.isErr() ? "\{sDial.err()!}" : ""}");
     }
-    return Conn(s.handle, u8[](), 0, 0, u8[](), u8[](), true, "");
+    return Conn(s!, u8[](), 0, 0, u8[](), u8[](), true, "");
   }
 
   /** Pull once, appending to the buffer. False once nothing more can arrive. */
-  bool pull(this, Cli cli) {
+  bool pull(this) {
     if (!this.ok) { return false; }
-    match (cli.recv(this.handle).wait()) {
-      Data(bytes): {
-        Buf next = Buf.create();
-        next.pushAll(this.buf);
-        next.pushAll(bytes);
-        this.buf = next.take();
-        return true;
+    match (flatten(this.sock!.recv().wait())) {
+      Ok(r): {
+        match (r) {
+          Data(bytes): {
+            Buf next = Buf.create();
+            next.pushAll(this.buf);
+            next.pushAll(bytes);
+            this.buf = next.take();
+            return true;
+          }
+          default: {
+            this.ok = false;
+            this.error = "the server closed the connection";
+            return false;
+          }
+        }
       }
-      End: {
+      Err(e): {
         this.ok = false;
-        this.error = "the server closed the connection";
-        return false;
-      }
-      Failed(why): {
-        this.ok = false;
-        this.error = "recv: \{why}";
+        this.error = "recv: \{e}";
         return false;
       }
     }
   }
 
-  void write(this, Cli cli, u8[] bytes) {
+  void write(this, u8[] bytes) {
     if (!this.ok) { return; }
-    if (!cli.send(this.handle, bytes).wait()) {
+    if (flatten(this.sock!.send(bytes).wait()).isErr()) {
       this.ok = false;
       this.error = "send failed";
     }
@@ -88,9 +94,9 @@ export struct Conn {
   /** Drop `n` bytes from the front, once a packet has been taken off it. */
   void consumed(this, i32 n) { this.buf = slice(this.buf, n, this.buf.len()); }
 
-  void close(this, Cli cli) {
-    if (this.handle >= 0) { cli.closeSocket(this.handle); }
-    this.handle = -1;
+  void close(this) {
+    if (this.sock is not null) { this.sock!.close(); }
+    this.sock = null;
   }
 
   /**
@@ -99,7 +105,7 @@ export struct Conn {
    * `tries` bounds the loop rather than a clock: every iteration is a blocking `recv`, so a server
    * that has stopped talking ends at `End` rather than spinning here.
    */
-  u8[] nextPlain(this, Cli cli) {
+  u8[] nextPlain(this) {
     for (i32 i = 0; i < 4096 && this.ok; i++) {
       Framed f = unframe(this.buf, 0, this.buf.len());
       match (f.status) {
@@ -107,7 +113,7 @@ export struct Conn {
           this.consumed(f.used);
           return f.payload;
         }
-        Incomplete: { this.pull(cli); }
+        Incomplete: { this.pull(); }
         default: {
           this.ok = false;
           this.error = "a packet could not be framed";
@@ -120,21 +126,21 @@ export struct Conn {
   }
 
   /** Frame and send one plaintext packet. */
-  void sendPlain(this, Cli cli, u8[] payload) {
+  void sendPlain(this, u8[] payload) {
     i32 block = minBlock();
-    this.write(cli, frame(payload, ramp(paddingFor(payload.len(), block), 37, 11), block));
+    this.write(frame(payload, ramp(paddingFor(payload.len(), block), 37, 11), block));
   }
 
   /** Seal and send one packet, advancing the outgoing sequence number. */
-  void send(this, Cli cli, u8[] payload) {
+  void send(this, u8[] payload) {
     i32 block = minBlock();
-    this.write(cli, seal(this.keyOut, this.outSeq, payload,
+    this.write(seal(this.keyOut, this.outSeq, payload,
                          ramp(aeadPaddingFor(payload.len(), block), 23, 7), block));
     this.outSeq = this.outSeq + 1;
   }
 
   /** The next encrypted packet's payload, advancing the incoming sequence number. */
-  u8[] next(this, Cli cli) {
+  u8[] next(this) {
     for (i32 i = 0; i < 200000 && this.ok; i++) {
       Plain p = open(this.keyIn, this.inSeq, this.buf, 0, this.buf.len(), MAX_PACKET);
       match (p.status) {
@@ -143,7 +149,7 @@ export struct Conn {
           this.inSeq = this.inSeq + 1;
           return p.payload;
         }
-        Incomplete: { this.pull(cli); }
+        Incomplete: { this.pull(); }
         default: {
           this.ok = false;
           this.error = "encrypted packet \{this.inSeq} did not open";
@@ -188,18 +194,18 @@ Session failed(Conn c, string why) {
  * `user` is the account to attempt; the fixture's sshd runs as this user and so can only
  * authenticate this one. A caller must check `ok` before reading anything else.
  */
-export Session handshake(Cli cli, string dir, i32 port, string user) {
-  Conn c = Conn.dial(cli, "127.0.0.1", port);
+export Session handshake(Files fs, Net net, string dir, i32 port, string user) {
+  Conn c = Conn.dial(net, "127.0.0.1", port);
   if (!c.ok) { return failed(c, c.error); }
 
   // Our version line goes first; SSH does not wait for the peer's.
-  c.write(cli, clientVersionLine());
+  c.write(clientVersionLine());
   u8[] serverVersion = u8[]();
   for (i32 i = 0; i < 100 && c.ok; i++) {
     Version v = scanVersion(c.buf, 0, c.buf.len());
     match (v.status) {
       Ok: { serverVersion = v.line; c.consumed(v.used); }
-      Incomplete: { c.pull(cli); continue; }
+      Incomplete: { c.pull(); continue; }
       default: { return failed(c, "the server's version line was rejected"); }
     }
     break;
@@ -209,8 +215,8 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
 
   // KEXINIT, both sides sending without waiting.
   u8[] ourKexInit = encodeKexInit(clientProposal(), ramp(16, 61, 5));
-  c.sendPlain(cli, ourKexInit);
-  u8[] serverKexInit = c.nextPlain(cli);
+  c.sendPlain(ourKexInit);
+  u8[] serverKexInit = c.nextPlain();
   if (!c.ok) { return failed(c, c.error); }
   if (serverKexInit.len() == 0 || serverKexInit[0] != 20) {
     return failed(c, "expected KEXINIT, got message " +
@@ -220,8 +226,8 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   // Key exchange.
   u8[] secret = ramp(32, 47, 13);
   u8[] qc = ephemeralPublic(secret);
-  c.sendPlain(cli, ecdhInit(qc));
-  u8[] replyBytes = c.nextPlain(cli);
+  c.sendPlain(ecdhInit(qc));
+  u8[] replyBytes = c.nextPlain();
   if (!c.ok) { return failed(c, c.error); }
   EcdhReply? reply = parseEcdhReply(replyBytes);
   if (reply is null) { return failed(c, "the server's KEX_ECDH_REPLY did not parse"); }
@@ -238,8 +244,8 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   // NEWKEYS. Both sides advertised strict KEX, so the sequence numbers reset to zero here.
   u8[] newKeys = u8[].filled(1, 0);
   newKeys[0] = 21;
-  c.sendPlain(cli, newKeys);
-  u8[] theirNewKeys = c.nextPlain(cli);
+  c.sendPlain(newKeys);
+  u8[] theirNewKeys = c.nextPlain();
   if (!c.ok) { return failed(c, c.error); }
   if (theirNewKeys.len() == 0 || theirNewKeys[0] != 21) {
     return failed(c, "expected NEWKEYS, got message " +
@@ -253,11 +259,11 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   c.outSeq = 0;
   c.inSeq = 0;
 
-  c.send(cli, serviceRequest());
+  c.send(serviceRequest());
   bool sawExtInfo = false;
   bool accepted = false;
   for (i32 i = 0; i < 8 && !accepted && c.ok; i++) {
-    u8[] p = c.next(cli);
+    u8[] p = c.next();
     if (p.len() == 0) { continue; }
     if (p[0] == 7) { sawExtInfo = true; }
     if (p[0] as i32 == msgServiceAccept()) { accepted = true; }
@@ -266,16 +272,16 @@ export Session handshake(Cli cli, string dir, i32 port, string user) {
   if (!accepted) { return failed(c, "never received SSH_MSG_SERVICE_ACCEPT"); }
 
   // Authenticate, reading the private key with our own code.
-  PrivateKey key = readEd25519(cli.readFile("\{dir}/clientkey").wait().bytes, u8[]());
+  PrivateKey key = readEd25519(flatten(fs.readFile("\{dir}/clientkey").wait()).orElse(u8[]()), u8[]());
   match (key.error) {
     Ok: {}
     default: { return failed(c, "could not read the client private key"); }
   }
-  c.send(cli, publicKeyRequest(h, user.toBytes(), key.publicBlob, key.seed));
+  c.send(publicKeyRequest(h, user.toBytes(), key.publicBlob, key.seed));
 
   bool authed = false;
   for (i32 i = 0; i < 8 && !authed && c.ok; i++) {
-    u8[] p = c.next(cli);
+    u8[] p = c.next();
     if (p.len() == 0) { continue; }
     if (p[0] as i32 == msgUserAuthFailure()) {
       return failed(c, "the server rejected our signature");

@@ -42,41 +42,47 @@
 // that makes it usable by something other than itself; the two share `link.wac`.
 
 
-import { Core, Cli, FileResult, Sys } from "std";
+import { Core, Cli, FileResult, Sys, Clock, Files, Net, Output, Random } from "std";
+import { flatten } from "core";
 import { Network, Session, bootstrap, buildCircuit } from "./bootstrap.wac";
-import { fetchOverCircuit } from "./link.wac";
+import { fetchOverCircuit, closeLink } from "./link.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 3) {
-    core.warn("usage: tor <seed-file> <authorities-file> <path>");
-    core.warn("  seed-file:        one line, `host port identityHex ntorOnionKeyBase64`");
-    core.warn("  authorities-file: one uppercase hex fingerprint per line");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Files fs = sys.files();
+  Net net = sys.net();
+  if (argv.len() < 3) {
+    err.line("usage: tor <seed-file> <authorities-file> <path>");
+    err.line("  seed-file:        one line, `host port identityHex ntorOnionKeyBase64`");
+    err.line("  authorities-file: one uppercase hex fingerprint per line");
     return 2;
   }
-  FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!seedFile.ok) { core.warn("tor: \{seedFile.error}"); return 1; }
-  FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
-  if (!authFile.ok) { core.warn("tor: \{authFile.error}"); return 1; }
-  string path = string.fromBytes(cli.arg(2).wait());
+  auto seedFileRead = flatten(fs.readFile(argv[0]).wait());
+  if (seedFileRead.isErr()) { err.line("tor: \{seedFileRead.isErr() ? "\{seedFileRead.err()!}" : ""}"); return 1; }
+  auto authFileRead = flatten(fs.readFile(argv[1]).wait());
+  if (authFileRead.isErr()) { err.line("tor: \{authFileRead.isErr() ? "\{authFileRead.err()!}" : ""}"); return 1; }
+  string path = argv[2];
 
-  Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, true);
-  if (!net.ok) { return 1; }
+  Network network = bootstrap(err, clock, rnd, net, seedFileRead.unwrap(), authFileRead.unwrap(), true);
+  if (!network.ok) { return 1; }
 
   // Port 0: this fetches a directory document, which any exit can carry. A program carrying
   // a stream to a particular port has to say so, or it may build a circuit that cannot.
-  Session s = buildCircuit(core, cli, net, 0, 0x80000002);
+  Session s = buildCircuit(err, clock, rnd, net, network, 0, 0x80000002);
   if (!s.ok) { return 1; }
   // Progress on the error channel, so stdout carries the fetched document and nothing else. Without
   // this `tor … /tor/status-vote/current/consensus > cons.txt` writes a file with three lines of
   // commentary above the document, which every consumer then has to strip.
-  core.warn("path: \{s.description}");
-  core.warn("circuit built, \{s.circ.length()} hops");
+  err.line("path: \{s.description}");
+  err.line("circuit built, \{s.circ.length()} hops");
 
   u8[] body = fetchOverCircuit(s.link, s.circ, path);
-  cli.closeSocket(s.link.sock);
+  closeLink(s.link);
   if (body.len() == 0) { return 1; }
-  cli.write(body);
+  out.write(body);
   return 0;
 }

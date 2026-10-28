@@ -17,19 +17,20 @@
 // they are used.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Cli, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string WC = "packages/platform/example/wc.wac";
 static string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
 static string PROBE = "packages/platform/test/wac/exec_probe.wac";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/runtimes-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/runtimes-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -43,55 +44,60 @@ string[] none() { return string[].filled(0, ""); }
  * for it, so the shebang assertion below is made only when nothing has asked for an instrumented
  * build — an instrumented one carries a scoped `--allow-write` for its coverage dump. wac-mono 0024.
  */
-bool build(T t, Cli cli, string entry, string out, string target, string[] grants) {
+bool build(T t, Procs procs, string entry, string out, string target, string[] grants) {
   string[] head = ["run", "-A", "packages/platform/build.ts", entry, "--target", target];
   string[] args = string[].filled(head.len() + grants.len() + 2, "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[]()).wait();
-  t.isTrue(r.ran() && r.status == 0,
+  auto rRan = flatten(procs.exec("deno", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null) && r!.status == 0,
            "\{entry} built for \{target} — " +
-           string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
-  return r.ran() && r.status == 0;
+           string.fromBytes(r!.stderr) + string.fromBytes(r!.stdout));
+  return (r is not null) && r!.status == 0;
 }
 
 /** The first line of a built program, which is its shebang. */
-string shebang(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return "<unreadable: \{f.error}>"; }
-  string[] ls = splitLines(string.fromBytes(f.bytes));
+string shebang(Files fs, string path) {
+  auto fRead = flatten(fs.readFile(path).wait());
+  u8[]? f = fRead.ok();
+  if ((f is null)) { return "<unreadable: \{fRead.isErr() ? "\{fRead.err()!}" : ""}>"; }
+  string[] ls = splitLines(string.fromBytes(f!));
   return ls.len() > 0 ? ls[0] : "<empty>";
 }
 
 /** Whether an instrumented build was asked for, which changes the grants baked into the shebang. */
-bool profiling(Cli cli) {
-  u8[]? v = cli.env("WAC_PROFILE").wait();
+bool profiling(Env env) {
+  u8[]? v = flatten(env.get("WAC_PROFILE").wait()).orElse(null);
   return (v is not null) && string.fromBytes(v!).len() > 0;
 }
 
-export string test_an_application_builds_to_one_executable_file_and_runs_repeatedly(
-    Core core, Cli cli) {
+export string test_an_application_builds_to_one_executable_file_and_runs_repeatedly(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Built once, run several times on purpose. The first version of this worked one run in three: the
   // launcher's `postMessage` reached the worker while the generated module was suspended at its
   // top-level `await WebAssembly.instantiate`, and was dropped. A single run would have called that
   // a pass.
   T t = T.create();
-  string dir = freshScratch(t, cli, "exe");
+  string dir = freshScratch(t, env, fs, "exe");
   string app = "\{dir}/wc";
-  if (!build(t, cli, WC, app, "deno", ["--allow-read"])) {
-    cli.remove(dir, true).wait();
+  if (!build(t, procs, WC, app, "deno", ["--allow-read"])) {
+    fs.remove(dir, true).wait();
     return t.report();
   }
 
   // `Stat` says `isFile` and a size and nothing about the mode, so the execute bit is asked of the
   // shell. It is the property that matters: a built program is run, not interpreted by a launcher.
-  Exec x = cli.exec("/bin/sh", ["-c", "test -x '\{app}'"], u8[]()).wait();
-  t.isTrue(x.ran() && x.status == 0, "the built file is executable");
+  auto xRan = flatten(procs.exec("/bin/sh", ["-c", "test -x '\{app}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? x = xRan.ok();
+  t.isTrue((x is not null) && x!.status == 0, "the built file is executable");
 
-  if (!profiling(cli)) {
-    t.eqStr(shebang(cli, app),
+  if (!profiling(env)) {
+    t.eqStr(shebang(fs, app),
             "#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read",
             "the shebang states the grants, and the cache flag which is not one");
   }
@@ -99,11 +105,12 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
   for (i32 i = 0; i < 3; i++) {
     // No permission flags and no separator: a built program takes the arguments a program takes.
     // What it may *do* was decided at build.
-    Exec r = cli.exec(app, [WC], u8[]()).wait();
-    t.isTrue(r.ran(), "run \{i} started — \{r.error}");
-    if (!r.ran()) { continue; }
-    t.eqI32(r.status, 0, "run \{i}: \{string.fromBytes(r.stderr)}");
-    string out = trimmed(string.fromBytes(r.stdout));
+    auto rRan = flatten(procs.exec(app, [WC], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? r = rRan.ok();
+    t.isTrue((r is not null), "run \{i} started — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+    if ((r is null)) { continue; }
+    t.eqI32(r!.status, 0, "run \{i}: \{string.fromBytes(r!.stderr)}");
+    string out = trimmed(string.fromBytes(r!.stdout));
     t.isTrue(out.len() >= WC.len() && out.slice(out.len() - WC.len(), out.len()) == WC,
              "run \{i} counted the file: \{out}");
   }
@@ -111,49 +118,54 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
   // The same application built without the grant: the capability is simply absent, and nothing the
   // caller passes can put it back.
   string bare = "\{dir}/wc-bare";
-  if (build(t, cli, WC, bare, "deno", none())) {
-    Exec denied = cli.exec(bare, [WC], u8[]()).wait();
-    t.isTrue(denied.ran(), "the ungranted build ran — \{denied.error}");
-    if (denied.ran()) {
-      t.eqI32(denied.status, 1, "no filesystem, and the application says so");
-      t.isTrue(contains(string.fromBytes(denied.stderr), "not granted"),
-               string.fromBytes(denied.stderr));
+  if (build(t, procs, WC, bare, "deno", none())) {
+    auto deniedRan = flatten(procs.exec(bare, [WC], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? denied = deniedRan.ok();
+    t.isTrue((denied is not null), "the ungranted build ran — \{deniedRan.isErr() ? "\{deniedRan.err()!}" : ""}");
+    if ((denied is not null)) {
+      t.eqI32(denied!.status, 1, "no filesystem, and the application says so");
+      t.isTrue(contains(string.fromBytes(denied!.stderr), "not granted"),
+               string.fromBytes(denied!.stderr));
     }
     // The shebang is exactly the grants, so a program granted nothing asks for nothing. That is only
     // possible because the worker comes from a blob URL: spawning the file itself needs
     // --allow-read, which used to sit in every shebang and read as a filesystem grant to anyone
     // auditing it.
-    if (!profiling(cli)) {
-      t.eqStr(shebang(cli, bare),
+    if (!profiling(env)) {
+      t.eqStr(shebang(fs, bare),
               "#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache",
               "no capabilities, no permissions");
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_same_application_builds_for_node_and_agrees_with_the_deno_build(
-    Core core, Cli cli) {
+export string test_the_same_application_builds_for_node_and_agrees_with_the_deno_build(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "node");
+  string dir = freshScratch(t, env, fs, "node");
   string denoOut = "\{dir}/wc-deno";
   string nodeOut = "\{dir}/wc-node";
-  bool okD = build(t, cli, WC, denoOut, "deno", ["--allow-read"]);
-  bool okN = build(t, cli, WC, nodeOut, "node", ["--allow-read"]);
-  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+  bool okD = build(t, procs, WC, denoOut, "deno", ["--allow-read"]);
+  bool okN = build(t, procs, WC, nodeOut, "node", ["--allow-read"]);
+  if (!okD || !okN) { fs.remove(dir, true).wait(); return t.report(); }
 
-  t.eqStr(shebang(cli, nodeOut), "#!/usr/bin/env node",
+  t.eqStr(shebang(fs, nodeOut), "#!/usr/bin/env node",
           "Node has no permission system, so its shebang states nothing");
 
-  Exec d = cli.exec(denoOut, [WC], u8[]()).wait();
-  Exec n = cli.exec("node", [nodeOut, WC], u8[]()).wait();
-  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — \{string.fromBytes(d.stderr)}");
-  t.isTrue(n.ran() && n.status == 0, "the Node build ran — \{string.fromBytes(n.stderr)}");
-  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  auto dRan = flatten(procs.exec(denoOut, [WC], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? d = dRan.ok();
+  auto nRan = flatten(procs.exec("node", [nodeOut, WC], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? n = nRan.ok();
+  t.isTrue((d is not null) && d!.status == 0, "the Deno build ran — \{string.fromBytes(d!.stderr)}");
+  t.isTrue((n is not null) && n!.status == 0, "the Node build ran — \{string.fromBytes(n!.stderr)}");
+  if ((d is null) || (n is null)) { fs.remove(dir, true).wait(); return t.report(); }
 
-  string dOut = trimmed(string.fromBytes(d.stdout));
-  t.eqStr(trimmed(string.fromBytes(n.stdout)), dOut,
+  string dOut = trimmed(string.fromBytes(d!.stdout));
+  t.eqStr(trimmed(string.fromBytes(n!.stdout)), dOut,
           "byte for byte, the same answer from both runtimes");
   // And it is an answer rather than two empty strings agreeing.
   t.isTrue(contains(dOut, WC), "neither runtime counted anything: \{dOut}");
@@ -161,16 +173,17 @@ export string test_the_same_application_builds_for_node_and_agrees_with_the_deno
   // And the capability boundary holds on Node, where it is the *only* boundary — there is no
   // process-level permission behind it.
   string bare = "\{dir}/wc-node-bare";
-  if (build(t, cli, WC, bare, "node", none())) {
-    Exec denied = cli.exec("node", [bare, WC], u8[]()).wait();
-    t.isTrue(denied.ran(), "the ungranted Node build ran — \{denied.error}");
-    if (denied.ran()) {
-      t.eqI32(denied.status, 1, string.fromBytes(denied.stderr));
-      t.isTrue(contains(string.fromBytes(denied.stderr), "not granted"),
-               string.fromBytes(denied.stderr));
+  if (build(t, procs, WC, bare, "node", none())) {
+    auto deniedRan = flatten(procs.exec("node", [bare, WC], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? denied = deniedRan.ok();
+    t.isTrue((denied is not null), "the ungranted Node build ran — \{deniedRan.isErr() ? "\{deniedRan.err()!}" : ""}");
+    if ((denied is not null)) {
+      t.eqI32(denied!.status, 1, string.fromBytes(denied!.stderr));
+      t.isTrue(contains(string.fromBytes(denied!.stderr), "not granted"),
+               string.fromBytes(denied!.stderr));
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -181,12 +194,14 @@ export string test_the_same_application_builds_for_node_and_agrees_with_the_deno
  * `readDir(".")` prints how many entries it saw, so a shared one would make the two transcripts
  * differ for a reason that has nothing to do with the hosts.
  */
-Exec inDir(Cli cli, string dir, string command) {
-  return cli.exec("/bin/sh", ["-c", "cd '\{dir}' && \{command}"], u8[]()).wait();
+Exec inDir(Procs procs, string dir, string command) {
+  return flatten(procs.exec("/bin/sh", ["-c", "cd '\{dir}' && \{command}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
-export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file(
-    Core core, Cli cli) {
+export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The comparison above uses `wc`, which reads one file and prints three numbers — so `stat`,
   // `readDir`, `writeFile`, `rename` and `remove` had **no Node coverage at all**, on a host whose
   // handlers are separate code from Deno's. `stat`'s reply grew a fault byte (wac-mono 0065) and
@@ -195,25 +210,25 @@ export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_re
   // `roundtrip` is the example that exercises all of them and prints what each answered, which makes
   // it an oracle for itself: the two runtimes have to produce the same transcript.
   T t = T.create();
-  string dir = freshScratch(t, cli, "fs");
+  string dir = freshScratch(t, env, fs, "fs");
   string denoOut = "\{dir}/rt-deno";
   string nodeOut = "\{dir}/rt-node";
-  bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", ["--allow-read", "--allow-write"]);
-  bool okN = build(t, cli, ROUNDTRIP, nodeOut, "node", ["--allow-read", "--allow-write"]);
-  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+  bool okD = build(t, procs, ROUNDTRIP, denoOut, "deno", ["--allow-read", "--allow-write"]);
+  bool okN = build(t, procs, ROUNDTRIP, nodeOut, "node", ["--allow-read", "--allow-write"]);
+  if (!okD || !okN) { fs.remove(dir, true).wait(); return t.report(); }
 
   string denoDir = "\{dir}/d";
   string nodeDir = "\{dir}/n";
-  string whyDir1 = madeDir(cli, denoDir);
+  string whyDir1 = madeDir(fs, denoDir);
   t.isTrue(whyDir1 == "", whyDir1);
-  string whyDir2 = madeDir(cli, nodeDir);
+  string whyDir2 = madeDir(fs, nodeDir);
   t.isTrue(whyDir2 == "", whyDir2);
 
-  Exec d = inDir(cli, denoDir, "'\{denoOut}' hello");
-  Exec n = inDir(cli, nodeDir, "node '\{nodeOut}' hello");
+  Exec d = inDir(procs, denoDir, "'\{denoOut}' hello");
+  Exec n = inDir(procs, nodeDir, "node '\{nodeOut}' hello");
   t.isTrue(d.ran() && d.status == 0, "the Deno build ran — \{string.fromBytes(d.stderr)}");
   t.isTrue(n.ran() && n.status == 0, "the Node build ran — \{string.fromBytes(n.stderr)}");
-  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  if (!d.ran() || !n.ran()) { fs.remove(dir, true).wait(); return t.report(); }
 
   string dOut = string.fromBytes(d.stdout);
   t.eqStr(string.fromBytes(n.stdout), dOut,
@@ -228,12 +243,14 @@ export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_re
   for (i32 i = 0; i < want.len(); i++) {
     t.isTrue(contains(dOut, want[i]), "missing \"\{want[i]}\" in:\n\{dOut}");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take(
-    Core core, Cli cli) {
+export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The other half of the fault field: a world with no read capability answers `FAULT_NOT_GRANTED`,
   // not "does not exist" and not "permission denied". Both hosts have to say it, and this is a case
   // where being wrong is invisible — an ungranted program that claims a file is absent looks exactly
@@ -245,20 +262,20 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
   // stats at all — which is how the first version of this test passed while checking the *write*
   // denial and claiming to check the stat.
   T t = T.create();
-  string dir = freshScratch(t, cli, "statdenied");
+  string dir = freshScratch(t, env, fs, "statdenied");
   string denoOut = "\{dir}/rtd-deno";
   string nodeOut = "\{dir}/rtd-node";
-  bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", ["--allow-write"]);
-  bool okN = build(t, cli, ROUNDTRIP, nodeOut, "node", ["--allow-write"]);
-  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+  bool okD = build(t, procs, ROUNDTRIP, denoOut, "deno", ["--allow-write"]);
+  bool okN = build(t, procs, ROUNDTRIP, nodeOut, "node", ["--allow-write"]);
+  if (!okD || !okN) { fs.remove(dir, true).wait(); return t.report(); }
 
   string work = "\{dir}/w";
-  string whyDir3 = madeDir(cli, work);
+  string whyDir3 = madeDir(fs, work);
   t.isTrue(whyDir3 == "", whyDir3);
-  Exec d = inDir(cli, work, "'\{denoOut}' hello");
-  Exec n = inDir(cli, work, "node '\{nodeOut}' hello");
+  Exec d = inDir(procs, work, "'\{denoOut}' hello");
+  Exec n = inDir(procs, work, "node '\{nodeOut}' hello");
   t.isTrue(d.ran() && n.ran(), "both builds ran — \{d.error}\{n.error}");
-  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  if (!d.ran() || !n.ran()) { fs.remove(dir, true).wait(); return t.report(); }
 
   string dOut = string.fromBytes(d.stdout);
   t.eqStr(string.fromBytes(n.stdout), dOut, "Deno and Node told different stories");
@@ -272,7 +289,7 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
   // It got that far, which is what makes the line above a statement about `stat` rather than about
   // whichever capability happened to fail first.
   t.isTrue(contains(dOut, "wrote roundtrip.txt"), dOut);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -292,24 +309,29 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
  * variables either child inherited: `deno` and `node` each add their own, and neither count is the
  * claim.
  */
-export string test_the_two_runtimes_agree_about_running_a_host_program(Core core, Cli cli) {
+export string test_the_two_runtimes_agree_about_running_a_host_program(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "exec");
+  string dir = freshScratch(t, env, fs, "exec");
   string denoOut = "\{dir}/probe-deno";
   string nodeOut = "\{dir}/probe-node";
-  bool okD = build(t, cli, PROBE, denoOut, "deno", ["--allow-run"]);
-  bool okN = build(t, cli, PROBE, nodeOut, "node", ["--allow-run"]);
-  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+  bool okD = build(t, procs, PROBE, denoOut, "deno", ["--allow-run"]);
+  bool okN = build(t, procs, PROBE, nodeOut, "node", ["--allow-run"]);
+  if (!okD || !okN) { fs.remove(dir, true).wait(); return t.report(); }
 
-  Exec d = cli.exec(denoOut, string[](), u8[]()).wait();
-  Exec n = cli.exec("node", [nodeOut], u8[]()).wait();
-  t.isTrue(d.ran() && n.ran(), "both builds ran — \{d.error}\{n.error}");
-  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  auto dRan = flatten(procs.exec(denoOut, string[](), u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? d = dRan.ok();
+  auto nRan = flatten(procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? n = nRan.ok();
+  t.isTrue((d is not null) && (n is not null), "both builds ran — \{dRan.isErr() ? "\{dRan.err()!}" : ""}\{nRan.isErr() ? "\{nRan.err()!}" : ""}");
+  if ((d is null) || (n is null)) { fs.remove(dir, true).wait(); return t.report(); }
 
-  string dLog = string.fromBytes(d.stderr);
-  string nLog = string.fromBytes(n.stderr);
+  string dLog = string.fromBytes(d!.stderr);
+  string nLog = string.fromBytes(n!.stderr);
   t.eqStr(nLog, dLog, "Deno and Node told different stories about `execWith`");
-  t.eqI32(n.status, d.status, "exit \{d.status} against \{n.status}");
+  t.eqI32(n!.status, d!.status, "exit \{d!.status} against \{n!.status}");
 
   // The transcript as well as the agreement: two hosts that had both lost the capability would
   // agree perfectly, and every one of these lines is a verdict the probe could only reach by
@@ -331,10 +353,10 @@ export string test_the_two_runtimes_agree_about_running_a_host_program(Core core
 
   // And the inherited bytes themselves, which are on the other stream: the grandchild wrote to the
   // probe's stdout, which is this pipe, on both hosts.
-  t.eqStr(trimmed(string.fromBytes(n.stdout)), trimmed(string.fromBytes(d.stdout)),
+  t.eqStr(trimmed(string.fromBytes(n!.stdout)), trimmed(string.fromBytes(d!.stdout)),
           "the inherited stream differed between the runtimes");
-  t.eqStr(trimmed(string.fromBytes(d.stdout)), "from the grandchild",
+  t.eqStr(trimmed(string.fromBytes(d!.stdout)), "from the grandchild",
           "the grandchild's line reached the probe's own stdout");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

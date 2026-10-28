@@ -132,6 +132,28 @@ export struct Sched {
   /** How much work is outstanding — what the host asks before deciding a clean exit. */
   i32 pending(const this) { return this.n; }
 
+  /**
+   * How many queued continuations are still current, dropping the rest — the ones a `wait` ran past, which
+   * do nothing when called and would otherwise count as work left.
+   */
+  i32 liveQueued(this) {
+    Queue<Continuation> kept;
+    i32 live = 0;
+    while (true) {
+      Continuation? c = this.queued.pop();
+      if (c is null) { break; }
+      if (!c!.current()) { continue; }
+      kept.push(c!);
+      live = live + 1;
+    }
+    while (true) {
+      Continuation? c = kept.pop();
+      if (c is null) { break; }
+      this.queued.push(c!);
+    }
+    return live;
+  }
+
   /** Run `handler` when `id` answers. Registering the same id twice runs both, in order. */
   void on(this, i32 id, fn<void(i32)> handler, fn<void(i32)> drop) {
     if (this.n == this.ids.len()) { this.grow(); }
@@ -841,6 +863,8 @@ export struct Core {
       while (true) {
         Continuation? c = this.sched.queued.pop();
         if (c is null) { break; }
+        // One a `wait` already ran past does nothing when called, and is not work left.
+        if (!c!.current()) { continue; }
         TicketBase? on = c!.t;
         if (on is null || on!.done) {
           c!.call();
@@ -893,7 +917,7 @@ export struct Core {
   }
 
   /** How much work is outstanding — the question the host asks when `main` returns. */
-  i32 outstanding(const this) { return this.sched.pending() + this.sched.queued.len(); }
+  i32 outstanding(this) { return this.sched.pending() + this.sched.liveQueued(); }
 
   /**
    * Whether the user has asked to interrupt. Call it once per *block* of work, never per byte:
@@ -2686,6 +2710,13 @@ export struct Sys {
   /** Random bytes. Needs no grant. */
   Random random(this) { return Random(this.core); }
 
+  /**
+   * Whether the user has asked to interrupt (`^C`) since the last time this asked — answered by whoever owns the
+   * keyboard, so only a page says yes; Deno, Node and the native hosts own none and always say no. Needs no grant.
+   * A long loop asks once per block of work and stops with 130, as a shell reports a program `^C` ended.
+   */
+  bool interrupted(const this) { return this.core.interrupted(); }
+
   /** The environment. Each operation answers `NotGranted` when the host withheld it. */
   Env env(this) { return Env(this.cli, this.core.waitAny); }
 
@@ -3157,6 +3188,12 @@ export struct Files {
    * host's own, `GRANT_READ` read-only, and 0 for anything composed, which the parent has to serve.
    */
   i32 hostGrants;
+  /**
+   * Who these files act as: the owner of what they create and the name each permission check is against. `""` for
+   * the host's, whose owners are not names; the name for `store.asUser(name)`; and the parent's for files a parent
+   * serves, which is how a spawned `whoami` knows the session it runs in.
+   */
+  string user;
 
   /** The host's filesystem, under whatever grants the host gave this program. */
   Files host(Cli cli, HostWait wait) {
@@ -3175,7 +3212,7 @@ export struct Files {
       (string p, i32 mode) => hostTicket(cli.chmod(p, mode), wait, modeOf),
       (string p, bool on) => hostTicket(cli.setExecutable(p, on), wait, modeOf),
       (string p, string owner) => hostChown(p),
-      GRANT_READ | GRANT_WRITE);
+      GRANT_READ | GRANT_WRITE, "");
   }
 
   /** The same files, every change answering `NotGranted`. */
@@ -3185,7 +3222,18 @@ export struct Files {
                  (string p, bool parents) => refusedMkdir(p), (string p, bool r) => refusedMove(p),
                  (string from, string to) => refusedMove(from), (string p, i32 mode) => refusedMode(p),
                  (string p, bool on) => refusedMode(p), (string p, string owner) => refusedMode(p),
-                 this.hostGrants & GRANT_READ);
+                 this.hostGrants & GRANT_READ, this.user);
+  }
+
+  /**
+   * The same files, every read answering `NotGranted` — what `--allow-write` without `--allow-read` holds. A
+   * change still lands; what is there cannot be looked at, its existence included.
+   */
+  Files writeOnly(this) {
+    return Files((string p) => refusedRead(p), this.writeFile, (string p) => refusedOpenRead(p), this.openWrite,
+                 this.openAppend, (string p) => refusedLook(p), (string p) => refusedLook(p),
+                 (string p) => refusedList(p), this.mkdir, this.remove, this.rename, this.chmod, this.setExecutable,
+                 this.chown, this.hostGrants & GRANT_WRITE, this.user);
   }
 
   /**
@@ -3210,12 +3258,14 @@ export struct Files {
       (string p, i32 mode) => f.chmod(pathFrom(dir, p), mode),
       (string p, bool on) => f.setExecutable(pathFrom(dir, p), on),
       (string p, string owner) => f.chown(pathFrom(dir, p), owner),
-      f.hostGrants);
+      f.hostGrants, f.user);
   }
 
   /**
    * Each path to the mount whose `at` is its longest prefix, with that prefix taken off — `/` mounted last is
-   * everything else. A rename across two mounts is `Other`, as a rename across two devices is.
+   * everything else. A rename across two mounts is `Other`, as a rename across two devices is. A listing has the
+   * mount points directly under it among its names, as a directory holding a mount point does. The user is the
+   * root mount's, `""` when nothing is mounted at `/`.
    */
   Files mounted(Mount[] mounts) {
     return Files(
@@ -3226,14 +3276,14 @@ export struct Files {
       (string p) => mountOf(mounts, p).files.openAppend(innerOf(mounts, p)),
       (string p) => mountOf(mounts, p).files.stat(innerOf(mounts, p)),
       (string p) => mountOf(mounts, p).files.linkStat(innerOf(mounts, p)),
-      (string p) => mountOf(mounts, p).files.readDir(innerOf(mounts, p)),
+      (string p) => mountedReadDir(mounts, p),
       (string p, bool parents) => mountOf(mounts, p).files.mkdir(innerOf(mounts, p), parents),
       (string p, bool r) => mountOf(mounts, p).files.remove(innerOf(mounts, p), r),
       (string from, string to) => mountedRename(mounts, from, to),
       (string p, i32 mode) => mountOf(mounts, p).files.chmod(innerOf(mounts, p), mode),
       (string p, bool on) => mountOf(mounts, p).files.setExecutable(innerOf(mounts, p), on),
       (string p, string owner) => mountOf(mounts, p).files.chown(innerOf(mounts, p), owner),
-      0);
+      0, rootUser(mounts));
   }
 }
 
@@ -3241,6 +3291,14 @@ export struct Files {
 export struct Mount {
   string at;
   Files files;
+}
+
+/** The user of the mount at `/`, or `""`. */
+string rootUser(Mount[] mounts) {
+  for (i32 i = 0; i < mounts.len(); i++) {
+    if (mounts[i].at == "/" || mounts[i].at == "") { return mounts[i].files.user; }
+  }
+  return "";
 }
 
 /** `p` from `dir`: as it is when absolute, else after `dir`, with `.` and `..` taken out either way. */
@@ -3424,7 +3482,7 @@ export struct MemoryStore {
       (string p, i32 mode) => memChmod(st, user, p, mode),
       (string p, bool on) => memSetExecutable(st, user, p, on),
       (string p, string owner) => memChown(st, user, p, owner),
-      0);
+      0, user);
   }
 
   /** The node at an absolute normal path, or `STORE_NONE` / `STORE_NOT_A_DIR`. */
@@ -3777,6 +3835,32 @@ string innerOf(Mount[] mounts, string p) {
   return rest == "" ? "/" : rest;
 }
 
+/** What the mount owning `p` lists there, with the mounts directly under `p` added — sorted, each name once. */
+async Result<string[], LookFault> mountedReadDir(Mount[] mounts, string p) {
+  string dir = p != "/" && p.len() > 1 && p.slice(p.len() - 1, p.len()) == "/" ? p.slice(0, p.len() - 1) : p;
+  string prefix = dir == "/" ? "/" : dir + "/";
+  Vec<string> extra = Vec.create();
+  for (Mount m in mounts) {
+    string at = m.at;
+    if (at == "/" || at.len() <= prefix.len() || at.slice(0, prefix.len()) != prefix) { continue; }
+    string rest = at.slice(prefix.len(), at.len());
+    if (rest.indexOf("/") < 0) { extra.push(rest); }
+  }
+  string[] own = string[]();
+  match (await mountOf(mounts, dir).files.readDir(innerOf(mounts, dir))) {
+    Ok(names): { own = names; }
+    // A directory that exists only because something is mounted under it lists its mount points.
+    Err(e): { if (extra.len() == 0) { return Result.Err(e); } }
+  }
+  Vec<string> all = Vec.fromArray(own);
+  for (i32 i = 0; i < extra.len(); i++) {
+    bool seen = false;
+    for (i32 k = 0; k < own.len(); k++) { if (own[k] == extra.get(i)) { seen = true; } }
+    if (!seen) { all.push(extra.get(i)); }
+  }
+  return Result.Ok(sortedNames(all.toArray()));
+}
+
 async Result<void, MoveFault> mountedRename(Mount[] mounts, string from, string to) {
   if (mountOf(mounts, from).at != mountOf(mounts, to).at) {
     return Result.Err(Other("cannot rename " + from + " to " + to + ": they are on different mounts"));
@@ -3784,6 +3868,10 @@ async Result<void, MoveFault> mountedRename(Mount[] mounts, string from, string 
   return await mountOf(mounts, from).files.rename(innerOf(mounts, from), innerOf(mounts, to));
 }
 
+async Result<u8[], ReadFault> refusedRead(string p) { return Result.Err(NotGranted(p + ": write-only")); }
+async Result<Input, ReadFault> refusedOpenRead(string p) { return Result.Err(NotGranted(p + ": write-only")); }
+async Result<Stat, LookFault> refusedLook(string p) { return Result.Err(NotGranted(p + ": write-only")); }
+async Result<string[], LookFault> refusedList(string p) { return Result.Err(NotGranted(p + ": write-only")); }
 async Result<void, WriteFault> refusedWrite(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<Output, WriteFault> refusedOpen(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, MkdirFault> refusedMkdir(string p) { return Result.Err(NotGranted(p + ": read-only")); }
@@ -4149,11 +4237,13 @@ struct ParentLine {
   WireLine line;
   Ticket<bool> turn;
   i32 served;
+  /** Who the parent's files act as, from its answer to the hello. */
+  string user;
 
   ParentLine on(Cli cli) {
     Ticket<bool> open;
     open.resolve(true);
-    return ParentLine(WireLine.on(cli, PARENT_FS), open, 0);
+    return ParentLine(WireLine.on(cli, PARENT_FS), open, 0, "");
   }
 
   /** Whether the parent serves files — asked once, the first time, and remembered. */
@@ -4167,6 +4257,7 @@ struct ParentLine {
       WireReader r = asked ? this.line.nextNow() : brokenReader("not spawned");
       string said = r.text();
       this.served = !r.bad && said == servedHello() ? 1 : 2;
+      if (this.served == 1) { this.user = r.text(); }
     }
     return this.served == 1;
   }
@@ -4201,7 +4292,7 @@ Files parentFiles(ParentLine l) {
     (string p, i32 mode) => askMode(l, ASK_CHMOD, p, mode, false, ""),
     (string p, bool on) => askMode(l, ASK_SET_EXECUTABLE, p, 0, on, ""),
     (string p, string owner) => askMode(l, ASK_CHOWN, p, 0, false, owner),
-    0);
+    0, l.user);
 }
 
 string lineGone(WireReader r) { return "the parent did not answer: " + r.why; }
@@ -4384,6 +4475,7 @@ async Buf answerQuestion(Files files, ServedStreams open, WireReader q) {
   Buf a = Buf.create();
   if (op == ASK_HELLO) {
     putWireString(a, servedHello());
+    putWireString(a, files.user);
   } else if (op == ASK_READ_FILE) {
     match (await files.readFile(q.text())) {
       Ok(b): { a.push(0); putWireBytes(a, b); }

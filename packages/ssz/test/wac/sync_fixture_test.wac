@@ -18,7 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json } from "../../../wactest/src/fixtures.wac";
-import { Core, Cli } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashTreeRoot, fixedSize, fieldBytes, fieldRoot } from "../../src/container.wac";
@@ -34,8 +34,8 @@ i32 UPDATE_SIGNATURE_SLOT()  { return 6; }
 i32 HEADER_BEACON()          { return 0; }
 i32 BEACON_SLOT()            { return 0; }
 
-JsonArray? syncCases(T t, Core core, Cli cli) {
-  Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
+JsonArray? syncCases(T t, Output err, Files fs, Procs procs) {
+  Loaded f = json(err, fs, procs, "ssz", "light_client_sync_altair_minimal", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return null; }
   JsonArray? cases = f.doc.member("cases")?.array();
@@ -66,10 +66,12 @@ bool isHexOf(string s, i32 nybbles) {
   return true;
 }
 
-export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recorded(
-    Core core, Cli cli) {
+export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recorded(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
 
   //                                            case: steps, distinct update files
@@ -100,10 +102,12 @@ export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recor
   return t.report();
 }
 
-export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present(
-    Core core, Cli cli) {
+export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   string[] kinds = ["process_update", "force_update", "upgrade_store"];
   string[] headers = ["finalized_header", "optimistic_header"];
@@ -149,9 +153,12 @@ export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_th
   return t.report();
 }
 
-export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Core core, Cli cli) {
+export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // Minimal `LightClientBootstrap` = header 112 + SyncCommittee (32 pubkeys x 48 + 48 = 1584)
   // + branch 5 x 32 = 1856. That the vendored bytes are exactly this is the cheapest possible check
@@ -180,9 +187,12 @@ export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Core core,
   return t.report();
 }
 
-export string test_the_metadata_carries_what_initialising_a_store_needs(Core core, Cli cli) {
+export string test_the_metadata_carries_what_initialising_a_store_needs(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   string[] roots = ["genesis_validators_root", "trusted_block_root"];
   // The fork digests decide which container type an object is; a client that ignores them would
@@ -206,10 +216,12 @@ export string test_the_metadata_carries_what_initialising_a_store_needs(Core cor
   return t.report();
 }
 
-export string test_the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes(
-    Core core, Cli cli) {
+export string test_the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // The reason `beaconTypes` takes a config at all. `SYNC_COMMITTEE_SIZE` is 32 here and 512 on
   // mainnet, and that changes the serialized size of everything holding a `SyncCommittee` — so the
@@ -240,10 +252,12 @@ export string test_the_minimal_descriptor_table_reproduces_the_vendored_objects_
   return t.report();
 }
 
-export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table(
-    Core core, Cli cli) {
+export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // Not against a published root — the sync vectors give none — but every object must at least be
   // *readable* as the container it claims to be. A refusal here means a descriptor or a length is
@@ -285,10 +299,12 @@ string slotOf(u8[] eightBytes) {
   return "\{v}";
 }
 
-export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks(
-    Core core, Cli cli) {
+export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // The oracle nobody had to write. A step's `checks.optimistic_header` states a slot and the
   // `hash_tree_root` of a beacon header — a value this package has to be able to extract — so field
@@ -353,10 +369,12 @@ export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_o
   return t.report();
 }
 
-export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused(
-    Core core, Cli cli) {
+export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   JsonObject? theUpdates = cases!.get(0).member("updates")?.object();
   t.isTrue(!(theUpdates is null) && theUpdates!.len() > 0, "the first case has no updates");

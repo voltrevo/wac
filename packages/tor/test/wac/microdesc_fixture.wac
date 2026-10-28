@@ -8,18 +8,18 @@
 
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decode as base64Decode } from "../../../codec/src/base64.wac";
-import { Cli } from "std";
+import { Files } from "std";
 import { arrayOf, jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
 
-JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/microdesc_vectors.json"); }
+JsonObject top(Files fs) { return jsonFile(fs, "packages/tor/test/data/microdesc_vectors.json"); }
 
-JsonArray cases(Cli cli) { return arrayOf(top(cli), "cases"); }
-JsonObject caseAt(Cli cli, i32 i) { return cases(cli).get(i).object()!; }
+JsonArray cases(Files fs) { return arrayOf(top(fs), "cases"); }
+JsonObject caseAt(Files fs, i32 i) { return cases(fs).get(i).object()!; }
 
-export i32 caseCount(Cli cli) { return cases(cli).len(); }
+export i32 caseCount(Files fs) { return cases(fs).len(); }
 
 /** The router descriptor a microdescriptor is made from. */
-export u8[] descriptor(Cli cli, i32 i) { return strOf(caseAt(cli, i), "descriptor").toBytes(); }
+export u8[] descriptor(Files fs, i32 i) { return strOf(caseAt(fs, i), "descriptor").toBytes(); }
 
 /**
  * The port-summary policy for that case, as text.
@@ -28,22 +28,22 @@ export u8[] descriptor(Cli cli, i32 i) { return strOf(caseAt(cli, i), "descripto
  * for the other, and "omitted" is the case a generator gets wrong by writing `p reject 1-65535`
  * where tor writes nothing at all.
  */
-export string policySummary(Cli cli, i32 i) { return strOf(caseAt(cli, i), "policySummary"); }
+export string policySummary(Files fs, i32 i) { return strOf(caseAt(fs, i), "policySummary"); }
 
 /** The microdescriptor tor accepted, byte for byte. */
-export u8[] expected(Cli cli, i32 i) { return strOf(caseAt(cli, i), "microdescriptor").toBytes(); }
+export u8[] expected(Files fs, i32 i) { return strOf(caseAt(fs, i), "microdescriptor").toBytes(); }
 
 /** tor's own unpadded base64 of the SHA-256 over the microdescriptor — the consensus's `m` line. */
-export string digestBase64(Cli cli, i32 i) { return strOf(caseAt(cli, i), "digest256Base64"); }
+export string digestBase64(Files fs, i32 i) { return strOf(caseAt(fs, i), "digest256Base64"); }
 
 /** The same digest, decoded. */
-export u8[] digest(Cli cli, i32 i) { return b64(digestBase64(cli, i)); }
+export u8[] digest(Files fs, i32 i) { return b64(digestBase64(fs, i)); }
 
 // ── the mutations ────────────────────────────────────────────────────────────
 
-JsonArray mutations(Cli cli) { return arrayOf(top(cli), "mutations"); }
+JsonArray mutations(Files fs) { return arrayOf(top(fs), "mutations"); }
 
-export i32 mutationCount(Cli cli) { return mutations(cli).len(); }
+export i32 mutationCount(Files fs) { return mutations(fs).len(); }
 
 /**
  * The digest tor gave a *corrupted* microdescriptor.
@@ -51,12 +51,12 @@ export i32 mutationCount(Cli cli) { return mutations(cli).len(); }
  * These exist to show the digest discriminates: if tor gave a damaged document the same digest as
  * the good one, every assertion built on it would be vacuous.
  */
-export string mutationDigestBase64(Cli cli, i32 i) {
-  return strOf(mutations(cli).get(i).object()!, "digest256Base64");
+export string mutationDigestBase64(Files fs, i32 i) {
+  return strOf(mutations(fs).get(i).object()!, "digest256Base64");
 }
 
-export string mutationName(Cli cli, i32 i) {
-  return strOf(mutations(cli).get(i).object()!, "name");
+export string mutationName(Files fs, i32 i) {
+  return strOf(mutations(fs).get(i).object()!, "name");
 }
 
 /**

@@ -53,15 +53,15 @@ import { T } from "../../packages/wactest/src/assert.wac";
 // `tracked` and `nonEmptyLines` moved to `packages/wactest/src/repo.wac` when
 // `duplicatedline_test.wac` became the second guard to want them.
 import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
-import { Core, Cli, Exec, FileResult } from "std";
-import { hashString } from "core";
+import { Cli, Exec, Files, Output, Procs, Sys } from "std";
+import { hashString, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 // ── the corpus ───────────────────────────────────────────────────────────────
 
-string read(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string read(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 /**
@@ -253,9 +253,12 @@ bool linkableSource(string f) {
 
 // ── the checks ───────────────────────────────────────────────────────────────
 
-export string test_every_relative_link_points_at_a_file_that_exists(Core core, Cli cli) {
+export string test_every_relative_link_points_at_a_file_that_exists(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   StringSet present = presentSet(all);
   i32 broken = 0;
   string first = "";
@@ -265,7 +268,7 @@ export string test_every_relative_link_points_at_a_file_that_exists(Core core, C
     // `site/` is a vite subtree with its own conventions and its own checker; everything else.
     if (hasPrefix(f, "site/") || !linkableSource(f)) { continue; }
     string dir = dirname(f);
-    string[] ts = targets(read(cli, f), !hasSuffix(f, ".md"));
+    string[] ts = targets(read(fs, f), !hasSuffix(f, ".md"));
     for (i32 k = 0; k < ts.len(); k++) {
       checked = checked + 1;
       if (present.has(resolve(dir, ts[k]))) { continue; }
@@ -291,7 +294,7 @@ export string test_every_relative_link_points_at_a_file_that_exists(Core core, C
  * and one that discarded *everything* would leave the check above green and useless — which is
  * exactly the failure this repository keeps finding in its own measurements.
  */
-export string test_the_check_has_something_to_check(Core core, Cli cli) {
+export string test_the_check_has_something_to_check() {
   T t = T.create();
   // **The examples are real paths, relative to this file**, so the check above sees them and they
   // have to resolve. The alternative was excluding this file from its own corpus, and a checker with
@@ -350,7 +353,7 @@ string slug(string heading) {
   return string.fromBytes(out);
 }
 
-export string test_the_slug_rule_is_the_one_the_anchors_were_written_against(Core core, Cli cli) {
+export string test_the_slug_rule_is_the_one_the_anchors_were_written_against() {
   T t = T.create();
   // The canary for the anchor check: a rule that dropped too much would map every heading to the
   // same string and pass everything, and one that dropped too little would have failed on the day it
@@ -415,9 +418,12 @@ string[][] anchorsIn(string text) {
   return exact;
 }
 
-export string test_every_anchor_names_a_heading_in_the_file_it_points_at(Core core, Cli cli) {
+export string test_every_anchor_names_a_heading_in_the_file_it_points_at(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   StringSet present = presentSet(all);
   i32 broken = 0;
   i32 checked = 0;
@@ -425,7 +431,7 @@ export string test_every_anchor_names_a_heading_in_the_file_it_points_at(Core co
   for (i32 i = 0; i < all.len(); i++) {
     string f = all[i];
     if (!hasSuffix(f, ".md") || hasPrefix(f, "site/")) { continue; }
-    string text = read(cli, f);
+    string text = read(fs, f);
     string[][] anchors = anchorsIn(text);
     if (anchors.len() == 0) { continue; }
     StringSet own = headingsOf(text);
@@ -438,7 +444,7 @@ export string test_every_anchor_names_a_heading_in_the_file_it_points_at(Core co
         // A target that does not exist at all is the existence check's business, so it is skipped
         // rather than reported twice: one broken link should produce one complaint.
         if (!present.has(target)) { continue; }
-        heads = headingsOf(read(cli, target));
+        heads = headingsOf(read(fs, target));
       }
       checked = checked + 1;
       if (heads.has(anchor)) { continue; }
@@ -451,12 +457,14 @@ export string test_every_anchor_names_a_heading_in_the_file_it_points_at(Core co
   return t.report();
 }
 
-export string test_the_corpus_is_the_whole_repository_not_a_sample(Core core, Cli cli) {
+export string test_the_corpus_is_the_whole_repository_not_a_sample(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   // Without this, a `git ls-files` that answered nothing — wrong directory, no git, a flag that
   // changed meaning — would make every check above pass with no files at all. It is here because
   // that has happened to this repository before.
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   i32 md = 0;
   i32 wac = 0;
   bool readme = false;
@@ -484,9 +492,12 @@ export string test_the_corpus_is_the_whole_repository_not_a_sample(Core core, Cl
  * angle brackets alone appear in prose about merges — this comment is an example, and a check that
  * failed on its own explanation would be deleted within the day.
  */
-export string test_no_tracked_file_carries_a_conflict_marker(Core core, Cli cli) {
+export string test_no_tracked_file_carries_a_conflict_marker(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   string open = "<<<<<<<" + " ";
   string close = ">>>>>>>" + " ";
   string mid = "=======";
@@ -497,7 +508,7 @@ export string test_no_tracked_file_carries_a_conflict_marker(Core core, Cli cli)
     string f = all[i];
     if (!markerCandidate(f)) { continue; }
     scanned = scanned + 1;
-    string[] ls = splitOn(read(cli, f), '\n');
+    string[] ls = splitOn(read(fs, f), '\n');
     for (i32 k = 0; k < ls.len(); k++) {
       string line = ls[k];
       bool hit = hasPrefix(line, open) || hasPrefix(line, close) || line == mid;
@@ -666,9 +677,12 @@ bool prosePath(string f) {
   return false;
 }
 
-export string test_every_backticked_repository_path_names_a_file_that_exists(Core core, Cli cli) {
+export string test_every_backticked_repository_path_names_a_file_that_exists(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   StringSet present = presentSet(all);
   i32 checked = 0;
   i32 broken = 0;
@@ -689,7 +703,7 @@ export string test_every_backticked_repository_path_names_a_file_that_exists(Cor
     // there is a check worth having there — and it is still not wanted, because that directory is
     // maintained by hand and nothing programmatic runs over it.
     if (!prosePath(f) || hasPrefix(f, "issues/") || hasPrefix(f, "vision/")) { continue; }
-    string[] paths = rootedPaths(read(cli, f));
+    string[] paths = rootedPaths(read(fs, f));
     for (i32 k = 0; k < paths.len(); k++) {
       string path = paths[k];
       if (path.indexOf("NNNN") >= 0) { continue; }
@@ -722,9 +736,12 @@ export string test_every_backticked_repository_path_names_a_file_that_exists(Cor
  * Over a wider file set, too: everything except the numbered issues themselves. That skips a closed
  * issue, which is a record, and keeps the trackers' own READMEs, which are live documentation.
  */
-export string test_no_backticked_path_names_the_layout_before_the_merge(Core core, Cli cli) {
+export string test_no_backticked_path_names_the_layout_before_the_merge(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   // The documents whose subject *is* the merge say the old names in order to explain them.
   string[] exemptFiles = ["MERGE.md", "tools/wac/links_test.wac"];
   string[] departedRoots = [
@@ -740,7 +757,7 @@ export string test_no_backticked_path_names_the_layout_before_the_merge(Core cor
     bool skip = false;
     for (i32 e = 0; e < exemptFiles.len(); e++) { if (f == exemptFiles[e]) { skip = true; } }
     if (skip) { continue; }
-    string[] ticked = backtickedAny(read(cli, f));
+    string[] ticked = backtickedAny(read(fs, f));
     for (i32 k = 0; k < ticked.len(); k++) {
       bool departed = false;
       for (i32 d = 0; d < departedRoots.len(); d++) {

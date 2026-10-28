@@ -21,17 +21,18 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat } from "std";
+import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 static string OPS = "packages/fs/example/ops.wac";
 
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
-string workDir(Cli cli) {
-  string who = agentDir(cli);
+string workDir(Env env) {
+  string who = agentDir(env);
   return "/tmp/wac-fs-ops" + (who == "" ? "" : "-\{who}");
 }
 
@@ -49,32 +50,32 @@ string workDir(Cli cli) {
  * `ops` reaches nine files, and `std/platform.wac` is not one of them — it is embedded in the compiler,
  * so a change to it arrives as a new `wac` binary, whose mtime `builtProgram` checks anyway.
  */
-string buildOps(T t, Core core, Cli cli) {
-  Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary that builds ops is where the seed task writes it");
-  if (!bin.exists) { return ""; }
-  string mod = builtProgram(cli, OPS, "fs-ops",
-                            ["--allow-read", "--allow-write"]);
-  t.isTrue(cli.stat(mod).wait().exists, "ops builds — see .cache/built-fs-ops");
-  return cli.stat(mod).wait().exists ? mod : "";
+string buildOps(T t, Env env, Files fs, Procs procs) {
+  Stat? bin = flatten(fs.stat(binary(env)).wait()).ok();
+  t.isTrue((bin is not null), "the binary that builds ops is where the seed task writes it");
+  if ((bin is null)) { return ""; }
+  string mod = builtProgram(env, fs, procs, OPS, "fs-ops", ["--allow-read", "--allow-write"]);
+  t.isTrue(flatten(fs.stat(mod).wait()).isOk(), "ops builds — see .cache/built-fs-ops");
+  return flatten(fs.stat(mod).wait()).isOk() ? mod : "";
 }
 
 /** Run a script against one backing and return its transcript. */
-string run(Core core, Cli cli, string stem, string[] args, string script) {
+string run(Output err, Env env, Procs procs, string stem, string[] args, string script) {
   string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = stem;
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
-  Exec r = cli.exec(binary(cli), argv, script.toBytes()).wait();
-  if (!r.ran()) {
-    core.warn("fs: ops would not start — \{r.error}");
+  auto rRan = flatten(procs.exec(binary(env), argv, script.toBytes(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) {
+    err.line("fs: ops would not start — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
     trap;
   }
-  string err = string.fromBytes(r.stderr);
-  if (trimmed(err).len() > 0) {
-    core.warn("fs: ops \{args[0]}: \{err}");
+  string complained = string.fromBytes(r!.stderr);
+  if (trimmed(complained).len() > 0) {
+    err.line("fs: ops \{args[0]}: \{complained}");
     trap;
   }
-  return string.fromBytes(r.stdout);
+  return string.fromBytes(r!.stdout);
 }
 
 /** Non-empty lines, which is how both a script and a transcript are counted. */
@@ -102,16 +103,16 @@ string joined(string[] lines) {
  * absolute once the prefix is added — which is what `ops` does with its second argument. The memory
  * run gets an empty prefix, so `/a` really is `/a` in a filesystem that has nothing else in it.
  */
-void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines) {
+void bothWays(T t, Output err, Env env, Files fs, Procs procs, string stem, string name, string[] lines) {
   string script = joined(lines);
-  string dir = "\{workDir(cli)}/\{name}";
-  Change gone = cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "\{name}: a directory for the host run — \{made.message}");
-  if (!made.ok()) { return; }
+  string dir = "\{workDir(env)}/\{name}";
+  auto gone = flatten(fs.remove(dir, true).wait());
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "\{name}: a directory for the host run — \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return; }
 
-  string inMemory = run(core, cli, stem, ["mem"], script);
-  string onHost = run(core, cli, stem, ["host", dir], script);
+  string inMemory = run(err, env, procs, stem, ["mem"], script);
+  string onHost = run(err, env, procs, stem, ["host", dir], script);
 
   // **A line per command, before the two are compared at all.**
   //
@@ -134,7 +135,7 @@ void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines)
   // The host's transcript names the temp directory nowhere — the answers are categories, sizes and
   // listings — so the two are comparable directly.
   t.eqStr(inMemory, onHost, "\{name}\n--- script ---\n\{script}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 }
 
 /**
@@ -148,9 +149,13 @@ void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines)
  * Chosen to cover what the categories *are* rather than to be long: absent, a write's answer, a file
  * with its size, the bytes back, a directory, and a listing.
  */
-export string test_the_transcript_is_what_it_says_it_is(Core core, Cli cli) {
+export string test_the_transcript_is_what_it_says_it_is(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
   string script = joined(["stat /a", "write /a hello", "stat /a", "read /a", "mkdir /d", "stat /d", "ls /"]);
   // Measured, not guessed: two of these were written from memory first — `stat dir 0` for a
@@ -160,64 +165,84 @@ export string test_the_transcript_is_what_it_says_it_is(Core core, Cli cli) {
     "stat absent", "write 0", "stat file 5", "read [hello]", "mkdir 0", "stat dir",
     "ls [a d]", ""
   ]);
-  t.eqStr(run(core, cli, stem, ["mem"], script), want, "the in-memory transcript");
-  string dir = "\{workDir(cli)}/pinned";
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a directory for the host run — \{made.message}");
-  if (made.ok()) {
-    t.eqStr(run(core, cli, stem, ["host", dir], script), want, "the same on a real disk");
-    cli.remove(dir, true).wait();
+  t.eqStr(run(err, env, procs, stem, ["mem"], script), want, "the in-memory transcript");
+  string dir = "\{workDir(env)}/pinned";
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a directory for the host run — \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isOk()) {
+    t.eqStr(run(err, env, procs, stem, ["host", dir], script), want, "the same on a real disk");
+    fs.remove(dir, true).wait();
   }
   return t.report();
 }
 
-export string test_a_file_written_reads_back(Core core, Cli cli) {
+export string test_a_file_written_reads_back(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "files", ["stat /a", "write /a hello", "stat /a", "read /a", "write /a bye", "read /a", "stat /a"]);
+  bothWays(t, err, env, fs, procs, stem, "files", ["stat /a", "write /a hello", "stat /a", "read /a", "write /a bye", "read /a", "stat /a"]);
   return t.report();
 }
 
-export string test_directories_and_the_three_faults_that_tell_rm_f_from_rm(Core core, Cli cli) {
+export string test_directories_and_the_three_faults_that_tell_rm_f_from_rm(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "directories", [
+  bothWays(t, err, env, fs, procs, stem, "directories", [
     "mkdir /d", "mkdir /d", "stat /d", "write /d/f x", "rm /d", "rm /d/f", "rm /d", "rm /d",
     "rm /gone", "mkdir /x/y", "write /x/y z"
   ]);
   return t.report();
 }
 
-export string test_mkdir_p_and_rm_r(Core core, Cli cli) {
+export string test_mkdir_p_and_rm_r(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "flags", [
+  bothWays(t, err, env, fs, procs, stem, "flags", [
     "mkdirp /a/b/c", "stat /a/b/c", "mkdirp /a/b/c", "write /a/b/c/f one", "rm /a", "rmr /a",
     "stat /a", "rmr /a"
   ]);
   return t.report();
 }
 
-export string test_a_listing_is_the_same_set_in_the_same_order(Core core, Cli cli) {
+export string test_a_listing_is_the_same_set_in_the_same_order(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "listing", [
+  bothWays(t, err, env, fs, procs, stem, "listing", [
     "write /b one", "write /a two", "mkdir /c", "write /c/inside three", "ls /", "ls /c", "ls /a",
     "ls /nope", "rm /a", "ls /"
   ]);
   return t.report();
 }
 
-export string test_rename_moves_a_name(Core core, Cli cli) {
+export string test_rename_moves_a_name(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "rename", [
+  bothWays(t, err, env, fs, procs, stem, "rename", [
     "mkdir /d", "write /a one", "mv /a /d/b", "stat /a", "read /d/b", "write /c two", "mv /d/b /c",
     "read /c", "mv /gone /x", "mv /c /nodir/x"
   ]);
@@ -235,11 +260,15 @@ export string test_rename_moves_a_name(Core core, Cli cli) {
  * What each should be is not a decision: `rename(2)` has rules and the host follows them. Whatever
  * this transcript says on the host side is what memory has to say.
  */
-export string test_rename_onto_something_already_there(Core core, Cli cli) {
+export string test_rename_onto_something_already_there(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "rename-onto", [
+  bothWays(t, err, env, fs, procs, stem, "rename-onto", [
     "mkdir /de", "mkdir /df", "write /df/x c", "write /f1 a", "write /f2 b", "mkdir /d1",
     "mv /f1 /de",          // a file onto an empty directory
     "mv /f1 /df",          // a file onto a full one
@@ -252,11 +281,15 @@ export string test_rename_onto_something_already_there(Core core, Cli cli) {
 }
 
 /** Writing over a directory, and reading one — both refuse, and the *category* is what has to match. */
-export string test_writing_over_a_directory_and_reading_one(Core core, Cli cli) {
+export string test_writing_over_a_directory_and_reading_one(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string stem = buildOps(t, core, cli);
+  string stem = buildOps(t, env, fs, procs);
   if (stem == "") { return t.report(); }
-  bothWays(t, core, cli, stem, "kinds", ["mkdir /d", "read /d", "write /d no", "stat /d"]);
-  cli.remove(workDir(cli), true).wait();
+  bothWays(t, err, env, fs, procs, stem, "kinds", ["mkdir /d", "read /d", "write /d no", "stat /d"]);
+  fs.remove(workDir(env), true).wait();
   return t.report();
 }

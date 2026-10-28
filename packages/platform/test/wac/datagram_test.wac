@@ -23,9 +23,10 @@
 // and `got: ping … sender-is-a yes` is the one that says a datagram made the trip.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary, nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
+import { flatten } from "core";
 
 static string PROBE = "packages/platform/test/wac/datagram_probe.wac";
 
@@ -39,43 +40,46 @@ string ranOut(Exec r) {
   return string.fromBytes(r.stdout);
 }
 
-export string test_the_datagram_capabilities_agree_across_hosts(Core core, Cli cli) {
+export string test_the_datagram_capabilities_agree_across_hosts(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/datagram";
-  string why = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/datagram";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
 
   // The Deno host, built the way every other two-host test builds one.
-  Exec bd = cli.exec("deno", [
+  auto bdRan = flatten(procs.exec("deno", [
                                       "run", "-A", "packages/platform/build.ts", PROBE,
                                       "--target", "deno", "--allow-net", "-o", "\{dir}/deno"
-  ],
-                     u8[]()).wait();
-  t.isTrue(bd.ran() && bd.status == 0,
-           "the probe built for deno — \{string.fromBytes(bd.stderr)}");
-  if (!bd.ran() || bd.status != 0) { return t.report(); }
+  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? bd = bdRan.ok();
+  t.isTrue((bd is not null) && bd!.status == 0,
+           "the probe built for deno — \{string.fromBytes(bd!.stderr)}");
+  if ((bd is null) || bd!.status != 0) { return t.report(); }
 
   // The V8 native host, through a plain module rather than an app: `wac run` is the shortest route
   // and needs no `wac` on PATH the way a `wac app` wrapper does.
-  Exec bn = cli.exec(wacBinary(cli),
-                     ["build", PROBE, "-o", "\{dir}/mod", "--allow-net"], u8[]()).wait();
-  t.isTrue(bn.ran() && bn.status == 0, "the probe built — \{string.fromBytes(bn.stderr)}");
-  if (!bn.ran() || bn.status != 0) { return t.report(); }
+  auto bnRan = flatten(procs.exec(wacBinary(env), ["build", PROBE, "-o", "\{dir}/mod", "--allow-net"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? bn = bnRan.ok();
+  t.isTrue((bn is not null) && bn!.status == 0, "the probe built — \{string.fromBytes(bn!.stderr)}");
+  if ((bn is null) || bn!.status != 0) { return t.report(); }
 
-  string denoSaid = ranOut(cli.exec("\{dir}/deno", string[].filled(0, ""), u8[]()).wait());
-  string v8Said = ranOut(cli.exec(wacBinary(cli),
-                                  ["run", "--allow-net", PROBE], u8[]()).wait());
+  string denoSaid = ranOut(flatten(procs.exec("\{dir}/deno", string[].filled(0, ""), u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap());
+  string v8Said = ranOut(flatten(procs.exec(wacBinary(env), ["run", "--allow-net", PROBE], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap());
 
   t.eqStr(v8Said, WANT, "the V8 native host's transcript");
   t.eqStr(denoSaid, WANT, "the Deno host's transcript");
 
   // **And the wasmtime host, which is the one `issues/lang/0109` reported** — required, not skipped.
-  if (requireNativeHost(cli, t) != "") {
-    string wlSaid = ranOut(cli.exec(nativeHost(cli), ["\{dir}/mod.wasm"], u8[]()).wait());
+  if (requireNativeHost(env, fs, t) != "") {
+    string wlSaid = ranOut(flatten(procs.exec(nativeHost(env), ["\{dir}/mod.wasm"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap());
     t.eqStr(wlSaid, WANT, "the wasmtime host's transcript");
   }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

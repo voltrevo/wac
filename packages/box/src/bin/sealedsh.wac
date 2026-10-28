@@ -27,45 +27,22 @@
 // that wanted eight bytes. The bound is the applet's to declare and the file is the filesystem's to
 // know; `Fs.readSome` was already the route and nothing was passing the number down it.
 
-import { Core, Cli, Sys } from "std";
-import { Fs, mountSystem } from "../../../fs/src/fs.wac";
+import { Sys, Files, MemoryStore } from "std";
 import { Vec } from "core";
-import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
-import { boxApplet, boxNames, boxRun } from "../shrun.wac";
+import { boxApplet, systemShell } from "../shrun.wac";
 import { UNKNOWN } from "../box.wac";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  // **This program is also its own applets**, as `bin/sh.wac` is: the shell spawns a stage by re-entering
-  // `main` with the applet's name first. Without grants nothing can actually spawn here, so it is the
-  // in-process route that runs — but the entry has to be a multi-call one either way, or a spawned
-  // `sort` would start a shell and hand it a script called `sort`.
-  i32 asApplet = await boxApplet(core, cli);
+  i32 asApplet = await boxApplet(sys);
   if (asApplet != UNKNOWN) { return asApplet; }
 
-  Fs fs = Fs.inMemory(0);
-  await fs.mkdir("/tmp", true);
-  // `/dev` and `/proc`, generated on read: `/dev/null`, `/dev/zero`, `/dev/urandom` and
-  // `/proc/self/cmdline`. A sealed session has a real CSPRNG this way without a grant for one.
-  Vec<string> argv = Vec.create();
-  argv.push("sealedsh");
-  for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
-  // `/bin` is `boxNames()`: the programs this build actually has, so `ls /bin` is the truth
-  // about this binary rather than a list somebody typed.
-  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
-
-  Shell sh = Shell.onFs(core, cli, fs);
-  sh.cwd = "/";
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  // **Spawnable, and the seal holds** — wac-mono 0116. `spawnSelf` needs no grant of its own, since
-  // the source is this program's own bundle, so a session with none has always been *able* to spawn;
-  // what stopped it was that the stage it spawned would build `Fs.onHost` and see the machine. It
-  // asks its parent now, and its parent is this shell, so a stage sees exactly this session's
-  // memory filesystem and nothing else. `test/sealing.test.ts` is where that is checked rather than
-  // asserted, including the canary that a stage cannot read a file that exists on the host.
-  sh.externalSpawnable = true;
-  return await shellMain(core, cli, sh, 0);
+  // Nothing of the machine's: a store in memory, with a `/tmp`, and the system mounted over it.
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.mkdir("/tmp", true);
+  string[] args = sys.args();
+  Vec<string> cmdline = Vec.create();
+  cmdline.push("sealedsh");
+  for (i32 i = 0; i < args.len(); i++) { cmdline.push(args[i]); }
+  return await shellMain(args, systemShell(sys, root, cmdline), 0);
 }

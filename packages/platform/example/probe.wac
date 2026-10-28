@@ -6,33 +6,32 @@
 //   probe                  ->  read=ok net=ok        (built with --allow-read --allow-net)
 //   runner probe.worker.js  ->  read=denied net=denied
 
-import { Cli, Core, FAULT_NOT_GRANTED, FileResult, HostSocket, Sys } from "std";
+import { NotGranted, Sys, Files, Net, Output } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Net net = sys.net();
   // A file that certainly exists when run from the repository root. A denial and a missing
-  // file are deliberately not distinguished by the world, so the *message* is what says
-  // which — and either way the answer is "not readable", which is what a caller acts on.
-  FileResult f = cli.readFile("README.md").wait();
-  // **The fault, not the sentence.** Reading `error` is what this program used to do, and the four
-  // hosts spell one refusal two ways — "filesystem read not granted to this application" on the
-  // JavaScript hosts against "Not granted to this application" on both native ones. A `contains`
-  // looking for lowercase "not granted" therefore reported `failed` under `wacland` and `wacv8`: the
-  // confinement was working and the program said it was not. `FileResult.fault` is the field that
-  // exists for exactly this, and its own docstring says why the message cannot be branched on.
-  string read = f.ok ? "ok" : (f.fault == FAULT_NOT_GRANTED() ? "denied" : "failed");
+  // file are deliberately not distinguished by the world, so the *fault* is what says which —
+  // and either way the answer is "not readable", which is what a caller acts on.
+  //
+  // **The fault, not the sentence.** Reading the message is what this program used to do, and the
+  // four hosts spell one refusal two ways — "filesystem read not granted to this application" on
+  // the JavaScript hosts against "Not granted to this application" on both native ones. A
+  // `contains` looking for lowercase "not granted" therefore reported `failed` under `wacland` and
+  // `wacv8`: the confinement was working and the program said it was not. `NotGranted` is the type
+  // that exists for exactly this.
+  auto f = flatten(fs.readFile("README.md").wait());
+  string read = f.isOk() ? "ok" : (f.err()! is NotGranted ? "denied" : "failed");
 
   // Port 1 is privileged and nothing is listening, so a *grant* failure and a connection
-  // failure differ in their message rather than in whether they failed.
-  // **And the fault is what says which, since `issues/system/0238c`.** This read `s.error` and matched
-  // `"ot granted"` -- the leading letter dropped so that "not granted" and "Not granted" both hit,
-  // because the hosts spell one refusal two ways. `Socket` carries a category now, exactly as
-  // `FileResult` and `Change` always have, and the two branches below are the same line.
-  HostSocket s = cli.connect("127.0.0.1", 1).wait();
-  string net = s.handle < 0 ? (s.fault == FAULT_NOT_GRANTED() ? "denied" : "failed") : "ok";
-  if (s.handle >= 0) { cli.closeSocket(s.handle); }
+  // failure differ in their fault rather than in whether they failed.
+  auto s = flatten(net.connect("127.0.0.1", 1).wait());
+  string said = s.isOk() ? "ok" : (s.err()! is NotGranted ? "denied" : "failed");
+  if (s.isOk()) { s.unwrap().close(); }
 
-  core.log("read=\{read} net=\{net}");
+  out.line("read=\{read} net=\{said}");
   return 0;
 }

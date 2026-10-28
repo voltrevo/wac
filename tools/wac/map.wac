@@ -23,10 +23,11 @@
 // It was tools/map.ts. The one definition of "a program" it shares with the compile check is
 // `tools/wac/programs.wac`, ported first for that reason. `issues/system/0161`.
 
-import { Core, Cli, Change, FileResult, Stat, Sys } from "std";
+import { Change, Stat, Sys, Files, Output } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
 import { isSpace } from "../../packages/wactest/src/strings.wac";
+import { flatten } from "core";
 
 struct Package {
   string name;
@@ -38,9 +39,9 @@ struct Package {
   string[] uses;
 }
 
-string read(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string read(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 bool hasSuffix(string s, string suffix) {
@@ -179,7 +180,7 @@ i32 occurrences(string s, string needle) {
 }
 
 /** Every file under `dir`, recursively. */
-string[] walk(Cli cli, string dir) {
+string[] walk(Files fs, string dir) {
   string[] out = string[].filled(8192, "");
   i32 n = 0;
   string[] stack = string[].filled(2048, "");
@@ -189,13 +190,13 @@ string[] walk(Cli cli, string dir) {
   while (top > 0 && n < out.len()) {
     top = top - 1;
     string at = stack[top];
-    string[]? entries = cli.readDir(at).wait();
+    string[]? entries = flatten(fs.readDir(at).wait()).ok();
     if (entries is null) { continue; }
     string[] es = entries!;
     for (i32 i = 0; i < es.len(); i++) {
       string path = at + "/" + es[i];
-      Stat st = cli.stat(path).wait();
-      if (st.isDir) {
+      Stat? st = flatten(fs.stat(path).wait()).ok();
+      if ((st is not null && st!.isDir)) {
         if (top < stack.len()) { stack[top] = path; top = top + 1; }
         continue;
       }
@@ -230,17 +231,17 @@ void collectUses(string src, string self, string[] found, i32[] n) {
   }
 }
 
-Package survey(Cli cli, string name) {
+Package survey(Files fs, string name) {
   string dir = "packages/" + name;
   i32 wacLines = 0;
   i32 hostTests = 0;
   i32 wacTests = 0;
   string[] uses = string[].filled(64, "");
   i32[] used = i32[].filled(1, 0);
-  string[] files = walk(cli, dir);
+  string[] files = walk(fs, dir);
   for (i32 i = 0; i < files.len(); i++) {
     string rel = files[i];
-    string src = read(cli, rel);
+    string src = read(fs, rel);
     if (hasSuffix(rel, ".wac")) {
       // Imports from `src/` only. Counting test imports as well made the graph cyclic and the
       // ordering meaningless: every package's tests import `wactest`, `wactest` imports `fmt`, and
@@ -257,7 +258,7 @@ Package survey(Cli cli, string name) {
   }
   string[] exact = string[].filled(used[0], "");
   exact.copyFrom(uses, 0, 0, used[0]);
-  return Package(name, summarize(read(cli, dir + "/README.md")), wacLines, hostTests, wacTests,
+  return Package(name, summarize(read(fs, dir + "/README.md")), wacLines, hostTests, wacTests,
                  sortedNames(exact));
 }
 
@@ -346,7 +347,7 @@ string commas(i32 v) {
   return out;
 }
 
-string render(Cli cli, Package[] pkgs, Program[] programs) {
+string render(Package[] pkgs, Program[] programs) {
   Package[] ordered = layered(pkgs);
   i32 wac = 0;
   i32 tests = 0;
@@ -456,46 +457,48 @@ string structure(string md) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
   bool check = false;
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   for (i32 i = 0; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--check") { check = true; }
+    if (argv[i] == "--check") { check = true; }
   }
 
-  string[]? entries = cli.readDir("packages").wait();
+  string[]? entries = flatten(fs.readDir("packages").wait()).ok();
   if (entries is null) {
-    core.warn("map: no packages directory here — run this from the repository root");
+    err.line("map: no packages directory here — run this from the repository root");
     return 1;
   }
   string[] names = sortedNames(entries!);
   Package[] pkgs = Package[].filled(names.len(), Package("", "", 0, 0, 0, string[]()));
   i32 n = 0;
   for (i32 i = 0; i < names.len(); i++) {
-    Stat st = cli.stat("packages/" + names[i]).wait();
-    if (!st.isDir) { continue; }
-    pkgs[n] = survey(cli, names[i]);
+    Stat? st = flatten(fs.stat("packages/" + names[i]).wait()).ok();
+    if (!(st is not null && st!.isDir)) { continue; }
+    pkgs[n] = survey(fs, names[i]);
     n = n + 1;
   }
   Package[] exact = Package[].filled(n, pkgs[0]);
   exact.copyFrom(pkgs, 0, 0, n);
 
-  string text = render(cli, exact, findPrograms(cli));
+  string text = render(exact, findPrograms(fs));
 
   if (check) {
-    if (structure(read(cli, "MAP.md")) != structure(text)) {
-      core.warn("MAP.md is out of date — run `wac task map`");
+    if (structure(read(fs, "MAP.md")) != structure(text)) {
+      err.line("MAP.md is out of date — run `wac task map`");
       return 1;
     }
-    core.log("MAP.md is current");
+    out.line("MAP.md is current");
     return 0;
   }
-  Change wrote = cli.writeFile("MAP.md", text.toBytes()).wait();
-  if (!wrote.ok()) {
-    core.warn("map: cannot write MAP.md — " + wrote.message);
+  auto wrote = flatten(fs.writeFile("MAP.md", text.toBytes()).wait());
+  if (wrote.isErr()) {
+    err.line("map: cannot write MAP.md — " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  core.log("MAP.md: " + itoa(n) + " packages");
+  out.line("MAP.md: " + itoa(n) + " packages");
   return 0;
 }

@@ -27,13 +27,13 @@
 // letter added there is honoured here the next time this runs. It is the same gain as `corpus:through`
 // importing the corpus instead of a derivation of it.
 
-import { Core, Cli, Exec, Stat, Sys } from "std";
+import { Cli, Exec, Stat, Sys, ChildEnv, Env, Files, Output, Procs, Launch } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, joined, splitLines } from "../../packages/wactest/src/strings.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
 import { sortStrings } from "./covledger.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { acceptedFlags } from "../../packages/box/src/lib/flags.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
@@ -63,11 +63,11 @@ string[] applets() {
 string stdinText() { return "banana\napple\napple\ncherry\n"; }
 
 /** Where the system keeps its own copy of an applet, or `""` if it has none. */
-string realPath(Cli cli, string tool) {
+string realPath(Files fs, string tool) {
   string[] where = ["/usr/bin/" + tool, "/bin/" + tool];
   for (i32 i = 0; i < where.len(); i++) {
-    Stat s = cli.stat(where[i]).wait();
-    if (s.exists) { return where[i]; }
+    Stat? s = flatten(fs.stat(where[i]).wait()).ok();
+    if ((s is not null)) { return where[i]; }
   }
   return "";
 }
@@ -84,22 +84,22 @@ string realPath(Cli cli, string tool) {
  * `"$0" "$@"` rather than an interpolated command line, so a path or an argument containing a space
  * or a quote is passed through as one word rather than re-split by the shell that bounds it.
  */
-Got runWith(Cli cli, string cmd, string[] args, string stdinBytes, string dir, string[] env) {
+Got runWith(Procs procs, string cmd, string[] args, string stdinBytes, string dir, string[] env) {
   string[] argv = string[].filled(args.len() + 3, "");
   argv[0] = "-c";
   argv[1] = "timeout 5 \"$0\" \"$@\" | head -c 200000";
   argv[2] = cmd;
   argv.copyFrom(args, 0, 3, args.len());
-  Exec r = cli.execWithIn("sh", argv, stdinBytes.toBytes(), env, true, false, dir).wait();
+  Exec r = flatten(procs.exec("sh", argv, stdinBytes.toBytes(), ChildEnv(true, env), Launch(dir, false, false, false)).wait()).unwrap();
   if (!r.ran()) { return Got("", "could not run sh: " + r.error, 0 - 1); }
   return Got(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status);
 }
 
 /** The single-letter flags the real tool's own `--help` documents. */
-string[] documentedFlags(Cli cli, string tool, string[] env) {
-  string real = realPath(cli, tool);
+string[] documentedFlags(Files fs, Procs procs, string tool, string[] env) {
+  string real = realPath(fs, tool);
   if (real == "") { return string[].filled(0, ""); }
-  Exec r = cli.execWithIn(real, ["--help"], u8[](), env, true, false, ".").wait();
+  Exec r = flatten(procs.exec(real, ["--help"], u8[](), ChildEnv(true, env), Launch(".", false, false, false)).wait()).unwrap();
   if (!r.ran()) { return string[].filled(0, ""); }
   return flagsFromHelp(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
@@ -171,39 +171,43 @@ string[] toArray(Vec<string> v) {
  * a shell script, a directory — fails the same way and says the same thing. So this asks it something
  * with a known answer.
  */
-bool answers(Core core, Cli cli, string box, string[] env) {
-  Got r = runWith(cli, box, ["echo", "canary"], "", ".", env);
+bool answers(Output err, Procs procs, string box, string[] env) {
+  Got r = runWith(procs, box, ["echo", "canary"], "", ".", env);
   if (trimmed(r.out) == "canary") { return true; }
-  core.warn(box + " did not answer `box echo canary` — it said \"" + trimmed(r.out) + "\"");
-  core.warn("  Every flag would be reported as refused, which is what an unmeasured sweep looks");
-  core.warn("  like. Build one: wac task app:build packages/box/src/box.wac -o /tmp/box");
+  err.line(box + " did not answer `box echo canary` — it said \"" + trimmed(r.out) + "\"");
+  err.line("  Every flag would be reported as refused, which is what an unmeasured sweep looks");
+  err.line("  like. Build one: wac task app:build packages/box/src/box.wac -o /tmp/box");
   return false;
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string box = "";
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (box == "" && !startsWith(a, "--")) { box = a; }
   }
   if (box == "") {
-    core.warn("usage: wac task flags:ignored <box-binary>");
-    core.warn("  wac task app:build packages/box/src/box.wac --allow-read --allow-write -o /tmp/box");
+    err.line("usage: wac task flags:ignored <box-binary>");
+    err.line("  wac task app:build packages/box/src/box.wac --allow-read --allow-write -o /tmp/box");
     return 2;
   }
 
   // `LC_ALL=C` and nothing else inherited but `PATH`, so the answer does not move with the
   // environment the sweep happened to run in.
-  u8[]? path = cli.env("PATH").wait();
-  string[] env = [
+  u8[]? path = flatten(env.get("PATH").wait()).orElse(null);
+  string[] childEnv = [
                           "LC_ALL=C",
                           "PATH=" + (path is null ? "/usr/bin:/bin" : string.fromBytes(path!))
   ];
 
-  if (!answers(core, cli, box, env)) { return 2; }
+  if (!answers(err, procs, box, childEnv)) { return 2; }
 
   Vec<string> ignored = Vec<string>.create();
   Vec<string> refused = Vec<string>.create();
@@ -213,18 +217,18 @@ export i32 main(Sys sys) {
   i32 checked = 0;
   for (i32 ai = 0; ai < names.len(); ai++) {
     string applet = names[ai];
-    string[] flags = documentedFlags(cli, applet, env);
+    string[] flags = documentedFlags(fs, procs, applet, childEnv);
     if (flags.len() == 0) { continue; }
-    string real = realPath(cli, applet);
+    string real = realPath(fs, applet);
     if (real == "") { continue; }
 
-    string dir = scratch(cli, "flags-" + applet);
-    cli.mkdir(dir, true).wait();
-    cli.writeFile(dir + "/f.txt", stdinText().toBytes()).wait();
+    string dir = scratch(env, "flags-" + applet);
+    fs.mkdir(dir, true).wait();
+    fs.writeFile(dir + "/f.txt", stdinText().toBytes()).wait();
 
     // Two baselines: what each answers with no flag at all, on the same input.
-    Got bare = runWith(cli, box, [applet, "f.txt"], stdinText(), dir, env);
-    Got bareReal = runWith(cli, real, ["f.txt"], stdinText(), dir, env);
+    Got bare = runWith(procs, box, [applet, "f.txt"], stdinText(), dir, childEnv);
+    Got bareReal = runWith(procs, real, ["f.txt"], stdinText(), dir, childEnv);
 
     string deliberate = acceptedFlags(applet);
 
@@ -233,8 +237,8 @@ export i32 main(Sys sys) {
       // `--help`/`--version` noise, which every tool has and no tool implements as an applet flag.
       if (applet != "cat" && (f == "h" || f == "V" || f == "v")) { continue; }
 
-      Got got = runWith(cli, box, [applet, "-" + f, "f.txt"], stdinText(), dir, env);
-      Got theirs = runWith(cli, real, ["-" + f, "f.txt"], stdinText(), dir, env);
+      Got got = runWith(procs, box, [applet, "-" + f, "f.txt"], stdinText(), dir, childEnv);
+      Got theirs = runWith(procs, real, ["-" + f, "f.txt"], stdinText(), dir, childEnv);
       checked = checked + 1;
 
       // 124 is `timeout` killing it, which says nothing about the flag.
@@ -258,17 +262,17 @@ export i32 main(Sys sys) {
         refused.push(applet + " -" + f);
       }
     }
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
   }
 
-  core.log(itoa(checked) + " flags tried across " + itoa(names.len())
+  out.line(itoa(checked) + " flags tried across " + itoa(names.len())
            + " applets; only those the real tool acts on are judged\n");
-  core.log("ACCEPTED AND IGNORED (" + itoa(ignored.len()) + ") — changed nothing, said nothing:");
-  for (i32 i = 0; i < ignored.len(); i++) { core.log("  " + ignored.get(i)); }
-  core.log("\naccepted deliberately (" + itoa(accepted.len())
+  out.line("ACCEPTED AND IGNORED (" + itoa(ignored.len()) + ") — changed nothing, said nothing:");
+  for (i32 i = 0; i < ignored.len(); i++) { out.line("  " + ignored.get(i)); }
+  out.line("\naccepted deliberately (" + itoa(accepted.len())
            + ") — the real tool ignores these too:");
-  core.log("  " + joined(toArray(accepted), "  "));
-  core.log("\nrefused with a message (" + itoa(refused.len()) + ") — honest:");
-  core.log("  " + joined(toArray(refused), "  "));
+  out.line("  " + joined(toArray(accepted), "  "));
+  out.line("\nrefused with a message (" + itoa(refused.len()) + ") — honest:");
+  out.line("  " + joined(toArray(refused), "  "));
   return 0;
 }

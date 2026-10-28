@@ -7,9 +7,10 @@
 // two bindings silently, so a failure here is a worklist and not a wrong answer.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Files, Output, Sys } from "std";
 import { Bundled, bundle } from "../../src/bundle.wac";
 import { Stripped, strip } from "../../src/strip.wac";
+import { flatten } from "core";
 
 string[] bridge() {
   return [
@@ -25,14 +26,16 @@ string[] bridge() {
   ];
 }
 
-export string test_the_bridge_flattens(Core core, Cli cli) {
+export string test_the_bridge_flattens(Sys sys) {
+  Output out = sys.stdout();
+  Files fs = sys.files();
   T t = T.create();
   string[] paths = bridge();
   u8[][] texts = u8[][].filled(paths.len(), u8[]());
   for (i32 i = 0; i < paths.len(); i++) {
-    FileResult f = cli.readFile(paths[i]).wait();
-    if (!f.ok) { t.isTrue(false, "cannot read \{paths[i]}"); return t.report(); }
-    Stripped s = strip(f.bytes);
+    u8[]? f = flatten(fs.readFile(paths[i]).wait()).ok();
+    if ((f is null)) { t.isTrue(false, "cannot read \{paths[i]}"); return t.report(); }
+    Stripped s = strip(f!);
     if (s.error != "") { t.isTrue(false, "\{paths[i]}: \{s.error}"); return t.report(); }
     texts[i] = s.out;
   }
@@ -40,7 +43,7 @@ export string test_the_bridge_flattens(Core core, Cli cli) {
 
   t.eqStr(b.error, "", "the bridge flattens from deno.ts");
   if (b.error != "") { return t.report(); }
-  core.log("   bundled \{b.out.len() / 1024} KB from \{paths.len()} files");
+  out.line("   bundled \{b.out.len() / 1024} KB from \{paths.len()} files");
   t.isTrue(b.out.len() > 100000, "and it is the whole bridge, not a fragment");
   string out = string.fromBytes(b.out);
   // Nothing that names another module may survive: a leftover `import` is a runtime failure.

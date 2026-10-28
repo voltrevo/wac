@@ -27,7 +27,7 @@
 // directions the TypeScript had: the case is allowed to fail, *and* it must still fail — a list of
 // tolerated misses with nothing checking whether they are still missed is how one becomes permanent.
 
-import { Change, Cli, Core } from "std";
+import { Change, Env, Files, Output, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";
@@ -36,10 +36,16 @@ import { blockedFiles, dumpErrors, dumpTypeErrorsFiles,
 import { CaseFile, loadCases } from "./cases.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
-export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
+export string test_cases_wacc_against_the_corpus(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  CaseFile[] cases = loadCases(cli);
+  CaseFile[] cases = loadCases(fs);
   // The floor is a canary: a walk that stopped resolving would leave every assertion below with nothing
   // to disagree with, and 206 cases would read as 206 met.
   t.isTrue(cases.len() >= 200,
@@ -56,7 +62,7 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
   // directly, so a filter that starts narrowing — a case named `.WAC`, a suffix check that changes —
   // is the difference between the two numbers. What it cannot catch is the capability itself lying,
   // which is what the floor above is still for.
-  string[]? entries = cli.readDir("spec/cases").wait();
+  string[]? entries = flatten(fs.readDir("spec/cases").wait()).ok();
   t.isTrue(!(entries is null), "spec/cases could not be listed");
   if (!(entries is null)) {
     i32 wac = 0;
@@ -72,8 +78,8 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
   // A directory of its own under `.cache`, removed at the end: ninety modules written straight into
   // `.cache` is ninety files beside every other test's artefacts, and identifiable ones are worth more
   // than tidy ones only while a failure is being read.
-  string dir = scratchDir(cli) + "/cases";
-  string whyDir1 = madeDir(cli, dir);
+  string dir = scratchDir(env, fs) + "/cases";
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
   i32 met = 0;
   i32 missed = 0;
@@ -128,7 +134,7 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
         u8[] wasm = emitFilesSelfDescribing(c.paths, c.sources, c.entry, "case.wasm", 0);
         // Named per case rather than one well-known path: ninety modules through one filename works and
         // names nothing when the ninetieth is the one that failed.
-        Ran r = runModule(cli, wasm, dir, "case" + itoa(i) + ".wasm", [c.expect.call]);
+        Ran r = runModule(env, fs, procs, wasm, dir, "case" + itoa(i) + ".wasm", [c.expect.call]);
         if (!r.ok) {
           ok = false;
           why = "did not run — " + r.error;
@@ -154,10 +160,10 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
     }
   }
 
-  Change gone = cli.remove(dir, true).wait();
-  if (!gone.ok()) { core.warn("cases: could not remove " + dir + " — " + gone.message); }
+  auto gone = flatten(fs.remove(dir, true).wait());
+  if (gone.isErr()) { err.line("cases: could not remove " + dir + " — " + "\{gone.isErr() ? "\{gone.err()!}" : ""}"); }
 
-  core.log("    cases: " + itoa(met) + " of " + itoa(cases.len()) + " met by wacc");
+  out.line("    cases: " + itoa(met) + " of " + itoa(cases.len()) + " met by wacc");
   t.eqI32(unreadable, 0, itoa(unreadable) + " case(s) could not be read:" + detail);
   t.eqI32(missed, 0, "wacc does not meet " + itoa(missed) + " case(s):" + detail);
   return t.report();

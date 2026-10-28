@@ -1,9 +1,9 @@
 // `/dev`, `/proc` and `/bin` as `Files` — design/system/0013 step 5. Each tree is made up as it is asked, so these
 // check what each path answers and that every change but a write to `/dev/null` is refused.
 
-import { Sys, Files, Input, Output, Stat, ReadOnly, NotFound, NotADir, IsDir } from "std";
+import { Sys, Files, MemoryStore, Mount, Input, Output, Stat, ReadOnly, NotFound, NotADir, IsDir, Exists } from "std";
 import { Read, Result, Vec } from "core";
-import { devFiles, procFiles, binFiles } from "../../src/trees.wac";
+import { devFiles, procFiles, procSelfFiles, binFiles, systemFiles } from "../../src/trees.wac";
 import { ProcTable } from "../../src/proc.wac";
 import { T } from "../../../wactest/src/assert.wac";
 
@@ -149,6 +149,27 @@ export async string test_proc_lists_each_process_and_self(Sys sys) {
   return t.report();
 }
 
+export async string test_a_childs_proc_self_is_the_child_whatever_is_current(Sys sys) {
+  T t = T.create();
+  ProcTable table = ProcTable.create();
+  Vec<string> argv = Vec.create();
+  argv.push("sh");
+  i32 sh = table.start(0, argv, 0 as i64);
+  Vec<string> argv2 = Vec.create();
+  argv2.push("cat");
+  i32 cat = table.start(sh, argv2, 0 as i64);
+  table.current = sh;
+  Files theirs = Files.mounted([Mount("/proc/self", procSelfFiles(table, cat)), Mount("/proc", procFiles(table))]);
+  t.eqStr(await text(theirs, "/proc/self/comm"), "cat\n", "self is the child it was mounted for");
+  t.eqStr(await text(theirs, "/proc/1/comm"), "sh\n", "and the rest of /proc is the session's");
+  t.eqStr(await listed(theirs, "/proc/self"), "cmdline comm status", "self lists as a process does");
+  t.eqStr(await text(procFiles(table), "/self/comm"), "sh\n", "while the session's own self is still its current");
+  table.exited(cat, 0);
+  table.reap(cat);
+  t.isTrue((await theirs.readFile("/proc/self/comm")).isErr(), "a reaped child has no self");
+  return t.report();
+}
+
 export async string test_bin_lists_the_programs_as_executables(Sys sys) {
   T t = T.create();
   Files bin = binFiles(["wc", "cat", "ca"]);
@@ -173,5 +194,45 @@ export async string test_bin_lists_the_programs_as_executables(Sys sys) {
     Ok(in): { t.isTrue((await in.chunk()).isOk(), "a program's note streams"); }
     Err(e): { t.fail("openRead /ca"); }
   }
+  return t.report();
+}
+
+/**
+ * A system with no programs has no `/bin` at all.
+ *
+ * `packages/ssh`'s server wires no applets, and an **empty** `/bin` would claim more than an absent one:
+ * `ls /` would show a directory of programs with no programs in it. `packages/box`'s `bin_test.wac` asks
+ * the same through a shell; this is the rule where it lives.
+ */
+export async string test_a_system_with_no_programs_has_no_bin(Sys sys) {
+  T t = T.create();
+  Files none = systemFiles(MemoryStore.create(sys.clock()).asUser("root"), sys.random(), ProcTable.create(),
+                           string[].filled(0, ""));
+  string[] top = (await none.readDir("/")).orElse(string[].filled(0, ""));
+  for (i32 i = 0; i < top.len(); i++) { t.isTrue(top[i] != "bin", "an empty /bin was mounted anyway"); }
+  t.isTrue((await none.stat("/bin")).isErr(), "and /bin is not there to stat");
+
+  Files one = systemFiles(MemoryStore.create(sys.clock()).asUser("root"), sys.random(), ProcTable.create(), ["wc"]);
+  t.isTrue((await one.stat("/bin/wc")).isOk(), "a system with a program has it in /bin");
+  return t.report();
+}
+
+/**
+ * A directory in a read-only tree is a directory first and read-only second.
+ *
+ * GNU's answers, measured on `/proc`: `echo x > /proc` is *Is a directory*, `mkdir /proc` is *File
+ * exists*, and `mkdir -p /proc` succeeds. Each asks about something that is there, so the tree being
+ * read-only is not the reason — it is the reason only for a name that is *not* there.
+ */
+export async string test_a_trees_directory_answers_as_a_directory_before_it_answers_read_only(Sys sys) {
+  T t = T.create();
+  Files dev = devFiles(sys.random());
+  auto wrote = await dev.writeFile("/", "x".toBytes());
+  t.isTrue(wrote.isErr() && wrote.err()! is IsDir, "a write to the tree's root: \{wrote.isErr() ? "\{wrote.err()!}" : "ok"}");
+  auto made = await dev.mkdir("/", false);
+  t.isTrue(made.isErr() && made.err()! is Exists, "mkdir of the root: \{made.isErr() ? "\{made.err()!}" : "ok"}");
+  t.isTrue((await dev.mkdir("/", true)).isOk(), "mkdir -p of the root is nothing to do");
+  auto fresh = await dev.mkdir("/d", false);
+  t.isTrue(fresh.isErr() && fresh.err()! is ReadOnly, "and a new name is refused as read-only");
   return t.report();
 }

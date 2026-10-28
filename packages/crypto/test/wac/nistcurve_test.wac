@@ -24,7 +24,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { p256Verify, p256VerifyDigest, p256Sign, p256PublicKey, p256Ecdh, p256Decodes, p256Order, p256ScalarBase,
          p256Reencode } from "../../src/p256.wac";
 import { p384Verify, p384VerifyDigest, p384Order } from "../../src/p384.wac";
@@ -69,8 +69,8 @@ export string test_the_group_orders() {
 
 static string ORACLE = "packages/crypto/test/oracle.mjs";
 
-Answers askEc(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "node", [ORACLE], lines, what);
+Answers askEc(T t, Procs procs, Lines lines, string what) {
+  return ask(t, procs, "node", [ORACLE], lines, what);
 }
 
 /** The scalar and point of an `ecgen`/`ecgensign` answer. */
@@ -78,14 +78,15 @@ u8[] scalarOf(string line) { return decodedHex(word(line, 1)); }
 u8[] pointOf(string line) { return decodedHex(word(line, 2)); }
 u8[] sigOf(string line) { return decodedHex(word(line, 3)); }
 
-export string test_public_keys_match_the_host(Core core, Cli cli) {
+export string test_public_keys_match_the_host(Sys sys) {
+  Procs procs = sys.procs();
   // The host picks the key and returns scalar || point; we must reproduce the point. That
   // is the stronger direction — the scalar is not one we chose, so it exercises whatever
   // the generator happens to produce rather than whatever a test author would write.
   T t = T.create();
   Lines lines = Lines.create();
   for (i32 i = 0; i < 8; i++) { lines.add("ecgen 256"); }
-  Answers a = askEc(t, cli, lines, "eight P-256 keypairs");
+  Answers a = askEc(t, procs, lines, "eight P-256 keypairs");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 8; i++) {
     t.eqBytes(p256PublicKey(scalarOf(a.lines[i])), pointOf(a.lines[i]),
@@ -94,13 +95,14 @@ export string test_public_keys_match_the_host(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_we_verify_the_hosts_signatures(Core core, Cli cli) {
+export string test_we_verify_the_hosts_signatures(Sys sys) {
+  Procs procs = sys.procs();
   // The verifier. node signs with a key it chose, and we must accept it — and must refuse
   // it once a bit moves, or "accepts everything" would pass the first half.
   T t = T.create();
   Lines lines = Lines.create();
   for (i32 i = 0; i < 6; i++) { lines.add("ecgensign 256 \{hex(fill(20 + i, i))}"); }
-  Answers a = askEc(t, cli, lines, "six signed P-256 keypairs");
+  Answers a = askEc(t, procs, lines, "six signed P-256 keypairs");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 6; i++) {
     u8[] pub = pointOf(a.lines[i]);
@@ -116,7 +118,8 @@ export string test_we_verify_the_hosts_signatures(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_host_verifies_ours(Core core, Cli cli) {
+export string test_the_host_verifies_ours(Sys sys) {
+  Procs procs = sys.procs();
   // The signer, which is a different claim. ECDSA is randomised so there is no byte
   // identity to compare against — an implementation that produced a self-consistent but
   // non-standard signature would verify against itself forever.
@@ -125,7 +128,7 @@ export string test_the_host_verifies_ours(Core core, Cli cli) {
   T t = T.create();
   Lines gen = Lines.create();
   for (i32 i = 0; i < 6; i++) { gen.add("ecgen 256"); }
-  Answers keys = askEc(t, cli, gen, "six P-256 keypairs");
+  Answers keys = askEc(t, procs, gen, "six P-256 keypairs");
   if (!keys.ok) { return t.report(); }
 
   Lines lines = Lines.create();
@@ -138,17 +141,18 @@ export string test_the_host_verifies_ours(Core core, Cli cli) {
     t.eqI32(sig.len(), 64, "signing produced a signature at round \{i as i64}");
     lines.add("ecverify 256 \{hex(pub)} \{hex(sig)} \{hex(msg)} 1");
   }
-  askEc(t, cli, lines, "the host verifies ours");
+  askEc(t, procs, lines, "the host verifies ours");
   return t.report();
 }
 
-export string test_p384_verifies_the_hosts_signatures(Core core, Cli cli) {
+export string test_p384_verifies_the_hosts_signatures(Sys sys) {
+  Procs procs = sys.procs();
   // The whole point of the generalisation: twelve limbs behaving as eight do. P-384 is
   // verification-only here, so this is the only direction available.
   T t = T.create();
   Lines gen = Lines.create();
   for (i32 i = 0; i < 5; i++) { gen.add("ecgensign 384 \{hex(fill(40 + i, i + 9))}"); }
-  Answers a = askEc(t, cli, gen, "five signed P-384 keypairs");
+  Answers a = askEc(t, procs, gen, "five signed P-384 keypairs");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 5; i++) {
     u8[] pub = pointOf(a.lines[i]);
@@ -332,7 +336,8 @@ void claimFp(Lines lines, string curve, string what, u8[] a, u8[] b, u8[] got) {
   lines.add("fp \{curve} \{what} \{hex(a)} \{hex(b)} \{hex(got)}");
 }
 
-export string test_the_fields_agree_with_bigint(Core core, Cli cli) {
+export string test_the_fields_agree_with_bigint(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] curves = ["p256", "p384"];
   i32[] widths = [32, 48];
@@ -350,11 +355,12 @@ export string test_the_fields_agree_with_bigint(Core core, Cli cli) {
       claimFp(lines, curves[c], "neg", a, b, fpToBytes(fpNeg(fpFromBytes(a))));
     }
   }
-  check(t, cli, "node", [CRYPTO_ORACLE], lines, "both fields over the corpus");
+  check(t, procs, "node", [CRYPTO_ORACLE], lines, "both fields over the corpus");
   return t.report();
 }
 
-export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core core, Cli cli) {
+export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] curves = ["p256", "p384"];
   i32[] widths = [32, 48];
@@ -373,7 +379,7 @@ export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core c
       }
     }
   }
-  check(t, cli, "node", [CRYPTO_ORACLE], lines, "inversion in both fields");
+  check(t, procs, "node", [CRYPTO_ORACLE], lines, "inversion in both fields");
   return t.report();
 }
 
@@ -433,7 +439,8 @@ export string test_the_exceptional_cases_in_the_p256_addition_law() {
   return t.report();
 }
 
-export string test_a_p384_signature_is_rejected_under_the_wrong_key(Core core, Cli cli) {
+export string test_a_p384_signature_is_rejected_under_the_wrong_key(Sys sys) {
+  Procs procs = sys.procs();
   // The check that distinguishes verification from a self-consistent computation: a signature that
   // verifies must do so only under the key that made it. Two keys in one batch, because the host
   // picks both and a second batch would pick two others.
@@ -442,7 +449,7 @@ export string test_a_p384_signature_is_rejected_under_the_wrong_key(Core core, C
   Lines lines = Lines.create();
   lines.add("ecgensign 384 \{hex(msg)}");
   lines.add("ecgensign 384 \{hex(msg)}");
-  Answers a = ask(t, cli, "node", [CRYPTO_ORACLE], lines, "two P-384 keys and signatures");
+  Answers a = ask(t, procs, "node", [CRYPTO_ORACLE], lines, "two P-384 keys and signatures");
   if (!a.ok) { return t.report(); }
 
   u8[] pointA = decodedHex(word(a.lines[0], 2));
@@ -453,7 +460,8 @@ export string test_a_p384_signature_is_rejected_under_the_wrong_key(Core core, C
   return t.report();
 }
 
-export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, Cli cli) {
+export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Sys sys) {
+  Procs procs = sys.procs();
   // Legal and it happens: `ecdsa-with-SHA256` on a P-384 key. The digest is shorter than the order,
   // so SEC 1 treats it as a small number rather than padding on the right. A left-aligned
   // implementation verifies nothing and would look like a broken curve.
@@ -461,7 +469,7 @@ export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, 
   u8[] msg = "a short digest under a long curve".toBytes();
   Lines lines = Lines.create();
   lines.add("ecgensign 384 \{hex(msg)} sha256");
-  Answers a = ask(t, cli, "node", [CRYPTO_ORACLE], lines, "a SHA-256 signature on P-384");
+  Answers a = ask(t, procs, "node", [CRYPTO_ORACLE], lines, "a SHA-256 signature on P-384");
   if (!a.ok) { return t.report(); }
   t.isTrue(p384VerifyDigest(decodedHex(word(a.lines[0], 2)), sha256(msg),
                             decodedHex(word(a.lines[0], 3))),
@@ -480,7 +488,7 @@ export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, 
  * `p384VerifyDigest` — so all four are asked. The canonical-key call is the canary: a verifier that
  * refused everything would satisfy the four refusals on its own.
  */
-export string test_a_malformed_public_key_is_false_not_a_trap(Core core, Cli cli) {
+export string test_a_malformed_public_key_is_false_not_a_trap() {
   T t = T.create();
   u8[] sig = u8[].filled(64, 0);
   sig[31] = 1;

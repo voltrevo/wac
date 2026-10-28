@@ -9,11 +9,12 @@ import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import {
   INTRO_ACK_BAD_FORMAT, INTRO_ACK_SUCCESS, INTRO_ACK_UNKNOWN_ID, IntroPoints, Introduced,
   establishIntro, forgetCircuit, forgetConnection, indexOfKey, introduce1, introduceAckBody,
 } from "../../src/introrelay.wac";
+import { flatten } from "core";
 
 /** A service claims a circuit, and a client's cell finds it. */
 /**
@@ -26,10 +27,10 @@ import {
  * Both checks are now `test_the_fixtures_are_what_the_tests_assume` below, which is where they can
  * be read next to what depends on them.
  */
-JsonObject jsonAt(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes).ok();
+JsonObject jsonAt(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) { trap; }
+  JsonValue? v = parse(r!).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }
@@ -46,11 +47,11 @@ string strField(JsonObject o, string key) {
   }
 }
 
-JsonObject estVectors(Cli cli) { return jsonAt(cli, "packages/tor/test/data/estintro_vectors.json"); }
+JsonObject estVectors(Files fs) { return jsonAt(fs, "packages/tor/test/data/estintro_vectors.json"); }
 
 /** The first INTRODUCE1 case — the file holds several and the tests use one. */
-JsonObject introCase(Cli cli) {
-  JsonObject top = jsonAt(cli, "packages/tor/test/data/introduce_vectors.json");
+JsonObject introCase(Files fs) {
+  JsonObject top = jsonAt(fs, "packages/tor/test/data/introduce_vectors.json");
   JsonValue? cs = top.getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
@@ -59,8 +60,8 @@ JsonObject introCase(Cli cli) {
   }
 }
 
-u8[] estField(Cli cli, string key) { return decoded(strField(estVectors(cli), key)); }
-u8[] introField(Cli cli, string key) { return decoded(strField(introCase(cli), key)); }
+u8[] estField(Files fs, string key) { return decoded(strField(estVectors(fs), key)); }
+u8[] introField(Files fs, string key) { return decoded(strField(introCase(fs), key)); }
 
 /**
  * What the wrapper checked before it would run anything, kept as a test.
@@ -68,27 +69,29 @@ u8[] introField(Cli cli, string key) { return decoded(strField(introCase(cli), k
  * The INTRODUCE1 has to come from tor's own builder, and the two fixtures must not share an auth
  * key — if they did, the unknown-id case below would pass without proving anything.
  */
-export string test_the_fixtures_are_what_the_tests_assume(Core core, Cli cli) {
+export string test_the_fixtures_are_what_the_tests_assume(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject top = jsonAt(cli, "packages/tor/test/data/introduce_vectors.json");
+  JsonObject top = jsonAt(fs, "packages/tor/test/data/introduce_vectors.json");
   string source = strField(top, "source");
   t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
            "the INTRODUCE1 must come from tor's builder — source is \{source}");
-  t.isFalse(strField(estVectors(cli), "authPublic") == strField(introCase(cli), "introAuthKey"),
+  t.isFalse(strField(estVectors(fs), "authPublic") == strField(introCase(fs), "introAuthKey"),
             "the two fixtures share an auth key; the unknown-id case would prove nothing");
   return t.report();
 }
 
-export string test_a_circuit_is_claimed_and_found(Core core, Cli cli) {
+export string test_a_circuit_is_claimed_and_found(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   IntroPoints m = IntroPoints.create(4);
-  u8[] cell = estField(cli, "cell");
-  u8[] kh = estField(cli, "circuitKH");
+  u8[] cell = estField(fs, "cell");
+  u8[] kh = estField(fs, "circuitKH");
 
   u8[] filed = establishIntro(m, cell, kh, 7, 0x4001, true);
-  t.eqBytes(filed, estField(cli, "authPublic"), "the circuit is filed under the auth key");
+  t.eqBytes(filed, estField(fs, "authPublic"), "the circuit is filed under the auth key");
   t.eqI32(m.count, 1, "and the relay is holding one introduction point");
-  t.eqI32(indexOfKey(m, estField(cli, "authPublic")), 0, "which can be found by that key");
+  t.eqI32(indexOfKey(m, estField(fs, "authPublic")), 0, "which can be found by that key");
 
   // Re-establishing replaces rather than duplicating. It requires a signature by the same key, so
   // only the holder can do it, and a service whose circuit died does exactly this.
@@ -105,11 +108,12 @@ export string test_a_circuit_is_claimed_and_found(Core core, Cli cli) {
  * A circuit that was extended onward is not ours to claim — accepting one would mean holding an
  * introduction point on somebody else's behalf, with the INTRODUCE1 cells having nowhere to go.
  */
-export string test_what_a_relay_refuses(Core core, Cli cli) {
+export string test_what_a_relay_refuses(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   IntroPoints m = IntroPoints.create(4);
-  u8[] cell = estField(cli, "cell");
-  u8[] kh = estField(cli, "circuitKH");
+  u8[] cell = estField(fs, "cell");
+  u8[] kh = estField(fs, "circuitKH");
 
   t.eqI32(establishIntro(m, cell, kh, 7, 0x4001, false).len(), 0,
           "a circuit that carries on elsewhere cannot be an introduction point");
@@ -126,7 +130,7 @@ export string test_what_a_relay_refuses(Core core, Cli cli) {
   // offers strangers, so the cap has to be *reached* to be tested — filling it with a different key
   // first, since re-establishing the same one replaces rather than grows.
   IntroPoints small = IntroPoints.create(1);
-  small.authKeys[0] = introField(cli, "introAuthKey");
+  small.authKeys[0] = introField(fs, "introAuthKey");
   small.connIds[0] = 1;
   small.circIds[0] = 0x1001;
   small.count = 1;
@@ -135,7 +139,7 @@ export string test_what_a_relay_refuses(Core core, Cli cli) {
   t.eqI32(small.count, 1, "and holds what it had");
   // With room, the same cell is accepted — so the refusal above is the cap and not the cell.
   IntroPoints roomy = IntroPoints.create(2);
-  roomy.authKeys[0] = introField(cli, "introAuthKey");
+  roomy.authKeys[0] = introField(fs, "introAuthKey");
   roomy.connIds[0] = 1;
   roomy.circIds[0] = 0x1001;
   roomy.count = 1;
@@ -151,10 +155,11 @@ export string test_what_a_relay_refuses(Core core, Cli cli) {
  * from this relay and a client that is broken — and a client that is told can try another
  * introduction point instead of waiting.
  */
-export string test_an_introduction_is_routed_or_refused(Core core, Cli cli) {
+export string test_an_introduction_is_routed_or_refused(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   IntroPoints m = IntroPoints.create(4);
-  u8[] intro = introField(cli, "cell");
+  u8[] intro = introField(fs, "cell");
 
   Introduced unknown = introduce1(m, intro, true);
   t.eqI32(unknown.status, INTRO_ACK_UNKNOWN_ID, "nobody holds that key");
@@ -162,7 +167,7 @@ export string test_an_introduction_is_routed_or_refused(Core core, Cli cli) {
 
   // File the very circuit that cell is for, and it routes.
   IntroPoints held = IntroPoints.create(4);
-  held.authKeys[0] = introField(cli, "introAuthKey");
+  held.authKeys[0] = introField(fs, "introAuthKey");
   held.connIds[0] = 3;
   held.circIds[0] = 0x5001;
   held.count = 1;
@@ -179,7 +184,7 @@ export string test_an_introduction_is_routed_or_refused(Core core, Cli cli) {
   // on a prefix, so a comparison that looked at one byte would pass every test above — the same trap
   // as a truncated digest comparison, and the reason `ctEqual` compares all thirty-two.
   IntroPoints nearly = IntroPoints.create(4);
-  u8[] lookalike = copy(introField(cli, "introAuthKey"));
+  u8[] lookalike = copy(introField(fs, "introAuthKey"));
   lookalike[31] = lookalike[31] ^ 1;
   nearly.authKeys[0] = lookalike;
   nearly.connIds[0] = 4;
@@ -201,11 +206,12 @@ export string test_an_introduction_is_routed_or_refused(Core core, Cli cli) {
 }
 
 /** A circuit or a connection going away takes its introduction points with it. */
-export string test_what_goes_away(Core core, Cli cli) {
+export string test_what_goes_away(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   IntroPoints m = IntroPoints.create(4);
-  u8[] cell = estField(cli, "cell");
-  u8[] kh = estField(cli, "circuitKH");
+  u8[] cell = estField(fs, "cell");
+  u8[] kh = estField(fs, "circuitKH");
   establishIntro(m, cell, kh, 7, 0x4001, true);
   t.eqI32(m.count, 1, "one held");
 
@@ -225,7 +231,7 @@ export string test_what_goes_away(Core core, Cli cli) {
 }
 
 /** The ACK body is a status and no extensions. */
-export string test_the_ack_body(Core core, Cli cli) {
+export string test_the_ack_body() {
   T t = T.create();
   u8[] ok = introduceAckBody(INTRO_ACK_SUCCESS);
   t.eqI32(ok.len(), 3, "two bytes of status and an extension count");

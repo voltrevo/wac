@@ -10,13 +10,14 @@
 // sorting.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { KIND_CLI, KIND_PAGE, Program, blurbOf, findPrograms } from "./programs.wac";
 
-export string test_the_programs_are_the_ones_the_rule_describes(Core core, Cli cli) {
+export string test_the_programs_are_the_ones_the_rule_describes(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Program[] ps = findPrograms(cli);
+  Program[] ps = findPrograms(fs);
   // A floor rather than a count: the day this was written the walk found 86, and a check that
   // tracked the number would fail on somebody else's new program.
   t.isTrue(ps.len() > 60, "only " + itoa(ps.len()) + " program(s) found — did the walk descend?");
@@ -52,7 +53,8 @@ export string test_the_programs_are_the_ones_the_rule_describes(Core core, Cli c
   return t.report();
 }
 
-export string test_a_blurb_is_the_opening_comment(Core core, Cli cli) {
+export string test_a_blurb_is_the_opening_comment(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   t.eqStr(blurbOf("// A desktop, in a tab\nexport i32 main() { return 0; }"),
           "A desktop, in a tab", "the first line, without its slashes");
@@ -61,7 +63,7 @@ export string test_a_blurb_is_the_opening_comment(Core core, Cli cli) {
 
   // Every program in the tree has one, which is what makes the map readable — and a walk that read
   // the wrong file would show up here as an empty column rather than as a wrong path.
-  Program[] ps = findPrograms(cli);
+  Program[] ps = findPrograms(fs);
   i32 blank = 0;
   for (i32 i = 0; i < ps.len(); i++) { if (ps[i].blurb == "") { blank = blank + 1; } }
   t.isTrue(blank * 10 < ps.len(),

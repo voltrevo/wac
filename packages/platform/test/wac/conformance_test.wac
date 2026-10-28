@@ -39,7 +39,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Core, Cli, Env, Files, Output, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { opcodes, nativeCapabilities, declaredFields, camel, has, sorted, joined, sourceOf }
   from "./conformance.wac";
@@ -167,15 +167,15 @@ bool hasCall(string src, string name) {
  * these files, and matching it would report every one of them as covering the Deno host. Three
  * spellings reach the V8 binary and two reach Deno, which is why this is a list rather than an `if`.
  */
-string hostsOfFile(Cli cli, string path) {
-  string src = sourceOf(cli, path);
+string hostsOfFile(Output err, Env env, Files fs, Procs procs, string path) {
+  string src = sourceOf(fs, path);
   string out = "";
   // `nativeBinaryPath` and `requireNativeHost` answer the wasmtime binary too, and the second does not
   // contain `nativeHost(` — the capital is in the way — so each is named rather than left to a substring.
   if (src.indexOf("nativeHost(") >= 0 || src.indexOf("requireNativeHost(") >= 0
       || src.indexOf("nativeBinaryPath(") >= 0) { out = out + "wasmtime"; }
   // **Four spellings, and the literal path is the one that matters most.** `native_test.wac` reaches
-  // the V8 binary as `root(cli) + "/native/v8/target/release/wac"` — no helper — and with only the
+  // the V8 binary as `root(env) + "/native/v8/target/release/wac"` — no helper — and with only the
   // three helper names this file derived it as wasmtime-only, against a note that says in as many
   // words *"run by both native binaries"*. The floor test below is what surfaced that; the fix is a
   // fourth pattern rather than a fourth guess.
@@ -189,25 +189,24 @@ string hostsOfFile(Cli cli, string path) {
   }
   // **`cli.exec("node"` is the one that matters**, and the literal `--target node` is not. Every test
   // that drives Node builds through a helper taking the target as a *variable* —
-  // `build(t, cli, WC, nodeOut, "node", …)` — so the flag pair never appears in the source at all.
+  // `build(t, err, env, fs, procs, WC, nodeOut, "node", …)` — so the flag pair never appears in the source at all.
   // Three tests derived as Deno-only for that reason, and the floor below could not see it: an entry
   // that finds one host of two passes a check that only refuses finding none.
   if (src.indexOf("cli.exec(\"node\"") >= 0 || src.indexOf("\"--target\", \"node\"") >= 0
       || src.indexOf("builtByNode(") >= 0) {
     out = out + (out == "" ? "" : "+") + "node";
   }
-  return out;
-}
+  return out;}
 
 /** `hostsOfFile` for an entry, following one `sameAs` hop. */
-string hostsOf(Cli cli, Cover[] all, Cover c) {
+string hostsOf(Output err, Env env, Files fs, Procs procs, Cover[] all, Cover c) {
   if (c.kind == "gap") { return ""; }
   if (c.kind == "where") {
-    string first = hostsOfFile(cli, c.ref);
+    string first = hostsOfFile(err, env, fs, procs, c.ref);
     if (c.also == "") { return first; }
     // Unioned, not concatenated: the second test usually repeats a host the first already had, and
     // `contains(hosts, "deno")` must not depend on how many times it appears.
-    string second = hostsOfFile(cli, c.also);
+    string second = hostsOfFile(err, env, fs, procs, c.also);
     string[] names = ["wasmtime", "v8", "deno", "node"];
     string out = "";
     for (i32 i = 0; i < names.len(); i++) {
@@ -227,9 +226,9 @@ string hostsOf(Cli cli, Cover[] all, Cover c) {
     // borrowers a narrower answer than the entry they name, which is a disagreement inside the
     // ledger rather than a fact about the hosts.
     if (all[i].op == c.ref && all[i].kind == "where") {
-      string inherited = hostsOf(cli, all, all[i]);
+      string inherited = hostsOf(err, env, fs, procs, all, all[i]);
       if (c.also == "") { return inherited; }
-      string mine = hostsOfFile(cli, c.also);
+      string mine = hostsOfFile(err, env, fs, procs, c.also);
       string[] names = ["wasmtime", "v8", "deno", "node"];
       string out = "";
       for (i32 k = 0; k < names.len(); k++) {
@@ -354,9 +353,8 @@ Cover[] coverage() {
       "be a plausible epoch stamp, which is what a host answering the wall clock in disguise would " +
       "produce while passing everything else"),
     where("SLEEP_MILLIS", "packages/platform/test/wac/native_examples_test.wac",
-      "native_examples: `clocks` brackets a 50ms sleep between two monotonic reads and asks three " +
-      "things — it lasted at least as long as asked, it reported a reading that lands inside the " +
-      "bracket rather than an invented number, and the two hosts said the same. **No upper bound**: a " +
+      "native_examples: `clocks` brackets a 50ms sleep between two monotonic reads and asks two " +
+      "things — it lasted at least as long as asked, and the two hosts said the same. **No upper bound**: a " +
       "sleep that overran is a loaded machine, not a broken host, and bounding it would measure the " +
       "machine — `hostfs.wac` makes the same argument at greater length"),
     where("RANDOM_BYTES", "packages/platform/test/wac/native_examples_test.wac",
@@ -447,7 +445,8 @@ Cover? entryFor(Cover[] all, string op) {
   return null;
 }
 
-export string test_the_readmes_capability_table_lists_every_capability_there_is(Core core, Cli cli) {
+export string test_the_readmes_capability_table_lists_every_capability_there_is(Sys sys) {
+  Files fs = sys.files();
   // The table in `packages/platform/README.md` is the first thing a person reads to find out what a
   // program may ask for, and it is the kind of list that goes quietly short: three capabilities had
   // been added to `platform.wac` without it — `Core.askInterrupt`, `Cli.spawnSelf` and the since-deleted
@@ -457,7 +456,7 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
   // direction, which nothing had: that every name that exists is quoted. A reader cannot tell a
   // capability that is missing from the table from one that does not exist.
   T t = T.create();
-  string src = sourceOf(cli, "packages/platform/README.md");
+  string src = sourceOf(fs, "packages/platform/README.md");
   i32 from = src.indexOf("| | capability | grant |");
   t.isTrue(from >= 0, "the capability table is gone from the README");
   if (from < 0) { return t.report(); }
@@ -466,7 +465,7 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
 
   string[] structs = ["Core", "Cli"];
   for (i32 s = 0; s < structs.len(); s++) {
-    string[] declared = declaredFields(cli, structs[s]);
+    string[] declared = declaredFields(fs, structs[s]);
     string missing = "";
     for (i32 i = 0; i < declared.len(); i++) {
       if (!contains(table, "`\{declared[i]}`")) {
@@ -479,8 +478,8 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
   return t.report();
 }
 
-export string test_every_capability_the_language_declares_the_host_with_no_js_supplies(
-    Core core, Cli cli) {
+export string test_every_capability_the_language_declares_the_host_with_no_js_supplies(Sys sys) {
+  Files fs = sys.files();
   // design/0001's aim is that the same programs run on a bootable kernel-and-wasmtime stack *and*
   // without it. That makes "is anything in the JavaScript hosts load-bearing that the wasm side cannot
   // supply?" a question with a definite answer, and this is it: for `Cli` and `Core`, nothing.
@@ -488,13 +487,13 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
   // The known exception is behavioural rather than structural and is covered elsewhere: `spawn` of a
   // *foreign* program answers -1 with a reason on the native host (see `SPAWN` above).
   T t = T.create();
-  string[] caps = nativeCapabilities(cli);
+  string[] caps = nativeCapabilities(fs);
   t.isTrue(caps.len() >= 30,
            "only \{caps.len()} native capabilities found — has the extraction broken?");
 
   string[] structs = ["Cli", "Core"];
   for (i32 s = 0; s < structs.len(); s++) {
-    string[] declared = declaredFields(cli, structs[s]);
+    string[] declared = declaredFields(fs, structs[s]);
     // The count first: an extraction that quietly matched nothing would make the loop below vacuous,
     // which is how this test would come to certify a surface it never read.
     t.isTrue(declared.len() >= 8,
@@ -513,7 +512,7 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
 }
 
 /** The opcodes both hosts have to answer — those with a native arm under the camelCase name. */
-string[] sharedOpcodes(Cli cli, string[] ops, string[] caps) {
+string[] sharedOpcodes(string[] ops, string[] caps) {
   string[] out = string[].filled(ops.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < ops.len(); i++) {
@@ -524,13 +523,14 @@ string[] sharedOpcodes(Cli cli, string[] ops, string[] caps) {
   return trimmed;
 }
 
-export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Core core, Cli cli) {
+export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] ops = opcodes(cli);
-  string[] caps = nativeCapabilities(cli);
+  string[] ops = opcodes(fs);
+  string[] caps = nativeCapabilities(fs);
   t.isTrue(ops.len() >= 38, "only \{ops.len()} opcodes found — has the extraction broken?");
 
-  string[] shared = sharedOpcodes(cli, ops, caps);
+  string[] shared = sharedOpcodes(ops, caps);
   string[] jsOnly = string[].filled(ops.len() - shared.len(), "");
   i32 p = 0;
   for (i32 i = 0; i < ops.len(); i++) {
@@ -569,9 +569,14 @@ export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Core co
   return t.report();
 }
 
-export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(Core core, Cli cli) {
+export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] shared = sharedOpcodes(cli, opcodes(cli), nativeCapabilities(cli));
+  string[] shared = sharedOpcodes(opcodes(fs), nativeCapabilities(fs));
   Cover[] all = coverage();
   i32 covered = 0;
   i32 withNode = 0;
@@ -580,7 +585,7 @@ export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(
     Cover? c = entryFor(all, shared[i]);
     if (!(c is not null) || !isCompared(c!)) { continue; }
     covered = covered + 1;
-    string hosts = hostsOf(cli, all, c!);
+    string hosts = hostsOf(err, env, fs, procs, all, c!);
     if (contains(hosts, "node")) { withNode = withNode + 1; }
     if (!contains(hosts, "v8")) { withoutV8 = withoutV8 + 1; }
   }
@@ -592,9 +597,9 @@ export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(
   // comparison` was true and was taken for *the hosts agree*; there are four hosts and no entry
   // compares all of them. The two below are derived from what the tests spawn, so they cannot drift
   // from the tests the way a written-down host list would — `issues/system/0268a`.
-  core.log("    conformance: \{covered} of \{shared.len()}" +
+  out.line("    conformance: \{covered} of \{shared.len()}" +
            " opcodes have a comparison; \{shared.len() - covered} are named gaps");
-  core.log("                 \{withNode} include the Node host; \{withoutV8}" +
+  out.line("                 \{withNode} include the Node host; \{withoutV8}" +
            " do not include the V8 binary");
 
   // A floor rather than a target: this is allowed to go up without editing the test, and a change
@@ -624,7 +629,11 @@ export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(
  * borrows has to exist and has to be a `where`, so a rename cannot leave four rows pointing at
  * nothing while still counting as covered.
  */
-export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core core, Cli cli) {
+export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   Cover[] all = coverage();
   string[] silent = string[].filled(all.len(), "");
@@ -640,7 +649,7 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
       }
       t.isTrue(found, "\{all[i].op} borrows \{all[i].ref}, which is not a `where` entry");
     }
-    string hosts = hostsOf(cli, all, all[i]);
+    string hosts = hostsOf(err, env, fs, procs, all, all[i]);
     if (hosts == "") { silent[n] = all[i].op; n = n + 1; continue; }
     everySeen = everySeen + "+\{hosts}";
   }
@@ -659,11 +668,11 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
   // is not a cross-check.
   for (i32 i = 0; i < all.len(); i++) {
     if (all[i].kind == "gap") { continue; }
-    string hosts = hostsOf(cli, all, all[i]);
+    string hosts = hostsOf(err, env, fs, procs, all, all[i]);
     string[] files = [all[i].kind == "where" ? all[i].ref : "", all[i].also];
     for (i32 f = 0; f < files.len(); f++) {
       if (files[f] == "") { continue; }
-      string src = sourceOf(cli, files[f]);
+      string src = sourceOf(fs, files[f]);
       if (contains(src, "cli.exec(\"node\"") && !contains(hosts, "node")) {
         t.fail("\{all[i].op}: \{files[f]} spawns node and the derive did not say so");
       }

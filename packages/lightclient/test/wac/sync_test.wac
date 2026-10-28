@@ -32,7 +32,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json } from "../../../wactest/src/fixtures.wac";
-import { Core, Cli } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Store, initializeStore, processUpdate, forceUpdate, headerSlot, headerBeaconRoot,
@@ -54,8 +54,8 @@ u8[] un(string h) {
   return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
 }
 
-JsonArray? syncCases(T t, Core core, Cli cli) {
-  Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
+JsonArray? syncCases(T t, Output err, Files fs, Procs procs) {
+  Loaded f = json(err, fs, procs, "ssz", "light_client_sync_altair_minimal", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return null; }
   JsonArray? cases = f.doc.member("cases")?.array();
@@ -130,10 +130,12 @@ i32 firstUpdateStep(JsonArray steps) {
 
 // ── The vectors, step by step ─────────────────────────────────────────────────
 
-export string test_every_light_client_sync_vector_step_agrees_header_for_header(
-    Core core, Cli cli) {
+export string test_every_light_client_sync_vector_step_agrees_header_for_header(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   i32 stepsRun = 0;
   i32 forced = 0;
@@ -198,9 +200,9 @@ struct Base {
   i64 currentSlot;
 }
 
-Base baseCase(T t, Core core, Cli cli) {
+Base baseCase(T t, Output err, Files fs, Procs procs) {
   Base none = Base(false, "", u8[](), u8[](), u8[](), u8[](), 0 as i64);
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return none; }
   JsonValue c = cases!.get(0);
   JsonValue? meta = c.member("meta");
@@ -220,8 +222,10 @@ Base baseCase(T t, Core core, Cli cli) {
 /** A store initialized from the base case's bootstrap, or `null`. */
 Store? freshStore(Base b) { return initializeStore(b.trustedRoot, b.bootstrap); }
 
-export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_committee(
-    Core core, Cli cli) {
+export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_committee(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // The test above proves the client accepts good updates; it cannot prove it would reject a bad one,
   // because the vectors contain none. Without this, a `validateUpdate` that returned true
@@ -232,7 +236,7 @@ export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_com
   // byte, on the assumption that the signature was the trailing field. It is not: the last eight
   // bytes are `signature_slot`, so the update was rejected for claiming a slot around 2^56 and the
   // BLS check never ran. The offsets above are asserted below so that cannot recur silently.
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   t.eqI32(b.update.len(), UPDATE_SIZE(), "update size: the offsets below are wrong");
   if (b.update.len() != UPDATE_SIZE()) { return t.report(); }
@@ -272,8 +276,10 @@ u8[] bitsOf(i32 n) {
   return b;
 }
 
-export string test_the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need(
-    Core core, Cli cli) {
+export string test_the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // Both thresholds survive every vector when weakened: `light_client_sync`'s updates are signed by
   // almost the whole committee, so `>= 2/3` and `>= 1/3` accept the same set, and the safety
@@ -295,7 +301,7 @@ export string test_the_two_participation_thresholds_are_what_the_spec_says_not_w
 
   // And the safety threshold is half the best participation, not zero and not the count itself.
   // Driven through a real store: process the case's first update, whose participation is known.
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   Store? store = freshStore(b);
   if (store is null) { return t.report(); }
@@ -310,8 +316,10 @@ export string test_the_two_participation_thresholds_are_what_the_spec_says_not_w
   return t.report();
 }
 
-export string test_is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates(
-    Core core, Cli cli) {
+export string test_is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // The last two tiebreakers — prefer the *older* attested header, then the *older* signature slot —
   // only decide anything when every earlier criterion ties, which no pair of real updates does. So
@@ -319,7 +327,7 @@ export string test_is_better_update_prefers_the_earlier_of_two_otherwise_identic
   //
   // `isBetterUpdate` reads only slots, branches and bits — it never verifies a signature — so a copy
   // of a real update with its slots bumped is a legitimate input, even though it would never validate.
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   u8[] older = b.update;
   i64 attested = readU64(older, ATTESTED_SLOT_AT());
@@ -346,8 +354,10 @@ export string test_is_better_update_prefers_the_earlier_of_two_otherwise_identic
   return t.report();
 }
 
-export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims(
-    Core core, Cli cli) {
+export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // The signature covers the **attested** header and nothing else. A peer may therefore attach any
   // `finalized_header` and any `next_sync_committee` it likes to a perfectly-signed update, and the
@@ -367,7 +377,7 @@ export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_
   i32 NEXT_COMMITTEE_AT = 112;
   i32 NEXT_BRANCH_AT = 1696;
 
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   Store? base = freshStore(b);
   if (base is null) { return t.report(); }
@@ -400,8 +410,10 @@ export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_
   return t.report();
 }
 
-export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store(
-    Core core, Cli cli) {
+export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // The bootstrap is the root of all the client's trust: everything later is signed by the committee
   // it yields. The trusted block root check catches a *substituted* bootstrap, but not a genuine
@@ -411,7 +423,7 @@ export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_
   //   0     header                       112
   //   112   current_sync_committee      1584
   //   1696  current_sync_committee_branch 160
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   t.eqI32(b.bootstrap.len(), 1856, "bootstrap size");
   if (b.bootstrap.len() != 1856) { return t.report(); }
@@ -438,14 +450,17 @@ export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_
   return t.report();
 }
 
-export string test_the_slot_ordering_is_strict_where_the_spec_is_strict(Core core, Cli cli) {
+export string test_the_slot_ordering_is_strict_where_the_spec_is_strict(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // `current_slot >= signature_slot > attested_slot >= finalized_slot`. The middle relation is the
   // strict one and it is the one worth planting: an update signed in the *same* slot it attests to
   // has not observed that slot's block, so accepting it lets a committee attest to a block it has
   // not seen. Slots are not signed over, so a copy with them rewritten is a legitimate input and the
   // signature still verifies — which is exactly what makes this reachable and worth checking.
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   i64 attested = readU64(b.update, ATTESTED_SLOT_AT());
   Store? base = freshStore(b);
@@ -478,13 +493,16 @@ export string test_the_slot_ordering_is_strict_where_the_spec_is_strict(Core cor
   return t.report();
 }
 
-export string test_an_update_nobody_signed_is_refused(Core core, Cli cli) {
+export string test_an_update_nobody_signed_is_refused(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // Zero participants. The refusal is doubly determined — `MIN_SYNC_COMMITTEE_PARTICIPANTS` catches
   // it first, and `fastAggregateVerify` refuses an empty key list rather than returning the identity
   // — so removing either check leaves the behaviour intact. That redundancy is deliberate and is why
   // this test pins the *outcome* rather than claiming to exercise one check.
-  Base b = baseCase(t, core, cli);
+  Base b = baseCase(t, err, fs, procs);
   if (!b.ok) { return t.report(); }
   u8[] bad = copyOf(b.update);
   for (i32 i = 0; i < 4; i++) { bad[SIGNATURE_AT() - 4 + i] = 0; }   // sync_committee_bits, 32 bits

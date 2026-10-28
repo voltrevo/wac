@@ -22,7 +22,8 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Point, Pin, Rule, onlyClaims, ratchet, uncoveredLines } from "./covledger.wac";
 import { freshDir, scratch } from "../../packages/wactest/src/host.wac";
-import { Core, Cli, Change } from "std";
+import { Cli, Change, Env, Files, Output, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /** Line 1 of the subject, which the covered point sits on. */
 static string COVERED_SNIPPET = "i32 reached() { return 1; }";
@@ -52,15 +53,15 @@ string[] nested() {
   ];
 }
 
-string nestedSubject(Cli cli, T t, string name) {
-  string dir = scratch(cli, name);
-  string whyDir = freshDir(cli, dir);
+string nestedSubject(Env env, Files fs, T t, string name) {
+  string dir = scratch(env, name);
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   string text = "";
   string[] ls = nested();
   for (i32 i = 0; i < ls.len(); i++) { text = text + ls[i] + "\n"; }
-  Change w = cli.writeFile(dir + "/nested.wac", text.toBytes()).wait();
-  t.isTrue(w.ok(), "could not write the nested subject — " + w.message);
+  auto w = flatten(fs.writeFile(dir + "/nested.wac", text.toBytes()).wait());
+  t.isTrue(w.isOk(), "could not write the nested subject — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
   return dir;
 }
 
@@ -69,13 +70,13 @@ string nestedSubject(Cli cli, T t, string name) {
  *
  * Its own file, so the lines are 1 and 2 and no assertion depends on the layout of this test.
  */
-string subject(Cli cli, T t, string name) {
-  string dir = scratch(cli, name);
-  string whyDir = freshDir(cli, dir);
+string subject(Env env, Files fs, T t, string name) {
+  string dir = scratch(env, name);
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change w = cli.writeFile(dir + "/subject.wac",
-    (COVERED_SNIPPET + "\n" + UNCOVERED_SNIPPET + "\n").toBytes()).wait();
-  t.isTrue(w.ok(), "could not write the subject — " + w.message);
+  auto w = flatten(fs.writeFile(dir + "/subject.wac",
+    (COVERED_SNIPPET + "\n" + UNCOVERED_SNIPPET + "\n").toBytes()).wait());
+  t.isTrue(w.isOk(), "could not write the subject — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
   return dir;
 }
 
@@ -96,12 +97,17 @@ Rule[] noRules() { return Rule[].filled(0, Rule("", "", "line", true, "")); }
 /** No pins at all, for the cases that are about what happens without a ledger. */
 Pin[] noPins() { return Pin[].filled(0, Pin("", 0, "", true, "")); }
 
-export string test_an_uncovered_point_with_no_entry_is_named(Core core, Cli cli) {
+export string test_an_uncovered_point_with_no_entry_is_named(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-unpinned");
+  string dir = subject(env, fs, t, "covledger-unpinned");
   string f = dir + "/subject.wac";
 
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", noPins(), noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", noPins(), noRules());
   t.isTrue(failed, "an uncovered point nothing speaks for must fail the run");
 
   // And says which one, by name: `tools/wac/coverageall.wac` repeats these lines verbatim.
@@ -109,26 +115,36 @@ export string test_an_uncovered_point_with_no_entry_is_named(Core core, Cli cli)
   t.eqI32(uncoveredLines(twoPoints(dir), 2, oneEach(), dir + "/", out), 1, "one line uncovered");
   t.eqStr(out[0], f + ":2", "and it is the second line");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_pinned_uncovered_point_is_accounted_for(Core core, Cli cli) {
+export string test_a_pinned_uncovered_point_is_accounted_for(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-pinned");
+  string dir = subject(env, fs, t, "covledger-pinned");
   string f = dir + "/subject.wac";
 
   Pin[] pins = [Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called.")];
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(!failed, "a pinned uncovered point with a matching snippet is the good case");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_pin_on_a_covered_point_fails(Core core, Cli cli) {
+export string test_a_pin_on_a_covered_point_fails(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-covered");
+  string dir = subject(env, fs, t, "covledger-covered");
   string f = dir + "/subject.wac";
 
   // **The direction that was silent for however long.** The pin's snippet still matches, so the entry
@@ -138,31 +154,41 @@ export string test_a_pin_on_a_covered_point_fails(Core core, Cli cli) {
     Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."),
     Pin(f, 1, COVERED_SNIPPET, true, "claims this is unreachable, and it is not.")
   ];
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a pin on a covered point must fail: the reason has stopped holding");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_pin_whose_line_moved_fails(Core core, Cli cli) {
+export string test_a_pin_whose_line_moved_fails(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-drifted");
+  string dir = subject(env, fs, t, "covledger-drifted");
   string f = dir + "/subject.wac";
 
   // The snippet is real and the line is not the one holding it — which is what adding a comment above
   // a pinned line does, silently, and the reason a pin is keyed on text as well as a number.
   Pin[] pins = [Pin(f, 1, UNCOVERED_SNIPPET, true, "pinned one line early.")];
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a pin whose line no longer holds its snippet must fail");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_an_unreadable_pin_is_an_error_not_a_pass(Core core, Cli cli) {
+export string test_an_unreadable_pin_is_an_error_not_a_pass(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-gone");
+  string dir = subject(env, fs, t, "covledger-gone");
   string f = dir + "/subject.wac";
 
   // A pin naming a file that has been deleted — the one case where the ratchet has nothing to compare
@@ -170,19 +196,24 @@ export string test_an_unreadable_pin_is_an_error_not_a_pass(Core core, Cli cli) 
   // drifted" would be a diagnosis it cannot make; reading it as "no file, therefore fine" is how a
   // renamed source silently drops every exemption in it.
   Pin[] pins = [Pin(dir + "/no-such.wac", 1, UNCOVERED_SNIPPET, true, "names a file that is not there.")];
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a pin on a file that cannot be read must fail");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cli cli) {
+export string test_the_prefix_and_the_test_rule_decide_what_counts(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-scope");
+  string dir = subject(env, fs, t, "covledger-scope");
 
   // Outside the prefix: not this package's business, so an uncovered point there is not a failure.
-  bool outside = ratchet(core, cli, twoPoints(dir), 2, oneEach(), "/tmp/wac-nothing/", noPins(), noRules());
+  bool outside = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), "/tmp/wac-nothing/", noPins(), noRules());
   t.isTrue(!outside, "a point outside the prefix is not counted");
 
   // And a `/test/` path is excluded by the same rule harness/wacCoverage.ts had: a test's uncovered
@@ -198,7 +229,7 @@ export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cl
   t.eqI32(uncoveredLines(inTest, 2, [0, 0] as i32[], "tools/wac/", out), 0,
           "neither a `_test.wac` name nor a `/test/` path is counted");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -214,32 +245,42 @@ export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cl
  * which is the whole reason zstd's ledger keeps the flag rather than calling both unreachable —
  * `packages/zstd/test/cov_ledger.wac`.
  */
-export string test_an_unproven_pin_is_accounted_for_while_the_gap_is_open(Core core, Cli cli) {
+export string test_an_unproven_pin_is_accounted_for_while_the_gap_is_open(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-unproven");
+  string dir = subject(env, fs, t, "covledger-unproven");
   string f = dir + "/subject.wac";
 
   Pin[] pins = [Pin(f, 2, UNCOVERED_SNIPPET, false, "reachable; nobody has built the input.")];
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(!failed, "an open gap that is written down is not a failure");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_an_unproven_pin_on_a_covered_point_fails(Core core, Cli cli) {
+export string test_an_unproven_pin_on_a_covered_point_fails(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = subject(cli, t, "covledger-closed");
+  string dir = subject(env, fs, t, "covledger-closed");
   string f = dir + "/subject.wac";
 
   Pin[] pins = [
     Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."),
     Pin(f, 1, COVERED_SNIPPET, false, "reachable; nobody has built the input.")
   ];
-  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
+  bool failed = ratchet(err, out, fs, procs, twoPoints(dir), 2, oneEach(), dir + "/", pins, noRules());
   t.isTrue(failed, "a gap that has been closed must fail so the entry goes");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -254,9 +295,14 @@ export string test_an_unproven_pin_on_a_covered_point_fails(Core core, Cli cli) 
  * A method body's `decl` is its signature and its `struct` is the type — different answers about the
  * same line, which is the whole reason there are three.
  */
-export string test_a_rule_speaks_for_every_point_its_scope_reaches(Core core, Cli cli) {
+export string test_a_rule_speaks_for_every_point_its_scope_reaches(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = nestedSubject(cli, t, "covledger-rule-scope");
+  string dir = nestedSubject(env, fs, t, "covledger-rule-scope");
   string f = dir + "/nested.wac";
 
   // Two uncovered points: one in the method body (line 5), one in the free function (line 10).
@@ -265,43 +311,48 @@ export string test_a_rule_speaks_for_every_point_its_scope_reaches(Core core, Cl
 
   // `decl` on the method signature reaches line 5 and not line 10, so line 10 is left over.
   Rule[] byDecl = [Rule(f, "Cli cli", "decl", false, "needs a live handle.")];
-  t.isTrue(ratchet(core, cli, ps, 2, none, dir + "/", noPins(), byDecl),
+  t.isTrue(ratchet(err, out, fs, procs, ps, 2, none, dir + "/", noPins(), byDecl),
            "a rule reaching one of two points leaves the other unaccounted");
 
   // `struct` on the type reaches line 5 too — the same point by a different route.
   Rule[] byStruct = [Rule(f, "struct Handle", "struct", false, "the type's own methods.")];
-  t.isTrue(ratchet(core, cli, ps, 2, none, dir + "/", noPins(), byStruct),
+  t.isTrue(ratchet(err, out, fs, procs, ps, 2, none, dir + "/", noPins(), byStruct),
            "and so does the struct scope, still leaving line 10");
 
   // Both points, so nothing is left over and the run passes: `decl` on the method plus a pin on the
   // free function's line.
   Pin[] one = [Pin(f, 10, "return n;", false, "reachable; not driven here.")];
-  t.isTrue(!ratchet(core, cli, ps, 2, none, dir + "/", one, byDecl),
+  t.isTrue(!ratchet(err, out, fs, procs, ps, 2, none, dir + "/", one, byDecl),
            "a rule and a pin together can account for everything");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_rule_that_matches_nothing_fails(Core core, Cli cli) {
+export string test_a_rule_that_matches_nothing_fails(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = nestedSubject(cli, t, "covledger-rule-stale");
+  string dir = nestedSubject(env, fs, t, "covledger-rule-stale");
   string f = dir + "/nested.wac";
   Point[] ps = [Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry")];
 
   // Everything covered, so no point is uncovered and the rule has nothing to speak for. That is the
   // same staleness a moved pin has: it explains something that is no longer there.
   Rule[] rules = [Rule(f, "Cli cli", "decl", false, "needs a live handle.")];
-  t.isTrue(ratchet(core, cli, ps, 2, [1, 1] as i32[], dir + "/", noPins(), rules),
+  t.isTrue(ratchet(err, out, fs, procs, ps, 2, [1, 1] as i32[], dir + "/", noPins(), rules),
            "a rule matching no uncovered point must fail");
 
   // And a pattern that was never in the file, while a point *is* uncovered — the other way to be
   // stale, and the one a blanket rule would hide.
   Rule[] wrong = [Rule(f, "no such text anywhere", "decl", false, "a pattern that never was.")];
-  t.isTrue(ratchet(core, cli, ps, 2, [0, 0] as i32[], dir + "/", noPins(), wrong),
+  t.isTrue(ratchet(err, out, fs, procs, ps, 2, [0, 0] as i32[], dir + "/", noPins(), wrong),
            "a pattern matching nothing must fail even with points going spare");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -312,9 +363,14 @@ export string test_a_rule_that_matches_nothing_fails(Core core, Cli cli) {
  * unaccounted where it then listed 22 — and would have gone green with fourteen branches nobody had
  * spoken for. Counting the set is the same distinction the report draws between points and mentions.
  */
-export string test_a_point_spoken_for_twice_is_still_one_point(Core core, Cli cli) {
+export string test_a_point_spoken_for_twice_is_still_one_point(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = nestedSubject(cli, t, "covledger-rule-overlap");
+  string dir = nestedSubject(env, fs, t, "covledger-rule-overlap");
   string f = dir + "/nested.wac";
   Point[] ps = [Point(0, f, 5, 5, "entry"), Point(1, f, 10, 3, "entry")];
 
@@ -322,10 +378,10 @@ export string test_a_point_spoken_for_twice_is_still_one_point(Core core, Cli cl
   // points and read as everything accounted for.
   Pin[] both = [Pin(f, 5, "return this.id;", false, "reachable; not driven here.")];
   Rule[] rules = [Rule(f, "Cli cli", "decl", false, "needs a live handle.")];
-  t.isTrue(ratchet(core, cli, ps, 2, [0, 0] as i32[], dir + "/", both, rules),
+  t.isTrue(ratchet(err, out, fs, procs, ps, 2, [0, 0] as i32[], dir + "/", both, rules),
            "two mentions of one point must not account for two points");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -346,9 +402,11 @@ export string test_a_point_spoken_for_twice_is_still_one_point(Core core, Cli cl
  * Asserted on `onlyClaims` rather than through `ratchet` because the finding is a log line and
  * `ratchet` answers with one bool for a whole run — the same reason the count is a function.
  */
-export string test_a_rule_with_no_point_of_its_own_is_named(Core core, Cli cli) {
+export string test_a_rule_with_no_point_of_its_own_is_named(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = nestedSubject(cli, t, "covledger-rule-subsumed");
+  string dir = nestedSubject(env, fs, t, "covledger-rule-subsumed");
   string f = dir + "/nested.wac";
   string[] ls = nested();
 
@@ -380,6 +438,6 @@ export string test_a_rule_with_no_point_of_its_own_is_named(Core core, Cli cli) 
   t.eqI32(onlyClaims(Rule(f, "no such text", "line", false, "-"), ls, uncovered, 2, once), 0,
           "a rule matching nothing was credited with a point");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

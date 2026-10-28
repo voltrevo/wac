@@ -11,7 +11,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 import {
   signedLength, signedDigest, keyFingerprint, rsaModulus, rsaExponent, signatureMatches,
@@ -56,13 +56,13 @@ struct Fixtures {
   u8[][] signatures;
 }
 
-Fixtures fixtures(T t, Cli cli, u8[][] digests) {
+Fixtures fixtures(T t, Procs procs, u8[][] digests) {
   Fixtures none = Fixtures(false, u8[](), u8[](), u8[](), u8[](), u8[](), u8[](),
                            u8[][](), u8[][](), u8[][]());
   Lines lines = Lines.create();
   lines.add("consfixtures");
   for (i32 i = 0; i < digests.len(); i++) { lines.add("conssign \{hex(digests[i])}"); }
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "the consensus fixtures");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "the consensus fixtures");
   if (!a.ok) { return none; }
   // `consfixtures` answers ten lines: two keys, six documents and two fingerprint sets.
   t.eqI32(a.lines.len(), 10 + digests.len(), "the host answered every line");
@@ -84,7 +84,7 @@ Fixtures fixtures(T t, Cli cli, u8[][] digests) {
 }
 
 /** No signatures wanted — the documents and keys alone. */
-Fixtures documents(T t, Cli cli) { return fixtures(t, cli, u8[][]()); }
+Fixtures documents(T t, Procs procs) { return fixtures(t, procs, u8[][]()); }
 
 export string test_the_signed_portion_ends_at_the_token() {
   // The boundary is "up to and including the string directory-signature ", trailing space
@@ -133,11 +133,12 @@ export string test_the_digest_covers_the_signed_portion_only() {
   return t.report();
 }
 
-export string test_a_public_key_is_read_out_of_its_der(Core core, Cli cli) {
+export string test_a_public_key_is_read_out_of_its_der(Sys sys) {
+  Procs procs = sys.procs();
   // The host hands over a DER RSAPublicKey and, separately, its modulus and exponent taken apart
   // with node's own parser — so agreement is not this code checking itself.
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   u8[] der = f.keyDer;
   t.eqBytes(rsaModulus(der), f.keyN, "the modulus");
@@ -146,7 +147,8 @@ export string test_a_public_key_is_read_out_of_its_der(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_genuine_signature_verifies(Core core, Cli cli) {
+export string test_a_genuine_signature_verifies(Sys sys) {
+  Procs procs = sys.procs();
   // Each signature is node's `privateEncrypt` with PKCS#1 v1.5 padding over the bare bytes —
   // Tor's shape exactly, with no DigestInfo.
   T t = T.create();
@@ -159,7 +161,7 @@ export string test_a_genuine_signature_verifies(Core core, Cli cli) {
   // And a sha256 digest, since the consensus uses those.
   digests[6] = sha256("network-status-version 3\n".toBytes());
 
-  Fixtures f = fixtures(t, cli, digests);
+  Fixtures f = fixtures(t, procs, digests);
   if (!f.ok) { return t.report(); }
   u8[] n = rsaModulus(f.keyDer);
   u8[] e = rsaExponent(f.keyDer);
@@ -171,12 +173,13 @@ export string test_a_genuine_signature_verifies(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_everything_that_must_be_refused(Core core, Cli cli) {
+export string test_everything_that_must_be_refused(Sys sys) {
+  Procs procs = sys.procs();
   // The half that matters. A verifier that returns true unconditionally passes every test
   // above this one.
   T t = T.create();
   u8[] digest = sha1("the message that was signed".toBytes());
-  Fixtures f = fixtures(t, cli, [digest]);
+  Fixtures f = fixtures(t, procs, [digest]);
   if (!f.ok) { return t.report(); }
   u8[] n = rsaModulus(f.keyDer);
   u8[] e = rsaExponent(f.keyDer);
@@ -219,12 +222,13 @@ export string test_everything_that_must_be_refused(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_signature_from_the_wrong_key_is_refused(Core core, Cli cli) {
+export string test_a_signature_from_the_wrong_key_is_refused(Sys sys) {
+  Procs procs = sys.procs();
   // The check that makes the whole chain mean anything: a signature is only evidence about
   // the key it was made with. A verifier that ignored the key would accept this.
   T t = T.create();
   u8[] digest = sha1("a consensus".toBytes());
-  Fixtures f = fixtures(t, cli, [digest]);
+  Fixtures f = fixtures(t, procs, [digest]);
   if (!f.ok) { return t.report(); }
   u8[] sig = f.signatures[0];
   t.isTrue(signatureMatches(rsaModulus(f.keyDer), rsaExponent(f.keyDer), digest, sig),
@@ -234,11 +238,12 @@ export string test_a_signature_from_the_wrong_key_is_refused(Core core, Cli cli)
   return t.report();
 }
 
-export string test_a_fingerprint_is_the_sha1_of_the_key(Core core, Cli cli) {
+export string test_a_fingerprint_is_the_sha1_of_the_key(Sys sys) {
+  Procs procs = sys.procs();
   // The value a client hardcodes. It is the SHA-1 of the DER, not of the PEM and not of the
   // modulus alone — hashing the wrong thing gives an authority set that matches nobody.
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   u8[] der = f.keyDer;
   t.eqBytes(keyFingerprint(der), sha1(der), "the fingerprint is sha1 over the whole DER");
@@ -248,13 +253,14 @@ export string test_a_fingerprint_is_the_sha1_of_the_key(Core core, Cli cli) {
 
 // ── The chain, ported from TypeScript ────────────────────────────────────────
 
-export string test_the_chain_accepts_a_genuine_consensus(Core core, Cli cli) {
+export string test_the_chain_accepts_a_genuine_consensus(Sys sys) {
+  Procs procs = sys.procs();
   // f.docs[0] consensus, f.docs[1] certs; lines(f.names[0]) the trusted fingerprints. The documents are
   // built by the registrar with real RSA keys, so this is the whole chain: identity key
   // hashes to a trusted fingerprint, certifies a signing key, signing key signs the
   // consensus, majority, freshness.
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   AuthorityCert[] certs = parseCertificates(f.docs[1], lines(f.names[0]));
   t.eqI32(certs.len(), 3, "three certificates check out");
@@ -266,11 +272,12 @@ export string test_the_chain_accepts_a_genuine_consensus(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_everything_the_chain_must_refuse(Core core, Cli cli) {
+export string test_everything_the_chain_must_refuse(Sys sys) {
+  Procs procs = sys.procs();
   // A verifier that accepts everything also accepts a genuine consensus, so this is where
   // the value is. Each case is a thing an attacker would actually try.
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   string[] trusted = lines(f.names[0]);
   AuthorityCert[] certs = parseCertificates(f.docs[1], trusted);
@@ -297,12 +304,13 @@ export string test_everything_the_chain_must_refuse(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_signing_key_its_identity_never_certified(Core core, Cli cli) {
+export string test_a_signing_key_its_identity_never_certified(Sys sys) {
+  Procs procs = sys.procs();
   // The check it is tempting to skip. f.docs[4] is the certificate file with one authority's
   // signing key replaced by another's — the consensus signature would still verify against
   // it, so only the certification check catches this.
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   AuthorityCert[] swapped = parseCertificates(f.docs[4], lines(f.names[0]));
   t.eqI32(swapped.len(), 2, "the tampered certificate is dropped, the others stand");
@@ -311,13 +319,14 @@ export string test_a_signing_key_its_identity_never_certified(Core core, Cli cli
   return t.report();
 }
 
-export string test_a_signature_names_which_signing_key_made_it(Core core, Cli cli) {
+export string test_a_signature_names_which_signing_key_made_it(Sys sys) {
+  Procs procs = sys.procs();
   // f.docs[5] holds two certificates for one authority — its rotated signing key last. The
   // consensus names the first key's digest. A chain that matched on the identity alone
   // would land on the rotated certificate and lose a good signature, so this is what makes
   // the digest half of the match load-bearing rather than decoration.
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   string[] trusted = lines(f.names[0]);
   AuthorityCert[] certs = parseCertificates(f.docs[5], trusted);
@@ -418,9 +427,10 @@ u8[] editOnce(u8[] doc, string from, string to) {
  * because that is what separates "this line was skipped" from "the whole document was thrown away" —
  * and a verifier that discarded everything on the first oddity would satisfy a bare `!ok`.
  */
-export string test_a_malformed_consensus_is_refused_without_trapping(Core core, Cli cli) {
+export string test_a_malformed_consensus_is_refused_without_trapping(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   string[] trusted = lines(f.names[0]);
   AuthorityCert[] certs = parseCertificates(f.docs[1], trusted);
@@ -614,9 +624,10 @@ string field(string line, i32 i) {
  * The measure throughout is `goodSignatures`: three when nothing is wrong, two when this line was
  * not counted. `ok` stays true in every case here, deliberately — see the header above.
  */
-export string test_a_malformed_directory_signature_line_is_not_counted(Core core, Cli cli) {
+export string test_a_malformed_directory_signature_line_is_not_counted(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixtures f = documents(t, cli);
+  Fixtures f = documents(t, procs);
   if (!f.ok) { return t.report(); }
   string[] trusted = lines(f.names[0]);
   AuthorityCert[] certs = parseCertificates(f.docs[1], trusted);

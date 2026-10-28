@@ -36,13 +36,15 @@
 //     messages differ by design: bash names the offending token and the line, ours says `syntax error`.
 //     Generating them buries the real findings under a class that is already understood.
 
-import { Change, Cli, Core, Exec, Sys } from "std";
-import { Buf } from "core";
+import { Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Buf, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Frame, childCli, childCore } from "../../packages/platform/src/frame.wac";
+import { Kept } from "../../packages/platform/src/stream.wac";
+import { bytesInput } from "../../packages/fs/src/trees.wac";
+import { ProcTable } from "../../packages/fs/src/proc.wac";
 import { Shell } from "../../packages/sh/src/exec.wac";
 import { shellMain } from "../../packages/sh/src/entry.wac";
-import { boxNames, boxRun } from "../../packages/box/src/shrun.wac";
+import { wireBox } from "../../packages/box/src/shrun.wac";
 
 /** The seeds the gate keeps, and how many scripts each contributes. */
 export i32[] seeds() { return [1, 3, 11, 47] as i32[]; }
@@ -284,11 +286,11 @@ export struct Answer {
 }
 
 /** The fixtures a generated script may name, back to their starting contents. */
-export bool fixtures(Cli cli, string dir) {
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return false; }
-  if (!cli.writeFile(dir + "/f", "a\nb\nc\n".toBytes()).wait().ok()) { return false; }
-  return cli.writeFile(dir + "/n", "3\n1\n2\n".toBytes()).wait().ok();
+export bool fixtures(Files fs, string dir) {
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) { return false; }
+  if (!flatten(fs.writeFile(dir + "/f", "a\nb\nc\n".toBytes()).wait()).isOk()) { return false; }
+  return flatten(fs.writeFile(dir + "/n", "3\n1\n2\n".toBytes()).wait()).isOk();
 }
 
 /**
@@ -298,28 +300,24 @@ export bool fixtures(Cli cli, string dir) {
  * directory** — `issues/system/0182`. The inner `bash -c` is what gives a diagnostic the plain `bash: `
  * prefix; through `env` alone, argv[0] is `/usr/bin/bash` and the prefix carries the path.
  */
-Exec askBash(Cli cli, string dir, string script) {
-  return cli.exec("env",
-                  [
+Exec askBash(Procs procs, string dir, string script) {
+  return flatten(procs.exec("env", [
                            "-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                            "LC_ALL=C", "HOME=" + dir,
                            "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                            "bash", dir, script
-                  ],
-                  u8[]()).wait();
+                  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** The same script through this repository's own shell, in this process. */
-export async Answer askOurs(Core core, Cli cli, string dir, string script) {
-  Frame f = Frame.of(["sh", "-c", script], u8[](), dir, false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Shell sh = Shell.create(c, l);
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  i32 status = await shellMain(c, l, sh, 1);
-  return Answer(normalise(combined(string.fromBytes(f.out.bytes()),
-                                   string.fromBytes(f.err.bytes()))), status);
+export async Answer askOurs(Sys sys, string dir, string script) {
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  Shell sh = Shell.of(bytesInput(u8[]()), out.out, err.out, sys.clock(), sys.env(), sys.net(), sys.procs(),
+                      sys.files(), ProcTable.create(), dir, true);
+  wireBox(sh, sys.random());
+  i32 status = await shellMain(["sh", "-c", script], sh, 1);
+  return Answer(normalise(combined(string.fromBytes(out.bytes()), string.fromBytes(err.bytes()))), status);
 }
 
 /** `<tag> <n>\n<bytes>\n`. */
@@ -329,26 +327,27 @@ void field(Buf out, string tag, u8[] bytes) {
   out.pushAll("\n".toBytes());
 }
 
-string versionOf(Cli cli, string program, string flag) {
-  Exec r = cli.exec(program, [flag], u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "(absent)"; }
-  string all = string.fromBytes(r.stdout);
+string versionOf(Procs procs, string program, string flag) {
+  auto rRan = flatten(procs.exec(program, [flag], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "(absent)"; }
+  string all = string.fromBytes(r!.stdout);
   i32 nl = all.indexOf("\n");
   return nl < 0 ? all : all.slice(0, nl);
 }
 
-string flagValue(Cli cli, string name, string fallback) {
-  i32 n = cli.argCount().wait();
+string flagValue(string[] argv, string name, string fallback) {
+  i32 n = argv.len();
   for (i32 i = 0; i + 1 < n; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == name) { return string.fromBytes(cli.arg(i + 1).wait()); }
+    if (argv[i] == name) { return argv[i + 1]; }
   }
   return fallback;
 }
 
-bool hasFlag(Cli cli, string name) {
-  i32 n = cli.argCount().wait();
+bool hasFlag(string[] argv, string name) {
+  i32 n = argv.len();
   for (i32 i = 0; i < n; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == name) { return true; }
+    if (argv[i] == name) { return true; }
   }
   return false;
 }
@@ -364,16 +363,19 @@ i32 numberOr(string s, i32 fallback) {
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string dir = ".cache/wac-shfuzz";
-  if (!fixtures(cli, dir)) {
-    core.warn("shfuzz: cannot make " + dir);
+  if (!fixtures(fs, dir)) {
+    err.line("shfuzz: cannot make " + dir);
     return 1;
   }
-  if (hasFlag(cli, "--capture")) { return capture(core, cli, dir); }
-  if (hasFlag(cli, "--print")) { return printScripts(core, cli); }
-  return await explore(core, cli, dir);
+  if (hasFlag(argv, "--capture")) { return capture(err, out, fs, procs, dir); }
+  if (hasFlag(argv, "--print")) { return printScripts(argv, out); }
+  return await explore(sys, argv, err, out, fs, procs, dir);
 }
 
 /**
@@ -386,11 +388,11 @@ export async i32 main(Sys sys) {
  * scripts it does produce. It drifted exactly that way on the first attempt, and seed 1 agreed for ten
  * scripts before it showed.
  */
-i32 printScripts(Core core, Cli cli) {
-  i32 seed = numberOr(flagValue(cli, "--seed", "1"), 1);
-  i32 count = numberOr(flagValue(cli, "--count", itoa(perSeed())), perSeed());
+i32 printScripts(string[] argv, Output out) {
+  i32 seed = numberOr(flagValue(argv, "--seed", "1"), 1);
+  i32 count = numberOr(flagValue(argv, "--count", itoa(perSeed())), perSeed());
   Rand r = Rand.of(seed);
-  for (i32 i = 0; i < count; i++) { core.log(show(script(r))); }
+  for (i32 i = 0; i < count; i++) { out.line(show(script(r))); }
   return 0;
 }
 
@@ -409,16 +411,16 @@ i32 printScripts(Core core, Cli cli) {
  * byte array and empty means end of input. The distinction 0113 was about is exactly the one a frame
  * cannot express (`issues/system/0195`).
  */
-i32 capture(Core core, Cli cli, string dir) {
-  Buf out = Buf.create();
-  out.pushAll("wac-sh-fuzz 1\n".toBytes());
-  out.pushAll(("bash: " + versionOf(cli, "bash", "--version") + "\n").toBytes());
-  out.pushAll("locale: LC_ALL=C\n".toBytes());
+i32 capture(Output err, Output out, Files fs, Procs procs, string dir) {
+  Buf buf = Buf.create();
+  buf.pushAll("wac-sh-fuzz 1\n".toBytes());
+  buf.pushAll(("bash: " + versionOf(procs, "bash", "--version") + "\n").toBytes());
+  buf.pushAll("locale: LC_ALL=C\n".toBytes());
   string list = "";
   for (i32 i = 0; i < seeds().len(); i++) { list = list + (i == 0 ? "" : " ") + itoa(seeds()[i]); }
-  out.pushAll(("seeds: " + list + "\n").toBytes());
-  out.pushAll(("per-seed: " + itoa(perSeed()) + "\n").toBytes());
-  out.pushAll(("count: " + itoa(seeds().len() * perSeed()) + "\n").toBytes());
+  buf.pushAll(("seeds: " + list + "\n").toBytes());
+  buf.pushAll(("per-seed: " + itoa(perSeed()) + "\n").toBytes());
+  buf.pushAll(("count: " + itoa(seeds().len() * perSeed()) + "\n").toBytes());
 
   i32 written = 0;
   for (i32 s = 0; s < seeds().len(); s++) {
@@ -428,31 +430,31 @@ i32 capture(Core core, Cli cli, string dir) {
       // The whole directory back to its starting state, not just `out` and `err`: a script can truncate a
       // fixture — `> f` is one redirection away — and the next would then be measured against a world the
       // previous one changed.
-      cli.remove(dir, true).wait();
-      if (!fixtures(cli, dir)) {
-        core.warn("shfuzz: cannot reset " + dir);
+      fs.remove(dir, true).wait();
+      if (!fixtures(fs, dir)) {
+        err.line("shfuzz: cannot reset " + dir);
         return 1;
       }
-      Exec got = askBash(cli, dir, sc);
+      Exec got = askBash(procs, dir, sc);
       if (!got.ran()) {
-        core.warn("shfuzz: bash would not start: " + got.error);
+        err.line("shfuzz: bash would not start: " + got.error);
         return 1;
       }
-      field(out, "S", sc.toBytes());
-      out.pushAll(("X " + itoa(got.status) + "\n").toBytes());
-      field(out, "C", normalise(combined(string.fromBytes(got.stdout),
+      field(buf, "S", sc.toBytes());
+      buf.pushAll(("X " + itoa(got.status) + "\n").toBytes());
+      field(buf, "C", normalise(combined(string.fromBytes(got.stdout),
                                          string.fromBytes(got.stderr))).toBytes());
       written = written + 1;
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
-  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
-  if (!wrote.ok()) {
-    core.warn("shfuzz: cannot write " + vectorsPath() + " — " + wrote.message);
+  auto wrote = flatten(fs.writeFile(vectorsPath(), buf.bytes()).wait());
+  if (wrote.isErr()) {
+    err.line("shfuzz: cannot write " + vectorsPath() + " — " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  core.log(vectorsPath() + ": " + itoa(written) + " answers, " + itoa(out.len / 1024) + " KB");
+  out.line(vectorsPath() + ": " + itoa(written) + " answers, " + itoa(buf.len / 1024) + " KB");
   return 0;
 }
 
@@ -463,14 +465,14 @@ i32 capture(Core core, Cli cli, string dir) {
  * **The canary is the first thing it does**, because everything below is "these two agree", which a
  * harness that ran neither would also report.
  */
-async i32 explore(Core core, Cli cli, string dir) {
-  i32 seed = numberOr(flagValue(cli, "--seed", "1"), 1);
-  i32 count = numberOr(flagValue(cli, "--count", "200"), 200);
+async i32 explore(Sys sys, string[] argv, Output err, Output out, Files fs, Procs procs, string dir) {
+  i32 seed = numberOr(flagValue(argv, "--seed", "1"), 1);
+  i32 count = numberOr(flagValue(argv, "--count", "200"), 200);
 
-  Answer one = await askOurs(core, cli, dir, "echo one");
-  Answer two = await askOurs(core, cli, dir, "echo two");
+  Answer one = await askOurs(sys, dir, "echo one");
+  Answer two = await askOurs(sys, dir, "echo two");
   if (one.text == two.text || one.text.indexOf("one") < 0) {
-    core.warn("shfuzz: our shell did not answer `echo one`: " + one.text);
+    err.line("shfuzz: our shell did not answer `echo one`: " + one.text);
     return 2;
   }
 
@@ -478,30 +480,30 @@ async i32 explore(Core core, Cli cli, string dir) {
   i32 differ = 0;
   for (i32 i = 0; i < count; i++) {
     string sc = script(r);
-    cli.remove(dir, true).wait();
-    if (!fixtures(cli, dir)) {
-      core.warn("shfuzz: cannot reset " + dir);
+    fs.remove(dir, true).wait();
+    if (!fixtures(fs, dir)) {
+      err.line("shfuzz: cannot reset " + dir);
       return 1;
     }
-    Exec want = askBash(cli, dir, sc);
+    Exec want = askBash(procs, dir, sc);
     if (!want.ran()) {
-      core.warn("shfuzz: bash would not start: " + want.error);
+      err.line("shfuzz: bash would not start: " + want.error);
       return 1;
     }
     string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
-    cli.remove(dir, true).wait();
-    fixtures(cli, dir);
-    Answer got = await askOurs(core, cli, dir, sc);
+    fs.remove(dir, true).wait();
+    fixtures(fs, dir);
+    Answer got = await askOurs(sys, dir, sc);
     if (wanted != got.text || want.status != got.status) {
       differ = differ + 1;
       if (differ <= 8) {
-        core.log("\nSCRIPT " + sc + "\n  bash " + show(wanted) + " (" + itoa(want.status) + ")" +
+        out.line("\nSCRIPT " + sc + "\n  bash " + show(wanted) + " (" + itoa(want.status) + ")" +
                  "\n  ours " + show(got.text) + " (" + itoa(got.status) + ")");
       }
     }
   }
-  cli.remove(dir, true).wait();
-  core.log(itoa(count - differ) + " of " + itoa(count) + " scripts agree with bash (seed " +
+  fs.remove(dir, true).wait();
+  out.line(itoa(count - differ) + " of " + itoa(count) + " scripts agree with bash (seed " +
            itoa(seed) + ")");
   return differ == 0 ? 0 : 1;
 }

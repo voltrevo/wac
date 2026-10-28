@@ -8,7 +8,8 @@
 // The one thing the capability world cannot do is wait on two sockets at once, which SSH does not
 // need for a single channel running one command. It would need it for port forwarding.
 
-import { Cli, Core } from "std";
+import { Clock, Output, Random, Socket } from "std";
+import { flatten } from "core";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { Found, Version, clientVersion, clientVersionLine, scanVersion, speaksV2 } from "./version.wac";
 import { keyLength } from "./cipher.wac";
@@ -36,14 +37,17 @@ i32 windowSize() { return 64 * 1024; }
 export struct Client {
   /** The transport underneath: socket, buffer, keys and the two sequence numbers. */
   Conn conn;
+  /** Where the remote command's output and diagnostic output go. */
+  Output out;
+  Output err;
 
   /** H from the first exchange, which authentication signatures bind to. */
   u8[] sessionId;
   /** The host key the server presented, for the caller to check against known_hosts. */
   u8[] hostKey;
 
-  Client create(Core core, Cli cli, i32 sock) {
-    return Client(Conn.create(core, cli, sock), u8[](), u8[]());
+  Client create(Output out, Output err, Clock clock, Random rnd, Socket sock) {
+    return Client(Conn.create(clock, rnd, sock), out, err, u8[](), u8[]());
   }
 
   bool failed(const this) { return this.conn.failed(); }
@@ -57,7 +61,7 @@ export struct Client {
    * whoever is running the program.
    */
   void handshake(this) {
-    if (!this.conn.cli.send(this.conn.sock, clientVersionLine()).wait()) {
+    if (flatten(this.conn.sock.send(clientVersionLine()).wait()).isErr()) {
       this.conn.fail("cannot send the version line");
       return;
     }
@@ -90,7 +94,7 @@ export struct Client {
       return;
     }
 
-    u8[] ourKexInit = encode(clientProposal(), this.conn.core.randomBytes(16).wait());
+    u8[] ourKexInit = encode(clientProposal(), flatten(this.conn.rnd.bytes(16).wait()).unwrap());
     if (!this.conn.sendPacket(ourKexInit)) { this.conn.fail("cannot send KEXINIT"); return; }
 
     u8[] theirKexInit = this.conn.readPacket();
@@ -98,7 +102,7 @@ export struct Client {
     if (theirKexInit[0] as i32 != msgKexInit()) { this.conn.fail("expected KEXINIT"); return; }
     if (!this.agreed(theirKexInit)) { return; }
 
-    u8[] secret = this.conn.core.randomBytes(32).wait();
+    u8[] secret = flatten(this.conn.rnd.bytes(32).wait()).unwrap();
     u8[] qc = ephemeralPublic(secret);
     if (!this.conn.sendPacket(ecdhInit(qc))) { this.conn.fail("cannot send the key exchange"); return; }
 
@@ -213,15 +217,15 @@ export struct Client {
       if (!m.ok) { this.conn.fail("a channel message did not parse"); break; }
 
       if (m.kind == msgChannelData()) {
-        this.conn.cli.write(m.data);
+        this.out.write(m.data);
         this.giveCredit(window, serverChannel, m.data.len());
       } else if (m.kind == msgChannelExtendedData()) {
         // Straight through, in the order the server sent it, so the two streams interleave here as
         // they did on the remote host. This used to be buffered to the end of the run and emitted as
         // one `warn`: `warn` writes a line of *text*, so a per-packet call inserted a newline at
         // every packet boundary and the whole-run form lost the ordering and mangled anything that
-        // was not valid UTF-8. `writeErr` takes bytes. wac-mono issue 0014.
-        if (m.extra == extendedDataStderr()) { this.conn.cli.writeErr(m.data); }
+        // was not valid UTF-8. `Output.write` takes bytes. wac-mono issue 0014.
+        if (m.extra == extendedDataStderr()) { this.err.write(m.data); }
         this.giveCredit(window, serverChannel, m.data.len());
       } else if (m.kind == msgChannelRequest()) {
         // `exit-status` is a request, not a reply, and nothing prompts it.

@@ -23,10 +23,11 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { importSpecs } from "../../src/files.wac";
 import { resolveFrom } from "../../src/path.wac";
+import { flatten } from "core";
 
 static string ORACLE = "packages/wacc/test/files_oracle.ts";
 
@@ -60,8 +61,8 @@ struct Paths {
 }
 
 /** Every `.wac` file under `dir`, recursively. */
-void walk(Cli cli, string dir, Paths into) {
-  string[]? entries = cli.readDir(dir).wait();
+void walk(Files fs, string dir, Paths into) {
+  string[]? entries = flatten(fs.readDir(dir).wait()).ok();
   if (entries is null) { return; }
   string[] names = entries!;
   for (i32 i = 0; i < names.len(); i++) {
@@ -72,31 +73,34 @@ void walk(Cli cli, string dir, Paths into) {
     // A directory is whatever `readDir` will list. `Stat` would answer too and costs a call per
     // entry; this costs one only for the entries that are not `.wac`, which is most directories and
     // few files.
-    if (cli.readDir(path).wait() is not null) { walk(cli, path, into); }
+    if (flatten(fs.readDir(path).wait()).ok() is not null) { walk(fs, path, into); }
   }
 }
 
-export string test_the_wac_walk_names_the_same_imports_as_the_typescript_one(Core core, Cli cli) {
+export string test_the_wac_walk_names_the_same_imports_as_the_typescript_one(Sys sys) {
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   Paths found = Paths.create();
-  walk(cli, "packages", found);
-  walk(cli, "spec", found);
+  walk(fs, "packages", found);
+  walk(fs, "spec", found);
   t.isTrue(found.n >= 100, "only " + itoa(found.n) + " files walked — the corpus is not being found");
   if (found.n < 100) { return t.report(); }
 
   Lines lines = Lines.create();
   for (i32 i = 0; i < found.n; i++) {
     string path = found.items[i];
-    FileResult f = cli.readFile(path).wait();
-    if (!f.ok) { t.fail("cannot read " + path + " — " + f.error); continue; }
-    string ours = joinedWith(importSpecs(f.bytes), "|");
+    auto fRead = flatten(fs.readFile(path).wait());
+    u8[]? f = fRead.ok();
+    if ((f is null)) { t.fail("cannot read " + path + " — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}"); continue; }
+    string ours = joinedWith(importSpecs(f!), "|");
     lines.add("imports " + path + " " + ours);
   }
   // `--allow-write=.cache` because the oracle's imports build what they need into it when it is cold —
   // after any change to `harness/` — and a read-only run then dies before comparing anything.
-  check(t, cli, "deno", ["run", "--allow-read", "--allow-write=.cache", "--no-check", ORACLE], lines,
-        "the TypeScript import walk");
-  core.log("    imports: " + itoa(found.n) + " files compared");
+  check(t, procs, "deno", ["run", "--allow-read", "--allow-write=.cache", "--no-check", ORACLE], lines, "the TypeScript import walk");
+  out.line("    imports: " + itoa(found.n) + " files compared");
   return t.report();
 }
 

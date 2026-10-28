@@ -23,21 +23,22 @@
 // has one file that needs `--allow-run` and it is this one. `issues/system/0165`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Stat, Pending } from "std";
+import { Exec, ChildEnv, Launch, SpawnFault, Stat, Env, Files, Output, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
+import { Result, Ticket, flatten, toString } from "core";
 
 static string ENTRY = "packages/wac/src/wac.wac";
 
 /** Where to put the two builds, named for this agent so two runs cannot overwrite each other. */
-string workDir(Cli cli) {
-  string who = agentDir(cli);
+string workDir(Env env) {
+  string who = agentDir(env);
   return "/tmp/wac-selfhost" + (who == "" ? "" : "-" + who);
 }
 
 /** The binary running this test — the same one that would run `wac task seed`. */
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Env env) { return flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac"; }
 
 /**
  * Start a compile of wacc to `stem`, without waiting for it.
@@ -52,10 +53,9 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  * passing, and still passing when its cache entry was replaced with a different valid module. `0204`
  * predicted exactly that before the cache was written.
  */
-Pending<Exec> submitBuild(Cli cli, string stem) {
-  return cli.exec(binary(cli),
-                  ["build", ENTRY, "-o", stem, "--allow-read", "--allow-write", "--no-cache"],
-                  u8[]());
+Ticket<Result<Exec, SpawnFault>> submitBuild(Env env, Procs procs, string stem) {
+  return procs.exec(binary(env), ["build", ENTRY, "-o", stem, "--allow-read", "--allow-write", "--no-cache"],
+                    u8[](), ChildEnv.inherited(), Launch.plain());
 }
 
 /** A message on one line, because a report that stops at the first newline loses the rest. */
@@ -76,9 +76,10 @@ string oneLine(string s) {
  * stderr was in the message all along, and the report shows a failure's first line. A trap the compiler
  * wrote a reason for is exactly what `issues/system/0203` needs the next time this happens.
  */
-string built(Pending<Exec> p) {
-  Exec r = p.wait();
-  if (!r.ran()) { return "the binary would not start: " + r.error; }
+string built(Ticket<Result<Exec, SpawnFault>> p) {
+  auto ran = flatten(p.wait());
+  if (ran.isErr()) { return "the binary would not start: \{ran.err()!}"; }
+  Exec r = ran.unwrap();
   if (r.status != 0) {
     return "wac build exited " + itoa(r.status) + ": " + oneLine(string.fromBytes(r.stderr))
            + " -- and stdout: " + oneLine(string.fromBytes(r.stdout));
@@ -93,10 +94,10 @@ string built(Pending<Exec> p) {
   return "";
 }
 
-u8[] read(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { return u8[](); }
-  return r.bytes;
+u8[] read(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) { return u8[](); }
+  return r!;
 }
 
 /**
@@ -114,36 +115,40 @@ u8[] read(Cli cli, string path) {
  * is not a fixed point, which is the defect this exists for, or an output *path* reached the artefact,
  * which would be a new one. Before, the second was impossible by construction and also untested.
  */
-export string test_the_compiler_builds_itself_to_a_fixed_point(Core core, Cli cli) {
+export string test_the_compiler_builds_itself_to_a_fixed_point(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary under test is where `wac task seed` writes it: " + binary(cli));
-  if (!bin.exists) { return t.report(); }
+  Stat? bin = flatten(fs.stat(binary(env)).wait()).ok();
+  t.isTrue((bin is not null), "the binary under test is where `wac task seed` writes it: " + binary(env));
+  if ((bin is null)) { return t.report(); }
 
-  string work = workDir(cli);
-  Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string work = workDir(env);
+  auto made = flatten(fs.mkdir(work, true).wait());
+  t.isTrue(made.isOk(), "a working directory: " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   // Same name, two directories: `wacc` either way, which is what the manifest records.
-  string whyDir1 = madeDir(cli, work + "/one");
+  string whyDir1 = madeDir(fs, work + "/one");
   t.isTrue(whyDir1 == "", whyDir1);
-  string whyDir2 = madeDir(cli, work + "/two");
+  string whyDir2 = madeDir(fs, work + "/two");
   t.isTrue(whyDir2 == "", whyDir2);
-  Pending<Exec> pOne = submitBuild(cli, work + "/one/wacc");
-  Pending<Exec> pTwo = submitBuild(cli, work + "/two/wacc");
+  Ticket<Result<Exec, SpawnFault>> pOne = submitBuild(env, procs, work + "/one/wacc");
+  Ticket<Result<Exec, SpawnFault>> pTwo = submitBuild(env, procs, work + "/two/wacc");
   string first = built(pOne);
   string second = built(pTwo);
   t.eqStr(first, "", "the compiler compiles itself");
   t.eqStr(second, "", "and does it again");
   if (first != "" || second != "") { return t.report(); }
 
-  u8[] wasmOne = read(cli, work + "/one/wacc.wasm");
+  u8[] wasmOne = read(fs, work + "/one/wacc.wasm");
   // A floor, so a build that wrote nothing cannot pass by matching another empty file.
   t.isTrue(wasmOne.len() > 100000,
            "the module is a compiler, not a stub — " + itoa(wasmOne.len()) + " bytes");
 
-  u8[] wasmTwo = read(cli, work + "/two/wacc.wasm");
+  u8[] wasmTwo = read(fs, work + "/two/wacc.wasm");
   t.eqI32(wasmTwo.len(), wasmOne.len(), "the two modules are the same size");
   // **One comparison, not two.** This compared the manifests separately when `wac build` wrote one
   // beside the module; the manifest is a section *inside* the module now, so comparing the modules
@@ -152,7 +157,7 @@ export string test_the_compiler_builds_itself_to_a_fixed_point(Core core, Cli cl
            "either the compiler is not a fixed point — building it twice gave different bytes — or the "
            + "output path reached the artefact, which the two directories would then be recording");
 
-  Change gone = cli.remove(work, true).wait();
-  if (!gone.ok()) { core.warn("selfhost: could not remove " + work + " — " + gone.message); }
+  auto gone = flatten(fs.remove(work, true).wait());
+  if (gone.isErr()) { err.line("selfhost: could not remove " + work + " — " + "\{gone.isErr() ? "\{gone.err()!}" : ""}"); }
   return t.report();
 }

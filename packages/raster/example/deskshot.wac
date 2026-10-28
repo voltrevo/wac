@@ -17,7 +17,8 @@
 // against a PNG encoder's CRC tables and deflate, and every image tool reads it. The alpha channel
 // is dropped, which is honest for a screenshot: the desktop is opaque by construction.
 
-import { Change, Cli, Core, FAULT_NONE, Sys } from "std";
+import { Sys, Files, Output } from "std";
+import { flatten } from "core";
 import { Desk } from "../src/desk.wac";
 import { Surface } from "../src/surface.wac";
 
@@ -39,13 +40,15 @@ i32[] letters(string s) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 1) {
-    core.warn("usage: deskshot <out.ppm>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  if (argv.len() < 1) {
+    err.line("usage: deskshot <out.ppm>");
     return 2;
   }
-  string out = string.fromBytes(cli.arg(0).wait());
+  string path = argv[0];
 
   // **The same desk the live test drags**, so the two are comparable by eye as well as by bytes.
   Desk d = Desk.create();
@@ -72,13 +75,13 @@ export i32 main(Sys sys) {
   // **`writeFile` answers a `Change`, not a bool**, and its `fault` is what says whether it worked —
   // `FAULT_NONE` when it did, the host's own words in `message` when it did not. I wrote `!…wait()`
   // first; the reference refused it and wacc built a module the engine would not load, which is
-  // `issues/lang/0132` — closed, and the cause turned out to be that a file which does not import
+  // `issues/lang/0132` — closed, and the cause turned path to be that a file which does not import
   // `Pending` was not given its members at all.
-  Change wrote = cli.writeFile(out, file).wait();
-  if (wrote.fault != FAULT_NONE()) {
-    core.warn("deskshot: could not write \{out}: \{wrote.message}");
+  auto wrote = flatten(fs.writeFile(path, file).wait());
+  if (wrote.isErr()) {
+    err.line("deskshot: could not write \{path}: \{wrote.err()!}");
     return 1;
   }
-  core.log("deskshot: \{W()}x\{H()} to \{out}");
+  out.line("deskshot: \{W()}x\{H()} to \{path}");
   return 0;
 }

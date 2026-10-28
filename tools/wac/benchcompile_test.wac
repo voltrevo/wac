@@ -23,13 +23,13 @@
 // that still looks right.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
-import { Vec } from "core";
+import { Files, Sys } from "std";
+import { Vec, flatten } from "core";
 
-string readOr(Cli cli, string path, T t) {
-  FileResult r = cli.readFile(path).wait();
-  t.isTrue(r.ok, "could not read " + path);
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string readOr(Files fs, string path, T t) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  t.isTrue((r is not null), "could not read " + path);
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 /**
@@ -122,10 +122,11 @@ string[] splitLines(string text) {
   return out.toArray();
 }
 
-export string test_every_compiler_call_a_build_makes_is_timed_or_exempted(Core core, Cli cli) {
+export string test_every_compiler_call_a_build_makes_is_timed_or_exempted(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string command = readOr(cli, "packages/wac/src/wac.wac", t);
-  string bench = readOr(cli, "tools/wac/benchcompile.wac", t);
+  string command = readOr(fs, "packages/wac/src/wac.wac", t);
+  string bench = readOr(fs, "tools/wac/benchcompile.wac", t);
   if (command == "" || bench == "") { return t.report(); }
 
   string[] called = apiCallsIn(command);

@@ -51,13 +51,13 @@
 // `issues/system/0290b` unblocked, and the fourth done. It needed `Cli.execWithIn` for the host arm's
 // per-script directory and `builtApp` for the three binaries.
 
-import { Core, Cli, Exec, Sys } from "std";
+import { Cli, Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
 import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { reachesTheMachine } from "../../packages/sh/test/wac/machinepaths.wac";
 
@@ -93,21 +93,21 @@ static i32 KILLED = 124;
  * **This checkout's `wac` goes on the front of PATH**: a `wac app` artefact is a shell preamble that
  * runs `command -v wac`, so under `clearEnv` with no PATH none of the three would start.
  */
-string[] childEnv(Cli cli, string dir, string binDir) {
-  u8[]? path = cli.env("PATH").wait();
+string[] childEnv(Env env, string dir, string binDir) {
+  u8[]? path = flatten(env.get("PATH").wait()).orElse(null);
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
   return ["LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
 }
 
 /** One script, on one binary, in `dir`. `mkdir -p /tmp` levels the one deliberate entry-point difference. */
-Run runOne(Cli cli, string cmd, string[] extra, string script, string dir, string[] env) {
+Run runOne(Procs procs, string cmd, string[] extra, string script, string dir, string[] env) {
   string[] argv = string[].filled(extra.len() + 4, "");
   argv[0] = "10";
   argv[1] = cmd;
   argv.copyFrom(extra, 0, 2, extra.len());
   argv[extra.len() + 2] = "-c";
   argv[extra.len() + 3] = "mkdir -p /tmp; " + script;
-  Exec r = cli.execWithIn("timeout", argv, u8[](), env, true, false, dir).wait();
+  Exec r = flatten(procs.exec("timeout", argv, u8[](), ChildEnv(true, env), Launch(dir, false, false, false)).wait()).unwrap();
   if (!r.ran()) { return Run("", "could not run timeout: " + r.error, 0 - 1, false); }
   return Run(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status, r.status == KILLED);
 }
@@ -116,72 +116,73 @@ bool same(Run a, Run b) { return a.out == b.out && a.err == b.err && a.code == b
 
 string show(Run r) { return "\"" + r.out + r.err + "\" (" + itoa(r.code) + ")"; }
 
-Three three(Cli cli, string base, string sealed, string imaged, string host, string binDir,
-            string script, i32 n) {
+Three three(Env env, Files fs, Procs procs, string base, string sealed, string imaged, string host, string binDir, string script, i32 n) {
   string image = base + "/w" + itoa(n) + ".img";
   string work = base + "/host" + itoa(n);
-  cli.mkdir(work, true).wait();
+  fs.mkdir(work, true).wait();
   Three answers = Three(
-      runOne(cli, sealed, string[].filled(0, ""), script, base, childEnv(cli, base, binDir)),
-      runOne(cli, imaged, [image], script, base, childEnv(cli, base, binDir)),
-      runOne(cli, host, string[].filled(0, ""), script, work, childEnv(cli, work, binDir)));
+      runOne(procs, sealed, string[].filled(0, ""), script, base, childEnv(env, base, binDir)),
+      runOne(procs, imaged, [image], script, base, childEnv(env, base, binDir)),
+      runOne(procs, host, string[].filled(0, ""), script, work, childEnv(env, work, binDir)));
   // A script that wrote nothing leaves no image, and removing what is not there is not an error here.
-  cli.remove(image, false).wait();
-  cli.remove(work, true).wait();
+  fs.remove(image, false).wait();
+  fs.remove(work, true).wait();
   return answers;
 }
 
 
 /** `--name N`, or `fallback` when it is absent or has nothing after it. */
-i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+i32 flagOf(string[] argv, i32 argc, string name, i32 fallback) {
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--" + name && i + 1 < argc) {
-      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+      return atoi(argv[i + 1]);
     }
   }
   return fallback;
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string[] scripts = corpus();
-  i32 argc = cli.argCount().wait();
-  i32 from = flagOf(cli, argc, "from", 0);
-  i32 count = flagOf(cli, argc, "count", scripts.len());
+  i32 argc = argv.len();
+  i32 from = flagOf(argv, argc, "from", 0);
+  i32 count = flagOf(argv, argc, "count", scripts.len());
 
   // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: this builds
   // programs and runs them, and nothing else made it visible. `issues/system/0142`. Removed by hand at
   // every exit, because wac has no `unload` listener; a note stranded by a trap is swept by the next
   // reader, which drops any whose process is gone.
-  string note = announce(core, cli, "corpus:backings");
+  string note = announce(clock, env, fs, "corpus:backings");
 
-  string binDir = wacBinary(cli);
+  string binDir = wacBinary(env);
   i32 cut = 0;
   for (i32 i = 0; i < binDir.len(); i++) { if (binDir.slice(i, i + 1) == "/") { cut = i; } }
   binDir = binDir.slice(0, cut);
 
-  string sealed = builtApp(cli, "packages/box/src/bin/sealedsh.wac", "corpusbackings-sealed",
-                           string[].filled(0, ""));
-  string imaged = builtApp(cli, "packages/box/src/bin/imaged.wac", "corpusbackings-imaged",
-                           ["--allow-read", "--allow-write"]);
-  string host = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusbackings-host",
-                         ["--allow-read", "--allow-write", "--allow-env"]);
+  string sealed = builtApp(env, fs, procs, "packages/box/src/bin/sealedsh.wac", "corpusbackings-sealed", string[].filled(0, ""));
+  string imaged = builtApp(env, fs, procs, "packages/box/src/bin/imaged.wac", "corpusbackings-imaged", ["--allow-read", "--allow-write"]);
+  string host = builtApp(env, fs, procs, "packages/box/src/bin/sh.wac", "corpusbackings-host", ["--allow-read", "--allow-write", "--allow-env"]);
 
-  string base = scratch(cli, "corpus-backings");
-  cli.mkdir(base, true).wait();
+  string base = scratch(env, "corpus-backings");
+  fs.mkdir(base, true).wait();
 
   // **The canary.** Everything below is "these agree", which three shells that ran nothing would also
   // report. One script that must answer proves each is live.
-  Three live = three(cli, base, sealed, imaged, host, binDir, "echo one", 0);
+  Three live = three(env, fs, procs, base, sealed, imaged, host, binDir, "echo one", 0);
   string[] names = ["memory", "image", "host"];
   Run[] arms = [live.memory, live.image, live.host];
   for (i32 i = 0; i < arms.len(); i++) {
     if (!startsWith(arms[i].out, "one")) {
-      core.warn("the " + names[i] + " backing did not answer `echo one`: " + show(arms[i]));
-      cli.remove(base, true).wait();
-      unannounce(cli, note);
+      err.line("the " + names[i] + " backing did not answer `echo one`: " + show(arms[i]));
+      fs.remove(base, true).wait();
+      unannounce(fs, note);
       return 2;
     }
   }
@@ -195,7 +196,7 @@ export i32 main(Sys sys) {
 
   for (i32 i = from; i < last; i++) {
     string script = scripts[i];
-    Three r = three(cli, base, sealed, imaged, host, binDir, script, i + 1);
+    Three r = three(env, fs, procs, base, sealed, imaged, host, binDir, script, i + 1);
     if (r.memory.hung || r.image.hung || r.host.hung) { hung.push(script); continue; }
 
     // **The third difference, and it is the machine rather than the backing.** A script naming an
@@ -208,7 +209,7 @@ export i32 main(Sys sys) {
     // So those scripts are compared **memory against image** and the host is left out of it, and the
     // count is printed rather than quietly dropped: a sweep that silently narrows what it covers
     // reports a better number for checking less.
-    if (reachesTheMachine(cli, script)) {
+    if (reachesTheMachine(fs, script)) {
       if (same(r.memory, r.image)) { agree = agree + 1; machineOnly = machineOnly + 1; continue; }
       differ.push("\"" + script + "\"  (host not compared: names an absolute path)\n"
                   + "  memory " + show(r.memory) + "\n  image  " + show(r.image));
@@ -219,22 +220,22 @@ export i32 main(Sys sys) {
                 + "\n  host   " + show(r.host));
   }
 
-  cli.remove(base, true).wait();
-  unannounce(cli, note);
+  fs.remove(base, true).wait();
+  unannounce(fs, note);
 
-  core.log(itoa(agree) + " of " + itoa(last - from)
+  out.line(itoa(agree) + " of " + itoa(last - from)
            + " scripts agree across memory, image and a host mount");
   if (machineOnly > 0) {
-    core.log("  " + itoa(machineOnly) + " of those named an absolute path and were compared on memory"
+    out.line("  " + itoa(machineOnly) + " of those named an absolute path and were compared on memory"
              + " and image only — the host shell would be answering about this machine, not about a"
              + " backing");
   }
   // Said rather than dropped: a sweep that silently skipped what it could not run would report a
   // coverage it did not have.
   if (hung.len() > 0) {
-    core.log("\n" + itoa(hung.len()) + " did not finish in 10s and were not compared:");
-    for (i32 i = 0; i < hung.len(); i++) { core.log("  \"" + hung.get(i) + "\""); }
+    out.line("\n" + itoa(hung.len()) + " did not finish in 10s and were not compared:");
+    for (i32 i = 0; i < hung.len(); i++) { out.line("  \"" + hung.get(i) + "\""); }
   }
-  for (i32 i = 0; i < differ.len(); i++) { core.log("\n" + differ.get(i)); }
+  for (i32 i = 0; i < differ.len(); i++) { out.line("\n" + differ.get(i)); }
   return differ.len() == 0 ? 0 : 1;
 }

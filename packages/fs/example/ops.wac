@@ -11,36 +11,37 @@
 // runs share nothing but the bytes, which is the same reason `packages/wacc`'s rungs project both sides
 // onto a printed form.
 
-import { Cli, Core, FAULT_NONE, Sys } from "std";
-import { Fs } from "../src/fs.wac";
+import { Sys, Files, MemoryStore, Input, Output, NotFound, Denied, Exists, NotEmpty, IsDir, NotADir, ReadOnly,
+         NameTooLong, Loop, NoSpace, NotRepresentable, NotGranted, Unsupported, OutputClosed, Other } from "std";
 import { Sink } from "../../platform/src/stream.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Input stdin = sys.stdin();
+  Output err = sys.stderr();
+  i32 n = argv.len();
   if (n < 1) {
-    core.warn("usage: ops mem | ops host <root>");
+    err.line("usage: ops mem | ops host <root>");
     return 2;
   }
-  string kind = string.fromBytes(cli.arg(0).wait());
+  string kind = argv[0];
   string prefix = "";
-  Fs fs = Fs.inMemory(0);
+  Files fs = MemoryStore.create(sys.clock()).asUser("root");
   if (kind == "host") {
     if (n < 2) {
-      core.warn("ops host needs a root directory");
+      err.line("ops host needs a root directory");
       return 2;
     }
-    prefix = string.fromBytes(cli.arg(1).wait());
-    fs = Fs.onHost(cli, 0);
+    prefix = argv[1];
+    fs = sys.files();
   } else if (kind != "mem") {
-    core.warn("ops: unknown backing '\{kind}'");
+    err.line("ops: unknown backing '\{kind}'");
     return 2;
   }
 
-  Sink out = Sink.toOutput(cli);
-  u8[] script = cli.readStdin().wait();
+  Sink out = Sink.to(sys.stdout());
+  u8[] script = flatten(stdin.readAll().wait()).orElse(u8[]());
   Vec<string> lines = splitLines(string.fromBytes(script));
   for (i32 i = 0; i < lines.len(); i++) {
     string line = lines.get(i);
@@ -54,11 +55,11 @@ export async i32 main(Sys sys) {
 /**
  * One operation, and what it answered.
  *
- * Faults are printed as their category number rather than their message, because the message is the
+ * Faults are printed as their category rather than their message, because the message is the
  * host's own words and the category is the thing both sides must agree on — the same reason the
  * differential tests for `mkdir` and `rm` compare GNU's reason rather than a runtime's errno text.
  */
-async string answer(Fs fs, string prefix, string line) {
+async string answer(Files fs, string prefix, string line) {
   Vec<string> words = splitSpaces(line);
   string op = words.get(0);
   string a = words.len() > 1 ? prefix + words.get(1) : "";
@@ -67,27 +68,31 @@ async string answer(Fs fs, string prefix, string line) {
   if (op == "write") {
     // The rest of the line is the content, so a file can hold a space.
     string body = words.len() > 2 ? rest(line, words.get(0).len() + 1 + words.get(1).len() + 1) : "";
-    return "write \{(await fs.writeFile(a, body.toBytes())).fault}";
+    auto wrote = await fs.writeFile(a, body.toBytes());
+    return "write " + (wrote.isOk() ? "0" : kind(wrote.err()!));
   }
   if (op == "read") {
-    if (!(await fs.readFile(a)).ok) { return "read fault \{(await fs.readFile(a)).fault}"; }
-    return "read [\{string.fromBytes((await fs.readFile(a)).bytes)}]";
+    match (await fs.readFile(a)) {
+      Ok(bytes): { return "read [\{string.fromBytes(bytes)}]"; }
+      Err(e): { return "read fault " + kind(e); }
+    }
   }
-  if (op == "mkdir") { return "mkdir \{(await fs.mkdir(a, false)).fault}"; }
-  if (op == "mkdirp") { return "mkdirp \{(await fs.mkdir(a, true)).fault}"; }
-  if (op == "rm") { return "rm \{(await fs.remove(a, false)).fault}"; }
-  if (op == "rmr") { return "rmr \{(await fs.remove(a, true)).fault}"; }
-  if (op == "mv") { return "mv \{(await fs.rename(a, b)).fault}"; }
+  if (op == "mkdir") { auto r = await fs.mkdir(a, false); return "mkdir " + (r.isOk() ? "0" : kind(r.err()!)); }
+  if (op == "mkdirp") { auto r = await fs.mkdir(a, true); return "mkdirp " + (r.isOk() ? "0" : kind(r.err()!)); }
+  if (op == "rm") { auto r = await fs.remove(a, false); return "rm " + (r.isOk() ? "0" : kind(r.err()!)); }
+  if (op == "rmr") { auto r = await fs.remove(a, true); return "rmr " + (r.isOk() ? "0" : kind(r.err()!)); }
+  if (op == "mv") { auto r = await fs.rename(a, b); return "mv " + (r.isOk() ? "0" : kind(r.err()!)); }
   if (op == "stat") {
-    if (!(await fs.stat(a)).exists) { return "stat absent"; }
     // A *file's* size is a fact; a directory's is the host's block size — 4096 on the ext4 under this
     // container, and something else elsewhere. Imitating that number would be cargo-culting a detail no
     // program should read, so it is left out of the transcript rather than matched.
-    if ((await fs.stat(a)).isDir) { return "stat dir"; }
-    return "stat file \{(await fs.stat(a)).size as~ i32}";
+    match (await fs.stat(a)) {
+      Ok(s): { return s.isDir ? "stat dir" : "stat file \{s.size as~ i32}"; }
+      Err(e): { return "stat absent"; }
+    }
   }
   if (op == "ls") {
-    string[]? names = await fs.readDir(a);
+    string[]? names = (await fs.readDir(a)).ok();
     if (names is null) { return "ls absent"; }
     string joined = "";
     for (i32 i = 0; i < names!.len(); i++) {
@@ -96,6 +101,29 @@ async string answer(Fs fs, string prefix, string line) {
     return "ls [\{joined}]";
   }
   return "unknown \{op}";
+}
+
+/** Every fault a `Files` operation answers. */
+type FilesFault = union<NotFound, Denied, Exists, NotEmpty, IsDir, NotADir, ReadOnly, NameTooLong, Loop, NoSpace,
+                        NotRepresentable, NotGranted, Unsupported, OutputClosed, Other>;
+
+/** A fault's category, which both backings must agree on; success prints `0`. */
+string kind(FilesFault e) {
+  if (e is NotFound) { return "NotFound"; }
+  if (e is Denied) { return "Denied"; }
+  if (e is Exists) { return "Exists"; }
+  if (e is NotEmpty) { return "NotEmpty"; }
+  if (e is IsDir) { return "IsDir"; }
+  if (e is NotADir) { return "NotADir"; }
+  if (e is ReadOnly) { return "ReadOnly"; }
+  if (e is NameTooLong) { return "NameTooLong"; }
+  if (e is Loop) { return "Loop"; }
+  if (e is NoSpace) { return "NoSpace"; }
+  if (e is NotRepresentable) { return "NotRepresentable"; }
+  if (e is NotGranted) { return "NotGranted"; }
+  if (e is Unsupported) { return "Unsupported"; }
+  if (e is OutputClosed) { return "OutputClosed"; }
+  return "Other";
 }
 
 /** The line from `at` on. */

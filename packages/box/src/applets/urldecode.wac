@@ -1,18 +1,17 @@
 // Percent-decoding, the other direction.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, readAll } from "../lib/input.wac";
+import { Opened, readAll } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
 
 import { decode } from "../../../url/src/percent.wac";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 urldecode(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await readAll(core, cli, fs, a, 0);
+export async i32 urldecode(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await readAll(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
   u8[] b = in.bytes;
   if (b.len() > 0 && b[b.len() - 1] == '\n') {
@@ -20,6 +19,6 @@ export async i32 urldecode(Core core, Cli cli, Fs fs, Args a) {
     t.copyFrom(b, 0, 0, b.len() - 1);
     b = t;
   }
-  cli.write(withNewline(decode(b)));
+  out.write(withNewline(decode(b)));
   return 0;
 }

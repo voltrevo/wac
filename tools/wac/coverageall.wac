@@ -46,7 +46,7 @@
 // has used since it moved. One run after this lands dispatches alphabetically, which is what a fresh
 // checkout has always done, and the stale `.json` is removed rather than left looking live.
 
-import { Core, Cli, Exec, Pending, FileResult, Stat, Sys } from "std";
+import { ChildEnv, Exec, Launch, SpawnFault, Stat, Sys, Clock, Env, Files, Output, Procs, Unsupported } from "std";
 import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, splitLines }
        from "../../packages/wactest/src/strings.wac";
@@ -54,6 +54,7 @@ import { Task, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
 import { sortStrings } from "./covledger.wac";
 import { wacBinary } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
+import { Result, Ticket, TicketBase, flatten } from "core";
 
 /**
  * Four at a time, because nineteen packages one after another is 38s of every push.
@@ -91,7 +92,7 @@ i32 pollMs() { return 250; }
 i64 stallMs() { return 900000 as i64; }
 
 /** What one package's driver did. */
-struct Result {
+struct Run {
   string pkg;
   i32 status;
   i64 ms;
@@ -211,8 +212,8 @@ export string[] splitOn(string s, string sep) {
  * this was noticed would have gone red for everyone, on somebody else's push, over a fact that has
  * been true all along. It is a line of output and a name list.
  */
-string[] unmeasured(Cli cli, string[] known) {
-  string[]? names = cli.readDir("packages").wait();
+string[] unmeasured(Files fs, string[] known) {
+  string[]? names = flatten(fs.readDir("packages").wait()).ok();
   if (names is null) { return string[].filled(0, ""); }
   string[] here = names!;
   i32 n = 0;
@@ -224,7 +225,7 @@ string[] unmeasured(Cli cli, string[] known) {
       for (i32 k = 0; k < known.len(); k++) { if (known[k] == here[i]) { isKnown = true; } }
       if (isKnown) { continue; }
       // No `src/` — a package of fixtures or docs, not code this could measure.
-      if (!cli.stat("packages/" + here[i] + "/src").wait().isDir) { continue; }
+      if (!flatten(fs.stat("packages/" + here[i] + "/src").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isDir) { continue; }
       if (pass == 1) { out[at] = here[i]; }
       at = at + 1;
     }
@@ -284,39 +285,44 @@ i64 recordedMs(string name, string[] names, i64[] millis) {
 }
 
 /** The times file's text. Missing or unreadable is not an error — it is the first run. */
-string readTimes(Cli cli) {
-  FileResult f = cli.readFile(timesPath()).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string readTimes(Files fs) {
+  u8[]? f = flatten(fs.readFile(timesPath()).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   bool verbose = false;
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   for (i32 i = 0; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+    if (argv[i] == "--verbose") { verbose = true; }
   }
 
   // Announced so another agent's suite gate can see this: it builds programs and runs them, and
   // nothing else made it visible. `issues/system/0142`.
-  string heavy = announce(core, cli, "coverage:all");
+  string heavy = announce(clock, env, fs, "coverage:all");
 
-  FileResult reg = cli.readFile(tasksFile()).wait();
-  if (!reg.ok) {
-    core.warn("coverage:all: cannot read " + tasksFile());
-    unannounce(cli, heavy);
+  u8[]? reg = flatten(fs.readFile(tasksFile()).wait()).ok();
+  if ((reg is null)) {
+    err.line("coverage:all: cannot read " + tasksFile());
+    unannounce(fs, heavy);
     return 1;
   }
-  Task[] tasks = tasksIn(reg.bytes);
+  Task[] tasks = tasksIn(reg!);
   string[] packages = packagesOf(tasks);
   if (packages.len() == 0) {
-    core.warn("coverage:all: no `coverage:` tasks in " + tasksFile() + " — did the registry move?");
-    unannounce(cli, heavy);
+    err.line("coverage:all: no `coverage:` tasks in " + tasksFile() + " — did the registry move?");
+    unannounce(fs, heavy);
     return 1;
   }
 
-  string[] rows = splitLines(readTimes(cli));
+  string[] rows = splitLines(readTimes(fs));
   string[] tNames = string[].filled(rows.len(), "");
   i64[] tMillis = i64[].filled(rows.len(), 0);
   i32 tN = 0;
@@ -330,8 +336,8 @@ export i32 main(Sys sys) {
 
   string[] dispatch = dispatchOrder(packages, tNames, tMillis);
 
-  i64 startedAll = nowMs(core);
-  Result[] results = Result[].filled(dispatch.len(), Result("", 0, 0 as i64, "", ""));
+  i64 startedAll = nowMs(clock);
+  Run[] results = Run[].filled(dispatch.len(), Run("", 0, 0 as i64, "", ""));
   i32 done = 0;
 
   // The queue. Each slot holds one ticket; when any of them answers, its line is printed and the slot
@@ -343,19 +349,20 @@ export i32 main(Sys sys) {
   // failure reports below read `results`, which is filled in `packages` order, so what a reader scans
   // for a red is stable even though the log is not.
   i32 workers = WORKERS < dispatch.len() ? WORKERS : dispatch.len();
-  Pending<Exec>[] live = Pending<Exec>[].defaulted(workers);
+  Ticket<Result<Exec, SpawnFault>>[] live = Ticket<Result<Exec, SpawnFault>>[].defaulted(workers);
   i32[] slotItem = i32[].filled(workers, 0);
   i64[] slotStart = i64[].filled(workers, 0);
   bool[] busy = bool[].filled(workers, false);
   i32 next = 0;
   // Only a completion counts as progress; a poll that timed out is the ordinary case while a long
   // driver runs, and must not keep the stall bound alive.
-  i64 lastProgress = nowMs(core);
+  i64 lastProgress = nowMs(clock);
 
   for (i32 s = 0; s < workers && next < dispatch.len(); s++) {
-    live[s] = cli.exec(wacBinary(cli), ["task", "coverage:" + dispatch[next]], u8[]());
+    live[s] = procs.exec(wacBinary(env), ["task", "coverage:" + dispatch[next]], u8[](), ChildEnv.inherited(),
+                         Launch.plain());
     slotItem[s] = next;
-    slotStart[s] = nowMs(core);
+    slotStart[s] = nowMs(clock);
     busy[s] = true;
     next = next + 1;
   }
@@ -364,78 +371,83 @@ export i32 main(Sys sys) {
     i32 nBusy = 0;
     for (i32 s = 0; s < workers; s++) { if (busy[s]) { nBusy = nBusy + 1; } }
     if (nBusy == 0) { break; }
-    i32[] ids = i32[].filled(nBusy, 0);
+    TicketBase[] racing = TicketBase[].defaulted(nBusy + 1);
     i32[] slotOf = i32[].filled(nBusy, 0);
     i32 at = 0;
     for (i32 s = 0; s < workers; s++) {
       if (!busy[s]) { continue; }
-      ids[at] = live[s].id;
+      racing[at] = live[s];
       slotOf[at] = s;
       at = at + 1;
     }
-    // **A deadline rather than for ever, and this is not caution.** `waitAny` waits on the
-    // completion counter the host bumps, so it answers an *edge*; a driver that settles between the
-    // bookkeeping below and the next call to this has already bumped the counter, and an unbounded
-    // wait then sleeps for a transition that has been and gone. With a deadline the next poll sees
-    // it. `tools/runTests.wac` waits with one for the same reason and says so.
+    // **A deadline rather than for ever.** The old `waitAny` waited on the completion counter the
+    // host bumps, so it answered an *edge*; a driver that settled between the bookkeeping below and
+    // the next call had already bumped the counter, and an unbounded wait then slept for a transition
+    // that had been and gone. Tickets keep their outcome, so that race is gone, but the deadline
+    // stays: it is what lets the stall bound below fire at all.
     //
     // It hung exactly once, in the gate, and the ordering is why it did not hang before: dispatched
     // alphabetically the last two drivers were `platform` and `tor`, thirteen seconds apart, and
     // nothing raced. Longest-first puts those two first, so the *tail* is a dozen short packages
     // finishing within a second of each other — the ordering this file added is what made its own
     // race reachable. 37 of 37 printed `ok`, then the process sat in a futex at zero CPU.
-    i32 which = core.waitAny(ids, pollMs());
+    Ticket<Result<void, union<Unsupported>>> timer = clock.sleepMillis(pollMs());
+    racing[nBusy] = timer;
+    i32 which = Ticket.first(racing).wait().orElse(nBusy);
+    if (which == nBusy) { which = -1; } else { timer.cancel(); }
     if (which < 0) {
-      if (nowMs(core) - lastProgress <= stallMs()) { continue; }
+      if (nowMs(clock) - lastProgress <= stallMs()) { continue; }
       string stuck = "";
       for (i32 i = 0; i < nBusy; i++) {
         i32 s = slotOf[i];
         stuck = stuck + (stuck == "" ? "" : ", ") + dispatch[slotItem[s]]
-              + " (" + seconds(nowMs(core) - slotStart[s]) + ")";
+              + " (" + seconds(nowMs(clock) - slotStart[s]) + ")";
       }
-      core.warn("coverage:all: no driver has finished in " + wholeSeconds(stallMs())
+      err.line("coverage:all: no driver has finished in " + wholeSeconds(stallMs())
                 + "s — giving up rather than holding the suite lock.");
-      core.warn("   " + itoa(done) + " of " + itoa(dispatch.len())
+      err.line("   " + itoa(done) + " of " + itoa(dispatch.len())
                 + " finished; still waiting on: " + stuck);
-      core.warn("   Run those by hand — `wac task coverage:<pkg>` — and see issues/system/0289b.");
-      unannounce(cli, heavy);
+      err.line("   Run those by hand — `wac task coverage:<pkg>` — and see issues/system/0289b.");
+      unannounce(fs, heavy);
       return 1;
     }
 
     i32 slot = slotOf[which];
-    Exec r = live[slot].wait();
+    auto ran = flatten(live[slot].wait());
+    Exec? r = ran.ok();
     string pkg = dispatch[slotItem[slot]];
-    i64 ms = nowMs(core) - slotStart[slot];
-    string output = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-    // A driver that could not be started is a failure, and its `error` is the only thing that says so.
-    i32 status = r.ran() ? r.status : 1;
-    if (!r.ran()) { output = output + "error: " + r.error + "\n"; }
-    results[indexIn(packages, pkg)] = Result(pkg, status, ms, output, "");
+    i64 ms = nowMs(clock) - slotStart[slot];
+    string output = (r is not null) ? string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr) : "";
+    // A driver that could not be started is a failure, and its fault is the only thing that says so.
+    i32 status = (r is not null) ? r!.status : 1;
+    if (r is null) { output = output + "error: \{ran.isErr() ? "\{ran.err()!}" : ""}\n"; }
+    results[indexIn(packages, pkg)] = Run(pkg, status, ms, output, "");
     done = done + 1;
-    lastProgress = nowMs(core);
+    lastProgress = nowMs(clock);
     // **`n of m` on every line**, because the alternative is what happened on 2026-08-30: a run
     // dispatched 38 jobs, printed 37 and appeared to hang, and nothing on screen distinguished
     // "finished" from "one job left". A count is one field and it makes a stuck run legible at a
     // glance rather than after a `ps`.
-    core.log((status == 0 ? "ok  " : "FAIL") + "  coverage:" + pkg + "  " + seconds(ms)
+    out.line((status == 0 ? "ok  " : "FAIL") + "  coverage:" + pkg + "  " + seconds(ms)
              + "  (" + itoa(done) + " of " + itoa(dispatch.len()) + ")");
 
     busy[slot] = false;
     if (next < dispatch.len()) {
-      live[slot] = cli.exec(wacBinary(cli), ["task", "coverage:" + dispatch[next]], u8[]());
+      live[slot] = procs.exec(wacBinary(env), ["task", "coverage:" + dispatch[next]], u8[](), ChildEnv.inherited(),
+                         Launch.plain());
       slotItem[slot] = next;
-      slotStart[slot] = nowMs(core);
+      slotStart[slot] = nowMs(clock);
       busy[slot] = true;
       next = next + 1;
     }
   }
 
   for (i32 i = 0; i < results.len(); i++) {
-    results[i] = Result(results[i].pkg, results[i].status, results[i].ms, results[i].output,
-                        kindOf(cli, driverOf(commandFor(tasks, results[i].pkg))));
+    results[i] = Run(results[i].pkg, results[i].status, results[i].ms, results[i].output,
+                        kindOf(fs, driverOf(commandFor(tasks, results[i].pkg))));
   }
 
-  writeTimes(cli, packages, results, tNames, tMillis);
+  writeTimes(fs, packages, results, tNames, tMillis);
 
   i32 failed = 0;
   i64 work = 0 as i64;
@@ -443,9 +455,9 @@ export i32 main(Sys sys) {
     if (results[i].status != 0) { failed = failed + 1; }
     work = work + results[i].ms;
   }
-  i64 elapsed = nowMs(core) - startedAll;
+  i64 elapsed = nowMs(clock) - startedAll;
 
-  core.log("\n" + itoa(results.len() - failed) + "/" + itoa(results.len()) + " ran in "
+  out.line("\n" + itoa(results.len() - failed) + "/" + itoa(results.len()) + " ran in "
            + wholeSeconds(elapsed) + "s (" + wholeSeconds(work) + "s of work at " + itoa(workers)
            + " workers) — " + itoa(countKind(results, "floor")) + " hold a coverage floor, "
            + itoa(countKind(results, "entries")) + " only check their own exemptions have not drifted, "
@@ -464,32 +476,32 @@ export i32 main(Sys sys) {
     if (results[i].kind == "floor" || results[i].pkg == "") { continue; }
     weak = weak + (weak == "" ? "" : ", ") + results[i].pkg + " (" + results[i].kind + ")";
   }
-  if (weak != "") { core.log("   no coverage floor: " + weak); }
+  if (weak != "") { out.line("   no coverage floor: " + weak); }
 
   // And what it is a sweep *of*, which the line above cannot say because it counts only what it ran.
-  string[] unswept = unmeasured(cli, packages);
+  string[] unswept = unmeasured(fs, packages);
   if (unswept.len() > 0) {
-    core.log("   " + itoa(unswept.len())
+    out.line("   " + itoa(unswept.len())
              + " package(s) have no coverage task and are not in the numbers above: "
              + joined(unswept, ", "));
   }
 
   for (i32 i = 0; i < results.len(); i++) {
     if (results[i].status == 0) { continue; }
-    core.log("\n── coverage:" + results[i].pkg + " (exit " + itoa(results[i].status) + ")");
+    out.line("\n── coverage:" + results[i].pkg + " (exit " + itoa(results[i].status) + ")");
     string[] lines = splitLines(results[i].output);
     i32 shown = 0;
     for (i32 k = 0; k < lines.len(); k++) {
       if (!verbose && !isFailureLine(lines[k])) { continue; }
-      core.log("   " + stripAnsi(lines[k]));
+      out.line("   " + stripAnsi(lines[k]));
       shown = shown + 1;
     }
     if (!verbose && shown == 0) {
-      core.log("   (nothing matched the known failure shapes — re-run with --verbose)");
+      out.line("   (nothing matched the known failure shapes — re-run with --verbose)");
     }
   }
 
-  unannounce(cli, heavy);
+  unannounce(fs, heavy);
   return failed > 0 ? 1 : 0;
 }
 
@@ -558,11 +570,11 @@ export string stripAnsi(string line) {
  * the stronger of the two: the shared ratchet fails when a point nothing reaches has no entry *and*
  * when an entry it carries has been covered or has drifted.
  */
-string kindOf(Cli cli, string path) {
+string kindOf(Files fs, string path) {
   if (path == "") { return "no driver"; }
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return "no driver"; }
-  string src = string.fromBytes(f.bytes);
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  if ((f is null)) { return "no driver"; }
+  string src = string.fromBytes(f!);
   if (endsWith(path, ".wac")) { return callsRatchet(src) ? "floor" : "reports"; }
   if (!contains(src, "Deno.exit(1)")) { return "reports"; }
   // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
@@ -594,7 +606,7 @@ bool isWordByte(string c) {
   return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
 }
 
-i32 countKind(Result[] results, string kind) {
+i32 countKind(Run[] results, string kind) {
   i32 n = 0;
   for (i32 i = 0; i < results.len(); i++) { if (results[i].kind == kind) { n = n + 1; } }
   return n;
@@ -617,7 +629,7 @@ i32 countKind(Result[] results, string kind) {
  * set of suite chunks is not — it is whatever the queue built for the directories that run was asked
  * about, which for a narrowed run is almost none of them.
  */
-void writeTimes(Cli cli, string[] packages, Result[] results, string[] names, i64[] millis) {
+void writeTimes(Files fs, string[] packages, Run[] results, string[] names, i64[] millis) {
   string out = "";
   for (i32 i = 0; i < packages.len(); i++) {
     i64 fresh = -1 as i64;
@@ -628,14 +640,14 @@ void writeTimes(Cli cli, string[] packages, Result[] results, string[] names, i6
     if (t < (0 as i64)) { continue; }
     out = out + packages[i] + "\t" + itoa64(t) + "\n";
   }
-  cli.mkdir(".cache", true).wait();
-  cli.writeFile(timesPath(), out.toBytes()).wait();
+  fs.mkdir(".cache", true).wait();
+  fs.writeFile(timesPath(), out.toBytes()).wait();
   // The file this replaced, so an orphan does not sit there looking like a live cache — which is the
   // "reads as a measurement later" problem this function is already careful about.
-  cli.remove(staleTimesPath(), false).wait();
+  fs.remove(staleTimesPath(), false).wait();
 }
 
-i64 nowMs(Core core) { return core.nowMillis().wait(); }
+i64 nowMs(Clock clock) { return flatten(clock.nowMillis().wait()).unwrap(); }
 
 /** `12.3s`, as each package's line reports it. */
 string seconds(i64 ms) {

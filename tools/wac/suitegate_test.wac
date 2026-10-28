@@ -15,13 +15,14 @@
 // no failure reported rather than as anything about a format. So the shape is asserted directly.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult, Stat } from "std";
+import { Stat, Clock, Env, Files, Sys } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Note, Slot, announce, unannounce, heavyOthers, ownPid, alive, agentName,
          killedLaneNote, envOf, marker, nestedWhy } from "./suitegate.wac";
+import { flatten } from "core";
 
-bool exists(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
+bool exists(Files fs, string path) { return flatten(fs.linkStat(path).wait()).isOk(); }
 
 /**
  * A file under the prefix that is not a note is left alone.
@@ -29,9 +30,10 @@ bool exists(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
  * Three spellings, all valid JSON and none of them a presence: a number — the one that actually
  * happened — a string, and an object with no `pid`.
  */
-export string test_a_file_sharing_the_prefix_but_not_the_shape_is_left_alone(Core core, Cli cli) {
+export string test_a_file_sharing_the_prefix_but_not_the_shape_is_left_alone(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 pid = ownPid(cli);
+  i32 pid = ownPid(fs);
   string[] paths = [
                             "/tmp/wac-heavy-last-" + itoa(pid),
                             "/tmp/wac-heavy-stamp-" + itoa(pid),
@@ -41,16 +43,16 @@ export string test_a_file_sharing_the_prefix_but_not_the_shape_is_left_alone(Cor
                              "1755229000000", "\"a string\"",
                              "{\"who\":\"agent-x\",\"label\":\"no pid at all\"}"
   ];
-  for (i32 i = 0; i < paths.len(); i++) { cli.writeFile(paths[i], bodies[i].toBytes()).wait(); }
+  for (i32 i = 0; i < paths.len(); i++) { fs.writeFile(paths[i], bodies[i].toBytes()).wait(); }
 
-  heavyOthers(core, cli, pid);
+  heavyOthers(fs, pid);
 
   for (i32 i = 0; i < paths.len(); i++) {
-    t.isTrue(exists(cli, paths[i]),
+    t.isTrue(exists(fs, paths[i]),
              paths[i] + " was deleted. The sweep may only remove notes it wrote — anything else " +
              "under the prefix belongs to somebody else, and guessing costs them a file with no " +
              "error anywhere.");
-    cli.remove(paths[i], false).wait();
+    fs.remove(paths[i], false).wait();
   }
   return t.report();
 }
@@ -62,14 +64,15 @@ export string test_a_file_sharing_the_prefix_but_not_the_shape_is_left_alone(Cor
  * Pid 2^22 + 1 is above `/proc/sys/kernel/pid_max`'s default, so it cannot name a live process — and
  * cannot name a real one this test might disturb.
  */
-export string test_a_note_whose_process_is_gone_is_swept(Core core, Cli cli) {
+export string test_a_note_whose_process_is_gone_is_swept(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   string path = "/tmp/wac-heavy-4194305";
-  cli.writeFile(path, ("{\"who\":\"agent-gone\",\"label\":\"a suite that was killed\"," +
+  fs.writeFile(path, ("{\"who\":\"agent-gone\",\"label\":\"a suite that was killed\"," +
                        "\"pid\":4194305,\"since\":0}").toBytes()).wait();
-  t.isFalse(alive(cli, 4194305), "the canary: 4194305 is not a live pid on this machine");
-  heavyOthers(core, cli, ownPid(cli));
-  t.isFalse(exists(cli, path), "a note with a dead pid should have been swept");
+  t.isFalse(alive(fs, 4194305), "the canary: 4194305 is not a live pid on this machine");
+  heavyOthers(fs, ownPid(fs));
+  t.isFalse(exists(fs, path), "a note with a dead pid should have been swept");
   return t.report();
 }
 
@@ -79,14 +82,17 @@ export string test_a_note_whose_process_is_gone_is_swept(Core core, Cli cli) {
  * The question that function answers is "who else", so a runner asking it must not find itself and
  * refuse to start.
  */
-export string test_a_note_is_announced_and_the_caller_is_not_among_the_others(Core core, Cli cli) {
+export string test_a_note_is_announced_and_the_caller_is_not_among_the_others(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  i32 pid = ownPid(cli);
+  i32 pid = ownPid(fs);
   t.isTrue(pid > 0, "this process can name itself — /proc/self/stat is where the pid comes from");
-  string path = announce(core, cli, "a test of the gate's own notes");
-  t.isTrue(exists(cli, path), "the note should be on disk: " + path);
+  string path = announce(clock, env, fs, "a test of the gate's own notes");
+  t.isTrue(exists(fs, path), "the note should be on disk: " + path);
 
-  Note[] others = heavyOthers(core, cli, pid);
+  Note[] others = heavyOthers(fs, pid);
   bool sawSelf = false;
   for (i32 i = 0; i < others.len(); i++) { if (others[i].pid == pid) { sawSelf = true; } }
   t.isFalse(sawSelf, "heavyOthers should not report the caller");
@@ -94,18 +100,18 @@ export string test_a_note_is_announced_and_the_caller_is_not_among_the_others(Co
   // And a note that *is* somebody else's is reported, so the assertion above is not passing because
   // the reader answers nothing at all.
   string theirs = "/tmp/wac-heavy-" + itoa(pid == 1 ? 2 : 1);
-  cli.writeFile(theirs, ("{\"who\":\"agent-other\",\"label\":\"pid 1, which is always alive\"," +
+  fs.writeFile(theirs, ("{\"who\":\"agent-other\",\"label\":\"pid 1, which is always alive\"," +
                          "\"pid\":" + itoa(pid == 1 ? 2 : 1) + ",\"since\":0}").toBytes()).wait();
-  Note[] again = heavyOthers(core, cli, pid);
+  Note[] again = heavyOthers(fs, pid);
   bool sawOther = false;
   for (i32 i = 0; i < again.len(); i++) {
     if (again[i].who == "agent-other") { sawOther = true; }
   }
-  cli.remove(theirs, false).wait();
+  fs.remove(theirs, false).wait();
   t.isTrue(sawOther, "a live note that is not ours is reported — otherwise the check above is empty");
 
-  unannounce(cli, path);
-  t.isFalse(exists(cli, path), "released should mean removed");
+  unannounce(fs, path);
+  t.isFalse(exists(fs, path), "released should mean removed");
   return t.report();
 }
 
@@ -117,11 +123,14 @@ export string test_a_note_is_announced_and_the_caller_is_not_among_the_others(Co
  * The four keys, their types, and the file's own path — a change to any of them is a change to a
  * protocol another program implements.
  */
-export string test_the_lock_is_the_shape_the_other_runner_reads(Core core, Cli cli) {
+export string test_the_lock_is_the_shape_the_other_runner_reads(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string who = agentName(cli);
-  i32 pid = ownPid(cli);
-  i64 now = core.nowMillis().wait();
+  string who = agentName(env);
+  i32 pid = ownPid(fs);
+  i64 now = flatten(clock.nowMillis().wait()).unwrap();
   string json = "{\"who\":\"" + who + "\",\"pid\":" + itoa(pid) + ",\"since\":" + itoa64(now) +
                 ",\"forced\":false}";
   // The same four fields in the same order `JSON.stringify({who, pid, since, forced})` produces.
@@ -138,7 +147,7 @@ export string test_the_lock_is_the_shape_the_other_runner_reads(Core core, Cli c
 }
 
 /** A killed lane is told apart from a failed one, and says there is no verdict. */
-export string test_a_killed_lane_is_told_apart_from_a_failed_one(Core core, Cli cli) {
+export string test_a_killed_lane_is_told_apart_from_a_failed_one() {
   T t = T.create();
   t.eqStr(killedLaneNote("parallel", 0), "", "a lane that passed has nothing to say");
   t.eqStr(killedLaneNote("parallel", 1), "", "and neither does one that failed a test");

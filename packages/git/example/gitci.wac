@@ -13,44 +13,46 @@
 // because `Stat` carries no mode and an executable cannot be told from a plain file
 // (issues/system/0132). Committing a tree that contained an executable therefore records a mode change.
 
-import { Cli, Core, FileResult, Sys } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { Core, Sys, Clock, Env, Output, Files } from "std";
 import { Setting, configOf } from "../src/config.wac";
 import { configChain } from "../src/configfiles.wac";
 import { Who } from "../src/commit.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { commitTree, headRef, openRepo, writeWorkTree } from "../src/repo.wac";
 import { IndexEntry } from "../src/index.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  i32 n = argv.len();
   if (n < 2) {
-    core.warn("usage: gitci <repo-dir> <message>");
+    err.line("usage: gitci <repo-dir> <message>");
     return 2;
   }
-  string root = string.fromBytes(cli.arg(0).wait());
-  string message = string.fromBytes(cli.arg(1).wait());
-  Fs fs = Fs.onHost(cli, 0);
+  string root = argv[0];
+  string message = argv[1];
+  Files fs = sys.files();
 
   match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
-      core.warn("gitci: \{why}");
+      err.line("gitci: \{why}");
       return 1;
     }
     Opened(repo): {
       string branch = await headRef(repo);
       if (branch == "") {
         // A detached HEAD has no branch to move, and moving `HEAD` itself is a different operation.
-        core.warn("gitci: HEAD is detached; nothing to move");
+        err.line("gitci: HEAD is detached; nothing to move");
         return 1;
       }
       Vec<IndexEntry> index = Vec.create();
       match ((await writeWorkTree(repo, root, "", index))) {
         NotStored(why): {
-          core.warn("gitci: \{why}");
+          err.line("gitci: \{why}");
           return 1;
         }
         Named(tree): {
@@ -70,20 +72,20 @@ export async i32 main(Sys sys) {
           // `.git/config` made this refuse to commit for very nearly everyone who has one configured.
           // `configChain` returns them lowest-precedence first and `configOf` takes the last, which is
           // git's answer per key — the local file over the dotfile over the XDG file over the system one.
-          Vec<Setting> settings = await configChain(cli, fs, "\{root}/.git");
+          Vec<Setting> settings = await configChain(env, fs, "\{root}/.git");
           string who = configOf(settings, "user.name");
           string mail = configOf(settings, "user.email");
           if (who == "" || mail == "") {
-            core.warn("gitci: user.name and user.email are set in no config file this reads — not"
+            err.line("gitci: user.name and user.email are set in no config file this reads — not"
               + " .git/config, ~/.gitconfig, the XDG file or /etc/gitconfig — and this does not invent"
               + " an author");
             return 1;
           }
           // `i64` all the way: `Who.when` is one, and a timestamp narrowed to `i32` stops working
           // in 2038 — which is exactly the kind of quiet cast this package has been bitten by once already.
-          i64 when = core.nowMillis().wait() / 1000;
+          i64 when = flatten(clock.nowMillis().wait()).unwrap() / 1000;
           string zone = "+0000";
-          u8[]? fixed = cli.env("GIT_AUTHOR_DATE").wait();
+          u8[]? fixed = flatten(env.get("GIT_AUTHOR_DATE").wait()).orElse(null);
           if (!(fixed is null)) {
             // `<seconds> <zone>`, which is the shape git accepts and the shape its own tests use.
             string text = string.fromBytes(fixed!);
@@ -102,11 +104,11 @@ export async i32 main(Sys sys) {
           Who me = Who("\{who} <\{mail}>", when, zone);
           match ((await commitTree(repo, tree, branch, me, message, index))) {
             NotStored(why): {
-              core.warn("gitci: \{why}");
+              err.line("gitci: \{why}");
               return 1;
             }
             Named(commit): {
-              core.log(string.fromBytes(hexBytes(commit)));
+              out.line(string.fromBytes(hexBytes(commit)));
               return 0;
             }
           }

@@ -8,9 +8,8 @@
 //
 // That is `inetd`, and it is the shape a shell served over the network takes — the thing the
 // SSH-server discussion on issue 0015 was reaching for. What makes it writable is that a
-// socket and a child are both handles, so waiting on whichever speaks first is one call:
-//
-//   i32 which = core.waitAny([fromNet.id, fromKid.id], -1);
+// socket and a child's streams are both things to read and write, so each direction is one
+// `async` leg and the two run at once.
 //
 // Try it with `box` as the handler, which needs no grants for a text applet:
 //
@@ -20,124 +19,136 @@
 //
 // The child is granted nothing but those two streams, so `inetd 9000 box.worker.js cat /etc/passwd`
 // serves an error rather than the file. The handler cannot exceed what this program hands it — and
-// what it hands over is the `GRANT_NONE` below, which is where to change that.
+// what it hands over is the `Authority.none()` below, which is where to change that.
 
-import { HostChild, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending, HostSocket, Sys } from "std";
-import { argvOf } from "../src/stream.wac";
-import { Read } from "core";
+import { Authority, Child, Launch, Socket, Sys, Files, Net, Output, Procs, Listener } from "std";
+import { Ticket, flatten } from "core";
 
-export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: inetd <port> <worker.js> [args...]");
+export async i32 main(Sys sys) {
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
+  if (argv.len() < 2) {
+    err.line("usage: inetd <port> <worker.js> [args...]");
     return 2;
   }
-  i32 port = atoi(string.fromBytes(cli.arg(0).wait()));
-  string workerPath = string.fromBytes(cli.arg(1).wait());
+  i32 port = atoi(argv[0]);
+  string workerPath = argv[1];
 
-  FileResult prog = cli.readFile(workerPath).wait();
-  if (!prog.ok) {
-    core.warn("inetd: \{workerPath}: \{prog.error}");
+  auto progRead = await fs.readFile(workerPath);
+  if (progRead.isErr()) {
+    err.line("inetd: \{workerPath}: \{progRead.err()!}");
     return 1;
   }
-  u8[] source = prog.bytes;
+  u8[] source = progRead.unwrap();
 
   // Everything after the worker path is the handler's own argv.
-  i32 extra = cli.argCount().wait() - 2;
+  i32 extra = argv.len() - 2;
   string[] childArgs = string[].filled(extra < 0 ? 0 : extra, "");
-  for (i32 i = 0; i < extra; i++) { childArgs[i] = string.fromBytes(cli.arg(i + 2).wait()); }
+  for (i32 i = 0; i < extra; i++) { childArgs[i] = argv[i + 2]; }
 
   // Loopback: an example that runs a program for whoever connects should not be reachable from
   // anywhere else while somebody is reading it. Issue 0025.
-  HostSocket l = cli.listen("127.0.0.1", port).wait();
-  if (l.handle < 0) {
-    core.warn("inetd: \{port}: \{l.error}");
+  auto lBind = await net.listen("127.0.0.1", port);
+  if (lBind.isErr()) {
+    err.line("inetd: \{port}: \{lBind.err()!}");
     return 1;
   }
-  core.warn("inetd: listening on port \{port}");
+  Listener l = lBind.unwrap();
+  err.line("inetd: listening on port \{port}");
 
   // One connection, then exit. A loop would need `accept` and the live child watched
-  // together, which `waitAny` can do — but serving one is what makes this testable, and
+  // together, which two legs can do — but serving one is what makes this testable, and
   // concurrency across connections is a different design decision from this one.
-  HostSocket c = cli.accept(l.handle).wait();
-  cli.closeSocket(l.handle);
-  if (c.handle < 0) {
-    core.warn("inetd: accept: \{c.error}");
+  auto accepted = await l.accept();
+  l.close();
+  if (accepted.isErr()) {
+    err.line("inetd: accept: \{accepted.err()!}");
     return 1;
   }
+  Socket c = accepted.unwrap();
 
-  // Nothing granted: the handler gets the socket's bytes and no other authority. Passing
-  // GRANT_READ here is what would make this an `inetd` that can serve a shell with one
-  // readable directory, and is the parent's decision to make rather than the handler's.
-  HostChild kid = cli.spawn(source, argvOf(childArgs), GRANT_NONE, "", INHERIT_NONE, false).wait();
-  if (kid.handle < 0) {
-    core.warn("inetd: \{kid.error}");
-    cli.closeSocket(c.handle);
+  // Nothing granted: the handler gets the socket's bytes and no other authority. Handing it an
+  // `Authority` with a read-only `Files` is what would make this an `inetd` that can serve a shell
+  // with one readable directory, and is the parent's decision to make rather than the handler's.
+  auto spawned = await procs.spawn(source, childArgs, Authority.none(), Launch.plain());
+  if (spawned.isErr()) {
+    err.line("inetd: \{spawned.err()!}");
+    c.close();
     return 1;
   }
+  Child kid = spawned.unwrap();
 
-  relay(core, cli, c.handle, kid.handle);
+  // Bytes both ways until the handler is done. The only subtlety is the end of the *network* side:
+  // the client closing means no more input for the handler, not that the handler is finished. `rev`
+  // and `wc` both answer only after their input ends, so treating a closed socket as the end of the
+  // exchange would serve nothing at all. The child's own end is what finishes it.
+  Over over = Over(false);
+  Ticket<void> toKid = fromClient(err, c, kid, over);
+  await toClient(err, kid, c);
+  over.done = true;
 
-  i32 code = cli.exitCode(kid.handle).wait();
-  cli.closeSocket(kid.handle);
-  cli.closeSocket(c.handle);
-  return code < 0 ? 1 : 0;
+  auto code = await kid.exit();
+  kid.stop();
+  c.close();
+  await toKid;
+  return code.isErr() || code.unwrap() < 0 ? 1 : 0;
 }
 
-/**
- * Bytes both ways until one side is done.
- *
- * The only subtlety is the end of the *network* side: the client closing means no more input
- * for the handler, not that the handler is finished. `rev` and `wc` both answer only after
- * their input ends, so treating a closed socket as the end of the exchange would serve
- * nothing at all. The child's own end is what finishes it.
- */
-void relay(Core core, Cli cli, i32 net, i32 kid) {
-  Pending<Read> fromNet = cli.recv(net);
-  Pending<Read> fromKid = cli.recv(kid);
-  bool netDone = false;
+/** Whether the exchange has finished — after which the client's side ending is not news. */
+struct Over {
+  bool done;
+}
 
+/** The client's bytes to the handler; the client stopping is the handler's end of input. */
+async void fromClient(Output err, Socket c, Child kid, Over over) {
+  Output feed = kid.input();
   while (true) {
-    i32 which = netDone
-      ? core.waitAny([fromKid.id], -1)
-      : core.waitAny([fromNet.id, fromKid.id], -1);
-    if (which < 0) { return; }
-
-    // With the network done there is one ticket in the list, so index 0 is the child.
-    bool kidSpoke = netDone || which == 1;
-
-    if (kidSpoke) {
-      bool over = false;
-      match (fromKid.wait()) {
-        Data(bytes): {
-          if (!cli.send(net, bytes).wait()) { return; }   // the client hung up
-          fromKid = cli.recv(kid);
-        }
-        End: { over = true; }                       // the handler has finished
-        // A handler whose pipe broke has not finished, and serving what it managed as though it had
-        // is how a client gets half an answer with no indication.
-        Failed(why): { core.warn("inetd: handler: \{why}"); over = true; }
-      }
-      if (over) { return; }
-      continue;
+    auto got = await c.recv();
+    if (got.isErr()) {
+      if (!over.done) { err.line("inetd: client: \{got.err()!}"); }
+      break;
     }
-
-    bool clientDone = false;
-    match (fromNet.wait()) {
+    bool stop = false;
+    match (got.unwrap()) {
       Data(bytes): {
-        if (!cli.send(kid, bytes).wait()) { return; }
-        fromNet = cli.recv(net);
+        auto fed = await feed.write(bytes);
+        if (fed.isErr()) { stop = true; }
       }
       // The client stopped talking. Tell the handler, and keep reading its answer.
-      End: { clientDone = true; }
-      Failed(why): { core.warn("inetd: client: \{why}"); clientDone = true; }
+      End: { stop = true; }
+      Failed(why): {
+        if (!over.done) { err.line("inetd: client: \{why}"); }
+        stop = true;
+      }
     }
-    if (clientDone) {
-      cli.closeFeed(kid);
-      netDone = true;
-      continue;
+    if (stop) { break; }
+  }
+  await feed.close();
+}
+
+/** The handler's bytes to the client, until the handler ends or the client hangs up. */
+async void toClient(Output err, Child kid, Socket c) {
+  while (true) {
+    auto got = await kid.output().chunk();
+    if (got.isErr()) {
+      err.line("inetd: handler: \{got.err()!}");
+      return;
     }
+    bool stop = false;
+    match (got.unwrap()) {
+      Data(bytes): {
+        auto sent = await c.send(bytes);
+        if (sent.isErr()) { stop = true; }   // the client hung up
+      }
+      End: { stop = true; }                  // the handler has finished
+      // A handler whose pipe broke has not finished, and serving what it managed as though it had
+      // is how a client gets half an answer with no indication.
+      Failed(why): { err.line("inetd: handler: \{why}"); stop = true; }
+    }
+    if (stop) { return; }
   }
 }
 
@@ -150,4 +161,3 @@ i32 atoi(string s) {
   }
   return n;
 }
-

@@ -11,8 +11,8 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Core, Cli, HostSocket, Pending } from "std";
-import { Read } from "core";
+import { Clock, Files, Net, Random, Socket, TimedOut } from "std";
+import { Read, flatten } from "core";
 import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure, clientStep, ClientStep } from "../../src/client.wac";
 import { recordsReady } from "../../src/record.wac";
@@ -37,8 +37,8 @@ export struct Reply {
 }
 
 /** The trust store from a PEM file: whatever roots it holds, and nothing else trusted. */
-export Store rootsFrom(Cli cli, string pemPath) {
-  return pemBundle(cli.readFile(pemPath).wait().bytes);
+export Store rootsFrom(Files fs, string pemPath) {
+  return pemBundle(flatten(fs.readFile(pemPath).wait()).orElse(u8[]()));
 }
 
 /** No roots at all — for a caller checking the shape of the first flight rather than a peer. */
@@ -51,7 +51,7 @@ export Store noRoots() { return Store(u8[](), i32[](), 0); }
  * low end. The rejection probability is about 2^-32, so this virtually never loops — the loop is here
  * because "virtually never" is not "never" and a biased scalar is not a failure anything would report.
  */
-export u8[] p256Scalar(Core core) {
+export u8[] p256Scalar(Random rnd) {
   const u8[] N = [
                       0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
                       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -59,7 +59,7 @@ export u8[] p256Scalar(Core core) {
                       0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51
   ];
   for (i32 tries = 0; tries < 64; tries++) {
-    u8[] k = core.randomBytes(32).wait();
+    u8[] k = flatten(rnd.bytes(32).wait()).unwrap();
     bool zero = true;
     for (i32 i = 0; i < 32; i++) { if (k[i] != 0) { zero = false; } }
     if (zero) { continue; }
@@ -73,10 +73,10 @@ export u8[] p256Scalar(Core core) {
 }
 
 /** The ClientHello and the state that goes with it, without a socket anywhere near it. */
-export ClientStep firstFlight(Core core, Cli cli, string sni, Store roots, i64 now) {
+export ClientStep firstFlight(Random rnd, string sni, Store roots, i64 now) {
   return clientStep(tlsClientInit(sni.toBytes(), roots.der, roots.offsets,
-                                  core.randomBytes(32).wait(), p256Scalar(core),
-                                  core.randomBytes(64).wait(), core.randomBytes(32).wait(), now));
+                                  flatten(rnd.bytes(32).wait()).unwrap(), p256Scalar(rnd),
+                                  flatten(rnd.bytes(64).wait()).unwrap(), flatten(rnd.bytes(32).wait()).unwrap(), now));
 }
 
 /** The same, from fixed bytes, for a caller that wants the flight to be the same every run. */
@@ -92,19 +92,22 @@ struct Chunk {
   string error;
 }
 
-Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
-  Pending<Read> read = cli.recv(handle);
-  if (core.waitAny([read.id], millis) < 0) {
-    // Cancelling stops us waiting and does not stop the host's read, and a cancelled ticket keeps its
-    // slot until the call underneath finishes. Closing the handle is what makes it finish.
-    read.cancel();
-    cli.closeSocket(handle);
-    return Chunk(u8[](), false, "the peer said nothing for \{millis}ms");
-  }
-  match (read.wait()) {
-    Data(bytes): { return Chunk(bytes, true, ""); }
-    End: { return Chunk(u8[](), true, ""); }
-    Failed(why): { return Chunk(u8[](), false, "recv: \{why}"); }
+Chunk readOnce(Clock clock, Socket s, i32 millis) {
+  match (flatten(clock.within(s.recv(), millis).wait())) {
+    Ok(r): {
+      match (r) {
+        Data(bytes): { return Chunk(bytes, true, ""); }
+        default: { return Chunk(u8[](), true, ""); }
+      }
+    }
+    Err(e): {
+      // `within` cancelled the read; closing the socket is what makes the host's read underneath finish.
+      if (e is TimedOut) {
+        s.close();
+        return Chunk(u8[](), false, "the peer said nothing for \{millis}ms");
+      }
+      return Chunk(u8[](), false, "recv: \{e}");
+    }
   }
 }
 
@@ -114,20 +117,18 @@ Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
  * `now` is passed in rather than read from the clock, which is what lets a caller ask the client to
  * evaluate a handshake as though it were 1990 without any clock trickery.
  */
-export Reply request(Core core, Cli cli, string host, i32 port, string sni, Store roots,
-                     string req, i64 now) {
-  Pending<HostSocket> dial = cli.connect(host, port);
-  if (core.waitAny([dial.id], READ_TIMEOUT_MS) < 0) {
-    dial.cancel();
-    return Reply(-1, "", "\{host}:\{port} did not answer the dial");
+export Reply request(Clock clock, Random rnd, Net net, string host, i32 port, string sni, Store roots, string req, i64 now) {
+  auto dial = flatten(clock.within(net.connect(host, port), READ_TIMEOUT_MS).wait());
+  if (dial.isErr()) {
+    if (dial.err()! is TimedOut) { return Reply(-1, "", "\{host}:\{port} did not answer the dial"); }
+    return Reply(-1, "", "connect: \{dial.err()!}");
   }
-  HostSocket s = dial.wait();
-  if (s.handle < 0) { return Reply(-1, "", "connect: \{s.error}"); }
+  Socket s = dial.unwrap();
 
-  ClientStep st = firstFlight(core, cli, sni, roots, now);
+  ClientStep st = firstFlight(rnd, sni, roots, now);
   u8[] state = st.state;
-  if (!cli.send(s.handle, st.toSend).wait()) {
-    cli.closeSocket(s.handle);
+  if (flatten(s.send(st.toSend).wait()).isErr()) {
+    s.close();
     return Reply(-1, "", "the ClientHello did not go out");
   }
 
@@ -144,10 +145,10 @@ export Reply request(Core core, Cli cli, string host, i32 port, string sni, Stor
     if (tlsClientPhase(state) == 3 && !sent) {
       ClientStep out = clientStep(tlsClientSend(state, req.toBytes()));
       state = out.state;
-      if (!cli.send(s.handle, out.toSend).wait()) { error = "the request did not go out"; break; }
+      if (flatten(s.send(out.toSend).wait()).isErr()) { error = "the request did not go out"; break; }
       sent = true;
     }
-    Chunk c = readOnce(core, cli, s.handle, READ_TIMEOUT_MS);
+    Chunk c = readOnce(clock, s, READ_TIMEOUT_MS);
     if (!c.ok) { error = c.error; break; }
     if (c.bytes.len() == 0) { break; }          // the peer closed, which is how `-www` ends
     raw.pushAll(c.bytes);
@@ -162,7 +163,7 @@ export Reply request(Core core, Cli cli, string host, i32 port, string sni, Stor
     ClientStep step = clientStep(tlsClientFeed(state, whole));
     state = step.state;
     if (step.toSend.len() > 0) {
-      if (!cli.send(s.handle, step.toSend).wait()) { error = "an answer did not go out"; break; }
+      if (flatten(s.send(step.toSend).wait()).isErr()) { error = "an answer did not go out"; break; }
     }
     if (step.appData.len() > 0) { app.pushAll(step.appData); }
 
@@ -176,8 +177,8 @@ export Reply request(Core core, Cli cli, string host, i32 port, string sni, Stor
   if (tlsClientFailure(state) == 0 && sent) {
     // Best effort: the peer may already be gone, and a close_notify nobody reads is not a failure.
     ClientStep bye = clientStep(tlsClientClose(state));
-    if (bye.toSend.len() > 0) { cli.send(s.handle, bye.toSend).wait(); }
+    if (bye.toSend.len() > 0) { s.send(bye.toSend).wait(); }
   }
-  cli.closeSocket(s.handle);
+  s.close();
   return Reply(tlsClientFailure(state), string.fromBytes(app.take()), error);
 }

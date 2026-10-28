@@ -25,9 +25,10 @@
 // it was on the build path here, which is the one place it should not be — a generated file whose
 // generator needs a second runtime is a file a fresh checkout cannot regenerate.
 
-import { Core, Cli, FileResult, Sys } from "std";
+import { Core, Cli, Sys, Files, Output } from "std";
 import { joined, splitKeepingEmpty, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 import { enumVariantsOfText, variadicCalleesIn } from "../../packages/wacc/src/scans.wac";
 
 /** Every file of `core`, in the order the module carries them. */
@@ -202,7 +203,7 @@ string[] symbolsOf(string text) {
  * Collapsing rather than trimming: a file with no trailing newline keeps none, so the embedding of
  * a file is the file, and only the ragged blank lines a text editor leaves are normalised away.
  */
-Tree readTree(Cli cli) {
+Tree readTree(Files fs) {
   string[] tree = coreTree();
   string[] paths = string[].filled(tree.len() + 1, "");
   paths.copyFrom(tree, 0, 0, tree.len());
@@ -211,12 +212,12 @@ Tree readTree(Cli cli) {
   string[] texts = string[].filled(paths.len(), "");
   string why = "";
   for (i32 i = 0; i < paths.len(); i++) {
-    FileResult f = cli.readFile(paths[i]).wait();
-    if (!f.ok) {
+    u8[]? f = flatten(fs.readFile(paths[i]).wait()).ok();
+    if ((f is null)) {
       if (why == "") { why = "cannot read " + paths[i]; }
       continue;
     }
-    string t = string.fromBytes(f.bytes);
+    string t = string.fromBytes(f!);
     i32 e = t.len();
     while (e > 0 && t.slice(e - 1, e) == "\n") { e = e - 1; }
     texts[i] = e < t.len() ? t.slice(0, e) + "\n" : t;
@@ -468,31 +469,33 @@ string waccFile(Tree tree) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
   bool check = false;
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   for (i32 i = 0; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--check") { check = true; }
+    if (argv[i] == "--check") { check = true; }
   }
 
-  Tree tree = readTree(cli);
+  Tree tree = readTree(fs);
   if (!tree.ok()) {
-    core.warn("gen:core: " + tree.why);
+    err.line("gen:core: " + tree.why);
     return 1;
   }
   string want = waccFile(tree);
 
-  FileResult now = cli.readFile(waccOut()).wait();
-  if (now.ok && string.fromBytes(now.bytes) == want) {
-    core.log(check ? "core/: the embedding is in step" : "core/: the embedding is unchanged");
+  u8[]? now = flatten(fs.readFile(waccOut()).wait()).ok();
+  if ((now is not null) && string.fromBytes(now!) == want) {
+    out.line(check ? "core/: the embedding is in step" : "core/: the embedding is unchanged");
     return 0;
   }
 
   if (check) {
-    string what = now.ok ? waccOut() + " is out of step with core/"
+    string what = (now is not null) ? waccOut() + " is out of step with core/"
                          : waccOut() + " is missing";
-    core.warn("1 generated file(s) do not match `core/`:\n  " + what + "\n\n"
+    err.line("1 generated file(s) do not match `core/`:\n  " + what + "\n\n"
               + "Run `wac task gen:core`. Editing the embedding by hand is what this replaces — it "
               + "is generated from the list of files in the generator, and that list is also what "
               + "`coreSource`, `stdSource` and `coreExports` answer for.");
@@ -502,8 +505,8 @@ export i32 main(Sys sys) {
   // The byte count, which is what `.len()` answers. The TypeScript this replaces printed
   // `text.length` and called it bytes; that is UTF-16 code units, and `core` is not all ASCII, so
   // the number it printed was short by one per non-BMP-free line.
-  cli.writeFile(waccOut(), want.toBytes()).wait();
-  core.log("wrote " + waccOut() + " (" + itoa(want.len()) + " bytes)");
-  core.log("core/: the embedding written");
+  fs.writeFile(waccOut(), want.toBytes()).wait();
+  out.line("wrote " + waccOut() + " (" + itoa(want.len()) + " bytes)");
+  out.line("core/: the embedding written");
   return 0;
 }

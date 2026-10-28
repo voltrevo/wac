@@ -21,13 +21,14 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Launch, Procs, Sys } from "std";
 import { Outcome, oracle, wire } from "./nodeoracle.wac";
 import { ResponseOutcome, responseOracle, responseOutcomeOf } from "./responseoracle.wac";
 import { Incoming, ParsedResponse, parseResponse, ERR_STATUS } from "../../src/incoming.wac";
 import { Outgoing, write as writeRequest } from "../../src/outgoing.wac";
 import { Headers } from "../../src/headers.wac";
 import { Response, write as writeResponse, statusHasBody } from "../../src/response.wac";
+import { flatten } from "core";
 
 i32 MAX_BODY() { return 1048576; }
 
@@ -102,10 +103,10 @@ string describe(string method, string text) {
   return "\{method} \"\{out}\"";
 }
 
-void check(T t, Cli cli, string[] texts, string[] methods) {
+void check(T t, Procs procs, string[] texts, string[] methods) {
   u8[][] cases = u8[][].filled(texts.len(), u8[]());
   for (i32 i = 0; i < texts.len(); i++) { cases[i] = wire(texts[i]); }
-  ResponseOutcome[] want = responseOracle(t, cli, cases, methods);
+  ResponseOutcome[] want = responseOracle(t, procs, cases, methods);
   if (want.len() != texts.len()) { return; }
 
   for (i32 i = 0; i < texts.len(); i++) {
@@ -162,7 +163,8 @@ void compareOk(T t, string label, ParsedResponse got, i32 status, string version
 /** A list of `n` copies of `method`, for the corpora that are all GETs. */
 string[] allGet(i32 n) { return string[].filled(n, "GET"); }
 
-export string test_well_formed_responses(Core core, Cli cli) {
+export string test_well_formed_responses(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] texts = [
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
@@ -178,11 +180,12 @@ export string test_well_formed_responses(Core core, Cli cli) {
     "HTTP/1.1 200\r\nContent-Length: 0\r\n\r\n",
     "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n"
   ];
-  check(t, cli, texts, allGet(texts.len()));
+  check(t, procs, texts, allGet(texts.len()));
   return t.report();
 }
 
-export string test_chunked_responses(Core core, Cli cli) {
+export string test_chunked_responses(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] texts = [
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
@@ -193,22 +196,22 @@ export string test_chunked_responses(Core core, Cli cli) {
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;x=1\r\nhello\r\n0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: v\r\n\r\n"
   ];
-  check(t, cli, texts, allGet(texts.len()));
+  check(t, procs, texts, allGet(texts.len()));
   return t.report();
 }
 
-export string test_bodies_that_are_not_there_whatever_the_headers_say(Core core, Cli cli) {
+export string test_bodies_that_are_not_there_whatever_the_headers_say(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // Rule 1: HEAD, 1xx, 204 and 304 have no body. The Content-Length is kept, because a caller may
   // want to know what the GET would have returned, but no bytes belong to this message.
-  check(t, cli, [
+  check(t, procs, [
     "HTTP/1.1 204 No Content\r\n\r\n",
     "HTTP/1.1 304 Not Modified\r\nContent-Length: 99\r\n\r\n",
     "HTTP/1.1 204 No Content\r\nContent-Length: 99\r\n\r\n",
     "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-  ],
-    ["GET", "GET", "GET", "HEAD", "HEAD"]);
+  ], ["GET", "GET", "GET", "HEAD", "HEAD"]);
 
   // And directly, since the oracle cannot see the distinction: a HEAD response must consume only
   // its headers, so a following response is still there to be read. A client that waited for 99
@@ -235,7 +238,8 @@ bool closeDelimitedOf(ParsedResponse p) {
   }
 }
 
-export string test_a_body_delimited_by_the_connection_closing(Core core, Cli cli) {
+export string test_a_body_delimited_by_the_connection_closing(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // Rule 5, and the reason `parseResponse` takes `eof`: with no length and no chunking, "the
   // message is complete" and "the connection ended" are the same statement.
@@ -244,7 +248,7 @@ export string test_a_body_delimited_by_the_connection_closing(Core core, Cli cli
     "HTTP/1.1 200 OK\r\n\r\n",
     "HTTP/1.1 200 OK\r\nX: 1\r\n\r\nbody here"
   ];
-  check(t, cli, texts, allGet(texts.len()));
+  check(t, procs, texts, allGet(texts.len()));
 
   // Before EOF the same bytes are incomplete, not complete-with-a-short-body. Getting this wrong
   // truncates every close-delimited response at a packet boundary.
@@ -258,7 +262,8 @@ export string test_a_body_delimited_by_the_connection_closing(Core core, Cli cli
   return t.report();
 }
 
-export string test_ambiguous_framing_is_refused(Core core, Cli cli) {
+export string test_ambiguous_framing_is_refused(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] texts = [
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
@@ -271,11 +276,12 @@ export string test_ambiguous_framing_is_refused(Core core, Cli cli) {
     "HTTP/1.1 200 OK\r\nX: 1\r\n 2\r\nContent-Length: 0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nX : 1\r\nContent-Length: 0\r\n\r\n"
   ];
-  check(t, cli, texts, allGet(texts.len()));
+  check(t, procs, texts, allGet(texts.len()));
   return t.report();
 }
 
-export string test_malformed_status_lines(Core core, Cli cli) {
+export string test_malformed_status_lines(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] texts = [
     "HTTP/1.1\r\n\r\n",
@@ -288,7 +294,7 @@ export string test_malformed_status_lines(Core core, Cli cli) {
     "\r\n\r\n",
     "HTTP/1.1 099 Low\r\nContent-Length: 0\r\n\r\n"
   ];
-  check(t, cli, texts, allGet(texts.len()));
+  check(t, procs, texts, allGet(texts.len()));
   return t.report();
 }
 
@@ -310,7 +316,8 @@ export string test_incomplete_responses_are_not_rejections() {
   return t.report();
 }
 
-export string test_the_request_writer_produces_what_our_own_parser_reads_back(Core core, Cli cli) {
+export string test_the_request_writer_produces_what_our_own_parser_reads_back(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // A round trip through the two halves, and then the same bytes past llhttp, so this is not
   // merely the writer and parser agreeing with each other.
@@ -325,7 +332,7 @@ export string test_the_request_writer_produces_what_our_own_parser_reads_back(Co
                                         "example.com".toBytes(), h, bodies[i].toBytes()), true);
   }
   // Every one must be a request llhttp accepts, which is the real check on the writer.
-  Outcome[] parsed = oracle(t, cli, requests, -1);
+  Outcome[] parsed = oracle(t, procs, requests, -1);
   if (parsed.len() != methods.len()) { return t.report(); }
   for (i32 i = 0; i < methods.len(); i++) {
     match (parsed[i]) {
@@ -424,7 +431,8 @@ string phraseOf(i32 status) {
  * deleted rather than the row changed. An exception that cannot tell "still behind" from "now agrees"
  * would quietly outlive its reason.
  */
-export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli) {
+export string test_every_reason_phrase_is_the_one_node_writes(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   i32[] codes = [
                       200, 201, 204, 301, 304, 400, 403, 404, 405, 408, 411, 413, 414, 415,
@@ -438,12 +446,13 @@ export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli
   args[0] = "-e";
   args[1] = script;
   for (i32 i = 0; i < codes.len(); i++) { args[i + 2] = "\{codes[i]}"; }
-  Exec r = cli.exec("node", args, u8[]()).wait();
-  t.isTrue(r.ran(), "node ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "node exited cleanly — \{string.fromBytes(r.stderr)}");
+  auto rRan = flatten(procs.exec("node", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "node ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0, "node exited cleanly — \{string.fromBytes(r!.stderr)}");
 
-  string said = string.fromBytes(r.stdout);
+  string said = string.fromBytes(r!.stdout);
   i32 checked = 0;
   i32 differed = 0;
   i32 from = 0;

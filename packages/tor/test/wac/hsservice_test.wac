@@ -34,13 +34,13 @@ import { equal } from "../../../bytes/src/slice.wac";
 import { jsonFile, strOf, numOf, boolOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Files, Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 
 static string ORACLE = "packages/tor/test/oracle.mjs";
 static string VECTOR = "packages/tor/test/data/estintro_vectors.json";
 
-JsonObject vector(Cli cli) { return jsonFile(cli, VECTOR); }
+JsonObject vector(Files fs) { return jsonFile(fs, VECTOR); }
 u8[] authSeed(JsonObject v) { return decoded(strOf(v, "authSeed")); }
 u8[] authPublic(JsonObject v) { return decoded(strOf(v, "authPublic")); }
 u8[] circuitKH(JsonObject v) { return decoded(strOf(v, "circuitKH")); }
@@ -61,9 +61,10 @@ u8[] built(JsonObject v) {
  * now, and they say the same thing: if tor accepted a mutation, ACCEPTED means nothing, and every
  * refusal below is about nothing.
  */
-export string test_the_fixture_can_discriminate(Core core, Cli cli) {
+export string test_the_fixture_can_discriminate(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   JsonArray muts = arrayOf(v, "mutations");
   t.isTrue(muts.len() >= 7, "too few mutations to show the verdict discriminates");
 
@@ -89,9 +90,10 @@ bool contains(string text, string needle) {
   return false;
 }
 
-export string test_the_cell_tor_accepted_is_reproduced(Core core, Cli cli) {
+export string test_the_cell_tor_accepted_is_reproduced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   t.eqBytes(built(v), theCell(v),
             "the ESTABLISH_INTRO cell is the one tor parsed and verified");
 
@@ -109,9 +111,10 @@ export string test_the_cell_tor_accepted_is_reproduced(Core core, Cli cli) {
  * boundary rather than a restatement of it. The signature span is the one that matters: it ends
  * *after* the MAC and *before* `sig_len`, so it is the MAC span plus exactly 32.
  */
-export string test_the_spans_are_where_tor_says(Core core, Cli cli) {
+export string test_the_spans_are_where_tor_says(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   u8[] cell = built(v);
   i32 macLen = macSpanLen(v);
   i32 sigLen = sigSpanLen(v);
@@ -127,9 +130,10 @@ export string test_the_spans_are_where_tor_says(Core core, Cli cli) {
 }
 
 /** The MAC is `crypto_mac_sha3_256` over the MAC span, keyed with the circuit's KH. */
-export string test_the_mac_is_keyed_with_the_circuit(Core core, Cli cli) {
+export string test_the_mac_is_keyed_with_the_circuit(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   u8[] cell = built(v);
   i32 macLen = macSpanLen(v);
 
@@ -154,9 +158,11 @@ export string test_the_mac_is_keyed_with_the_circuit(Core core, Cli cli) {
  * asked too, which is worth something once the host has established what the answer is — but on its
  * own it would only say that our signer and our verifier agree.
  */
-export string test_the_signature_is_over_the_prefixed_span(Core core, Cli cli) {
+export string test_the_signature_is_over_the_prefixed_span(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   u8[] cell = built(v);
   i32 sigLen = sigSpanLen(v);
 
@@ -166,7 +172,7 @@ export string test_the_signature_is_over_the_prefixed_span(Core core, Cli cli) {
   u8[] message = prefixed(sigSpanOf(cell));
   Lines lines = Lines.create();
   lines.add("edsign " + strOf(v, "authSeed") + " " + hex(message));
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "node's signature over the same span");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "node's signature over the same span");
   if (!a.ok) { return t.report(); }
   t.eqBytes(sig, decoded(word(a.lines[0], 1)),
             "node's Ed25519 over the same span produces the same signature");
@@ -189,9 +195,10 @@ export string test_the_signature_is_over_the_prefixed_span(Core core, Cli cli) {
 }
 
 /** Inputs that are not keys produce nothing, rather than a cell an intro point will hang up on. */
-export string test_bad_inputs_make_no_cell(Core core, Cli cli) {
+export string test_bad_inputs_make_no_cell(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   u8[] seed = authSeed(v);
   u8[] pub = authPublic(v);
   u8[] kh = circuitKH(v);
@@ -222,9 +229,10 @@ export string test_bad_inputs_make_no_cell(Core core, Cli cli) {
  * cell, tor's parser refused each of the seven mutations, and the mutations now carry their bytes so
  * ours is asked the same question rather than a described one.
  */
-export string test_the_relay_accepts_what_tor_built(Core core, Cli cli) {
+export string test_the_relay_accepts_what_tor_built(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = vector(cli);
+  JsonObject v = vector(fs);
   u8[] cell = theCell(v);
   u8[] kh = circuitKH(v);
 

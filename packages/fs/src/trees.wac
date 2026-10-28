@@ -8,7 +8,7 @@
 // piece at a time: `head -c 16 /dev/urandom` costs sixteen bytes and a chunk.
 
 import { Files, Input, Output, Random, Stat, Other, IsDir, NotADir, NotFound, ReadOnly, Unsupported, ReadFault,
-         WriteFault, LookFault, MkdirFault, MoveFault, ModeFault, HostFault, OutputFault, FAULT_NONE } from "std";
+         WriteFault, LookFault, MkdirFault, MoveFault, ModeFault, HostFault, OutputFault, FAULT_NONE, Mount, Exists } from "std";
 import { Read, Result, Ticket } from "core";
 import { PROC_RUN, Proc, ProcTable } from "./proc.wac";
 
@@ -51,13 +51,13 @@ export Files readOnlyTree(fn<TreeNode(string)> look) {
     (string p) => treeStat(look, p),
     (string p) => treeStat(look, p),
     (string p) => treeReadDir(look, p),
-    (string p, bool parents) => treeRefusedMkdir(p),
+    (string p, bool parents) => treeMkdir(look, p, parents),
     (string p, bool r) => treeRefusedMove(p),
     (string from, string to) => treeRefusedMove(from),
     (string p, i32 mode) => treeRefusedMode(p),
     (string p, bool on) => treeRefusedMode(p),
     (string p, string owner) => treeRefusedMode(p),
-    0);
+    0, "");
 }
 
 string readOnlyWords(string p) { return p + ": Read-only file system"; }
@@ -70,8 +70,14 @@ async Result<u8[], ReadFault> treeRead(fn<TreeNode(string)> look, string p) {
   return Result.Ok(n.data);
 }
 
+/**
+ * A sink takes the write; anything else is refused — **as a directory first** when it is one, which is
+ * what GNU answers for `echo x > /proc`. Read-only is the reason only for what is not a directory.
+ */
 async Result<void, WriteFault> treeWrite(fn<TreeNode(string)> look, string p) {
-  if (look(p).kind == TREE_SINK) { return Result.Ok(); }
+  TreeNode n = look(p);
+  if (n.kind == TREE_SINK) { return Result.Ok(); }
+  if (n.kind == TREE_DIR) { return Result.Err(IsDir(p + ": Is a directory")); }
   return Result.Err(ReadOnly(readOnlyWords(p)));
 }
 
@@ -127,7 +133,13 @@ async Result<string[], LookFault> treeReadDir(fn<TreeNode(string)> look, string 
   return Result.Ok(n.names);
 }
 
-async Result<void, MkdirFault> treeRefusedMkdir(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+/** A name that is there exists, and `-p` asks nothing more of it; only a new one meets the read-only tree. */
+async Result<void, MkdirFault> treeMkdir(fn<TreeNode(string)> look, string p, bool parents) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_DIR && parents) { return Result.Ok(); }
+  if (n.kind != TREE_NONE) { return Result.Err(Exists(p + ": File exists")); }
+  return Result.Err(ReadOnly(readOnlyWords(p)));
+}
 async Result<void, MoveFault> treeRefusedMove(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 async Result<void, ModeFault> treeRefusedMode(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 
@@ -158,19 +170,27 @@ async Result<Read, HostFault> randomPiece(Random rnd) {
 // ── /proc ──
 
 /** `/proc`: a directory per process in `table`, each with `cmdline`, `comm` and `status`, and `self` for `table.current`. */
-export Files procFiles(ProcTable table) { return readOnlyTree((string p) => procNode(table, p)); }
+export Files procFiles(ProcTable table) { return readOnlyTree((string p) => procNode(table, table.current, p)); }
 
-TreeNode procNode(ProcTable table, string p) {
+/**
+ * `/proc/self` for one process: what a parent mounts at `/proc/self` over the files it serves a child, so the
+ * child's `self` is the child rather than whatever its parent is running when the question arrives.
+ */
+export Files procSelfFiles(ProcTable table, i32 pid) {
+  return readOnlyTree((string p) => procNode(table, pid, p == "/" || p == "" ? "/self" : "/self" + p));
+}
+
+TreeNode procNode(ProcTable table, i32 self, string p) {
   string[] parts = treeParts(p);
   if (parts.len() == 0) {
     i32[] pids = table.pids();
     string[] names = string[].filled(pids.len() + 1, "");
     for (i32 i = 0; i < pids.len(); i++) { names[i] = "\{pids[i]}"; }
     names[pids.len()] = "self";
-    sortTreeNames(names);
+    sortNames(names);
     return TreeNode.dir(names);
   }
-  i32 pid = parts[0] == "self" ? table.current : pidOf(parts[0]);
+  i32 pid = parts[0] == "self" ? self : pidOf(parts[0]);
   Proc? found = table.find(pid);
   if (found is null || parts.len() > 2) { return TreeNode.none(); }
   Proc row = found!;
@@ -209,7 +229,7 @@ TreeNode binNode(string[] programs, string p) {
   if (parts.len() == 0) {
     string[] names = string[].filled(programs.len(), "");
     for (i32 i = 0; i < programs.len(); i++) { names[i] = programs[i]; }
-    sortTreeNames(names);
+    sortNames(names);
     return TreeNode.dir(names);
   }
   if (parts.len() > 1) { return TreeNode.none(); }
@@ -248,7 +268,7 @@ string[] treeParts(string p) {
 }
 
 /** Sorted by their bytes. */
-void sortTreeNames(string[] names) {
+export void sortNames(string[] names) {
   for (i32 i = 1; i < names.len(); i++) {
     string v = names[i];
     i32 j = i - 1;
@@ -269,3 +289,21 @@ bool treeAfter(string a, string b) {
   }
   return x.len() > y.len();
 }
+
+// ── a system ──
+
+/**
+ * `root` with `/dev`, `/proc` over `table` and `/bin` listing `programs` mounted on it — what a session on an
+ * image or in memory is given, so `ps`, `cat /dev/null` and `ls /bin` answer there. The user is `root`'s.
+ *
+ * **No programs, no `/bin`.** An empty one would claim more than an absent one: `ls /` would show a
+ * directory of programs with no programs in it, and `packages/ssh`'s server wires none.
+ */
+export Files systemFiles(Files root, Random rnd, ProcTable table, string[] programs) {
+  if (programs.len() == 0) {
+    return Files.mounted([Mount("/dev", devFiles(rnd)), Mount("/proc", procFiles(table)), Mount("/", root)]);
+  }
+  return Files.mounted([Mount("/dev", devFiles(rnd)), Mount("/proc", procFiles(table)), Mount("/bin", binFiles(programs)),
+                        Mount("/", root)]);
+}
+

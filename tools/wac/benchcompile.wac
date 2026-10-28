@@ -31,8 +31,7 @@
 // `issues/system/0161`. The file it was ported from is in git; naming its path here would leave a
 // backticked path to something deleted, which `tools/wac/links_test.wac` rightly refuses.
 
-import { Core, Cli, Exec, FileResult, Sys } from "std";
-import { Fs } from "../../packages/fs/src/fs.wac";
+import { Exec, Sys, ChildEnv, Clock, Env, Files, Launch, Output, Procs } from "std";
 import { Sources, exactly, gather, resOf } from "../../packages/wac/src/sources.wac";
 import { Res } from "../../packages/wacc/src/path.wac";
 import { Built } from "../../packages/wacc/src/emit.wac";
@@ -40,6 +39,7 @@ import { buildFilesIn, diagnoseGraphIn } from "../../packages/wacc/src/api.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Program, findPrograms } from "./programs.wac";
 import { binaryPath } from "../../packages/wactest/src/host.wac";
+import { flatten } from "core";
 
 // bench-exempt: covTableFilesIn — only a coverage build asks for it.
 // bench-exempt: emitFilesCoveredIn — the coverage path's own front.
@@ -96,8 +96,8 @@ struct Loaded {
   i32 kib;
 }
 
-async Loaded load(Fs fs, Cli cli, string entry) {
-  Sources src = await gather(fs, cli, entry, false);
+async Loaded load(Files fs, Env env, string entry) {
+  Sources src = await gather(fs, env, entry, false);
   if (src.why != "") {
     return Loaded(false, string[].filled(0, ""), string[].filled(0, ""), resOf(src), 0);
   }
@@ -109,10 +109,10 @@ async Loaded load(Fs fs, Cli cli, string entry) {
 }
 
 /** Peak resident set so far, in MiB, or `-1` where `/proc/self/status` is not readable. */
-i32 peakRssMiB(Cli cli) {
-  FileResult r = cli.readFile("/proc/self/status").wait();
-  if (!r.ok) { return 0 - 1; }
-  string text = string.fromBytes(r.bytes);
+i32 peakRssMiB(Files fs) {
+  u8[]? r = flatten(fs.readFile("/proc/self/status").wait()).ok();
+  if (r is null) { return 0 - 1; }
+  string text = string.fromBytes(r!);
   i32 at = text.indexOf("VmHWM:");
   if (at < 0) { return 0 - 1; }
   i32 i = at + 6;
@@ -126,10 +126,10 @@ i32 peakRssMiB(Cli cli) {
 }
 
 /** Milliseconds for one call, measured around it. */
-i64 timePhase(Core core, i32 which, string[] paths, string[] texts, const Res res, string entry) {
-  i64 began = core.monotonicNanos().wait();
+i64 timePhase(Clock clock, i32 which, string[] paths, string[] texts, const Res res, string entry) {
+  i64 began = flatten(clock.monotonicNanos().wait()).unwrap();
   runPhase(which, paths, texts, res, entry);
-  return (core.monotonicNanos().wait() - began) / 1000000;
+  return (flatten(clock.monotonicNanos().wait()).unwrap() - began) / 1000000;
 }
 
 /** `packages/json/src/json.wac` → `json`, which is what names a row. */
@@ -147,20 +147,20 @@ i32 percent(i64 part, i64 whole) {
 }
 
 /** The default table: four programs, each phase twice after a warm-up. */
-async i32 byPhase(Core core, Cli cli, Fs fs) {
-  core.log("## Compile time by phase\n");
+async i32 byPhase(Output err, Output out, Clock clock, Env env, Files fs) {
+  out.line("## Compile time by phase\n");
   string head = "| program | files | KiB";
   for (i32 p = 0; p < phaseCount(); p++) { head = head + " | " + phaseName(p); }
-  core.log(head + " | total | build |");
+  out.line(head + " | total | build |");
   string rule = "|---|---:|---:";
   for (i32 p = 0; p < phaseCount(); p++) { rule = rule + "|---:"; }
-  core.log(rule + "|---:|---:|");
+  out.line(rule + "|---:|---:|");
 
   string[] entries = samples();
   for (i32 i = 0; i < entries.len(); i++) {
-    Loaded l = await load(fs, cli, entries[i]);
+    Loaded l = await load(fs, env, entries[i]);
     if (!l.ok) {
-      core.warn("could not gather " + entries[i] + " — skipped");
+      err.line("could not gather " + entries[i] + " — skipped");
       continue;
     }
     string row = "| " + shortName(entries[i]) + " | " + itoa(l.paths.len()) + " | " + itoa(l.kib);
@@ -168,47 +168,47 @@ async i32 byPhase(Core core, Cli cli, Fs fs) {
     i64[] each = i64[].filled(phaseCount(), 0);
     for (i32 p = 0; p < phaseCount(); p++) {
       runPhase(p, l.paths, l.texts, l.res, entries[i]);          // warm
-      i64 a = timePhase(core, p, l.paths, l.texts, l.res, entries[i]);
-      i64 b = timePhase(core, p, l.paths, l.texts, l.res, entries[i]);
+      i64 a = timePhase(clock, p, l.paths, l.texts, l.res, entries[i]);
+      i64 b = timePhase(clock, p, l.paths, l.texts, l.res, entries[i]);
       each[p] = (a + b) / 2;
       total = total + each[p];
       row = row + " | " + itoa64(each[p]);
     }
-    core.log(row + " | " + itoa64(total) + " | **" + itoa(percent(each[1], total)) + "%** |");
+    out.line(row + " | " + itoa64(total) + " | **" + itoa(percent(each[1], total)) + "%** |");
   }
-  core.log("\nMilliseconds, mean of 2 after a warm-up. `buildFilesIn` is the whole of a build's\n"
+  out.line("\nMilliseconds, mean of 2 after a warm-up. `buildFilesIn` is the whole of a build's\n"
            + "compiler work in one call; `diagnoseGraphIn` is the checker. See `issues/lang/0129`.");
   return 0;
 }
 
 /** Every program in the repository, cold, once each. */
-async i32 overAll(Core core, Cli cli, Fs fs) {
-  Program[] list = findPrograms(cli);
+async i32 overAll(Output out, Clock clock, Env env, Files fs) {
+  Program[] list = findPrograms(fs);
   i64[] totals = i64[].filled(phaseCount(), 0);
   i32 done = 0;
   i32 skipped = 0;
   i32 failed = 0;
   i32 kib = 0;
   for (i32 i = 0; i < list.len(); i++) {
-    Loaded l = await load(fs, cli, list[i].path);
+    Loaded l = await load(fs, env, list[i].path);
     if (!l.ok) { skipped = skipped + 1; continue; }
     kib = kib + l.kib;
     for (i32 p = 0; p < phaseCount(); p++) {
-      totals[p] = totals[p] + timePhase(core, p, l.paths, l.texts, l.res, list[i].path);
+      totals[p] = totals[p] + timePhase(clock, p, l.paths, l.texts, l.res, list[i].path);
     }
     done = done + 1;
   }
   i64 total = 0;
   for (i32 p = 0; p < phaseCount(); p++) { total = total + totals[p]; }
-  core.log("## Every program, cold\n");
-  core.log("| phase | ms | share |");
-  core.log("|---|---:|---:|");
+  out.line("## Every program, cold\n");
+  out.line("| phase | ms | share |");
+  out.line("|---|---:|---:|");
   for (i32 p = 0; p < phaseCount(); p++) {
-    core.log("| " + phaseName(p) + " | " + itoa64(totals[p]) + " | "
+    out.line("| " + phaseName(p) + " | " + itoa64(totals[p]) + " | "
              + itoa(percent(totals[p], total)) + "% |");
   }
-  core.log("| **total** | **" + itoa64(total) + "** | |");
-  core.log("\n" + itoa(done) + " program(s), " + itoa(kib) + " KiB"
+  out.line("| **total** | **" + itoa64(total) + "** | |");
+  out.line("\n" + itoa(done) + " program(s), " + itoa(kib) + " KiB"
            + (skipped > 0 ? ", " + itoa(skipped) + " skipped (would not gather)" : "")
            + (failed > 0 ? ", " + itoa(failed) + " declined" : "")
            + ".\nNo warm-up and one run each: this is the cold-build cost a change to a"
@@ -224,50 +224,49 @@ async i32 overAll(Core core, Cli cli, Fs fs) {
  * does one thing and says what it peaked at, and `baseline` runs nothing — the compiler is bound
  * either way, and that floor is most of the number.
  */
-i32 byMemory(Core core, Cli cli) {
-  if (peakRssMiB(cli) < 0) {
-    core.log("`--mem` needs /proc/self/status — Linux only.");
+i32 byMemory(Output err, Output out, Env env, Files fs, Procs procs) {
+  if (peakRssMiB(fs) < 0) {
+    out.line("`--mem` needs /proc/self/status — Linux only.");
     return 0;
   }
   string entry = samples()[3];
-  core.log("## Peak memory by phase\n\n" + entry + "\n");
-  core.log("| phase | peak MiB | above baseline |");
-  core.log("|---|---:|---:|");
+  out.line("## Peak memory by phase\n\n" + entry + "\n");
+  out.line("| phase | peak MiB | above baseline |");
+  out.line("|---|---:|---:|");
   i32 base = 0;
   for (i32 p = 0 - 1; p < phaseCount(); p++) {
     string name = p < 0 ? "baseline" : phaseName(p);
-    Exec ran = cli.exec(binaryPath(cli),
-                        [
+    auto ranRan = flatten(procs.exec(binaryPath(env), [
                                  "run", "--allow-read", "--allow-env",
                                  "tools/wac/benchcompile.wac", "--phase", name, entry
-                        ],
-                        u8[]()).wait();
-    if (!ran.ran() || ran.status != 0) {
-      core.warn("the " + name + " child did not run — " + ran.error
-                + string.fromBytes(ran.stderr));
+                        ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? ran = ranRan.ok();
+    if ((ran is null) || ran!.status != 0) {
+      err.line("the " + name + " child did not run — " + "\{ranRan.isErr() ? "\{ranRan.err()!}" : ""}"
+                + string.fromBytes(ran!.stderr));
       return 1;
     }
     i32 peak = 0;
-    string out = string.fromBytes(ran.stdout);
-    for (i32 i = 0; i < out.len(); i++) {
-      string c = out.slice(i, i + 1);
-      if (c >= "0" && c <= "9") { peak = peak * 10 + (out.toBytes()[i] as i32 - '0'); }
+    string said = string.fromBytes(ran!.stdout);
+    for (i32 i = 0; i < said.len(); i++) {
+      string c = said.slice(i, i + 1);
+      if (c >= "0" && c <= "9") { peak = peak * 10 + (said.toBytes()[i] as i32 - '0'); }
     }
     if (p < 0) { base = peak; }
-    core.log("| " + name + " | " + itoa(peak) + " | "
+    out.line("| " + name + " | " + itoa(peak) + " | "
              + (p < 0 ? "—" : itoa(peak - base)) + " |");
   }
-  core.log("\nOne phase per process: a collection during one otherwise reads as another using"
+  out.line("\nOne phase per process: a collection during one otherwise reads as another using"
            + " less.\nThe call that is not `buildFilesIn` allocates about as much as emitting does,"
            + " to check\nthe program emitting has already parsed — `issues/lang/0129`.");
   return 0;
 }
 
 /** `--phase <name> <entry>`: this file re-invoked by `--mem`. Prints the peak and nothing else. */
-async i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
-  Loaded l = await load(fs, cli, entry);
+async i32 onePhase(Output err, Output out, Env env, Files fs, string name, string entry) {
+  Loaded l = await load(fs, env, entry);
   if (!l.ok) {
-    core.warn("could not gather " + entry);
+    err.line("could not gather " + entry);
     return 1;
   }
   if (name != "baseline") {
@@ -275,34 +274,38 @@ async i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
       if (phaseName(p) == name) { runPhase(p, l.paths, l.texts, l.res, entry); }
     }
   }
-  core.log(itoa(peakRssMiB(cli)));
+  out.line(itoa(peakRssMiB(fs)));
   return 0;
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   bool all = false;
   bool mem = false;
   i32 phaseAt = 0 - 1;
   string[] args = string[].filled(16, "");
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   if (argc > 16) { argc = 16; }
   for (i32 i = 0; i < argc; i++) {
-    args[i] = string.fromBytes(cli.arg(i).wait());
+    args[i] = argv[i];
     if (args[i] == "--all") { all = true; }
     if (args[i] == "--mem") { mem = true; }
     if (args[i] == "--phase") { phaseAt = i; }
   }
-  Fs fs = Fs.onHost(cli, 0);
   if (phaseAt >= 0) {
     if (phaseAt + 2 >= argc) {
-      core.warn("--phase needs a phase name and an entry");
+      err.line("--phase needs a phase name and an entry");
       return 1;
     }
-    return await onePhase(core, cli, fs, args[phaseAt + 1], args[phaseAt + 2]);
+    return await onePhase(err, out, env, fs, args[phaseAt + 1], args[phaseAt + 2]);
   }
-  if (mem) { return byMemory(core, cli); }
-  if (all) { return await overAll(core, cli, fs); }
-  return await byPhase(core, cli, fs);
+  if (mem) { return byMemory(err, out, env, fs, procs); }
+  if (all) { return await overAll(out, clock, env, fs); }
+  return await byPhase(err, out, clock, env, fs);
 }

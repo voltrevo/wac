@@ -21,8 +21,8 @@
 // answer for the same object.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std";
-import { Vec } from "core";
+import { Cli, Exec, Change, FileResult, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Vec, flatten } from "core";
 import { RefValue, PackedRef, parseRef, parsePackedRefs, packedTarget } from "../../src/refs.wac";
 import { Commit, Parsed, Who, parseCommit } from "../../src/commit.wac";
 import { Object, readLoose } from "../../src/object.wac";
@@ -32,10 +32,10 @@ import { agentDir } from "../../../wactest/src/host.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 
 struct Git {
-  Cli cli;
+  Procs procs;
   string dir;
 
-  Exec run(const this, string[] args) {
+  Exec run(this, string[] args) {
     string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
@@ -44,10 +44,10 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=ada@example.com";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, u8[]()).wait();
+    return flatten(this.procs.exec("git", full, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
   }
 
-  string text(const this, string[] args) {
+  string text(this, string[] args) {
     return trimmed(string.fromBytes(this.run(args).stdout));
   }
 }
@@ -79,25 +79,25 @@ string[] splitOn(string s, string sep) {
 string hexStr(u8[] b) { return string.fromBytes(hexOf(b)); }
 
 /** A repository with a root commit, a merge, and its refs packed. */
-Git history(T t, Cli cli, string name) {
-  string who = agentDir(cli);
+Git history(T t, Procs procs, Env env, Files fs, string name) {
+  string who = agentDir(env);
   string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  Git g = Git(cli, dir);
-  if (!made.ok()) { return g; }
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  Git g = Git(procs, dir);
+  if (made.isErr()) { return g; }
 
   g.run(["init", "-q", "-b", "main"]);
-  cli.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
+  fs.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "root commit"]);
   g.run(["checkout", "-qb", "side"]);
-  cli.writeFile("\{dir}/b.txt", "side\n".toBytes()).wait();
+  fs.writeFile("\{dir}/b.txt", "side\n".toBytes()).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "on the side"]);
   g.run(["checkout", "-q", "main"]);
-  cli.writeFile("\{dir}/c.txt", "main\n".toBytes()).wait();
+  fs.writeFile("\{dir}/c.txt", "main\n".toBytes()).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "on main"]);
   Exec m = g.run(["merge", "-q", "--no-ff", "-m", "the merge", "side"]);
@@ -108,16 +108,16 @@ Git history(T t, Cli cli, string name) {
 
 /** Reads an object by name, loose first and then the pack — the order git looks in. */
 struct Reader {
-  Cli cli;
+  Files fs;
   string dir;
   bool havePack;
   Pack pack;
 
-  u8[] read(const this, string name) {
-    FileResult f = this.cli.readFile("\{this.dir}/.git/objects/\{name.slice(0, 2)}/" +
-                                     name.slice(2, name.len())).wait();
-    if (f.ok) {
-      match (readLoose(f.bytes)) {
+  u8[] read(this, string name) {
+    u8[]? f = flatten(this.fs.readFile("\{this.dir}/.git/objects/\{name.slice(0, 2)}/" +
+                                       name.slice(2, name.len())).wait()).ok();
+    if (f is not null) {
+      match (readLoose(f!)) {
         Loaded(kind, content): { return content; }
         default: { }
       }
@@ -130,9 +130,9 @@ struct Reader {
   }
 }
 
-Reader reader(T t, Cli cli, string dir) {
+Reader reader(T t, Files fs, string dir) {
   string pd = "\{dir}/.git/objects/pack";
-  string[]? listing = cli.readDir(pd).wait();
+  string[]? listing = flatten(fs.readDir(pd).wait()).ok();
   string stem = "";
   if (!(listing is null)) {
     string[] names = listing!;
@@ -142,18 +142,18 @@ Reader reader(T t, Cli cli, string dir) {
     }
   }
   t.isTrue(stem != "", "the fixture has a pack, so `git gc` ran");
-  if (stem == "") { return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]())); }
+  if (stem == "") { return Reader(fs, dir, false, openPackOrDie(t, u8[](), u8[]())); }
 
-  FileResult p = cli.readFile("\{pd}/\{stem}.pack").wait();
-  FileResult i = cli.readFile("\{pd}/\{stem}.idx").wait();
-  t.isTrue(p.ok && i.ok, "the pack and its index could be read");
-  if (!p.ok || !i.ok) { return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]())); }
+  u8[]? p = flatten(fs.readFile("\{pd}/\{stem}.pack").wait()).ok();
+  u8[]? i = flatten(fs.readFile("\{pd}/\{stem}.idx").wait()).ok();
+  t.isTrue((p is not null) && (i is not null), "the pack and its index could be read");
+  if ((p is null) || (i is null)) { return Reader(fs, dir, false, openPackOrDie(t, u8[](), u8[]())); }
 
-  match (openPack(p.bytes, i.bytes)) {
-    Ready(pack): { return Reader(cli, dir, true, pack); }
+  match (openPack(p!, i!)) {
+    Ready(pack): { return Reader(fs, dir, true, pack); }
     Refused(why): {
       t.isTrue(false, "the fixture's pack did not open: \{why}");
-      return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]()));
+      return Reader(fs, dir, false, openPackOrDie(t, u8[](), u8[]()));
     }
   }
 }
@@ -166,16 +166,18 @@ Pack openPackOrDie(T t, u8[] a, u8[] b) {
   }
 }
 
-export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_names(
-    Core core, Cli cli) {
+export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_names(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = history(t, cli, "hist");
+  Git g = history(t, procs, env, fs, "hist");
 
-  FileResult headFile = cli.readFile("\{g.dir}/.git/HEAD").wait();
-  t.isTrue(headFile.ok, "HEAD could be read");
-  if (!headFile.ok) { return t.report(); }
+  u8[]? headFile = flatten(fs.readFile("\{g.dir}/.git/HEAD").wait()).ok();
+  t.isTrue((headFile is not null), "HEAD could be read");
+  if ((headFile is null)) { return t.report(); }
   string branch = "";
-  match (parseRef(headFile.bytes)) {
+  match (parseRef(headFile!)) {
     Symbolic(target): { branch = target; }
     default: { t.isTrue(false, "HEAD did not read as symbolic"); }
   }
@@ -183,10 +185,10 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
 
   // `git gc` packed the refs, so the loose file is gone and `packed-refs` is the only copy — which
   // is exactly the state a reader that only looks in `refs/` gets wrong.
-  FileResult pr = cli.readFile("\{g.dir}/.git/packed-refs").wait();
-  t.isTrue(pr.ok, "packed-refs could be read");
-  if (!pr.ok) { return t.report(); }
-  Vec<PackedRef> packed = parsePackedRefs(pr.bytes);
+  u8[]? pr = flatten(fs.readFile("\{g.dir}/.git/packed-refs").wait()).ok();
+  t.isTrue((pr is not null), "packed-refs could be read");
+  if ((pr is null)) { return t.report(); }
+  Vec<PackedRef> packed = parsePackedRefs(pr!);
   t.isTrue(packed.len() >= 2,
            "packed-refs held \{packed.len() as i64} refs, expected main and side");
 
@@ -207,33 +209,35 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
 
   // A detached HEAD is the other shape, and it is direct rather than symbolic.
   g.run(["checkout", "-q", "--detach"]);
-  FileResult detachedFile = cli.readFile("\{g.dir}/.git/HEAD").wait();
-  match (parseRef(detachedFile.bytes)) {
+  u8[]? detachedFile = flatten(fs.readFile("\{g.dir}/.git/HEAD").wait()).ok();
+  match (parseRef(detachedFile!)) {
     Direct(name): {
       t.eqStr(hexStr(name), g.text(["rev-parse", "HEAD"]), "a detached HEAD names its commit");
     }
     default: { t.isTrue(false, "a detached HEAD did not read as direct"); }
   }
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 
-export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gives(
-    Core core, Cli cli) {
+export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gives(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = history(t, cli, "hist2");
-  Reader r = reader(t, cli, g.dir);
+  Git g = history(t, procs, env, fs, "hist2");
+  Reader r = reader(t, fs, g.dir);
 
-  FileResult pr = cli.readFile("\{g.dir}/.git/packed-refs").wait();
-  FileResult headFile = cli.readFile("\{g.dir}/.git/HEAD").wait();
-  if (!pr.ok || !headFile.ok) { return t.report(); }
+  u8[]? pr = flatten(fs.readFile("\{g.dir}/.git/packed-refs").wait()).ok();
+  u8[]? headFile = flatten(fs.readFile("\{g.dir}/.git/HEAD").wait()).ok();
+  if ((pr is null) || (headFile is null)) { return t.report(); }
   string branch = "";
-  match (parseRef(headFile.bytes)) {
+  match (parseRef(headFile!)) {
     Symbolic(target): { branch = target; }
     default: { }
   }
-  u8[]? start = packedTarget(parsePackedRefs(pr.bytes), branch);
+  u8[]? start = packedTarget(parsePackedRefs(pr!), branch);
   t.isTrue(!(start is null), "HEAD resolves through packed-refs");
   if (start is null) { return t.report(); }
 
@@ -271,14 +275,17 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
   t.isTrue(merges >= 1, "the walk crossed a merge, so the several-parents case is exercised");
   t.isTrue(root, "the walk reached a commit with no parent");
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 
-export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) {
+export string test_a_commits_fields_are_the_ones_git_prints(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = history(t, cli, "hist3");
-  Reader r = reader(t, cli, g.dir);
+  Git g = history(t, procs, env, fs, "hist3");
+  Reader r = reader(t, fs, g.dir);
   string head = g.text(["rev-parse", "HEAD"]);
 
   match (parseCommit(r.read(head))) {
@@ -305,7 +312,7 @@ export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) 
     }
   }
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 

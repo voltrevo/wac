@@ -6,8 +6,9 @@
 // the reference catches that while both exist; the cases below outlive it. `issues/system/0161`.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Change, Core, Cli, Exec } from "std";
+import { Change, Exec, ChildEnv, Files, Launch, Procs, Sys } from "std";
 import { firstFailureLine } from "./mutatewhy.wac";
+import { flatten } from "core";
 
 string ORACLE() { return ".cache/mutatewhy-oracle.ts"; }
 
@@ -24,24 +25,25 @@ string ORACLE() { return ".cache/mutatewhy-oracle.ts"; }
  * is full of quotes, escapes and newlines, and a program that embeds it tests my quoting rather than
  * their function.
  */
-string theirs(Core core, Cli cli, string transcript) {
-  Exec r = cli.exec("deno", [
+string theirs(Procs procs, string transcript) {
+  auto rRan = flatten(procs.exec("deno", [
                                      "run", "-A", "--no-check", "--unstable-sloppy-imports",
                                      ORACLE()
-  ], transcript.toBytes()).wait();
-  if (!r.ran() || r.status != 0) { return "oracle-failed"; }
-  return string.fromBytes(r.stdout);
+  ], transcript.toBytes(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "oracle-failed"; }
+  return string.fromBytes(r!.stdout);
 }
 
 /** `""` once the oracle program is on disk, or why not. */
-string writeOracle(Cli cli) {
-  cli.mkdir(".cache", true).wait();
+string writeOracle(Files fs) {
+  fs.mkdir(".cache", true).wait();
   string program =
     "import { firstFailureLine } from '../tools/mutate/why.ts';\n"
     + "const t = await new Response(Deno.stdin.readable).text();\n"
     + "console.log(JSON.stringify(firstFailureLine(t)));\n";
-  Change wrote = cli.writeFile(ORACLE(), program.toBytes()).wait();
-  return wrote.ok() ? "" : wrote.message;
+  auto wrote = flatten(fs.writeFile(ORACLE(), program.toBytes()).wait());
+  return wrote.isOk() ? "" : "\{wrote.isErr() ? "\{wrote.err()!}" : ""}";
 }
 
 /** `"…"` as JSON, so a comparison with the oracle's output is a comparison of the same shape. */
@@ -108,9 +110,11 @@ export string test_the_line_it_picks_is_the_one_that_says_why() {
  * for `error:` anywhere, so a transcript with both — which is most real ones — distinguishes a port
  * that checks line by line from one that checks pattern by pattern. The third case below is that.
  */
-export string test_it_agrees_with_the_typescript_it_replaces(Core core, Cli cli) {
+export string test_it_agrees_with_the_typescript_it_replaces(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string why = writeOracle(cli);
+  string why = writeOracle(fs);
   t.eqStr(why, "", "the oracle program was written");
   if (why != "") { return t.report(); }
   string[] cases = [
@@ -124,7 +128,7 @@ export string test_it_agrees_with_the_typescript_it_replaces(Core core, Cli cli)
   ];
   for (i32 i = 0; i < cases.len(); i++) {
     string got = quoted(firstFailureLine(cases[i]));
-    string want = theirs(core, cli, cases[i]);
+    string want = theirs(procs, cases[i]);
     // The oracle prints a JSON string and a newline; compare without it.
     if (want.len() > 0 && want.slice(want.len() - 1, want.len()) == "\n") {
       want = want.slice(0, want.len() - 1);

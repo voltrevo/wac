@@ -412,3 +412,59 @@ export async string test_exec_runs_a_host_program(Sys sys) {
   }
   return t.report();
 }
+
+export string test_no_host_here_owns_a_keyboard_so_nothing_is_interrupted(Sys sys) {
+  T t = T.create();
+  t.isFalse(sys.interrupted(), "Deno, Node and the native hosts own no keyboard and always say no");
+  t.isFalse(sys.interrupted(), "and asking again changes nothing");
+  return t.report();
+}
+
+/** The inheritself probe's answer on one host: the child's line on the parent's own output, and the child's status. */
+void inheritedSaid(T t, string host, Result<Exec, SpawnFault> ran) {
+  match (ran) {
+    Ok(r): {
+      t.eqI32(r.status, 5, host + ": the child's status is the parent's: " + string.fromBytes(r.stderr));
+      t.eqStr(string.fromBytes(r.stdout), "from the child\n", host + ": a spawnSelf child handed the output writes it");
+    }
+    Err(e): { t.fail(host + ": did not run"); }
+  }
+}
+
+export async string test_a_spawn_self_child_writes_the_output_it_inherits_on_every_host(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string probe = "packages/platform/test/wac/inheritself_probe.wac";
+  string dir = base(sys) + "/inheritself";
+  await sys.files().mkdir(dir, true);
+  inheritedSaid(t, "v8", await procs.exec("native/v8/target/release/wac", ["run", "--allow-run", probe],
+                                          u8[](), ChildEnv.inherited(), Launch.plain()));
+  string denoOut = dir + "/probe-deno.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
+                            "--target", "deno", "-o", denoOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  inheritedSaid(t, "deno", await procs.exec("deno", ["run", "-A", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  string nodeOut = dir + "/probe-node.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
+                            "--target", "node", "-o", nodeOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  inheritedSaid(t, "node", await procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  return t.report();
+}
+
+/** An `async` call that waits on the host once. */
+async bool statted(Files fs) { return (await fs.stat(".")).isOk(); }
+
+/**
+ * A `.wait()` that drove an `async` call to its end leaves nothing outstanding.
+ *
+ * The call parks its continuation on the program's queue, and the `wait` then runs the machine itself — so
+ * the queued one is an earlier suspension, and calling it does nothing. Counting it anyway made the
+ * JavaScript hosts end a finished program with *"1 continuation(s) still waiting"*: `roundtrip.wac` did,
+ * on Deno, as soon as it listed a directory through `Files`.
+ */
+export string test_a_wait_that_finished_an_async_call_leaves_nothing_outstanding(Sys sys) {
+  T t = T.create();
+  i32 before = sys.core.outstanding();
+  t.isTrue(statted(sys.files()).wait().unwrap(), "the stat answered");
+  t.eqI32(sys.core.outstanding() - before, 0, "what the wait finished is still counted as outstanding");
+  return t.report();
+}

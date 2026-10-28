@@ -1600,9 +1600,9 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
     // file-writing applet on this host. `issues/system/0277c`.
     //
     // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
-    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
-    // redirects, as it does on the host: a child that says its output is a file gets a file."* That
-    // was aligned to what the host does, and this host did not do it.
+    // `Frame`'s capture, and `packages/platform`'s frame (gone since design/system/0013 step 5) stated
+    // the answer: *"`openOutput` redirects, as it does on the host: a child that says its output is a
+    // file gets a file."* That was aligned to what the host does, and this host did not do it.
     //
     // Standard error is deliberately untouched: it is where a program says what went wrong, and
     // sending that into the file being written would hide it — `native/src/main.rs` makes the same
@@ -2371,9 +2371,13 @@ fn dispatch(
             let argv = read_bytes_array(scope, args.get(1));
             let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(3));
-            // The `INHERIT_*` mask; only the input bit is the host's — `DETACHED` (4) is handled in
-            // std's `Cli.of`, where the ticket decides whether to stop the child. `issues/system/0312b`.
-            let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) & 1 != 0;
+            // The `INHERIT_*` mask: the input bit and the output bit are the host's — `DETACHED` (4) is
+            // handled in std, where the ticket decides whether to stop the child. `issues/system/0312b`.
+            let mask = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let inherits = mask & 1 != 0;
+            // **The child writes this process's own streams**, as `spawn`'s does — this read only the
+            // input bit, so a `spawnSelf` child handed the output wrote into a queue nobody read.
+            let inherit_out = mask & 2 != 0;
             // The fifth and last wac argument. Read rather than dropped as it used to be, which is
             // the whole of 0157: a parent that offered to serve a filesystem was never asked to.
             let serve_fs = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
@@ -2437,8 +2441,9 @@ fn dispatch(
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
-                out: Some(out.clone()),
-                err: Some(err.clone()),
+                // None is what `emit_bytes` falls through on: no parent queue, so the real stream.
+                out: if inherit_out { None } else { Some(out.clone()) },
+                err: if inherit_out { None } else { Some(err.clone()) },
                 input: Some(input),
                 inherits,
                 fs_req: fs_req.clone(),

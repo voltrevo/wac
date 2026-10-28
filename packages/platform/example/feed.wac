@@ -1,12 +1,12 @@
-// What `send` answers when the thing it is sending to has stopped listening.
+// What a write to a child's input answers when the child has stopped listening.
 //
 //   feed        ->  the child's echo, then the verdicts
 //   feed echo   ->  reads its input to the end and writes it back
 //   feed flood  ->  writes nine megabytes and stops, to fill a parent that is not reading
 //
-// **`send` answers `Pending<bool>`, and the bool is the whole point of it.** platform.wac says a
-// caller checks it; `packages/sh` checks it; the runtime with no JavaScript in it answers it from
-// `stream.write`, which is false once a stream is finished. The three JavaScript hosts wrote
+// **The write answers whether it landed, and that is the whole point of it** — `OutputClosed` when it
+// did not. A caller checks it; `packages/sh` checks it; the runtime with no JavaScript in it answers it
+// from `stream.write`, which is false once a stream is finished. The three JavaScript hosts wrote
 //
 //     if (kid !== undefined) { kid.in.push(p.slice(4)); return EMPTY; }
 //
@@ -17,7 +17,7 @@
 // **The verdicts are answers rather than measurements**, so two hosts can be compared on them:
 //
 //   - a send to a live child lands — *yes*, or the capability does not work at all
-//   - a send after `closeFeed` does not land — *yes*, the fix
+//   - a send after the child's input is closed does not land — *yes*, the fix
 //   - and the child, which read to the end before answering, echoes only what actually landed
 //   - a child that writes more than the queue holds loses nothing — the other direction, and the
 //     other half of the same mistake (0120): a full queue must make the writer *wait*, not fail
@@ -26,38 +26,41 @@
 // answered false and queued the bytes anyway would pass the middle line and fail this one. The
 // fourth needs more than `QUEUE_CAP` bytes to mean anything, which is why it sends nine megabytes
 // through a queue that holds eight: with fewer, every host passes by never filling anything.
-import { HostChild, Cli, Core, GRANT_NONE, Sys } from "std";
-import { Read } from "core";
-import { argvOf } from "../src/stream.wac";
+import { Authority, Child, Launch, Sys, Clock, Input, Output, Procs, Unsupported } from "std";
+import { Read, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
-  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "echo") { return echo(cli); }
-  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "flood") { return flood(core, cli); }
+  string[] argv = sys.args();
+  Input stdin = sys.stdin();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Procs procs = sys.procs();
+  i32 n = argv.len();
+  if (n > 0 && argv[0] == "echo") { return echo(stdin, out); }
+  if (n > 0 && argv[0] == "flood") { return flood(out, clock); }
 
-  HostChild kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", 0, false).wait();
-  if (kid.unavailable()) {
-    core.warn("feed: this world cannot spawn: \{kid.error}");
+  auto started = flatten(procs.spawnSelf(["echo", "feed"], Authority.none(), Launch.plain()).wait());
+  if (started.isErr()) {
+    auto why = started.err()!;
+    err.line((why is Unsupported ? "feed: this world cannot spawn: " : "feed: the child would not start: ") + "\{why}");
     return 2;
   }
-  if (kid.handle < 0) {
-    core.warn("feed: the child would not start: \{kid.error}");
-    return 2;
-  }
+  Child kid = started.unwrap();
+  Output feeding = kid.input();
+  Input hearing = kid.output();
 
   // ── A send to a live child lands ──
-  bool first = cli.send(kid.handle, "kept\n".toBytes()).wait();
-  say(cli, "a send to a live child lands", first);
+  bool first = feeding.write("kept\n".toBytes()).wait().isOk();
+  say(out, "a send to a live child lands", first);
 
   // ── And after its feed is closed, a send says so rather than claiming success ──
   //
-  // `closeFeed` and not `closeSocket`: the child must stay alive to answer, which is the whole
+  // Closing its input and not `stop`: the child must stay alive to answer, which is the whole
   // distinction between the two calls.
-  cli.closeFeed(kid.handle);
-  bool second = cli.send(kid.handle, "dropped\n".toBytes()).wait();
-  say(cli, "a send after closeFeed does not land", !second);
+  feeding.close().wait();
+  bool second = feeding.write("dropped\n".toBytes()).wait().isOk();
+  say(out, "a send after its input is closed does not land", !second);
 
   // ── What the child actually received ──
   //
@@ -65,13 +68,15 @@ export i32 main(Sys sys) {
   string heard = "";
   bool reading = true;
   while (reading) {
-    match (cli.recv(kid.handle).wait()) {
+    auto chunk = flatten(hearing.chunk().wait());
+    if (chunk.isErr()) { err.line("feed: reading the child failed: \{chunk.err()!}"); return 2; }
+    match (chunk.unwrap()) {
       Data(bytes): { heard = heard + string.fromBytes(bytes); }
       End: { reading = false; }
-      Failed(why): { core.warn("feed: reading the child failed: \{why}"); return 2; }
+      Failed(why): { err.line("feed: reading the child failed: \{why}"); return 2; }
     }
   }
-  say(cli, "the child heard what landed and nothing else", heard == "heard: kept\n");
+  say(out, "the child heard what landed and nothing else", heard == "heard: kept\n");
 
   // ── And the other direction: a child writing more than the queue holds loses nothing ──
   //
@@ -79,7 +84,7 @@ export i32 main(Sys sys) {
   // write has to wait. A host that acknowledged the write without waiting would drop everything
   // past the cap and the total below would be short — silently, which is what made this worth a
   // program rather than an assertion.
-  return flooded(core, cli) ? 0 : 2;
+  return flooded(err, out, clock, procs) ? 0 : 2;
 }
 
 /** How much the flooding child writes: more than `QUEUE_CAP`, which is eight megabytes. */
@@ -89,31 +94,34 @@ i32 FLOOD_BYTES() { return 9 * 1024 * 1024; }
 i32 BLOCK() { return 65536; }
 
 /** Spawn a child that writes more than the queue holds, and count every byte it sent. */
-bool flooded(Core core, Cli cli) {
-  HostChild kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", 0, false).wait();
-  if (kid.unavailable() || kid.handle < 0) {
-    core.warn("feed: the flooding child would not start: \{kid.error}");
+bool flooded(Output err, Output out, Clock clock, Procs procs) {
+  auto started = flatten(procs.spawnSelf(["flood", "feed"], Authority.none(), Launch.plain()).wait());
+  if (started.isErr()) {
+    err.line("feed: the flooding child would not start: \{started.err()!}");
     return false;
   }
+  Input flood = started.unwrap().output();
   // **Not reading for a moment**, so the queue is certainly full before anything drains it. Without
   // this the parent might keep up and the child would never have to wait, which is a race that
   // passes rather than one that fails — the worst kind.
-  core.sleepMillis(300).wait();
+  clock.sleepMillis(300).wait();
 
   i32 got = 0;
   string tail = "";
   bool reading = true;
   while (reading) {
-    match (cli.recv(kid.handle).wait()) {
+    auto chunk = flatten(flood.chunk().wait());
+    if (chunk.isErr()) { err.line("feed: reading the flood failed: \{chunk.err()!}"); return false; }
+    match (chunk.unwrap()) {
       Data(bytes): { got = got + bytes.len(); tail = string.fromBytes(bytes); }
       End: { reading = false; }
-      Failed(why): { core.warn("feed: reading the flood failed: \{why}"); return false; }
+      Failed(why): { err.line("feed: reading the flood failed: \{why}"); return false; }
     }
   }
-  say(cli, "a child that outruns its reader loses nothing", got == FLOOD_BYTES() + VERDICT_LEN());
+  say(out, "a child that outruns its reader loses nothing", got == FLOOD_BYTES() + VERDICT_LEN());
   // The child's own verdict, in its last chunk: it timed its writes and says whether they waited.
   // A host that acknowledged a write into a full queue would have let it finish immediately.
-  say(cli, "and it waited for the reader rather than racing ahead", contains(tail, "waited: yes"));
+  say(out, "and it waited for the reader rather than racing ahead", contains(tail, "waited: yes"));
   return true;
 }
 
@@ -151,33 +159,33 @@ bool contains(string s, string needle) {
  * not lets it run to the end at memory speed. The parent's 300ms of not reading is the floor, and
  * 200 is well inside it — no upper bound, because how much longer is the machine's business.
  */
-i32 flood(Core core, Cli cli) {
+i32 flood(Output out, Clock clock) {
   u8[] block = u8[].filled(BLOCK(), 'x');
-  i64 began = core.monotonicNanos().wait();
+  i64 began = flatten(clock.monotonicNanos().wait()).unwrap();
   i32 sent = 0;
   while (sent < FLOOD_BYTES()) {
-    cli.write(block);
+    out.write(block);
     sent = sent + BLOCK();
   }
-  i64 took = core.monotonicNanos().wait() - began;
+  i64 took = flatten(clock.monotonicNanos().wait()).unwrap() - began;
   u8[] line = u8[].filled(VERDICT_LEN(), ' ');
   u8[] said = ("waited: " + (took >= 200000000 ? "yes" : "NO")).toBytes();
   line.copyFrom(said, 0, 0, said.len());
   line[VERDICT_LEN() - 1] = '\n';
-  cli.write(line);
+  out.write(line);
   return 0;
 }
 
 /** The child: everything it is fed, in one line, once the feed has ended. */
-i32 echo(Cli cli) {
-  // `readStdin` is "all of standard input, to the end", so this call is itself the wait for the
-  // feed to close — which is what makes the parent's `closeFeed` observable from in here.
-  u8[] got = cli.readStdin().wait();
-  cli.write("heard: \{string.fromBytes(got)}".toBytes());
+i32 echo(Input stdin, Output out) {
+  // `readAll` is "all of standard input, to the end", so this call is itself the wait for the
+  // feed to close — which is what makes the parent's close observable from in here.
+  u8[] got = flatten(stdin.readAll().wait()).orElse(u8[]());
+  out.write("heard: \{string.fromBytes(got)}".toBytes());
   return 0;
 }
 
 /** One verdict, in a line that is the same on every host that keeps the promise. */
-void say(Cli cli, string claim, bool held) {
-  cli.write((claim + ": " + (held ? "yes" : "NO") + "\n").toBytes());
+void say(Output out, string claim, bool held) {
+  out.write((claim + ": " + (held ? "yes" : "NO") + "\n").toBytes());
 }

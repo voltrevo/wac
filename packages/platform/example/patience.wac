@@ -6,24 +6,25 @@
 // handshake and then says nothing used to stop the application permanently — no error, no log
 // line, no way to notice (wac-mono issue 0018).
 //
-// The deadline is a parameter of the wait:
+// The deadline is a timer raced against the call:
 //
-//   i32 which = core.waitAny([r.id], ms);   // -1 when the time ran out
+//   Ticket<Result<void, union<Unsupported>>> timer = clock.sleepMillis(ms);
+//   i32 which = Ticket.first([r, timer]).wait().orElse(1);   // 1 when the time ran out
+//   if (which == 0) { timer.cancel(); }
 //
-// Not a `recvWithin`, and not a timer in the list. `waitAny` already parks on this worker's own
-// memory and `Atomics.wait` takes a timeout, so the deadline costs no opcode, no ring slot and
-// nothing to clean up — and the same parameter bounds `connect`, `accept`, `readFile` or a
-// child's `exitCode` without any of them knowing what a deadline is.
+// `Clock.within` is the same race with the bookkeeping done — whichever ticket loses is cancelled,
+// so a deadline never leaves the host holding a slot — and the connect below uses it, because a
+// connect that ran out of time is given up. A read that ran out of time is not, here, and `within`
+// would cancel it; so the rounds race the timer by hand and cancel only the timer.
 //
-// The first version of this file passed a `core.sleepMillis` ticket in the list instead. It
-// worked, and it made every round allocate a ticket that had to be cancelled on every path;
-// forgetting one held a ring slot for good, and four of those stopped the program somewhere
-// else entirely. That is why the deadline moved onto the wait. What survives is the part that
-// is genuinely the caller's problem, because it is about the call rather than the clock:
+// The losing timer has to be cancelled on every path, which is exactly the obligation that once moved
+// the deadline onto a host-side wait instead: forgetting one held a ring slot for good, and four of
+// those stopped the program somewhere else entirely. What survives is the part that is genuinely the
+// caller's problem, because it is about the call rather than the clock:
 //
 //   * wait more — wait on the **same** ticket again. Do not issue a second `recv`: two reads
 //                 on one socket, and the byte order is anyone's guess.
-//   * give up   — cancel *and* close the handle. Cancelling discards the answer; closing is
+//   * give up   — cancel *and* close the socket. Cancelling discards the answer; closing is
 //                 what makes the read finish, which is what returns its slot.
 //
 // Six rounds, deliberately more than the ring has slots, so a version that leaked would stall
@@ -34,79 +35,88 @@
 //   ...
 //   giving up after 600ms
 
-import { Cli, Core, Pending, HostSocket, Sys } from "std";
-import { Read } from "core";
+import { Clock, Socket, Sys, Net, Output, TimedOut, Unsupported } from "std";
+import { Read, Result, Ticket, flatten } from "core";
 
 static i32 ROUNDS = 6;   // more than SLOTS, so a leaked ticket would show up as a stall
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 3) {
-    core.warn("usage: patience <host> <port> <millis>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
+  Clock clock = sys.clock();
+  if (argv.len() < 3) {
+    err.line("usage: patience <host> <port> <millis>");
     return 2;
   }
-  string host = string.fromBytes(cli.arg(0).wait());
-  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
-  i32 ms = atoi(string.fromBytes(cli.arg(2).wait()));
+  string host = argv[0];
+  i32 port = atoi(argv[1]);
+  i32 ms = atoi(argv[2]);
 
-  // Even connecting is bounded, and the shape is identical — which is the point of putting the
-  // deadline on the waiter rather than on each capability.
-  Pending<HostSocket> pc = cli.connect(host, port);
-  if (core.waitAny([pc.id], ms) < 0) {
-    core.warn("patience: connect to \{host} did not answer within \{ms}ms");
-    // **The dial may already have succeeded**, which is the case this comment used to deny. If
-    // it completed as the deadline passed, the answer is in hand: a real socket, in the host's
-    // table, with the peer holding an open line. Cancelling *closes* such a socket, so the peer
-    // finds out rather than waiting on something nothing can reach — a dialled connection is the
-    // one thing in this family nothing else can want. `issues/system/0310b`.
-    //
-    // If it truly is still in flight there is nothing to close and the slot comes back when the
-    // host's own attempt finishes: cancelling says "discard the answer", not "stop trying". Both
-    // are worth knowing before doing this in a loop, and only the second used to be written here.
-    pc.cancel();
+  // Even connecting is bounded, and by the same clock.
+  auto dialled = flatten(clock.within(net.connect(host, port), ms).wait());
+  if (dialled.isErr()) {
+    auto why = dialled.err()!;
+    if (why is TimedOut) {
+      err.line("patience: connect to \{host} did not answer within \{ms}ms");
+      // **The dial may already have succeeded** as the deadline passed. `within` cancels the loser,
+      // and cancelling a connect that completed *closes* the socket, so the peer finds out rather than
+      // waiting on something nothing can reach — a dialled connection is the one thing in this family
+      // nothing else can want. `issues/system/0310b`. If it truly is still in flight there is nothing
+      // to close and the slot comes back when the host's own attempt finishes: cancelling says
+      // "discard the answer", not "stop trying".
+      return 1;
+    }
+    err.line("patience: \{why}");
     return 1;
   }
-  HostSocket s = pc.wait();
-  if (s.handle < 0) {
-    core.warn("patience: \{s.error}");
-    return 1;
-  }
+  Socket s = dialled.unwrap();
 
   // One read, waited on more than once. Re-issuing `recv` per round instead would be the bug
   // the header warns about, and it would not look like one.
-  Pending<Read> r = cli.recv(s.handle);
+  auto r = s.recv();
   i32 waited = 0;
 
   for (i32 round = 0; round < ROUNDS; round++) {
-    i32 which = core.waitAny([r.id], ms);
+    Ticket<Result<void, union<Unsupported>>> timer = clock.sleepMillis(ms);
+    // A race that cannot settle is a stuck wait, not a winner; it counts as the time running out.
+    Ticket<i32> race = Ticket.first([r, timer]);
+    i32 which = race.wait().orElse(1);
     waited = waited + ms;
 
     if (which == 0) {
+      timer.cancel();
       // Three outcomes, and a deadline is exactly the situation where they differ: a peer that
       // closed, a connection that broke, and bytes that arrived all used to be two cases.
-      match (r.wait()) {
-        Data(bytes): {
-          core.log("peer sent \{bytes.len()} bytes after \{waited}ms");
-        }
-        End: { core.log("peer closed after \{waited}ms"); }
-        Failed(why): { core.log("connection failed after \{waited}ms: \{why}"); }
+      auto heard = flatten(r.wait());
+      if (heard.isErr()) {
+        out.line("connection failed after \{waited}ms: \{heard.err()!}");
+        s.close();
+        return 0;
       }
-      cli.closeSocket(s.handle);
+      match (heard.unwrap()) {
+        Data(bytes): {
+          out.line("peer sent \{bytes.len()} bytes after \{waited}ms");
+        }
+        End: { out.line("peer closed after \{waited}ms"); }
+        Failed(why): { out.line("connection failed after \{waited}ms: \{why}"); }
+      }
+      s.close();
       return 0;
     }
 
     if (round + 1 < ROUNDS) {
-      core.log("waited \{waited}ms, nothing yet");
+      out.line("waited \{waited}ms, nothing yet");
     }
   }
 
-  core.log("giving up after \{waited}ms");
+  out.line("giving up after \{waited}ms");
   // Giving up for real. Cancelling says the answer is unwanted; closing the socket is what
   // makes the read finish, and the slot returns when it does. Without the close, the ring is
   // short a slot for as long as the peer keeps the connection open.
   r.cancel();
-  cli.closeSocket(s.handle);
+  s.close();
   return 1;
 }
 

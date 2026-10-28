@@ -27,9 +27,10 @@ import {
   MILLER_RABIN_ROUNDS, PUBLIC_EXPONENT, small, suitablePrime,
 } from "../../src/rsagen.wac";
 import { equal } from "../../../bytes/src/slice.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Launch, Procs, Sys } from "std";
 import { derInteger, derSequence, derConcat, derIntegerSmall } from "../../../tls/src/derwrite.wac";
 import { encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
+import { flatten } from "core";
 
 /** A PKCS#1 `RSAPrivateKey` as the PEM openssl reads, CRT parameters and all. */
 u8[] privateKeyPem(RsaKey k) {
@@ -67,7 +68,8 @@ bool contains(string text, string needle) {
   return false;
 }
 
-export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core, Cli cli) {
+export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] seed = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { seed[i] = ((i * 13 + 7) & 0xFF) as@ u8; }
@@ -87,11 +89,11 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core
 
   // The one that matters and that only the host can answer: are p and q actually prime, and is d
   // actually the inverse? `openssl rsa -check` tests exactly that.
-  Exec r = cli.exec("openssl", ["rsa", "-check", "-noout", "-text"],
-                    privateKeyPem(k)).wait();
-  t.eqStr(r.error, "", "openssl could not be started");
-  string out = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.eqI32(r.status, 0, "openssl rejected the generated key: \{out}");
+  auto rRan = flatten(procs.exec("openssl", ["rsa", "-check", "-noout", "-text"], privateKeyPem(k), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqStr("\{rRan.isErr() ? "\{rRan.err()!}" : ""}", "", "openssl could not be started");
+  string out = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
+  t.eqI32(r!.status, 0, "openssl rejected the generated key: \{out}");
   t.isTrue(contains(out, "RSA key ok"),
            "openssl accepts it: p and q are prime, n = p*q, and d is the inverse — said: \{out}");
   // And openssl's own reading of the modulus width, which the key's structure has to agree with.
@@ -109,7 +111,7 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core
   return t.report();
 }
 
-export string test_the_same_seed_gives_the_same_key(Core core, Cli cli) {
+export string test_the_same_seed_gives_the_same_key() {
   // Deterministic from the seed, which is what makes this testable at all — and what makes the seed
   // the whole of the key's secrecy. Both halves are worth an assertion.
   T t = T.create();
@@ -135,7 +137,7 @@ export string test_the_same_seed_gives_the_same_key(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli) {
+export string test_miller_rabin_knows_primes_from_composites() {
   // Known answers, since there is no external oracle for a predicate. The composites are chosen to
   // be the ones a weak test gets wrong.
   T t = T.create();
@@ -170,7 +172,7 @@ export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli)
   return t.report();
 }
 
-export string test_gcd_and_modular_inverse(Core core, Cli cli) {
+export string test_gcd_and_modular_inverse() {
   T t = T.create();
   t.eqI64(smallOf(gcd(small(12), small(18))), 6, "gcd(12,18) = 6");
   t.eqI64(smallOf(gcd(small(17), small(5))), 1, "coprime gives 1");
@@ -202,7 +204,7 @@ i64 smallOf(Big v) {
   return out;
 }
 
-export string test_a_prime_is_rejected_when_e_has_no_inverse(Core core, Cli cli) {
+export string test_a_prime_is_rejected_when_e_has_no_inverse() {
   // `gcd(e, p-1) == 1` or `e` has no inverse mod `p-1` and the key cannot be made. With e = 65537
   // that needs 65537 to divide p-1 and essentially never happens, so the check looks like dead code
   // and dropping it survives every other test here.

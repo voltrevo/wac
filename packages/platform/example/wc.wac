@@ -7,39 +7,46 @@
 // this one is parked — and it can reach nothing it was not handed, so `main`'s two
 // parameters are the complete list of what it can do.
 
-import { Cli, Core, FileResult, Sys } from "std";
+import { Sys, Clock, Env, Files, Input, Output } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Input stdin = sys.stdin();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
   // No argument means standard input, as `wc` has always meant it. That this works at all
   // is the difference between a file-to-file tool and something you can put in a pipe.
   u8[] data = u8[]();
   string label = "";
-  if (cli.argCount().wait() < 1) {
-    data = cli.readStdin().wait();
+  if (argv.len() < 1) {
+    data = flatten(stdin.readAll().wait()).orElse(u8[]());
   } else {
-    label = string.fromBytes(cli.arg(0).wait());
-    FileResult f = cli.readFile(label).wait();
-    if (!f.ok) {
-      core.warn("wc: \{label}: \{f.error}");
+    label = argv[0];
+    auto fRead = flatten(fs.readFile(label).wait());
+    u8[]? f = fRead.ok();
+    if ((f is null)) {
+      err.line("wc: \{label}: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
       return 1;
     }
-    data = f.bytes;
+    data = f!;
   }
 
-  i64 startedAt = core.monotonicNanos().wait();
+  i64 startedAt = flatten(clock.monotonicNanos().wait()).unwrap();
   Counts c = count(data);
-  i64 tookNanos = core.monotonicNanos().wait() - startedAt;
+  i64 tookNanos = flatten(clock.monotonicNanos().wait()).unwrap() - startedAt;
 
   string line = "\{c.lines} \{c.words} \{c.bytes}";
-  core.log(label == "" ? line : "\{line} \{label}");
+  out.line(label == "" ? line : "\{line} \{label}");
 
   // Unset and empty are different things, which is why the capability returns `string?`.
-  u8[]? verboseRaw = cli.env("WC_VERBOSE").wait();
+  u8[]? verboseRaw = flatten(env.get("WC_VERBOSE").wait()).orElse(null);
   string? verbose = verboseRaw is null ? null : string.fromBytes(verboseRaw!);
   if (verbose is null) { return 0; }
-  core.log("counted in \{(tookNanos / 1000) as~ i32}us");
+  out.line("counted in \{(tookNanos / 1000) as~ i32}us");
   return 0;
 }
 

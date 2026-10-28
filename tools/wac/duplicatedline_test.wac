@@ -35,9 +35,10 @@
 // thing somebody should be able to find.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /** The shortest repeated unit worth reporting. Below this it is punctuation, not prose. */
 static i32 FLOOR = 12;
@@ -75,14 +76,16 @@ string repeatedUnit(string line) {
   return unit == 0 ? "" : line.slice(0, unit);
 }
 
-export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
+export string test_no_line_is_one_thing_written_twice(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // `site/` is the one npm subtree and is excluded from every repo-wide walk here; the four extensions
   // are the ones with prose in them.
   // `vision/` joins `site/` as an exclusion, and for its own reason: it is maintained by hand and
   // nothing programmatic runs over it, so an edit there must not be able to fail a build.
-  string[] files = sourceFiles(core, cli, [".md", ".ts", ".wac", ".rs"],
-                               ["site/", "vision/"]);
+  string[] files = sourceFiles(err, procs, [".md", ".ts", ".wac", ".rs"], ["site/", "vision/"]);
 
   // **A floor, so a walk that resolved nothing cannot pass as a clean result** — which is the failure
   // this whole file is about, one level up.
@@ -95,9 +98,9 @@ export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
   string found = "";
   i32 n = 0;
   for (i32 f = 0; f < files.len(); f++) {
-    FileResult r = cli.readFile(files[f]).wait();
-    if (!r.ok) { continue; }
-    u8[] b = r.bytes;
+    u8[]? r = flatten(fs.readFile(files[f]).wait()).ok();
+    if ((r is null)) { continue; }
+    u8[] b = r!;
     i32 line = 1;
     i32 from = 0;
     for (i32 i = 0; i <= b.len(); i++) {
@@ -120,8 +123,7 @@ export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_check_can_actually_match_which_the_sweep_it_replaces_could_not(Core core,
-                                                                                      Cli cli) {
+export string test_the_check_can_actually_match_which_the_sweep_it_replaces_could_not() {
   T t = T.create();
   // **The canary, and it is the point of this file rather than a formality.** The predecessor reported
   // the repository clean while two duplications sat in it — not by matching nothing, but by being a

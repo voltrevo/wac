@@ -23,7 +23,7 @@ import { parse as parseRequest } from "./probe.wac";
 import { parse as parseResponse, buildRequest } from "./client_probe.wac";
 import { handle as serve } from "../../server/test/probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
-import { Core, Cli, Sys } from "std";
+import { Core, Cli, Sys, Output, Procs } from "std";
 import {
   test_a_body_past_the_limit_is_refused_on_every_route_into_one as lm__limits,
   test_a_message_with_more_headers_than_the_table_holds as lm__headers,
@@ -238,8 +238,9 @@ string[] responseMethods() {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Procs procs = sys.procs();
   i32 seen = 0;
 
   string[] cs = cases();
@@ -370,158 +371,158 @@ export i32 main(Sys sys) {
   // None of the 32 expects a trap, so there is no `trapCase` sweep.
   i32 bad = 0;
   if (lm__limits().len() > 0) {
-    core.warn("error: FAILED limits_test test_a_body_past_the_limit_is_refused_on_every_route_into_one");
+    err.line("error: FAILED limits_test test_a_body_past_the_limit_is_refused_on_every_route_into_one");
     bad = bad + 1;
   }
   if (lm__headers().len() > 0) {
-    core.warn("error: FAILED limits_test test_a_message_with_more_headers_than_the_table_holds");
+    err.line("error: FAILED limits_test test_a_message_with_more_headers_than_the_table_holds");
     bad = bad + 1;
   }
   if (lm__shapes().len() > 0) {
-    core.warn("error: FAILED limits_test test_the_shapes_a_node_generated_corpus_does_not_contain");
+    err.line("error: FAILED limits_test test_the_shapes_a_node_generated_corpus_does_not_contain");
     bad = bad + 1;
   }
   if (lm__builder().len() > 0) {
-    core.warn("error: FAILED limits_test test_the_request_builder_produces_what_a_caller_asked_for");
+    err.line("error: FAILED limits_test test_the_request_builder_produces_what_a_caller_asked_for");
     bad = bad + 1;
   }
-  if (fz__fuzz_neither_parser_accepts_what_the_other_refuses(core, cli).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_fuzz_neither_parser_accepts_what_the_other_refuses");
+  if (fz__fuzz_neither_parser_accepts_what_the_other_refuses(sys).len() > 0) {
+    err.line("error: FAILED fuzz_test test_fuzz_neither_parser_accepts_what_the_other_refuses");
     bad = bad + 1;
   }
-  if (fz__fuzz_a_second_seed(core, cli).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_fuzz_a_second_seed");
+  if (fz__fuzz_a_second_seed(sys).len() > 0) {
+    err.line("error: FAILED fuzz_test test_fuzz_a_second_seed");
     bad = bad + 1;
   }
-  if (or__oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case(core, cli).len() > 0) {
-    core.warn("error: FAILED oracle_test test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case");
+  if (or__oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case(sys).len() > 0) {
+    err.line("error: FAILED oracle_test test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case");
     bad = bad + 1;
   }
-  if (or__the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(core, cli).len() > 0) {
-    core.warn("error: FAILED oracle_test test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one");
+  if (or__the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(sys).len() > 0) {
+    err.line("error: FAILED oracle_test test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one");
     bad = bad + 1;
   }
   if (px__a_proxy_variable_parses_the_way_http_proxy_is_actually_written().len() > 0) {
-    core.warn("error: FAILED proxy_test test_a_proxy_variable_parses_the_way_http_proxy_is_actually_written");
+    err.line("error: FAILED proxy_test test_a_proxy_variable_parses_the_way_http_proxy_is_actually_written");
     bad = bad + 1;
   }
   if (px__the_request_is_a_connect_to_an_authority_and_asks_for_no_close().len() > 0) {
-    core.warn("error: FAILED proxy_test test_the_request_is_a_connect_to_an_authority_and_asks_for_no_close");
+    err.line("error: FAILED proxy_test test_the_request_is_a_connect_to_an_authority_and_asks_for_no_close");
     bad = bad + 1;
   }
   if (px__a_reply_is_complete_at_the_blank_line_and_not_before().len() > 0) {
-    core.warn("error: FAILED proxy_test test_a_reply_is_complete_at_the_blank_line_and_not_before");
+    err.line("error: FAILED proxy_test test_a_reply_is_complete_at_the_blank_line_and_not_before");
     bad = bad + 1;
   }
   if (px__bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply().len() > 0) {
-    core.warn("error: FAILED proxy_test test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply");
+    err.line("error: FAILED proxy_test test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply");
     bad = bad + 1;
   }
   if (px__the_proxys_own_words_come_back_for_a_refusal().len() > 0) {
-    core.warn("error: FAILED proxy_test test_the_proxys_own_words_come_back_for_a_refusal");
+    err.line("error: FAILED proxy_test test_the_proxys_own_words_come_back_for_a_refusal");
     bad = bad + 1;
   }
   if (px__headers_before_the_blank_line_do_not_move_where_the_tunnel_starts().len() > 0) {
-    core.warn("error: FAILED proxy_test test_headers_before_the_blank_line_do_not_move_where_the_tunnel_starts");
+    err.line("error: FAILED proxy_test test_headers_before_the_blank_line_do_not_move_where_the_tunnel_starts");
     bad = bad + 1;
   }
   if (px__http_1_0_is_a_proxy_answering_not_a_proxy_failing().len() > 0) {
-    core.warn("error: FAILED proxy_test test_http_1_0_is_a_proxy_answering_not_a_proxy_failing");
+    err.line("error: FAILED proxy_test test_http_1_0_is_a_proxy_answering_not_a_proxy_failing");
     bad = bad + 1;
   }
   if (px__complete_reply().len() > 0) {
-    core.warn("error: FAILED proxy_test test_a_complete_reply_that_is_not_a_status_line_is_not_a_proxy_answering");
+    err.line("error: FAILED proxy_test test_a_complete_reply_that_is_not_a_status_line_is_not_a_proxy_answering");
     bad = bad + 1;
   }
   if (px__something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line().len() > 0) {
-    core.warn("error: FAILED proxy_test test_something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line");
+    err.line("error: FAILED proxy_test test_something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line");
     bad = bad + 1;
   }
-  if (rq__well_formed_requests(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_well_formed_requests");
+  if (rq__well_formed_requests(sys).len() > 0) {
+    err.line("error: FAILED request_test test_well_formed_requests");
     bad = bad + 1;
   }
-  if (rq__chunked_bodies(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_chunked_bodies");
+  if (rq__chunked_bodies(sys).len() > 0) {
+    err.line("error: FAILED request_test test_chunked_bodies");
     bad = bad + 1;
   }
-  if (rq__incomplete_messages_are_not_rejections(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_incomplete_messages_are_not_rejections");
+  if (rq__incomplete_messages_are_not_rejections(sys).len() > 0) {
+    err.line("error: FAILED request_test test_incomplete_messages_are_not_rejections");
     bad = bad + 1;
   }
-  if (rq__incomplete_chunked_messages_are_not_rejections(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_incomplete_chunked_messages_are_not_rejections");
+  if (rq__incomplete_chunked_messages_are_not_rejections(sys).len() > 0) {
+    err.line("error: FAILED request_test test_incomplete_chunked_messages_are_not_rejections");
     bad = bad + 1;
   }
-  if (rq__framing_ambiguity_is_refused_the_smuggling_shapes(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_framing_ambiguity_is_refused_the_smuggling_shapes");
+  if (rq__framing_ambiguity_is_refused_the_smuggling_shapes(sys).len() > 0) {
+    err.line("error: FAILED request_test test_framing_ambiguity_is_refused_the_smuggling_shapes");
     bad = bad + 1;
   }
-  if (rq__malformed_request_lines_and_headers(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_malformed_request_lines_and_headers");
+  if (rq__malformed_request_lines_and_headers(sys).len() > 0) {
+    err.line("error: FAILED request_test test_malformed_request_lines_and_headers");
     bad = bad + 1;
   }
-  if (rq__malformed_chunked_bodies(core, cli).len() > 0) {
-    core.warn("error: FAILED request_test test_malformed_chunked_bodies");
+  if (rq__malformed_chunked_bodies(sys).len() > 0) {
+    err.line("error: FAILED request_test test_malformed_chunked_bodies");
     bad = bad + 1;
   }
   if (rq__what_the_parser_consumed_is_where_the_next_message_starts().len() > 0) {
-    core.warn("error: FAILED request_test test_what_the_parser_consumed_is_where_the_next_message_starts");
+    err.line("error: FAILED request_test test_what_the_parser_consumed_is_where_the_next_message_starts");
     bad = bad + 1;
   }
   if (rq__each_rejection_reports_its_own_reason_not_just_no().len() > 0) {
-    core.warn("error: FAILED request_test test_each_rejection_reports_its_own_reason_not_just_no");
+    err.line("error: FAILED request_test test_each_rejection_reports_its_own_reason_not_just_no");
     bad = bad + 1;
   }
   if (rq__a_framing_length_too_large_for_an_i32_is_refused_not_wrapped().len() > 0) {
-    core.warn("error: FAILED request_test test_a_framing_length_too_large_for_an_i32_is_refused_not_wrapped");
+    err.line("error: FAILED request_test test_a_framing_length_too_large_for_an_i32_is_refused_not_wrapped");
     bad = bad + 1;
   }
-  if (rs__well_formed_responses(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_well_formed_responses");
+  if (rs__well_formed_responses(sys).len() > 0) {
+    err.line("error: FAILED response_test test_well_formed_responses");
     bad = bad + 1;
   }
-  if (rs__chunked_responses(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_chunked_responses");
+  if (rs__chunked_responses(sys).len() > 0) {
+    err.line("error: FAILED response_test test_chunked_responses");
     bad = bad + 1;
   }
-  if (rs__bodies_that_are_not_there_whatever_the_headers_say(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_bodies_that_are_not_there_whatever_the_headers_say");
+  if (rs__bodies_that_are_not_there_whatever_the_headers_say(sys).len() > 0) {
+    err.line("error: FAILED response_test test_bodies_that_are_not_there_whatever_the_headers_say");
     bad = bad + 1;
   }
-  if (rs__a_body_delimited_by_the_connection_closing(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_a_body_delimited_by_the_connection_closing");
+  if (rs__a_body_delimited_by_the_connection_closing(sys).len() > 0) {
+    err.line("error: FAILED response_test test_a_body_delimited_by_the_connection_closing");
     bad = bad + 1;
   }
-  if (rs__ambiguous_framing_is_refused(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_ambiguous_framing_is_refused");
+  if (rs__ambiguous_framing_is_refused(sys).len() > 0) {
+    err.line("error: FAILED response_test test_ambiguous_framing_is_refused");
     bad = bad + 1;
   }
-  if (rs__malformed_status_lines(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_malformed_status_lines");
+  if (rs__malformed_status_lines(sys).len() > 0) {
+    err.line("error: FAILED response_test test_malformed_status_lines");
     bad = bad + 1;
   }
   if (rs__incomplete_responses_are_not_rejections().len() > 0) {
-    core.warn("error: FAILED response_test test_incomplete_responses_are_not_rejections");
+    err.line("error: FAILED response_test test_incomplete_responses_are_not_rejections");
     bad = bad + 1;
   }
-  if (rs__the_request_writer_produces_what_our_own_parser_reads_back(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_the_request_writer_produces_what_our_own_parser_reads_back");
+  if (rs__the_request_writer_produces_what_our_own_parser_reads_back(sys).len() > 0) {
+    err.line("error: FAILED response_test test_the_request_writer_produces_what_our_own_parser_reads_back");
     bad = bad + 1;
   }
   if (rs__a_malformed_status_line_says_so_specifically().len() > 0) {
-    core.warn("error: FAILED response_test test_a_malformed_status_line_says_so_specifically");
+    err.line("error: FAILED response_test test_a_malformed_status_line_says_so_specifically");
     bad = bad + 1;
   }
-  if (rs__every_reason_phrase_is_the_one_node_writes(core, cli).len() > 0) {
-    core.warn("error: FAILED response_test test_every_reason_phrase_is_the_one_node_writes");
+  if (rs__every_reason_phrase_is_the_one_node_writes(sys).len() > 0) {
+    err.line("error: FAILED response_test test_every_reason_phrase_is_the_one_node_writes");
     bad = bad + 1;
   }
   if (rs__a_2xx_to_connect_has_no_body_whatever_it_claims().len() > 0) {
-    core.warn("error: FAILED response_test test_a_2xx_to_connect_has_no_body_whatever_it_claims");
+    err.line("error: FAILED response_test test_a_2xx_to_connect_has_no_body_whatever_it_claims");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("http: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("http: \{bad} test(s) failed under the coverage driver"); }
   seen = seen + bad;
 
   return seen;

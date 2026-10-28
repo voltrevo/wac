@@ -30,15 +30,16 @@
 // asks whether the two counts are non-trivial.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { tracked, under } from "../../packages/wactest/src/repo.wac";
 import { Vectors, load } from "../../packages/sh/test/wac/vectors.wac";
+import { flatten } from "core";
 
 /** Read a file, or "" — every caller here treats an unreadable source as a failed assertion. */
-string readAll(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string readAll(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 /** Whether a byte is a decimal digit. `i32`, not `u8`: a packed type is an array's element type
@@ -107,8 +108,8 @@ i32[] boldNumbers(string text) {
 }
 
 /** Every `design/**.md`, both trees, so a note added later is covered without editing this file. */
-string[] designDocs(Core core, Cli cli) {
-  string[] all = tracked(core, cli);
+string[] designDocs(Output err, Procs procs) {
+  string[] all = tracked(err, procs);
   string[] hit = string[].filled(all.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
@@ -130,8 +131,8 @@ string[] designDocs(Core core, Cli cli) {
  * ellipsis inside the quotes, and a name is lowercase-and-digits — which is why this differs by one
  * from a naive count of the string.
  */
-i32 appletCount(Cli cli) {
-  string src = readAll(cli, "packages/box/src/box.wac");
+i32 appletCount(Files fs) {
+  string src = readAll(fs, "packages/box/src/box.wac");
   string needle = "if (applet == \"";
   i32 n = 0;
   i32 at = 0;
@@ -153,15 +154,18 @@ i32 appletCount(Cli cli) {
   return n;
 }
 
-export string test_every_applet_count_a_design_document_states_is_the_dispatchers(Core core, Cli cli) {
+export string test_every_applet_count_a_design_document_states_is_the_dispatchers(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  i32 real = appletCount(cli);
+  i32 real = appletCount(fs);
   t.isTrue(real > 50, "box.wac dispatches only " + itoa(real) + " applets — the scan has moved");
-  string[] docs = designDocs(core, cli);
+  string[] docs = designDocs(err, procs);
   t.isTrue(docs.len() >= 8, "only " + itoa(docs.len()) + " design notes found");
   string wrong = "";
   for (i32 i = 0; i < docs.len(); i++) {
-    Claim[] said = numbersBefore(readAll(cli, docs[i]), " applets");
+    Claim[] said = numbersBefore(readAll(fs, docs[i]), " applets");
     for (i32 k = 0; k < said.len(); k++) {
       if (said[k].value != real) {
         wrong = wrong + "\n  " + docs[i] + ":" + itoa(said[k].line) + ": says " + itoa(said[k].value)
@@ -173,18 +177,21 @@ export string test_every_applet_count_a_design_document_states_is_the_dispatcher
   return t.report();
 }
 
-export string test_every_corpus_size_a_design_document_states_is_the_corpuss(Core core, Cli cli) {
+export string test_every_corpus_size_a_design_document_states_is_the_corpuss(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Vectors v = load(cli);
+  Vectors v = load(fs);
   t.eqStr(v.error, "", "the corpus vectors did not load");
   if (v.error != "") { return t.report(); }
   i32 total = v.n;
   t.isTrue(total > 500, "the corpus has only " + itoa(total) + " scripts");
 
-  string[] docs = designDocs(core, cli);
+  string[] docs = designDocs(err, procs);
   string wrong = "";
   for (i32 i = 0; i < docs.len(); i++) {
-    Claim[] said = numbersBefore(readAll(cli, docs[i]), " scripts");
+    Claim[] said = numbersBefore(readAll(fs, docs[i]), " scripts");
     for (i32 k = 0; k < said.len(); k++) {
       // **A bounded sample is a real claim and may be smaller.** What must not happen is a number
       // larger than the corpus, or one that used to be the whole of it and has quietly become a
@@ -200,9 +207,10 @@ export string test_every_corpus_size_a_design_document_states_is_the_corpuss(Cor
   return t.report();
 }
 
-export string test_the_shell_readme_states_the_corpus_split_the_corpus_has(Core core, Cli cli) {
+export string test_the_shell_readme_states_the_corpus_split_the_corpus_has(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Vectors v = load(cli);
+  Vectors v = load(fs);
   t.eqStr(v.error, "", "the corpus vectors did not load");
   if (v.error != "") { return t.report(); }
   i32 total = v.n;
@@ -218,7 +226,7 @@ export string test_the_shell_readme_states_the_corpus_split_the_corpus_has(Core 
   t.isTrue(differential > 100,
            "only " + itoa(differential) + " scripts are compared with bash — the split has collapsed");
 
-  string readme = readAll(cli, "packages/sh/README.md");
+  string readme = readAll(fs, "packages/sh/README.md");
   i32[] bold = boldNumbers(readme);
   t.isTrue(bold.len() >= 3,
            "packages/sh/README.md no longer states the split in digits — nothing here can check it");
@@ -239,19 +247,20 @@ export string test_the_shell_readme_states_the_corpus_split_the_corpus_has(Core 
   return t.report();
 }
 
-export string test_the_checks_above_have_something_to_check(Core core, Cli cli) {
+export string test_the_checks_above_have_something_to_check(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // **The canary, and not decoration**: the two document checks pass vacuously if nothing matches,
   // which is what happens the day somebody writes a count as words. Four of design/0001's were words
   // when this was first written — "sixty applets" — and putting them in digits is what makes them
   // checkable. If this fails, the numbers have gone back to prose rather than gone away.
-  string zero = readAll(cli, "design/system/0001-a-self-contained-system.md");
+  string zero = readAll(fs, "design/system/0001-a-self-contained-system.md");
   t.isTrue(numbersBefore(zero, " applets").len() > 0,
            "design/0001 states no applet count in digits — a spelled-out number cannot be checked");
   // The corpus size is deliberately not here: it was in six documents, all copies of one number, and
   // five said 817 after it was 821. design/0001 says "the whole corpus" and links to the README where
   // the digits live, so that is where the canary looks. A link cannot drift; a second copy always does.
-  t.isTrue(boldNumbers(readAll(cli, "packages/sh/README.md")).len() >= 3,
+  t.isTrue(boldNumbers(readAll(fs, "packages/sh/README.md")).len() >= 3,
            "packages/sh/README.md no longer states the corpus split in digits");
   return t.report();
 }

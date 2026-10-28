@@ -10,8 +10,8 @@
 // nothing is not hypothetical.
 
 import { NTOR_KEY_MATERIAL, relayDataLen } from "./relay.wac";
-import { Core, Cli, HostSocket, Pending } from "std";
-import { Vec, Read } from "core";
+import { Clock, Net, Output, Random, Socket, TimedOut } from "std";
+import { Vec, Read, flatten } from "core";
 import { Relay } from "./directory.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotExtended, gotBroken,
          gotDestroyed, extendedReply } from "./circuit.wac";
@@ -66,8 +66,10 @@ export u8[] concat(u8[] a, u8[] b) {
  * flag because a boolean is one typo from disabling this everywhere.
  */
 export struct Link {
-  Core core;
-  Cli cli;
+  /** Where a link says what went wrong. */
+  Output err;
+  /** What bounds a wait on the relay. */
+  Clock clock;
   /**
    * Who is on the other end, as `host:port`, for diagnostics only.
    *
@@ -77,7 +79,8 @@ export struct Link {
    * message is to save the re-run.
    */
   string peer;
-  i32 sock;
+  /** The connection, or null when the dial failed — a dead link with nothing to close. */
+  Socket? sock;
   u8[] tls;
   /** Cell bytes decrypted but not yet consumed. */
   u8[] buffered;
@@ -99,36 +102,29 @@ export struct Link {
 static i32 CONNECT_TIMEOUT_MS = 15000;
 static i32 READ_TIMEOUT_MS = 30000;
 
-export Link connectRelay(Core core, Cli cli, string host, i32 port) {
-  Pending<HostSocket> dial = cli.connect(host, port);
-  if (core.waitAny([dial.id], CONNECT_TIMEOUT_MS) < 0) {
-    // **This used to say there was nothing to close, and that was the assumption that hid a
-    // leak.** If the connection completes just as the deadline passes, the answer *is* in hand:
-    // the socket exists, it is in the host's table, and the relay at the other end is holding an
-    // open line. Cancelling used to discard that answer and the line stayed up with nothing able
-    // to reach it — a leaked handle per slow dial, and the comment here said it could not happen,
-    // which is why nobody looked.
-    //
-    // `Pending.cancel` closes it now: a dialled socket is the one thing in this family that
-    // nothing else can want, so the host closes it and the peer finds out.
-    // `issues/system/0310b`.
-    dial.cancel();
-    core.warn("tor: \{host} did not answer within \{CONNECT_TIMEOUT_MS}ms");
-    return Link(core, cli, "\{host}:\{port}", -1, u8[](), u8[](), true, u8[](), false);
+export Link connectRelay(Output err, Clock clock, Random rnd, Net net, string host, i32 port) {
+  // A dial that completes just as the deadline passes is cancelled by `within`, and cancelling a dial closes the
+  // socket it made — a line the relay holds open with nothing able to reach it is a leak. `issues/system/0310b`.
+  auto dial = flatten(clock.within(net.connect(host, port), CONNECT_TIMEOUT_MS).wait());
+  if (dial.isErr()) {
+    if (dial.err()! is TimedOut) { err.line("tor: \{host} did not answer within \{CONNECT_TIMEOUT_MS}ms"); }
+    else { err.line("tor: \{host}: \{dial.err()!}"); }
+    return Link(err, clock, "\{host}:\{port}", null, u8[](), u8[](), true, u8[](), false);
   }
-  HostSocket s = dial.wait();
-  if (s.handle < 0) {
-    core.warn("tor: \{host}: \{s.error}");
-    return Link(core, cli, "\{host}:\{port}", -1, u8[](), u8[](), true, u8[](), false);
-  }
+  Socket s = dial.unwrap();
   Step st = unpack(tlsClientInit(
     host.toBytes(), u8[](), i32[](),
-    core.randomBytes(32).wait(), core.randomBytes(32).wait(),
-    core.randomBytes(64).wait(), core.randomBytes(32).wait(),
-    core.nowMillis().wait() / 1000));
-  Link l = Link(core, cli, "\{host}:\{port}", s.handle, st.state, u8[](), false, u8[](), false);
-  if (!cli.send(s.handle, st.toSend).wait()) { l.dead = true; }
+    flatten(rnd.bytes(32).wait()).unwrap(), flatten(rnd.bytes(32).wait()).unwrap(),
+    flatten(rnd.bytes(64).wait()).unwrap(), flatten(rnd.bytes(32).wait()).unwrap(),
+    flatten(clock.nowMillis().wait()).unwrap() / 1000));
+  Link l = Link(err, clock, "\{host}:\{port}", s, st.state, u8[](), false, u8[](), false);
+  if (flatten(s.send(st.toSend).wait()).isErr()) { l.dead = true; }
   return l;
+}
+
+/** Close the link's connection, if the dial made one. */
+export void closeLink(Link l) {
+  if (l.sock is not null) { l.sock!.close(); }
 }
 
 /** Pump the socket until the TLS handshake completes or the link dies. */
@@ -162,23 +158,30 @@ export bool pump(Link l) { return pumpFor(l, READ_TIMEOUT_MS); }
  * hours in `hsintropoint.wac` — which is a property of the protocol rather than of a socket.
  */
 export bool pumpFor(Link l, i32 millis) {
-  Pending<Read> read = l.cli.recv(l.sock);
-  if (l.core.waitAny([read.id], millis) < 0) {
-    read.cancel();
-    l.cli.closeSocket(l.sock);
-    l.core.warn("tor: " + (l.peer == "" ? "a relay" : l.peer) + " went silent for " +
-                "\{millis}ms with \{l.buffered.len()} cell byte(s) buffered and " +
-                "\{l.raw.len()} partial record byte(s)");
-    return false;
-  }
+  if (l.sock is null) { return false; }
+  Socket s = l.sock!;
   // A relay that broke and a relay that closed are both "no more circuit", but only the first is
   // worth a line — and a Tor client that reports a clean close for a reset connection is hiding the
   // one fact an operator needs.
   bool live = false;
-  match (read.wait()) {
-    Data(bytes): { live = feedLink(l, bytes); }
-    End: { }
-    Failed(why): { l.core.warn("tor: " + (l.peer == "" ? "the relay" : l.peer) + " connection failed: " + why); }
+  match (flatten(l.clock.within(s.recv(), millis).wait())) {
+    Ok(r): {
+      match (r) {
+        Data(bytes): { live = feedLink(l, bytes); }
+        default: { }
+      }
+    }
+    Err(e): {
+      if (e is TimedOut) {
+        // `within` cancelled the read; closing the socket is what makes the host's read underneath finish.
+        s.close();
+        l.err.line("tor: " + (l.peer == "" ? "a relay" : l.peer) + " went silent for " +
+                   "\{millis}ms with \{l.buffered.len()} cell byte(s) buffered and " +
+                   "\{l.raw.len()} partial record byte(s)");
+        return false;
+      }
+      l.err.line("tor: " + (l.peer == "" ? "the relay" : l.peer) + " connection failed: \{e}");
+    }
   }
   return live;
 }
@@ -217,11 +220,11 @@ export bool feedLink(Link l, u8[] chunk) {
   Step st = unpack(tlsClientFeed(l.tls, whole));
   l.tls = st.state;
   if (st.toSend.len() > 0) {
-    if (!l.cli.send(l.sock, st.toSend).wait()) { return false; }
+    if (l.sock is null || flatten(l.sock!.send(st.toSend).wait()).isErr()) { return false; }
   }
   if (st.appData.len() > 0) { l.buffered = concat(l.buffered, st.appData); }
   if (tlsClientFailure(l.tls) != 0) {
-    l.core.warn("tor: TLS to the relay failed, code \{tlsClientFailure(l.tls)}");
+    l.err.line("tor: TLS to the relay failed, code \{tlsClientFailure(l.tls)}");
     return false;
   }
   return true;
@@ -231,7 +234,7 @@ export void sendCells(Link l, u8[] bytes) {
   if (l.dead || bytes.len() == 0) { return; }
   Step st = unpack(tlsClientSend(l.tls, bytes));
   l.tls = st.state;
-  if (!l.cli.send(l.sock, st.toSend).wait()) { l.dead = true; }
+  if (l.sock is null || flatten(l.sock!.send(st.toSend).wait()).isErr()) { l.dead = true; }
 }
 
 /** The next whole cell, or an empty array if the link ended. */
@@ -286,17 +289,17 @@ export bool linkHandshake(Link l, string host) {
   sendCells(l, encodeVersions([3, 4, 5] as i32[]));
   u8[] versions = nextCell(l);
   if (versions.len() == 0) {
-    l.core.warn("tor: no VERSIONS answer (dead=" + (l.dead ? "yes" : "no") + ")");
+    l.err.line("tor: no VERSIONS answer (dead=" + (l.dead ? "yes" : "no") + ")");
     return false;
   }
   if (cellCommand(versions, 0, idWidth(l)) != cmdVersions()) {
-    l.core.warn("tor: the first cell was command \{cellCommand(versions, 0, idWidth(l))}" +
+    l.err.line("tor: the first cell was command \{cellCommand(versions, 0, idWidth(l))}" +
                 ", not VERSIONS");
     return false;
   }
   i32 agreed = negotiateVersion(cellPayload(versions, 0, idWidth(l)), [3, 4, 5] as i32[]);
   if (agreed < 4) {
-    l.core.warn("tor: no link version in common, best was \{agreed}");
+    l.err.line("tor: no link version in common, best was \{agreed}");
     return false;
   }
   // **From here the circuit id is four bytes.** The VERSIONS cell just read was the last narrow one
@@ -309,7 +312,7 @@ export bool linkHandshake(Link l, string host) {
       // Which of the two ways this fails matters: a dead link is a timeout or a closed socket, and an
       // unexpected command is a disagreement about the cells themselves. Saying which cost a whole
       // cycle of guessing when a relay could not extend to another of ours.
-      l.core.warn("tor: the link went quiet during the handshake (dead=" +
+      l.err.line("tor: the link went quiet during the handshake (dead=" +
                   (l.dead ? "yes" : "no") + ")");
       return false;
     }
@@ -317,12 +320,12 @@ export bool linkHandshake(Link l, string host) {
     if (cmd == cmdNetinfo()) { break; }
     if (cmd == cmdCerts()) {
       if (certsCount(cellPayload(cell, 0, idWidth(l))) < 0) {
-        l.core.warn("tor: the CERTS cell did not parse, payload " +
+        l.err.line("tor: the CERTS cell did not parse, payload " +
                     "\{cellPayload(cell, 0, idWidth(l)).len()} bytes");
         return false;
       }
     } else if (cmd != cmdAuthChallenge() && cmd != cmdVpadding()) {
-      l.core.warn("tor: an unexpected cell command \{cmd} during the handshake");
+      l.err.line("tor: an unexpected cell command \{cmd} during the handshake");
       return false;
     }
   }
@@ -331,7 +334,7 @@ export bool linkHandshake(Link l, string host) {
     // Every cell was exchanged and the link died on the way out. This was the one exit with no
     // message, which is why a relay reported only "the link handshake failed" after the other five
     // had been instrumented and stayed silent.
-    l.core.warn("tor: the link died while sending NETINFO");
+    l.err.line("tor: the link died while sending NETINFO");
     return false;
   }
   return true;
@@ -365,7 +368,7 @@ export u8[] createCircuit(Link l, Circuit c, u8[] identity, u8[] onionKey, u8[] 
   u8[] cell = nextCell(l);
   if (cell.len() == 0) { return u8[](); }
   if (cellCommand(cell, 0, idWidth(l)) == cmdDestroy()) {
-    l.core.warn("tor: the relay refused the circuit");
+    l.err.line("tor: the relay refused the circuit");
     return u8[]();
   }
   if (cellCommand(cell, 0, idWidth(l)) != cmdCreated2()) { return u8[](); }
@@ -391,7 +394,7 @@ export bool extendTo(Link l, Circuit c, Relay r, u8[] ephemeral) {
       // was a small-order point. Either way the party at the other end does not hold the
       // key the consensus named, and there is nothing to negotiate.
       if (keys.len() == 0) {
-        l.core.warn("tor: \{r.nickname} did not authenticate");
+        l.err.line("tor: \{r.nickname} did not authenticate");
         return false;
       }
       c.addHop(keys);
@@ -485,15 +488,15 @@ export u8[] fetchOverCircuit(Link l, Circuit c, string path) {
   // A status of -1 is not an answer, and saying "the directory answered -1" would send whoever reads
   // the log looking for a directory bug rather than a broken circuit.
   if (r.status < 0) {
-    l.core.warn("tor: no answer for \{path} — the circuit broke or the stream closed unanswered");
+    l.err.line("tor: no answer for \{path} — the circuit broke or the stream closed unanswered");
     return u8[]();
   }
   if (r.status != 200) {
-    l.core.warn("tor: the directory answered \{r.status} for \{path}");
+    l.err.line("tor: the directory answered \{r.status} for \{path}");
     return u8[]();
   }
   if (!isIdentity(r)) {
-    l.core.warn("tor: the directory compressed a body we asked it not to");
+    l.err.line("tor: the directory compressed a body we asked it not to");
     return u8[]();
   }
   return r.body;
@@ -554,8 +557,8 @@ export i32 hexDigit(i32 c) {
   return -1;
 }
 /** A non-negative i64 from the world's entropy, for the chooser. */
-export i64 randomI64(Core core) {
-  u8[] b = core.randomBytes(8).wait();
+export i64 randomI64(Random rnd) {
+  u8[] b = flatten(rnd.bytes(8).wait()).unwrap();
   i64 v = 0;
   for (i32 i = 0; i < 8; i++) { v = (v << 8) | (b[i] as i64); }
   return v < 0 ? -v : v;

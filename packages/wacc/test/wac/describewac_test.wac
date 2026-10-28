@@ -22,11 +22,12 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { blockedFiles, exportSigsFiles, bindTypesFiles, describeFiles,
          describeSeparator } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { closureOf } from "./source_probe.wac";
+import { flatten } from "core";
 
 string[] entries() {
   return [
@@ -36,9 +37,10 @@ string[] entries() {
   ];
 }
 
-export string test_describefiles_agrees_with_the_two_calls_it_replaced(Core core, Cli cli) {
+export string test_describefiles_agrees_with_the_two_calls_it_replaced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "describewac_test");
+  Corpus c = loadCorpus(fs, "describewac_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
@@ -62,11 +64,12 @@ export string test_describefiles_agrees_with_the_two_calls_it_replaced(Core core
     bool have = false;
     for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == want[e]) { have = true; } }
     if (have) { continue; }
-    FileResult f = cli.readFile(want[e]).wait();
-    t.isTrue(f.ok, want[e] + " is readable — " + f.error);
-    if (!f.ok) { return t.report(); }
+    auto fRead = flatten(fs.readFile(want[e]).wait());
+    u8[]? f = fRead.ok();
+    t.isTrue((f is not null), want[e] + " is readable — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+    if ((f is null)) { return t.report(); }
     paths[at2] = want[e];
-    sources[at2] = string.fromBytes(f.bytes);
+    sources[at2] = string.fromBytes(f!);
     at2 = at2 + 1;
   }
 

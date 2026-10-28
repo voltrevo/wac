@@ -23,9 +23,10 @@
 // is lost, and it says so.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "std";
+import { requireNativeHost } from "../../../wactest/src/built.wac";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string ENTRY = "packages/raster/example/deskshot.wac";
 static i32 WIDTH = 320;
@@ -33,10 +34,13 @@ static i32 HEIGHT = 200;
 
 
 
-export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_javascript_in_it(
-    Core core, Cli cli) {
+export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_javascript_in_it(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string cwd = cli.cwd().wait();
+  string cwd = flatten(env.cwd().wait()).unwrap();
   string wac = "\{cwd}/native/v8/target/release/wac";
   // **The directory is kept, and that is worth three seconds.** It used to be emptied here — and
   // wasmtime's compiled artefact lives *beside* the module it was compiled from, so wiping the
@@ -47,7 +51,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // hosts. `wac build` is deterministic, so an unchanged program produces the same bytes, the same
   // cache key and a hit. The images are removed below; the artefacts older than this build are too.
   string dir = "\{cwd}/.cache/raster-hosts";
-  string whyDir1 = madeDir(cli, dir);
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
   string stem = "\{dir}/deskshot";
   // **The directory is not emptied, and that is worth four seconds.** `wacland` caches the compiled
@@ -59,26 +63,28 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   //
   // What the delete was actually protecting is the comparison — two hosts that both write nothing
   // agree perfectly on last run's pixels — so the *images* still go, and only they.
-  cli.remove("\{dir}/js.ppm", false).wait();
-  cli.remove("\{dir}/native.ppm", false).wait();
+  fs.remove("\{dir}/js.ppm", false).wait();
+  fs.remove("\{dir}/native.ppm", false).wait();
 
   // One build, both hosts. `--allow-write` because the program writes the image it is asked for.
-  Exec built = cli.exec(wac, ["build", ENTRY, "-o", stem, "--allow-write", "--quiet"],
-                        u8[]()).wait();
-  t.isTrue(built.ran(), "the wac binary ran — \{built.error}");
-  t.eqI32(built.status, 0, "wac build failed: \{string.fromBytes(built.stderr)}");
-  if (!built.ran() || built.status != 0) { return t.report(); }
+  auto builtRan = flatten(procs.exec(wac, ["build", ENTRY, "-o", stem, "--allow-write", "--quiet"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  t.isTrue((built is not null), "the wac binary ran — \{builtRan.isErr() ? "\{builtRan.err()!}" : ""}");
+  t.eqI32(built!.status, 0, "wac build failed: \{string.fromBytes(built!.stderr)}");
+  if ((built is null) || built!.status != 0) { return t.report(); }
 
   // The v8 half, which runs whether or not cargo is here.
   string jsOut = "\{dir}/js.ppm";
-  Exec ran = cli.exec(wac, ["\{stem}.wasm", jsOut], u8[]()).wait();
-  t.eqI32(ran.status, 0, "the JavaScript half failed: \{string.fromBytes(ran.stderr)}");
-  if (ran.status != 0) { return t.report(); }
+  auto ranRan = flatten(procs.exec(wac, ["\{stem}.wasm", jsOut], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? ran = ranRan.ok();
+  t.eqI32(ran!.status, 0, "the JavaScript half failed: \{string.fromBytes(ran!.stderr)}");
+  if (ran!.status != 0) { return t.report(); }
 
-  FileResult js = cli.readFile(jsOut).wait();
-  t.isTrue(js.ok, "the JavaScript half wrote an image — \{js.error}");
-  if (!js.ok) { return t.report(); }
-  u8[] a = js.bytes;
+  auto jsRead = flatten(fs.readFile(jsOut).wait());
+  u8[]? js = jsRead.ok();
+  t.isTrue((js is not null), "the JavaScript half wrote an image — \{jsRead.isErr() ? "\{jsRead.err()!}" : ""}");
+  if ((js is null)) { return t.report(); }
+  u8[] a = js!;
 
   // **Asserted, not merely captured.** Two hosts that both wrote nothing agree perfectly, so this
   // half is checked against what a 320x200 P6 must be before the other one is asked.
@@ -108,20 +114,21 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // it descended into `target/`, where the binary being compared against lives. Four other files did
   // the same thing four other ways. `wac task seed` owns the build now — `seed:native` for this crate
   // alone — and this asks whether the result is there. `issues/system/0208`.
-  string wacland = requireNativeHost(cli, t);
+  string wacland = requireNativeHost(env, fs, t);
   if (wacland == "") { return t.report(); }
 
   string nativeOut = "\{dir}/native.ppm";
-  Exec nran = cli.exec("\{cwd}/native/target/release/wac",
-                       ["\{stem}.wasm", nativeOut], u8[]()).wait();
-  t.isTrue(nran.ran(), "the native host ran — \{nran.error}");
-  t.eqI32(nran.status, 0, "the native half failed: \{string.fromBytes(nran.stderr)}");
-  if (!nran.ran() || nran.status != 0) { return t.report(); }
+  auto nranRan = flatten(procs.exec("\{cwd}/native/target/release/wac", ["\{stem}.wasm", nativeOut], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? nran = nranRan.ok();
+  t.isTrue((nran is not null), "the native host ran — \{nranRan.isErr() ? "\{nranRan.err()!}" : ""}");
+  t.eqI32(nran!.status, 0, "the native half failed: \{string.fromBytes(nran!.stderr)}");
+  if ((nran is null) || nran!.status != 0) { return t.report(); }
 
-  FileResult nat = cli.readFile(nativeOut).wait();
-  t.isTrue(nat.ok, "the native half wrote an image — \{nat.error}");
-  if (!nat.ok) { return t.report(); }
-  u8[] b = nat.bytes;
+  auto natRead = flatten(fs.readFile(nativeOut).wait());
+  u8[]? nat = natRead.ok();
+  t.isTrue((nat is not null), "the native half wrote an image — \{natRead.isErr() ? "\{natRead.err()!}" : ""}");
+  if ((nat is null)) { return t.report(); }
+  u8[] b = nat!;
 
   t.eqI32(b.len(), a.len(), "the two hosts wrote images of different sizes");
   if (b.len() != a.len()) { return t.report(); }
@@ -137,8 +144,8 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // lives here at all: `native/src/main.rs` keeps compiled modules in one shared directory keyed by
   // the wasm's own bytes, and sweeps it, so what stays in `.cache` is the module and its manifest.
   // The pixels are what must not survive a run, and they do not.
-  cli.remove(jsOut, false).wait();
-  cli.remove(nativeOut, false).wait();
+  fs.remove(jsOut, false).wait();
+  fs.remove(nativeOut, false).wait();
   return t.report();
 }
 

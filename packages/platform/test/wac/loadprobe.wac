@@ -7,7 +7,8 @@
 //
 // One line per call, in a fixed order, so a diff says which shape moved.
 
-import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule, Sys } from "std";
+import { Authority, CallResult, Module, Sys, Files, Modules, Output, Unsupported } from "std";
+import { flatten } from "core";
 
 /** Every shape in the closed set, plus the two refusals — in the order the report prints them. */
 string[] shapes() {
@@ -18,44 +19,53 @@ string[] shapes() {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 1) {
-    core.warn("usage: loadprobe <module.wasm>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Modules mods = sys.modules();
+  if (argv.len() < 1) {
+    err.line("usage: loadprobe <module.wasm>");
     return 2;
   }
-  string path = string.fromBytes(cli.arg(0).wait());
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) {
-    core.warn("loadprobe: cannot read \{path} — \{f.error}");
+  string path = argv[0];
+  auto fRead = flatten(fs.readFile(path).wait());
+  u8[]? f = fRead.ok();
+  if ((f is null)) {
+    err.line("loadprobe: cannot read \{path} — \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
     return 1;
   }
 
-  LoadedModule m = cli.load(f.bytes, GRANT_ALL());
-  if (m.unavailable()) {
-    // Printed rather than failed: this is the answer on the native hosts, and a caller reading it is
-    // the whole reason -2 is distinct from -1.
-    core.log("unavailable");
-    return 0;
-  }
-  if (m.handle < 0) {
-    core.warn("loadprobe: \{m.error}");
-    return 1;
+  // Holding the files and nothing else: no row of the expectation needs more, and a module is handed
+  // what it uses.
+  Module m;
+  match (mods.load(f!, Authority(fs, null, null, null))) {
+    Ok(loaded): { m = loaded; }
+    Err(e): {
+      // Printed rather than failed: this is the answer on a host that cannot load, and a caller
+      // reading it is the whole reason `Unsupported` is distinct from a module that would not load.
+      if (e is Unsupported) {
+        out.line("unavailable");
+        return 0;
+      }
+      err.line("loadprobe: \{e}");
+      return 1;
+    }
   }
 
   string[] names = shapes();
   for (i32 i = 0; i < names.len(); i++) {
     // `21` for every call, so `twice` answering 42 is the argument having arrived rather than a
     // constant that happens to match.
-    CallResult c = cli.call(m.handle, names[i], 21);
-    core.log("\{names[i]} \{c.status} \{c.value} \{c.text}");
+    CallResult c = m.call(names[i], 21).unwrap();
+    out.line("\{names[i]} \{c.status} \{c.value} \{c.text}");
   }
-  cli.unload(m.handle);
+  m.unload();
 
   // **After a trap, and after an unload.** Calling into a module that has been let go is a caller's
   // mistake rather than a crash, and the handle is gone rather than stale — 2, as for any name the
   // module does not have.
-  CallResult after = cli.call(m.handle, "answer", 0);
-  core.log("after-unload \{after.status}");
+  CallResult after = m.call("answer", 0).unwrap();
+  out.line("after-unload \{after.status}");
   return 0;
 }

@@ -4,7 +4,7 @@
 // and said nothing, `cut -f2-4` printed field 2, and `cut -f-3` was refused as though no list had been
 // given. `lib/ranges.wac` is the syntax; this is what the two flags do with it.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, flagValue, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
@@ -12,10 +12,9 @@ import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { Buf } from "core";
 import { tryHelp } from "../lib/operands.wac";
 import { Ranges, parseRanges } from "../lib/ranges.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 cut(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 cut(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   string d = flagValue(a, 'd');
   i32 delim = d == "" ? '\t' : d.toBytes()[0] as i32;
   // **`-b` and `-c` are the same selection over bytes**, which in the C locale is what a character is —
@@ -25,23 +24,23 @@ export async i32 cut(Core core, Cli cli, Fs fs, Args a) {
   string list = byBytes ? (has(a, 'b') ? flagValue(a, 'b') : flagValue(a, 'c')) : flagValue(a, 'f');
   if (list == "") {
     // GNU says which of the several things `cut` needs was missing; "usage: cut -f<n>" did not.
-    core.warn("\{a.name}: you must specify a list of bytes, characters, or fields");
-    tryHelp(core, a.name);
+    err.line("\{a.name}: you must specify a list of bytes, characters, or fields");
+    tryHelp(err, a.name);
     return 1;
   }
   Ranges want = parseRanges(a.name, list);
   if (!want.ok) {
-    core.warn(want.error);
-    tryHelp(core, a.name);
+    err.line(want.error);
+    tryHelp(err, a.name);
     return 1;
   }
 
-  Sink out = Sink.create(cli);
-  Reader r = await Reader.create(core, cli, fs, a, 0, out);
+  Sink sink = Sink.to(out);
+  Reader r = await Reader.create(stdin, err, fs, a, 0, sink);
   while (true) {
-    Line l = await r.next(core, cli, fs, a);
-    if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
-    emitTo(out, byBytes ? bytesOf(l.bytes, want) : fieldsOf(l.bytes, delim, want), true);
+    Line l = await r.next(stdin, err, fs, a);
+    if (!l.ok) { sink.flush(); return r.broken || r.failed ? 1 : 0; }
+    emitTo(sink, byBytes ? bytesOf(l.bytes, want) : fieldsOf(l.bytes, delim, want), true);
   }
   return 0;
 }

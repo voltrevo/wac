@@ -16,7 +16,8 @@
 // **A case nobody can read is worse than none**, which is `cases.ts`'s rule and this keeps it: a file
 // that cannot be parsed comes back with `error` set rather than as a case that trivially passes.
 
-import { Cli, FileResult } from "std";
+import { Files } from "std";
+import { flatten } from "core";
 
 /** What a case says must happen. `call` and `value` are empty where the kind does not use them. */
 export struct Expect {
@@ -48,23 +49,23 @@ export struct CaseFile {
 }
 
 /** Every case in `spec/cases`, in name order. */
-export CaseFile[] loadCases(Cli cli) {
-  string[] names = casesIn(cli, "spec/cases");
+export CaseFile[] loadCases(Files fs) {
+  string[] names = casesIn(fs, "spec/cases");
   CaseFile[] out = CaseFile[].filled(names.len(), none(""));
   for (i32 i = 0; i < names.len(); i++) {
-    FileResult r = cli.readFile("spec/cases/" + names[i]).wait();
-    if (!r.ok) {
+    u8[]? r = flatten(fs.readFile("spec/cases/" + names[i]).wait()).ok();
+    if ((r is null)) {
       out[i] = none(names[i] + ": cannot read it");
       continue;
     }
-    out[i] = parseCase(names[i], string.fromBytes(r.bytes));
+    out[i] = parseCase(names[i], string.fromBytes(r!));
   }
   return out;
 }
 
 /** `*.wac` directly in `dir`, sorted, which is the order `cases.ts` reads them in. */
-string[] casesIn(Cli cli, string dir) {
-  string[]? entries = cli.readDir(dir).wait();
+string[] casesIn(Files fs, string dir) {
+  string[]? entries = flatten(fs.readDir(dir).wait()).ok();
   if (entries is null) { return string[].filled(0, ""); }
   string[] all = entries!;
   i32 n = 0;

@@ -23,8 +23,8 @@
 // transport confidentiality buys nothing a client relies on, which is exactly why tor's own DirPort is
 // unencrypted. `consensus.wac` is the reason — a client checks the documents, not the connection.
 
-import { Core, Cli, HostSocket, FileResult, Sys } from "std";
-import { Read } from "core";
+import { Sys, Files, Net, Output, Listener, HostFault, Socket, SocketFault } from "std";
+import { Read, flatten, Result } from "core";
 import { Buf } from "core";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
 import { DirDocuments, dirSourceFingerprint } from "./dirserve.wac";
@@ -49,27 +49,30 @@ static i32 MAX_REQUEST = 8192;
 static i32 MAX_STORED = 32;
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 3) {
-    core.warn("usage: dird <consensus-file> <certificate-file> <descriptor-file>... [port]");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Net net = sys.net();
+  if (argv.len() < 3) {
+    err.line("usage: dird <consensus-file> <certificate-file> <descriptor-file>... [port]");
     return 1;
   }
 
-  u8[] consensus = readOr(core, cli, string.fromBytes(cli.arg(0).wait()));
-  u8[] certificate = readOr(core, cli, string.fromBytes(cli.arg(1).wait()));
+  u8[] consensus = readOr(err, fs, argv[0]);
+  u8[] certificate = readOr(err, fs, argv[1]);
   // Every argument from the third on is a descriptor, so a network of several relays is served by
   // listing them. They go out concatenated, which is how a directory response carries more than one.
   // A trailing port and a descriptor path are both just arguments, so the port is recognised by being
   // all digits and last. Counting descriptors as "everything that is not a flag" would have swallowed
   // the port and then failed trying to open `17999` as a file.
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   i32 descCount = argc - 2;
-  if (descCount > 1 && atoiSafe(cli.arg(argc - 1).wait()) >= 0) { descCount = descCount - 1; }
+  if (descCount > 1 && atoiSafe(argv[argc - 1].toBytes()) >= 0) { descCount = descCount - 1; }
   u8[] descriptors = u8[]();
   u8[][] digests = u8[][].defaulted(descCount);
   for (i32 i = 0; i < descCount; i++) {
-    u8[] one = readOr(core, cli, string.fromBytes(cli.arg(2 + i).wait()));
+    u8[] one = readOr(err, fs, argv[2 + i]);
     if (one.len() == 0) { return 1; }
     descriptors = joinBytes(descriptors, one);
     digests[i] = rsaDescriptorDigest(one);
@@ -81,9 +84,9 @@ export i32 main(Sys sys) {
   if (argc > 2 + descCount) {
     // Port 0 is "ask the operating system", not a mistake: the chosen port is logged, and it is what
     // lets two agents run the suite at once without agreeing in advance about who gets which number.
-    i32 given = atoiSafe(cli.arg(2 + descCount).wait());
+    i32 given = atoiSafe(argv[2 + descCount].toBytes());
     if (given < 0 || given > 65535) {
-      core.warn("dird: " + string.fromBytes(cli.arg(2 + descCount).wait()) + " is not a port");
+      err.line("dird: " + argv[2 + descCount] + " is not a port");
       return 1;
     }
     port = given;
@@ -94,7 +97,7 @@ export i32 main(Sys sys) {
   // passed in, where the two could disagree.
   u8[] fingerprint = dirSourceFingerprint(consensus);
   if (fingerprint.len() != 20) {
-    core.warn("dird: the consensus has no dir-source fingerprint to answer /tor/keys/fp for");
+    err.line("dird: the consensus has no dir-source fingerprint to answer /tor/keys/fp for");
     return 1;
   }
 
@@ -105,14 +108,14 @@ export i32 main(Sys sys) {
   u8[] micros = u8[]();
   u8[][] microDigests = u8[][]();
   {
-    string base = string.fromBytes(cli.arg(0).wait());
-    FileResult mc = cli.readFile("\{base}.micro").wait();
-    FileResult md = cli.readFile("\{base}.mds").wait();
-    if (mc.ok && md.ok) {
-      microCons = mc.bytes;
-      micros = md.bytes;
+    string base = argv[0];
+    u8[]? mc = flatten(fs.readFile("\{base}.micro").wait()).ok();
+    u8[]? md = flatten(fs.readFile("\{base}.mds").wait()).ok();
+    if ((mc is not null) && (md is not null)) {
+      microCons = mc!;
+      micros = md!;
       microDigests = microdescDigests(micros);
-      core.log("dird: serving the microdesc flavour and \{microDigests.len()}" +
+      out.line("dird: serving the microdesc flavour and \{microDigests.len()}" +
                " microdescriptor(s)");
     }
   }
@@ -120,17 +123,18 @@ export i32 main(Sys sys) {
   DirDocuments docs = DirDocuments(consensus, microCons, certificate, descriptors, digests,
                                    fingerprint, micros, microDigests, u8[][](), u8[][]());
 
-  HostSocket listener = cli.listen("127.0.0.1", port).wait();
-  if (listener.handle < 0) {
-    core.warn("dird: listen: \{listener.error}");
+  auto listenerBind = flatten(net.listen("127.0.0.1", port).wait());
+  Listener? listener = listenerBind.ok();
+  if (listener is null) {
+    err.line("dird: listen: \{listenerBind.isErr() ? "\{listenerBind.err()!}" : ""}");
     return 1;
   }
-  core.log("dird: serving the directory on 127.0.0.1:\{listener.port}");
+  out.line("dird: serving the directory on 127.0.0.1:\{listener!.port}");
 
-  accepting(core, cli, listener.handle, Held(docs));
+  accepting(err, out, listener!, Held(docs));
   // Nothing has suspended yet: `accepting` ran as far as its first `await` and handed back a ticket.
   // `drain` is what dispatches every continuation from here on, and it is the whole event loop.
-  core.drain();
+  sys.drain().wait();
   return 0;
 }
 
@@ -143,14 +147,14 @@ export i32 main(Sys sys) {
  * `issues/system/0294c` records as the reason to want this here — a directory port is reachable by
  * anyone who can route to it.
  */
-async void accepting(Core core, Cli cli, i32 listener, Held held) {
+async void accepting(Output err, Output out, Listener listener, Held held) {
   while (true) {
-    HostSocket conn = await cli.accept(listener).ticket();
-    if (conn.handle < 0) {
-      core.warn("dird: accept: \{conn.error}");
+    Result<Socket, HostFault> conn = await listener.accept();
+    if (conn.isErr()) {
+      err.line("dird: accept: \{conn.err()!}");
       return;
     }
-    answer(core, cli, conn, held);
+    answer(err, out, conn.unwrap(), held);
   }
 }
 
@@ -161,7 +165,7 @@ async void accepting(Core core, Cli cli, i32 listener, Held held) {
  * cap matters: without it a client that never finishes a request line holds this loop forever, and a
  * directory port is reachable by anyone who can route to it.
  */
-async void answer(Core core, Cli cli, HostSocket conn, Held held) {
+async void answer(Output err, Output out, Socket conn, Held held) {
   Buf pending = Buf.create();
   while (true) {
     // **Read and write with no suspension between them**, which is the whole of what concurrency
@@ -174,31 +178,35 @@ async void answer(Core core, Cli cli, HostSocket conn, Held held) {
     if (act.ready) {
       if (act.descriptor.len() > 0) {
         held.docs = filed(held.docs, act.descriptor, act.blindedKey, MAX_STORED);
-        core.log("dird: stored a descriptor, \{held.docs.hsDescriptors.len()} held");
+        out.line("dird: stored a descriptor, \{held.docs.hsDescriptors.len()} held");
       } else if (act.refusedFor != PUB_OK) {
-        core.warn("dird: refused a descriptor, reason \{act.refusedFor}");
+        err.line("dird: refused a descriptor, reason \{act.refusedFor}");
       }
-      bool sent = await cli.send(conn.handle, act.response).ticket();
-      if (!sent) { core.warn("dird: the reply could not be sent"); }
-      cli.closeSocket(conn.handle);
+      Result<void, SocketFault> sent = await conn.send(act.response);
+      if (sent.isErr()) { err.line("dird: the reply could not be sent: \{sent.err()!}"); }
+      conn.close();
       return;
     }
     if (pending.bytes().len() > MAX_REQUEST + MAX_BODY) {
-      core.warn("dird: a request larger than \{MAX_REQUEST + MAX_BODY} bytes, dropped");
-      cli.closeSocket(conn.handle);
+      err.line("dird: a request larger than \{MAX_REQUEST + MAX_BODY} bytes, dropped");
+      conn.close();
       return;
     }
     bool more = false;
-    Read got = await cli.recv(conn.handle).ticket();
+    Result<Read, SocketFault> got = await conn.recv();
     match (got) {
-      Data(bytes): {
-        pending.pushAll(bytes);
-        more = true;
+      Ok(r): {
+        match (r) {
+          Data(bytes): {
+            pending.pushAll(bytes);
+            more = true;
+          }
+          default: { }
+        }
       }
-      End: { }
-      Failed(why): { core.warn("dird: the connection failed: \{why}"); }
+      Err(e): { err.line("dird: the connection failed: \{e}"); }
     }
-    if (!more) { cli.closeSocket(conn.handle); return; }
+    if (!more) { conn.close(); return; }
   }
 }
 
@@ -212,13 +220,14 @@ struct Held {
   DirDocuments docs;
 }
 
-u8[] readOr(Core core, Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) {
-    core.warn("dird: \{path}: \{f.error}");
+u8[] readOr(Output err, Files fs, string path) {
+  auto fRead = flatten(fs.readFile(path).wait());
+  u8[]? f = fRead.ok();
+  if ((f is null)) {
+    err.line("dird: \{path}: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
     return u8[]();
   }
-  return f.bytes;
+  return f!;
 }
 
 /** A port, or -1 rather than a partial number — `atoi` would read "80x" as 80. Zero is a port here. */

@@ -33,10 +33,11 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Launch, Output, Procs, Sys } from "std";
 import { roundTrip } from "./probe.wac";
 import { Ints, unhex, hex, writeDescriptor } from "./descriptor.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 /**
  * Foundry's `cast`, wherever the operator put it.
@@ -49,28 +50,30 @@ import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
  * the failure this file exists to avoid, so the caller fails on `"nolookup"` and skips on
  * `"missing"`. `issues/system/0173`.
  */
-string findCast(Core core, Cli cli) {
-  Exec onPath = cli.exec("cast", ["--version"], u8[]()).wait();
-  if (onPath.ran() && onPath.status == 0) { return "cast"; }
+string findCast(Output err, Env env, Procs procs) {
+  auto onPathRan = flatten(procs.exec("cast", ["--version"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? onPath = onPathRan.ok();
+  if ((onPath is not null) && onPath!.status == 0) { return "cast"; }
 
-  u8[]? h = cli.env("HOME").wait();
+  u8[]? h = flatten(env.get("HOME").wait()).orElse(null);
   if (h is null) {
-    core.warn("packages/abi/test/wac/cast_test.wac: no `cast` on PATH, and HOME could not be read " +
+    err.line("packages/abi/test/wac/cast_test.wac: no `cast` on PATH, and HOME could not be read " +
               "so ~/tools/foundry could not be checked. Run this lane with --allow-env.");
     return "nolookup";
   }
   string candidate = "\{string.fromBytes(h!)}/tools/foundry/cast";
-  Exec there = cli.exec(candidate, ["--version"], u8[]()).wait();
-  if (there.ran() && there.status == 0) { return candidate; }
+  auto thereRan = flatten(procs.exec(candidate, ["--version"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? there = thereRan.ok();
+  if ((there is not null) && there!.status == 0) { return candidate; }
 
-  core.warn("packages/abi/test/wac/cast_test.wac: no `cast` on PATH or in ~/tools/foundry — the " +
+  err.line("packages/abi/test/wac/cast_test.wac: no `cast` on PATH or in ~/tools/foundry — the " +
             "second oracle is not running. Foundry's installer puts it in ~/.foundry/bin; this " +
             "repo keeps it in ~/tools/foundry so it survives a container restart.");
   return "missing";
 }
 
 /** `cast abi-encode 'f(types)' args…`, or a trap naming what it said. */
-u8[] castEncode(Core core, Cli cli, string cast, string[] types, string[] args) {
+u8[] castEncode(Output err, Procs procs, string cast, string[] types, string[] args) {
   string[] argv = string[].filled(types.len() + args.len() + 2, "");
   argv[0] = "abi-encode";
   string joined = "";
@@ -80,13 +83,14 @@ u8[] castEncode(Core core, Cli cli, string cast, string[] types, string[] args) 
   string[] exact = string[].filled(2 + args.len(), "");
   for (i32 i = 0; i < exact.len(); i++) { exact[i] = argv[i]; }
 
-  Exec r = cli.exec(cast, exact, u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("cast abi-encode f(" + joined + "): " +
-              (r.ran() ? string.fromBytes(r.stderr) : r.error));
+  auto rRan = flatten(procs.exec(cast, exact, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("cast abi-encode f(" + joined + "): " +
+              ((r is not null) ? string.fromBytes(r!.stderr) : "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"));
     trap;
   }
-  string said = trimmed(string.fromBytes(r.stdout));
+  string said = trimmed(string.fromBytes(r!.stdout));
   return unhex(said.len() >= 2 && said.slice(0, 2) == "0x" ? said.slice(2, said.len()) : said);
 }
 
@@ -165,9 +169,12 @@ string label(Case c) {
   return "(\{types}) \{args} — \{c.why}";
 }
 
-export string test_bytes_another_implementation_produced_round_trip(Core core, Cli cli) {
+export string test_bytes_another_implementation_produced_round_trip(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Procs procs = sys.procs();
   T t = T.create();
-  string cast = findCast(core, cli);
+  string cast = findCast(err, env, procs);
   t.isTrue(cast != "nolookup",
            "cast could not be looked for: this lane has no --allow-env, so ~/tools/foundry is out " +
            "of reach and the second oracle would silently compare nothing");
@@ -175,14 +182,14 @@ export string test_bytes_another_implementation_produced_round_trip(Core core, C
 
   // **The canary.** Every assertion here is "these agree", which a harness that encoded nothing would
   // also satisfy. Two encodings that must differ prove `cast` is really running.
-  u8[] one = castEncode(core, cli, cast, ["uint256"], ["1"]);
-  u8[] two = castEncode(core, cli, cast, ["uint256"], ["2"]);
+  u8[] one = castEncode(err, procs, cast, ["uint256"], ["1"]);
+  u8[] two = castEncode(err, procs, cast, ["uint256"], ["2"]);
   t.isTrue(hex(one) != hex(two), "the oracle is not running — two different values encoded alike");
 
   Case[] cases = corpusGaps();
   i32 compared = 0;
   for (i32 i = 0; i < cases.len(); i++) {
-    u8[] theirs = castEncode(core, cli, cast, cases[i].types, cases[i].args);
+    u8[] theirs = castEncode(err, procs, cast, cases[i].types, cases[i].args);
     u8[] ours = roundTrip(theirs, schemaOf(cases[i].types));
     t.eqStr(ours.len() == 0 ? "(refused)" : hex(ours), hex(theirs), label(cases[i]));
     compared = compared + 1;

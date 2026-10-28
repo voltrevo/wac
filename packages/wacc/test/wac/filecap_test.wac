@@ -23,10 +23,11 @@
 // `wac check`, so this writes files and runs the command.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { putFile } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /**
  * One file per function plus an entry importing every one of them, written under `dir`.
@@ -36,55 +37,59 @@ import { putFile } from "../../../wactest/src/host.wac";
  * `bool` for all of them, so a failure at any point reached the reader as "wrote the over-cap
  * program" failing, which says nothing about which file or why. `issues/system/0229`.
  */
-string writeProgram(Cli cli, string dir, i32 n) {
+string writeProgram(Files fs, string dir, i32 n) {
   string entry = "";
   for (i32 i = 0; i < n; i++) {
     string name = "f" + itoa(i) + ".wac";
-    string why = putFile(cli, dir + "/" + name,
-        "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n");
+    string why = putFile(fs, dir + "/" + name, "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n");
     if (why != "") { return why; }
     entry = entry + "import { g" + itoa(i) + " } from \"./" + name + "\";\n";
   }
   entry = entry + "export i32 main() { return g0(); }\n";
-  return putFile(cli, dir + "/main.wac", entry);
+  return putFile(fs, dir + "/main.wac", entry);
 }
 
-string checkIn(Cli cli, string dir) {
-  Exec r = cli.exec("/bin/sh",
-    ["-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check main.wac 2>&1"],
-    u8[]()).wait();
-  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+string checkIn(Env env, Procs procs, string dir) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cd '" + dir + "' && '" + wacBinary(env) + "' check main.wac 2>&1"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
 }
 
-export string test_a_program_past_the_file_cap_is_refused_and_names_the_file(Core core, Cli cli) {
+export string test_a_program_past_the_file_cap_is_refused_and_names_the_file(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/filecap-over";
-  cli.remove(dir, true).wait();
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/filecap-over";
+  fs.remove(dir, true).wait();
   // One past the cap, because the cap counts the entry: 512 sources plus `main.wac` is 513.
-  string whyOver = writeProgram(cli, dir, 512);
+  string whyOver = writeProgram(fs, dir, 512);
   t.isTrue(whyOver == "", whyOver);
-  string said = checkIn(cli, dir);
+  string said = checkIn(env, procs, dir);
   // **The limit and the file, not just a refusal.** A message that says only "too many files" leaves
   // the reader counting; the file that did not fit is the one to look at.
   t.isTrue(said.indexOf("at most 512 files") >= 0, "did not name the limit — " + said);
   t.isTrue(said.indexOf(".wac") >= 0, "did not name a file — " + said);
   t.isTrue(said.indexOf("no diagnostics") < 0,
       "reported a clean program it had only half read — " + said);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_and_a_program_within_the_cap_still_checks_clean(Core core, Cli cli) {
+export string test_and_a_program_within_the_cap_still_checks_clean(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The control, and it is the point: a cap that refuses everything is not a cap. Small rather than
   // 511, because what is being asked is whether the *guard* fires, and 511 files cost a real compile.
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/filecap-under";
-  cli.remove(dir, true).wait();
-  string whyUnder = writeProgram(cli, dir, 40);
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/filecap-under";
+  fs.remove(dir, true).wait();
+  string whyUnder = writeProgram(fs, dir, 40);
   t.isTrue(whyUnder == "", whyUnder);
-  string said = checkIn(cli, dir);
+  string said = checkIn(env, procs, dir);
   t.isTrue(said.indexOf("no diagnostics") >= 0, "a 41-file program was refused — " + said);
   t.isTrue(said.indexOf("at most") < 0, "the cap fired under the cap — " + said);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

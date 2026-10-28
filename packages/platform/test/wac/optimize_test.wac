@@ -16,34 +16,33 @@
 // which is the only way from out here to ask for the combination that must be refused.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string WC = "packages/platform/example/wc.wac";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/optimize-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/optimize-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
 
 /** Build `wc.wac`, optionally optimised, with coverage off however this run was started. */
-Exec build(Cli cli, string out, bool optimize) {
-  return cli.exec("/bin/sh",
-    [
+Exec build(Procs procs, string out, bool optimize) {
+  return flatten(procs.exec("/bin/sh", [
              "-c", "unset WAC_PROFILE; exec deno run -A packages/platform/build.ts '" + WC +
              "' --allow-read " + (optimize ? "--optimize " : "") + "-o '" + out + "'"
-    ],
-    u8[]()).wait();
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
-i64 sizeOf(Cli cli, string path) {
-  Stat s = cli.stat(path).wait();
-  return s.exists ? s.size : (0 as i64);
+i64 sizeOf(Files fs, string path) {
+  Stat? s = flatten(fs.stat(path).wait()).ok();
+  return (s is not null) ? s!.size : (0 as i64);
 }
 
 /** The whitespace-separated fields of one line. */
@@ -59,23 +58,26 @@ i32 fieldCount(string s) {
   return n;
 }
 
-export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Core core, Cli cli) {
+export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "smaller");
+  string dir = freshScratch(t, env, fs, "smaller");
   string plain = "\{dir}/wc-plain";
   string opt = "\{dir}/wc-opt";
 
-  Exec bp = build(cli, plain, false);
-  Exec bo = build(cli, opt, true);
+  Exec bp = build(procs, plain, false);
+  Exec bo = build(procs, opt, true);
   t.isTrue(bp.ran() && bp.status == 0, "the plain build — \{string.fromBytes(bp.stderr)}");
   t.isTrue(bo.ran() && bo.status == 0, "the optimised build — \{string.fromBytes(bo.stderr)}");
   if (!bp.ran() || bp.status != 0 || !bo.ran() || bo.status != 0) {
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
     return t.report();
   }
 
-  i64 before = sizeOf(cli, plain);
-  i64 after = sizeOf(cli, opt);
+  i64 before = sizeOf(fs, plain);
+  i64 after = sizeOf(fs, opt);
   // Measured at 274 KB -> 222 KB on 2026-08-11, which is the wasm going 93,766 -> 55,143 inside a
   // file that is about half host JavaScript (wac-mono 0129). A tenth is a floor with room under it
   // rather than the figure: what this asserts is that something happened, not how much.
@@ -84,60 +86,67 @@ export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Core 
            " bytes is not a saving worth a flag");
 
   // **And it is still the program.** A build that emitted an empty module would pass the line above.
-  Exec rp = cli.exec(plain, ["README.md"], u8[]()).wait();
-  Exec ro = cli.exec(opt, ["README.md"], u8[]()).wait();
-  t.isTrue(rp.ran() && rp.status == 0, "the plain program ran — \{string.fromBytes(rp.stderr)}");
-  t.isTrue(ro.ran() && ro.status == 0, "the optimised program ran — \{string.fromBytes(ro.stderr)}");
-  if (rp.ran() && ro.ran()) {
-    string plainOut = string.fromBytes(rp.stdout);
-    t.eqStr(string.fromBytes(ro.stdout), plainOut, "the optimised program answers differently");
+  auto rpRan = flatten(procs.exec(plain, ["README.md"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? rp = rpRan.ok();
+  auto roRan = flatten(procs.exec(opt, ["README.md"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? ro = roRan.ok();
+  t.isTrue((rp is not null) && rp!.status == 0, "the plain program ran — \{string.fromBytes(rp!.stderr)}");
+  t.isTrue((ro is not null) && ro!.status == 0, "the optimised program ran — \{string.fromBytes(ro!.stderr)}");
+  if ((rp is not null) && (ro is not null)) {
+    string plainOut = string.fromBytes(rp!.stdout);
+    t.eqStr(string.fromBytes(ro!.stdout), plainOut, "the optimised program answers differently");
     t.eqI32(fieldCount(trimmed(plainOut)), 4, "wc printed \{plainOut}");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one(
-    Core core, Cli cli) {
+export string test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The cache key carries the flag and the binaryen version — without that, asking for one after the
   // other hands back whichever was built first, which is the stale-artifact failure `buildCache`
   // exists to prevent and would read here as "--optimize does nothing".
   T t = T.create();
-  string dir = freshScratch(t, cli, "cachekey");
+  string dir = freshScratch(t, env, fs, "cachekey");
   string a = "\{dir}/key-plain";
   string b = "\{dir}/key-opt";
-  Exec ba = build(cli, a, false);
-  Exec bb = build(cli, b, true);
+  Exec ba = build(procs, a, false);
+  Exec bb = build(procs, b, true);
   t.isTrue(ba.ran() && ba.status == 0, "the plain build — \{string.fromBytes(ba.stderr)}");
   t.isTrue(bb.ran() && bb.status == 0, "the optimised build — \{string.fromBytes(bb.stderr)}");
   if (ba.ran() && ba.status == 0 && bb.ran() && bb.status == 0) {
-    i64 sa = sizeOf(cli, a);
-    i64 sb = sizeOf(cli, b);
+    i64 sa = sizeOf(fs, a);
+    i64 sb = sizeOf(fs, b);
     t.isTrue(sa > (0 as i64) && sb < sa,
              "the two builds are the same file: \{sa as~ i32} and " +
              "\{sb as~ i32} bytes");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_coverage_build_refuses_to_be_optimised(Core core, Cli cli) {
+export string test_a_coverage_build_refuses_to_be_optimised(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Counters are branch-indexed globals and an optimiser may merge or drop the branches they count,
   // so a dump would be renumbered underneath the table that names them — a wrong answer rather than a
   // missing one. Refused at the call rather than discovered in a report nobody could explain.
   T t = T.create();
-  string dir = freshScratch(t, cli, "refusal");
-  Exec r = cli.exec("/bin/sh",
-    [
+  string dir = freshScratch(t, env, fs, "refusal");
+  auto rRan = flatten(procs.exec("/bin/sh", [
              "-c", "WAC_PROFILE=1 exec deno run -A packages/platform/build.ts '\{WC}" +
              "' --allow-read --optimize -o '\{dir}/never'"
-    ], u8[]()).wait();
-  t.isTrue(r.ran(), "the build was attempted — \{r.error}");
-  if (r.ran()) {
-    t.isTrue(r.status != 0, "it built anyway, which it must not");
-    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the build was attempted — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is not null)) {
+    t.isTrue(r!.status != 0, "it built anyway, which it must not");
+    string said = string.fromBytes(r!.stderr) + string.fromBytes(r!.stdout);
     t.isTrue(contains(said, "cannot be optimised"), "expected a refusal, got: \{said}");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

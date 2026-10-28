@@ -48,9 +48,9 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { Buf } from "core";
+import { Buf, flatten } from "core";
 import { literalOf, chunkedLiteral } from "./source_probe.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { emitFilesSelfDescribing } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
@@ -107,12 +107,12 @@ string driverFor(string text) {
  * The driver carries the target file as a string literal and imports the compiler, so the reference
  * compiles all of that once per process. Three questions asked separately were three of those.
  */
-i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
+i32[] ladderAnswers(Procs procs, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", ["run", "-A", "harness/ladderRun.ts", DRIVER, exports],
-                    u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return i32[].filled(want, 0); }
-  string[] lines = splitLines(string.fromBytes(r.stdout));
+  auto rRan = flatten(procs.exec("deno", ["run", "-A", "harness/ladderRun.ts", DRIVER, exports], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return i32[].filled(want, 0); }
+  string[] lines = splitLines(string.fromBytes(r!.stdout));
   i32[] out = i32[].filled(want, 0);
   i32 n = 0;
   for (i32 i = 0; i < lines.len() && n < want; i++) {
@@ -125,13 +125,16 @@ i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
   return out;
 }
 
-export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core core, Cli cli) {
+export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "fixpointemit_test");
+  Corpus c = loadCorpus(fs, "fixpointemit_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   string[] want = targets();
   i32[] ok = i32[].filled(1, 0);
 
@@ -147,13 +150,13 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
     for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
     paths[c.paths.len()] = DRIVER;
 
-    Change wrote = cli.writeFile(DRIVER, driverFor(c.sources[at]).toBytes()).wait();
-    t.eqI32(wrote.fault, 0, "the driver for " + want[k] + " was written");
-    if (wrote.fault != 0) { continue; }
+    auto wrote = flatten(fs.writeFile(DRIVER, driverFor(c.sources[at]).toBytes()).wait());
+    t.isTrue(wrote.isOk(), "the driver for " + want[k] + " was written");
+    if (wrote.isErr()) { continue; }
 
     // **The canaries, per target, from the side that answers in full.** A stage that declined the
     // whole file would emit an empty module and agree with the other about nothing in particular.
-    i32[] said = ladderAnswers(cli, "blockedLen,emitLen,fold", 3, ok);
+    i32[] said = ladderAnswers(procs, "blockedLen,emitLen,fold", 3, ok);
     t.eqI32(ok[0], 1, "the ladder's wacc ran the driver for " + want[k] + " and answered all three");
     if (ok[0] != 1) { continue; }
     t.eqI32(said[0], 0,
@@ -164,7 +167,7 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
 
     sources[c.paths.len()] = driverFor(c.sources[at]);
     u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "fix.wasm", 0);
-    Ran r = runModule(cli, wasm, dir, "fixdrive.wasm", ["fold"]);
+    Ran r = runModule(env, fs, procs, wasm, dir, "fixdrive.wasm", ["fold"]);
     if (!r.ok || wasRejected(r) || r.trapped) {
       t.fail("stage B for " + want[k] + " did not run — " + (r.ok ? r.stderr : r.error));
       continue;
@@ -182,6 +185,6 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
             ", stage A=" + itoa(theirs) + ", folded over targetLen, blockedLen, emitLen and emitSum");
   }
 
-  cli.remove(DRIVER, false).wait();
+  fs.remove(DRIVER, false).wait();
   return t.report();
 }

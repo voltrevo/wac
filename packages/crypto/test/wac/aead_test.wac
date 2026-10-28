@@ -16,7 +16,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, askDeno, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { poly1305 } from "../../src/poly1305.wac";
 import { aeadDecrypt, aeadEncrypt, aeadTag } from "../../src/aead.wac";
 import { equal } from "../../../bytes/src/slice.wac";
@@ -84,8 +84,8 @@ export string test_poly1305_forced_carries() {
 static string ORACLE = "packages/crypto/test/oracle.mjs";
 
 /** Ask node's ChaCha20-Poly1305 — `chacha` judges a seal, `open` answers about bytes we did not. */
-Answers askAead(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "node", [ORACLE], lines, what);
+Answers askAead(T t, Procs procs, Lines lines, string what) {
+  return ask(t, procs, "node", [ORACLE], lines, what);
 }
 
 /** A `chacha` claim: the sealed output we say these inputs produce. */
@@ -94,7 +94,8 @@ void claimSeal(Lines lines, u8[] key, u8[] nonce, u8[] aad, u8[] plain, u8[] sea
             hex(sealed));
 }
 
-export string test_rfc_8439_aead(Core core, Cli cli) {
+export string test_rfc_8439_aead(Sys sys) {
+  Procs procs = sys.procs();
   // §2.8.2's worked example, then the same inputs through the host.
   T t = T.create();
   u8[] key = aeadKey();
@@ -117,11 +118,12 @@ export string test_rfc_8439_aead(Core core, Cli cli) {
   // And the host, which agrees only if the framing matches too.
   Lines lines = Lines.create();
   claimSeal(lines, key, nonce, aad, plain, cat(ct, aeadTag(key, nonce, aad, ct)));
-  askAead(t, cli, lines, "the host seals the same bytes");
+  askAead(t, procs, lines, "the host seals the same bytes");
   return t.report();
 }
 
-export string test_the_length_fields_stop_a_block_moving(Core core, Cli cli) {
+export string test_the_length_fields_stop_a_block_moving(Sys sys) {
+  Procs procs = sys.procs();
   // The property the two trailing counts exist for, and it takes a whole block to expose.
   //
   // Moving a *byte* between the fields changes the padded content, so padding alone
@@ -149,14 +151,15 @@ export string test_the_length_fields_stop_a_block_moving(Core core, Cli cli) {
   lines.add("open \{hex(key)} \{hex(nonce)} \{hex(a)} \{hex(cat(c, split))}");
   lines.add("open \{hex(key)} \{hex(nonce)} \{hex(u8[]())} " +
             hex(cat(cat(a, c), split)));
-  Answers r = askAead(t, cli, lines, "the two framings");
+  Answers r = askAead(t, procs, lines, "the two framings");
   if (!r.ok) { return t.report(); }
   t.eqI32(word(r.lines[0], 1).len(), 32, "the host accepts the split framing");
   t.eqStr(word(r.lines[1], 1), "-", "and rejects the same bytes framed the other way");
   return t.report();
 }
 
-export string test_the_tag_covers_everything(Core core, Cli cli) {
+export string test_the_tag_covers_everything(Sys sys) {
+  Procs procs = sys.procs();
   // Every input must move the tag, and the host must agree at every length — including
   // the empty cases, where a construction that skipped padding for a zero-length field
   // diverges from one that pads it to a full block of nothing.
@@ -176,7 +179,7 @@ export string test_the_tag_covers_everything(Core core, Cli cli) {
     }
   }
   t.eqI32(lines.n, 40, "eight plaintext lengths by five aad lengths");
-  askAead(t, cli, lines, "the tag at every length");
+  askAead(t, procs, lines, "the tag at every length");
   return t.report();
 }
 
@@ -319,8 +322,8 @@ void claim(Lines lines, u8[] key, u8[] msg) {
   lines.add("poly1305 \{hex(key)} \{hex(msg)} \{hex(poly1305(key, msg))}");
 }
 
-export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(
-    Core core, Cli cli) {
+export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] key = decoded("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
   Lines lines = Lines.create();
@@ -329,11 +332,12 @@ export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_b
     for (i32 i = 0; i < n; i++) { m[i] = ((i * 53 + 17) & 0xFF) as@ u8; }
     claim(lines, key, m);
   }
-  check(t, cli, "node", [CRYPTO_ORACLE], lines, "every length to three blocks");
+  check(t, procs, "node", [CRYPTO_ORACLE], lines, "every length to three blocks");
   return t.report();
 }
 
-export string test_poly1305_agrees_with_the_reference_under_fuzzing(Core core, Cli cli) {
+export string test_poly1305_agrees_with_the_reference_under_fuzzing(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Rng rng = Rng(0x1E3779B9);   // the golden-ratio constant, with the top bit cleared for i32
   Lines lines = Lines.create();
@@ -352,6 +356,6 @@ export string test_poly1305_agrees_with_the_reference_under_fuzzing(Core core, C
     for (i32 j = 0; j < lens[i]; j++) { msg[j] = 0xFF; }
     claim(lines, key, msg);
   }
-  check(t, cli, "node", [CRYPTO_ORACLE], lines, "400 fuzz cases and five saturated ones");
+  check(t, procs, "node", [CRYPTO_ORACLE], lines, "400 fuzz cases and five saturated ones");
   return t.report();
 }

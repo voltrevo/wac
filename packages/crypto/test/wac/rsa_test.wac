@@ -41,7 +41,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { Big } from "../../../bignum/src/big.wac";
@@ -52,8 +52,8 @@ import { check } from "../../../wactest/src/oracle.wac";
 
 static string ORACLE = "packages/crypto/test/oracle.mjs";
 
-Answers askRsa(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "node", [ORACLE], lines, what);
+Answers askRsa(T t, Procs procs, Lines lines, string what) {
+  return ask(t, procs, "node", [ORACLE], lines, what);
 }
 
 /** The `n` and `e` of a `rsakey` answer, and the payload of the single-value answers. */
@@ -74,7 +74,8 @@ struct Key {
   Key of(string line) { return Key(modulusOf(line), exponentOf(line)); }
 }
 
-export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
+export string test_pkcs1_signatures_from_the_host(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   i32[] bits = [2048, 3072];
   i32[] hashes = [32, 48, 64];
@@ -87,7 +88,7 @@ export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
       lines.add("rsasign \{hashes[h] as i64} \{hex(fill(50 + h, b * 3 + h))}");
     }
   }
-  Answers a = askRsa(t, cli, lines, "two keys and six signatures");
+  Answers a = askRsa(t, procs, lines, "two keys and six signatures");
   if (!a.ok) { return t.report(); }
 
   for (i32 b = 0; b < bits.len(); b++) {
@@ -103,7 +104,8 @@ export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
+export string test_pkcs1_refuses_a_block_that_is_not_exact(Sys sys) {
+  Procs procs = sys.procs();
   // Every byte of the block is specified, so every byte is worth moving.
   //
   // What this does *not* reach: the individual strictness checks guard each other here. Flipping a
@@ -120,7 +122,7 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
   lines.add("rsasign 32 \{hex(msg)}");
-  Answers a = askRsa(t, cli, lines, "a key and one signature");
+  Answers a = askRsa(t, procs, lines, "a key and one signature");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);
   u8[] sig = valueOf(a.lines[1]);
@@ -143,7 +145,8 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_pss_at_every_salt_length(Core core, Cli cli) {
+export string test_pss_at_every_salt_length(Sys sys) {
+  Procs procs = sys.procs();
   // PSS is randomised, so there is nothing to compare byte for byte — only acceptance.
   // The salt length is the parameter implementations disagree about, so each is checked
   // against a verifier told the same length.
@@ -157,7 +160,7 @@ export string test_pss_at_every_salt_length(Core core, Cli cli) {
     lines.add("rsapss 32 \{salts[s] as i64} \{hex(msg)}");
     lines.add("rsapss 32 \{salts[s] as i64} \{hex(msg)}");
   }
-  Answers a = askRsa(t, cli, lines, "a key and six PSS signatures");
+  Answers a = askRsa(t, procs, lines, "a key and six PSS signatures");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);
   for (i32 s = 0; s < salts.len(); s++) {
@@ -178,13 +181,14 @@ export string test_pss_at_every_salt_length(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_pss_refuses_tampering(Core core, Cli cli) {
+export string test_pss_refuses_tampering(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] msg = "tamper with this".toBytes();
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
   lines.add("rsapss 32 32 \{hex(msg)}");
-  Answers a = askRsa(t, cli, lines, "a key and one PSS signature");
+  Answers a = askRsa(t, procs, lines, "a key and one PSS signature");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);
   u8[] sig = valueOf(a.lines[1]);
@@ -209,7 +213,8 @@ export string test_pss_refuses_tampering(Core core, Cli cli) {
 
 // ── Signing ───────────────────────────────────────────────────────────────────
 
-export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core, Cli cli) {
+export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Sys sys) {
+  Procs procs = sys.procs();
   // The strongest form available, and the reason it is available: PKCS#1 v1.5 has no salt and no
   // randomness, so one key, one message and one hash admit exactly one signature. Equality with
   // node's therefore checks the padding construction, the digest, the DigestInfo prefix and the
@@ -226,7 +231,7 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core,
       lines.add("rsasign \{hashes[h] as i64} \{hex(fill(64 + h, b * 5 + h))}");
     }
   }
-  Answers a = askRsa(t, cli, lines, "two keys, their exponents and six signatures");
+  Answers a = askRsa(t, procs, lines, "two keys, their exponents and six signatures");
   if (!a.ok) { return t.report(); }
 
   for (i32 b = 0; b < bits.len(); b++) {
@@ -246,7 +251,8 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core,
   return t.report();
 }
 
-export string test_the_host_accepts_what_we_signed(Core core, Cli cli) {
+export string test_the_host_accepts_what_we_signed(Sys sys) {
+  Procs procs = sys.procs();
   // Byte-identity above already implies this, but only while node's signer stays deterministic —
   // and it is node that decides that, not us. This asks the question the caller actually cares
   // about, which is whether an independent verifier accepts our output.
@@ -254,7 +260,7 @@ export string test_the_host_accepts_what_we_signed(Core core, Cli cli) {
   Lines first = Lines.create();
   first.add("rsakeygen 2048");
   first.add("rsaprivate");
-  Answers keys = askRsa(t, cli, first, "a key and its exponent");
+  Answers keys = askRsa(t, procs, first, "a key and its exponent");
   if (!keys.ok) { return t.report(); }
   Key k = Key.of(keys.lines[0]);
   u8[] d = valueOf(keys.lines[1]);
@@ -272,14 +278,15 @@ export string test_the_host_accepts_what_we_signed(Core core, Cli cli) {
   // test would pass for a signer that ignored its input.
   judged.add("rsaverify 32 " + hex(sig) + " " +
              hex("a different message entirely".toBytes()) + " 0");
-  askRsa(t, cli, judged, "node's verdict on ours");
+  askRsa(t, procs, judged, "node's verdict on ours");
 
   // Our own verifier agrees, which is the weak direction and is labelled as such.
   t.isTrue(rsaVerifyPkcs1(k.n, k.e, msg, sig, 32), "and we verify it ourselves");
   return t.report();
 }
 
-export string test_a_raw_signature_carries_exactly_the_payload(Core core, Cli cli) {
+export string test_a_raw_signature_carries_exactly_the_payload(Sys sys) {
+  Procs procs = sys.procs();
   // `rsaSignRawPkcs1` is the one Tor needs: a bare digest in PKCS#1 padding with no DigestInfo.
   // node cannot verify that with `createVerify`, because there is nothing naming an algorithm — so
   // the check is `RSA_public_decrypt`, which is the verify primitive and returns the payload.
@@ -287,7 +294,7 @@ export string test_a_raw_signature_carries_exactly_the_payload(Core core, Cli cl
   Lines first = Lines.create();
   first.add("rsakeygen 2048");
   first.add("rsaprivate");
-  Answers keys = askRsa(t, cli, first, "a key and its exponent");
+  Answers keys = askRsa(t, procs, first, "a key and its exponent");
   if (!keys.ok) { return t.report(); }
   Key k = Key.of(keys.lines[0]);
   u8[] d = valueOf(keys.lines[1]);
@@ -303,7 +310,7 @@ export string test_a_raw_signature_carries_exactly_the_payload(Core core, Cli cl
   second.add("rsapub \{hex(k.n)} \{hex(k.e)}");
   second.add("rsarecover \{hex(sig)}");
   second.add("rsarecover \{hex(rsaSignRawPkcs1(k.n, d, p32))}");
-  Answers r = askRsa(t, cli, second, "what node recovers");
+  Answers r = askRsa(t, procs, second, "what node recovers");
   if (!r.ok) { return t.report(); }
 
   u8[] got = valueOf(r.lines[0]);   // `rsapub` answers nothing, so the recoveries are 0 and 1
@@ -319,7 +326,8 @@ export string test_a_raw_signature_carries_exactly_the_payload(Core core, Cli cl
   return t.report();
 }
 
-export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(Core core, Cli cli) {
+export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(Sys sys) {
+  Procs procs = sys.procs();
   // The gap `test_pkcs1_refuses_a_block_that_is_not_exact` names above and could not close: its
   // perturbations turn the whole block to garbage after exponentiation, so every strictness check
   // refuses and none of them is reached individually. Closing it needs a block that is correct
@@ -331,7 +339,7 @@ export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(Core cor
   Lines first = Lines.create();
   first.add("rsakeygen 2048");
   first.add("rsaprivate");
-  Answers keys = askRsa(t, cli, first, "a key and its exponent");
+  Answers keys = askRsa(t, procs, first, "a key and its exponent");
   if (!keys.ok) { return t.report(); }
   Key k = Key.of(keys.lines[0]);
   u8[] d = valueOf(keys.lines[1]);
@@ -423,14 +431,15 @@ u8[] copyOf(u8[] src) {
  * TLS 1.3 needs exactly this: `rsa_pss_rsae_sha256` in CertificateVerify, which is the only way a
  * server presenting an RSA certificate can complete a handshake.
  */
-export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
+export string test_our_pss_signatures_verify_elsewhere(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Lines first = Lines.create();
   first.add("rsakeygen 2048");
   first.add("rsaprivate");
   first.add("rsakeygen 512");
   first.add("rsaprivate");
-  Answers keys = askRsa(t, cli, first, "two keys and their exponents");
+  Answers keys = askRsa(t, procs, first, "two keys and their exponents");
   if (!keys.ok) { return t.report(); }
   Key k = Key.of(keys.lines[0]);
   u8[] d = valueOf(keys.lines[1]);
@@ -453,7 +462,7 @@ export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
     // even if both halves were wrong in the same way.
     t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, salts[s]), "and so does ours");
   }
-  askRsa(t, cli, judged, "node's verdict on our PSS");
+  askRsa(t, procs, judged, "node's verdict on our PSS");
 
   // The salt reaches the signature: two different salts must give two different signatures, or the
   // parameter is being ignored and every signature over one message is the same bytes.
@@ -631,7 +640,8 @@ struct ModCase {
   string what;
 }
 
-export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli) {
+export string test_modular_exponentiation_agrees_with_bigint(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   ModCase[] cases = [
     ModCase("…3", "…5", "…7", "the textbook case"),
@@ -660,7 +670,7 @@ export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli)
     u8[] got = toBytes(modPow(fromBytes(b), fromBytes(e), fromBytes(m)), 32);
     lines.add("modexp \{hex(b)} \{hex(e)} \{hex(m)} \{hex(got)}");
   }
-  check(t, cli, "node", [ORACLE], lines, "nine modular exponentiations");
+  check(t, procs, "node", [ORACLE], lines, "nine modular exponentiations");
   return t.report();
 }
 
@@ -797,7 +807,7 @@ export string test_a_pkcs1_signature_recovers_the_payload_it_carried() {
  * A real modulus is hundreds of bytes. The point is that "real" is not something a function can
  * assume about an argument, and this one had already promised an answer for input it dislikes.
  */
-export string test_a_one_byte_modulus_recovers_nothing(Core core, Cli cli) {
+export string test_a_one_byte_modulus_recovers_nothing() {
   T t = T.create();
   t.eqI32(rsaRecoverPkcs1([3] as u8[], [1] as u8[], [0] as u8[]).len(), 0,
           "a one-byte modulus should recover nothing");
@@ -818,13 +828,14 @@ export string test_a_one_byte_modulus_recovers_nothing(Core core, Cli cli) {
  * The positive half is the canary — the same call with the correct salt length still verifies — so
  * this cannot pass for a verifier that rejects everything.
  */
-export string test_a_negative_salt_length_is_rejected(Core core, Cli cli) {
+export string test_a_negative_salt_length_is_rejected(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] msg = "a negative salt length".toBytes();
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
   lines.add("rsapss 32 32 \{hex(msg)}");
-  Answers a = askRsa(t, cli, lines, "a key and one PSS signature");
+  Answers a = askRsa(t, procs, lines, "a key and one PSS signature");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);
   u8[] sig = valueOf(a.lines[1]);

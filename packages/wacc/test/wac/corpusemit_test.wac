@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Output, Procs, Sys } from "std";
 import { blockedFiles, blockedFilesIn, emitFilesIn } from "../../src/api.wac";
 import { Corpus, loadCorpus, nestedProjects } from "./corpus_probe.wac";
 import { Res } from "../../src/path.wac";
@@ -96,16 +96,20 @@ export string test_the_export_scan_reads_what_a_source_declares() {
   return t.report();
 }
 
-export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
+export string test_rung_4_the_repository_corpus_compiled(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "corpusemit_test");
+  Corpus c = loadCorpus(fs, "corpusemit_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
   t.isTrue(c.paths.len() >= 100, "only " + itoa(c.paths.len()) + " corpus files loaded");
 
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   // What a nested project's directory names, as the command resolves it (`nestedProjects`).
-  Res res = nestedProjects(cli, c.paths, c.sources);
+  Res res = nestedProjects(fs, c.paths, c.sources);
   i32 whole = 0;
   i32 partial = 0;
   i32 invalid = 0;
@@ -138,13 +142,13 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
       // file — which is where this test's time actually went, not the forks it was blamed on.
       u8[] wasm = emitFilesIn(c.paths, c.sources, res, c.paths[base + j]);
       string at = dir + "/corpusemit" + itoa(j) + ".wasm";
-      cli.writeFile(at, wasm).wait();
+      fs.writeFile(at, wasm).wait();
       wrote[j] = at;
       // Read here, while the bytes are in hand, rather than by asking the compiler again.
       exported[j] = joined(exportedFunctions(wasm).names, "\n");
     }
 
-    Validated v = validateAll(cli, wrote);
+    Validated v = validateAll(env, procs, wrote);
     t.isTrue(v.ok, "the engine was asked about this chunk — " + v.error);
     if (!v.ok) { return t.report(); }
 
@@ -202,7 +206,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // for their shape — some whole, some partial, none invalid — so the numbers themselves reached nobody:
   // `README.md` and the website both quoted "411 of 414 whole", from a run in the days when this rung
   // still printed. A measurement that cannot be read goes stale in the documents that cite it.
-  core.warn("rung 4: " + itoa(whole) + " of " + itoa(c.paths.len()) + " corpus files emitted whole, "
+  err.line("rung 4: " + itoa(whole) + " of " + itoa(c.paths.len()) + " corpus files emitted whole, "
             + itoa(partial) + " partially, " + itoa(invalid) + " invalid, "
             + itoa(reasons) + " declined by name");
 

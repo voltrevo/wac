@@ -21,42 +21,46 @@
 // names the file and line, because a refusal that cannot be located is a riddle.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
-export string test_a_program_the_checker_refuses_does_not_build(Core core, Cli cli) {
+export string test_a_program_the_checker_refuses_does_not_build(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/buildchecks";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/buildchecks";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
   // A type error the emitter would happily guess past: the name resolves to nothing, and an emitter
   // that skipped the function would still produce a module.
   string entry = "\{dir}/bad.wac";
   string out = "\{dir}/out";
-  Change wrote = cli.writeFile(entry, "export i32 main() { return \"not an i32\"; }\n".toBytes())
-                    .wait();
-  t.eqI32(wrote.fault, 0, "wrote the fixture");
-  if (wrote.fault != 0) { return t.report(); }
+  auto wrote = flatten(fs.writeFile(entry, "export i32 main() { return \"not an i32\"; }\n".toBytes()).wait());
+  t.isTrue(wrote.isOk(), "wrote the fixture — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
+  if (wrote.isErr()) { return t.report(); }
 
-  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
-  Exec r = cli.exec(wac, ["build", entry, "-o", out], u8[]()).wait();
-  t.isTrue(r.ran(), "the wac binary ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
+  string wac = "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
+  auto rRan = flatten(procs.exec(wac, ["build", entry, "-o", out], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the wac binary ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
 
-  t.isTrue(r.status != 0, "a program with a type error was built");
-  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r!.status != 0, "a program with a type error was built");
+  string said = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
 
   // **The artefact, which is the thing the issue was about.** A build that reported an error and
   // wrote the module anyway would satisfy every assertion about the message.
-  t.isTrue(!cli.stat("\{out}.wasm").wait().exists, "a module was written for a refused program");
-  t.isTrue(!cli.stat("\{out}.json").wait().exists, "a manifest was written for a refused program");
+  t.isTrue(!flatten(fs.stat("\{out}.wasm").wait()).isOk(), "a module was written for a refused program");
+  t.isTrue(!flatten(fs.stat("\{out}.json").wait()).isOk(), "a manifest was written for a refused program");
 
   // The diagnostic itself has to reach the caller, or a refusal is a riddle. The file and a line
   // number, not the sentence: the sentence belongs to whichever compiler answered.
   t.isTrue(said.indexOf("bad.wac:1:") >= 0,
            "the message names no position:\n\{said}");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

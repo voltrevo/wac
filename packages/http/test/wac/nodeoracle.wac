@@ -37,8 +37,8 @@
 // nothing else — which is what `issues/system/0182` argued for and what closed it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec } from "std";
-import { Buf } from "core";
+import { Cli, Exec, ChildEnv, Launch, Procs } from "std";
+import { Buf, flatten } from "core";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
@@ -106,7 +106,7 @@ u8[] unbase64(string s) {
  * Answers one `Outcome` per case, and `Broken` for every case when the batch itself failed — never a
  * shorter list, because a caller zipping outcomes against cases would then compare the wrong pairs.
  */
-export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
+export Outcome[] oracle(T t, Procs procs, u8[][] cases, i32 nudgeMs) {
   if (cases.len() == 0) { return Outcome[].filled(0, Outcome.Incomplete); }
   Buf payload = Buf.create();
   payload.push('[');
@@ -120,12 +120,13 @@ export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
 
   string[] args = nudgeMs < 0 ? [ORACLE]
                               : [ORACLE, "--nudge-ms=\{nudgeMs}"];
-  Exec r = cli.exec("node", args, payload.take()).wait();
-  if (!r.ran()) { return allBroken(t, cases.len(), "the oracle could not be run: \{r.error}"); }
-  if (r.status != 0) {
-    return allBroken(t, cases.len(), "the oracle failed: \{string.fromBytes(r.stderr)}");
+  auto rRan = flatten(procs.exec("node", args, payload.take(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return allBroken(t, cases.len(), "the oracle could not be run: \{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  if (r!.status != 0) {
+    return allBroken(t, cases.len(), "the oracle failed: \{string.fromBytes(r!.stderr)}");
   }
-  JsonValue? doc = parse(r.stdout).ok();
+  JsonValue? doc = parse(r!.stdout).ok();
   if (doc is null) {
     return allBroken(t, cases.len(), "the oracle's answer is not JSON");
   }

@@ -329,6 +329,7 @@ Nothing here is specific to async: a synchronous generator suspends inside a sco
 struct Continuation {
   TicketBase? t;
   fn<void()> call;
+  fn<bool()> current;
 }
 ```
 
@@ -356,7 +357,9 @@ export i32 continuationResumes() {
 ```
 
 `[§wac-continuation-xj5pyv3]` A `Continuation` holds the ticket its machine is waiting on — `null` for a bare `await;` —
-and a `call` that resumes it.
+and a `call` that resumes it. `current` says whether its machine is still parked there: a `wait` may run the machine
+itself, past a continuation already handed to a queue, and calling that one does nothing — so a scheduler counting
+what is left counts only the current ones.
 
 ```wac
 // expect: traps callsTooEarly

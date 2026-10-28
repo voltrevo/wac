@@ -47,7 +47,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Cli, Files, Output, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { assertCaught, assertQuiet, caughtAndQuiet, complaint,
@@ -55,6 +55,7 @@ import { assertCaught, assertQuiet, caughtAndQuiet, complaint,
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
 import { errWrongCastOp } from "../../src/check.wac";
+import { flatten } from "core";
 
 /**
  * Programs that are wrong in the one way this slice knows about.
@@ -581,8 +582,8 @@ bool startsWith(string s, string prefix) {
 }
 
 /** Every `.wac` file under `dir`, recursively, skipping what a build never reads. */
-void walk(Cli cli, string dir, string[] into, i32[] n) {
-  string[]? entries = cli.readDir(dir).wait();
+void walk(Files fs, string dir, string[] into, i32[] n) {
+  string[]? entries = flatten(fs.readDir(dir).wait()).ok();
   if (entries is null) { return; }
   string[] names = entries!;
   for (i32 i = 0; i < names.len(); i++) {
@@ -593,11 +594,12 @@ void walk(Cli cli, string dir, string[] into, i32[] n) {
       n[0] = n[0] + 1;
       continue;
     }
-    if (cli.readDir(path).wait() is not null) { walk(cli, path, into, n); }
+    if (flatten(fs.readDir(path).wait()).ok() is not null) { walk(fs, path, into, n); }
   }
 }
 
-export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
+export string test_rung3_the_whole_repo_stays_silent(Sys sys) {
+  Files fs = sys.files();
   // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
   // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
   // a dozen hand-written cases and is not, and it has already earned itself twice: the missing-return
@@ -617,7 +619,7 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
   T t = T.create();
   string[] found = string[].filled(2048, "");
   i32[] n = i32[].filled(1, 0);
-  walk(cli, "packages", found, n);
+  walk(fs, "packages", found, n);
   t.isTrue(n[0] >= 250, "only " + itoa(n[0]) + " .wac files checked — the corpus did not load");
   if (n[0] < 250) { return t.report(); }
 
@@ -626,9 +628,9 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
   i32 total = 0;
   i32 missing = 0;
   for (i32 i = 0; i < n[0] && i < found.len(); i++) {
-    FileResult f = cli.readFile(found[i]).wait();
-    if (!f.ok) { continue; }
-    i32[] flat = dumpTypeErrors(f.bytes);
+    u8[]? f = flatten(fs.readFile(found[i]).wait()).ok();
+    if ((f is null)) { continue; }
+    i32[] flat = dumpTypeErrors(f!);
     for (i32 k = 0; k * 3 < flat.len(); k++) {
       if (flat[k * 3] == 77) { missing = missing + 1; continue; }
       total = total + 1;
@@ -818,7 +820,7 @@ export string test_rung3_a_returned_local_and_a_name_used_before_its_declaration
   return t.report();
 }
 
-export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, Cli cli) {
+export string test_rung3_a_function_that_can_reach_its_closing_brace() {
   // Two lists rather than one filtered on `all code paths`. A filter on message text is a second
   // opinion about which diagnostics count — it makes a program the reference rejects for some other
   // reason look accepted, which is how `i32 && i32` sat in the operator test as "left alone".
@@ -903,8 +905,7 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
  * A literal operand is skipped rather than typed: `x + 1` is legal for any numeric `x`, because the
  * literal takes the other side's type. Demanding they agree would report the code everybody writes.
  */
-export string test_rung3_same_type_operands_and_the_operators_that_answer_something_else(
-    Core core, Cli cli) {
+export string test_rung3_same_type_operands_and_the_operators_that_answer_something_else() {
   T t = T.create();
   caughtAndQuiet(t, [
     "export f64 bad(i32 x, f64 y) { return x + y; }",
@@ -963,7 +964,7 @@ export string test_rung3_same_type_operands_and_the_operators_that_answer_someth
  * Arity is left to the reference, which answers it with its own message; pairing arguments with
  * parameters positionally when the counts differ would report the wrong ones anyway.
  */
-export string test_rung3_a_calls_arguments_against_its_parameters(Core core, Cli cli) {
+export string test_rung3_a_calls_arguments_against_its_parameters() {
   T t = T.create();
   caughtAndQuiet(t, [
     "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
@@ -1038,7 +1039,7 @@ export string test_rung3_operands_and_conditions_that_have_to_be_boolean() {
  * is also not a primitive, and nobody has measured what the reference says about comparing those — so
  * they stay unknown rather than being swept in by a rule about everything else.
  */
-export string test_rung3_struct_types_and_identity_rather_than_equality(Core core, Cli cli) {
+export string test_rung3_struct_types_and_identity_rather_than_equality() {
   T t = T.create();
   string d = "struct P { i32 x; } struct Q { i32 y; } ";
   caughtAndQuiet(t, [
@@ -1077,7 +1078,7 @@ export string test_rung3_struct_types_and_identity_rather_than_equality(Core cor
  * and stays quiet about. A `T?` also takes whatever `T` takes: `i32? n = null;` and `i32? n = 5;` are
  * both legal.
  */
-export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
+export string test_rung3_arrays_and_nullables() {
   T t = T.create();
   string d = "struct P { i32 x; } ";
   caughtAndQuiet(t, [
@@ -1108,7 +1109,7 @@ export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
  * Inheritance is one hop per lookup up the `parentTok` chain, bounded by the number of structs so a
  * cycle — which the reference rejects separately — terminates rather than hangs.
  */
-export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core core, Cli cli) {
+export string test_rung3_member_access_and_fields_inherited_from_a_parent() {
   T t = T.create();
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
   caughtAndQuiet(t, [
@@ -1148,7 +1149,7 @@ export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core c
  * Missing return is reported at the **return type**. A `Method` carries no position of its own, and
  * the return type is the first thing it has that does, which is also where the reference puts it.
  */
-export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
+export string test_rung3_method_bodies_and_this() {
   T t = T.create();
   caughtAndQuiet(t, [
     "struct P { i32 x; string bad(this) { return this.x; } }",
@@ -1181,7 +1182,7 @@ export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
  * accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two would report the
  * literal cases that rule deliberately skips.
  */
-export string test_rung3_assignment_through_names_fields_and_elements(Core core, Cli cli) {
+export string test_rung3_assignment_through_names_fields_and_elements() {
   T t = T.create();
   string d = "struct P { i32 x; string s; } ";
   caughtAndQuiet(t, [
@@ -1216,7 +1217,8 @@ export string test_rung3_assignment_through_names_fields_and_elements(Core core,
  * expression" into a question the reference already answers — *"return: expected T, found U"* — with
  * no need for it to expose a typer.
  */
-export string test_rung3_every_expression_form_against_every_return_type(Core core) {
+export string test_rung3_every_expression_form_against_every_return_type(Sys sys) {
+  Output out = sys.stdout();
   T t = T.create();
   string d = "struct P { i32 x; } i32 fi() { return 1; } string fs() { return \"a\"; } ";
   string params = "i32 n, i64 m, bool b, P p, i32[] arr, i32? opt";
@@ -1274,7 +1276,7 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
   t.eqI32(caught, rejected, "the grid rejects " + itoa(rejected) + " of " +
                             itoa(sources.len()) + " cells and we catch " + itoa(caught) +
                             "; every form is meant to be typed");
-  core.log("    expression grid: " + itoa(sources.len()) + " cells, " + itoa(rejected) +
+  out.line("    expression grid: " + itoa(sources.len()) + " cells, " + itoa(rejected) +
            " rejected, all caught");
   return t.report();
 }
@@ -1290,7 +1292,7 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
  * Inherited fields come **first**, which is measured rather than guessed: `C(1.5, 2.0)` for
  * `struct C : B` puts the reference's complaint on the first argument, where `B`'s `i32 b` is.
  */
-export string test_rung3_struct_construction_against_field_types(Core core, Cli cli) {
+export string test_rung3_struct_construction_against_field_types() {
   T t = T.create();
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
   caughtAndQuiet(t, [
@@ -1322,7 +1324,7 @@ export string test_rung3_struct_construction_against_field_types(Core core, Cli 
  * `assignable` still answers `true` for this shape, so the mismatch rules stay quiet and exactly one
  * diagnostic lands at the position rather than two.
  */
-export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(Core core, Cli cli) {
+export string test_rung3_nullable_into_non_null_in_every_position_that_assigns() {
   T t = T.create();
   string d = "struct P { i32 x; } i32 takes(i32 n) { return n; } ";
   caughtAndQuiet(t, [
@@ -1357,7 +1359,7 @@ export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(C
  * the reference names the `p`, not the field node one column later. Reporting at the node that is
  * actually const would have been the obvious choice and is off by one against every compound target.
  */
-export string test_rung3_const_variables_const_fields_and_const_references(Core core, Cli cli) {
+export string test_rung3_const_variables_const_fields_and_const_references() {
   T t = T.create();
   string d = "struct P { i32 x; const i32 k; } struct Q { P p; } ";
   caughtAndQuiet(t, [
@@ -1381,7 +1383,7 @@ export string test_rung3_const_variables_const_fields_and_const_references(Core 
   return t.report();
 }
 
-export string test_rung3_a_const_this_refuses_writes_through_the_receiver(Core core, Cli cli) {
+export string test_rung3_a_const_this_refuses_writes_through_the_receiver() {
   // The same rule as a `const P p` parameter, reusing it exactly: `this` is declared with the
   // method's own constness, and everything else follows.
   T t = T.create();
@@ -1409,7 +1411,7 @@ export string test_rung3_a_const_this_refuses_writes_through_the_receiver(Core c
  *     this slice can spell, so asking its type says "no such field" about a field that is right
  *     there.
  */
-export string test_rung3_method_calls_static_and_through_a_const_receiver(Core core, Cli cli) {
+export string test_rung3_method_calls_static_and_through_a_const_receiver() {
   T t = T.create();
   string d = "struct P { i32 x; i32 get(const this) { return this.x; } " +
              "void set(this, i32 v) { this.x = v; } i32 mk() { return 1; } } ";
@@ -1447,8 +1449,7 @@ export string test_rung3_method_calls_static_and_through_a_const_receiver(Core c
  * refuses. Knowing that needs to track where `c` came from — flow analysis rather than a walk — and
  * uncaught is the safe direction.
  */
-export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiver(
-    Core core, Cli cli) {
+export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiver() {
   T t = T.create();
   caughtAndQuiet(t, [
     "struct Base { i32 b; Base make() { return Base(1); } } struct Sub : Base { i32 e2; } " +
@@ -1474,8 +1475,7 @@ export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiv
 // Three families that share nothing but the slot they were found in: an array literal's elements, a
 // parameter list read for its own sake, and a scope wider than a function. The last is why the other
 // two arrived late — nothing before this walked a declaration that was not a body.
-export string test_rung3_array_elements_duplicate_parameters_and_module_level_consts(
-    Core core, Cli cli) {
+export string test_rung3_array_elements_duplicate_parameters_and_module_level_consts() {
   T t = T.create();
   caughtAndQuiet(t, [
     // Elements and fills carry the element type, not their own.
@@ -1511,7 +1511,7 @@ export string test_rung3_array_elements_duplicate_parameters_and_module_level_co
 // The builtin surface on primitive types, which no signature in a file describes. This was the
 // largest single uncaught cluster: a receiver that is a type name but not a struct was silently
 // skipped by every rule, so `f64.nope()` and `string.fromBytes(5)` both passed unremarked.
-export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core core, Cli cli) {
+export string test_rung3_builtin_statics_and_methods_on_primitive_types() {
   T t = T.create();
   caughtAndQuiet(t, [
     // Arity, at the call.
@@ -1683,7 +1683,7 @@ export string test_rung3_an_index_and_an_array_size_are_i32_exactly() {
  * inside a generic, a `Pending<T>` — because comparing needs a substitution it does not perform, and
  * a wrong complaint about correct code is worse than a missed one.
  */
-export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core core, Cli cli) {
+export string test_rung3_the_argument_types_of_a_call_through_a_funcref() {
   T t = T.create();
   string d = "struct H { fn<i32(i32, u8[])> f; } struct G<T> { fn<i32(T)> g; } ";
   caughtAndQuiet(t, [
@@ -1708,7 +1708,7 @@ export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core cor
   return t.report();
 }
 
-export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, Cli cli) {
+export string test_rung3_narrowing_and_the_guards_that_do_not_count() {
   T t = T.create();
   string e = "enum Shape { Point, Circle(f64 radius) } ";
   string s = "struct Base { i32 b; } struct Sub : Base { i32 s; } ";
@@ -1753,8 +1753,7 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
  * fits — so no amount of looking at the text answers it, and the literal is parsed to an `f64` and
  * compared against the largest value that still rounds to something finite.
  */
-export string test_rung3_a_literals_value_and_a_local_that_aliases_something_const(
-    Core core, Cli cli) {
+export string test_rung3_a_literals_value_and_a_local_that_aliases_something_const() {
   T t = T.create();
   string c = "struct Counter { i32 c; void mutate(this) { this.c = 9; } } ";
   caughtAndQuiet(t, [
@@ -1802,7 +1801,7 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
  *
  * A bare `Box(1.0)` has no type arguments written, so what it means depends on where it is going.
  */
-export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core core, Cli cli) {
+export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot() {
   T t = T.create();
   string b = "struct Box<T> { T v; i32 get(const this) { return 1; } } ";
   caughtAndQuiet(t, [
@@ -1849,8 +1848,7 @@ export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core c
  * unknown. That is the silent direction, and it is why this could be turned on at all: the signatures
  * had been recorded as blank precisely because nothing could bind them.
  */
-export string test_rung3_a_generic_functions_arguments_say_what_its_parameters_are(
-    Core core, Cli cli) {
+export string test_rung3_a_generic_functions_arguments_say_what_its_parameters_are() {
   T t = T.create();
   string box = "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } ";
   string id = "T id<T>(T x) { return x; } ";
@@ -1941,8 +1939,7 @@ export string test_rung3_two_types_this_file_only_imports_are_not_judged_unrelat
   return t.report();
 }
 
-export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
-    Core core, Cli cli) {
+export string test_rung3_funcrefs_what_is_callable_and_casts_between_references() {
   T t = T.create();
   string sh = "struct Shape { f64 x; } struct Circle : Shape { f64 r; } ";
   caughtAndQuiet(t, [
@@ -2025,7 +2022,7 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
  * representation. **Reference to reference** is a widening with `as` and a checked narrowing with
  * `as!`, and never `as~` or `as@`.
  */
-export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli) {
+export string test_rung3_the_cast_law_across_all_three_worlds() {
   T t = T.create();
   string d = "struct P { i32 x; } struct Base { i32 b; } struct Sub : Base { i32 s; } " +
              "enum E { A, B } ";
@@ -2095,8 +2092,7 @@ export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli
  * back — and the language refuses it. What decides is the **receiver**, not the return type: a method
  * called on something const returns something const.
  */
-export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_value(
-    Core core, Cli cli) {
+export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_value() {
   T t = T.create();
   string inner = "struct Inner { i32 val; void mutate(this) { this.val = 1; } } ";
   caughtAndQuiet(t, [
@@ -2139,8 +2135,7 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
   return t.report();
 }
 
-export string test_rung3_override_increments_construction_arity_and_default_values(
-    Core core, Cli cli) {
+export string test_rung3_override_increments_construction_arity_and_default_values() {
   T t = T.create();
   caughtAndQuiet(t, [
     // override, both directions.
@@ -2213,8 +2208,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
   return t.report();
 }
 
-export string test_rung3_arity_loop_depth_representation_and_static_evaluation(
-    Core core, Cli cli) {
+export string test_rung3_arity_loop_depth_representation_and_static_evaluation() {
   T t = T.create();
   caughtAndQuiet(t, [
     // `break` and `continue` with nothing to leave.
@@ -2268,8 +2262,7 @@ export string test_rung3_arity_loop_depth_representation_and_static_evaluation(
   return t.report();
 }
 
-export string test_rung3_generic_instantiations_and_substitution_at_their_members(
-    Core core, Cli cli) {
+export string test_rung3_generic_instantiations_and_substitution_at_their_members() {
   T t = T.create();
   string box = "struct Box<T> { T v; T get(const this) { return this.v; } } ";
   string vec = "struct Vec<T> { T[] items; i32 n; } ";
@@ -2312,8 +2305,7 @@ export string test_rung3_generic_instantiations_and_substitution_at_their_member
   return t.report();
 }
 
-export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declaring_one(
-    Core core, Cli cli) {
+export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declaring_one() {
   T t = T.create();
   caughtAndQuiet(t, [
     "export void bad() { i32 x = y; }",
@@ -2353,7 +2345,7 @@ export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declar
   return t.report();
 }
 
-export string test_rung3_operators_members_indexing_and_the_questions_they_ask(Core core, Cli cli) {
+export string test_rung3_operators_members_indexing_and_the_questions_they_ask() {
   T t = T.create();
   caughtAndQuiet(t, [
     // Declaration positions that cannot hold a type.
@@ -2447,7 +2439,7 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
  * that rule rather than the operator). Now `i32 as u8` is a lossy pair: plain `as` is refused for its
  * operator, and `as@`, `as!` and `as~` each say what to do with what does not fit.
  */
-export string test_a_cast_into_a_packed_type_is_a_cast_like_any_other(Core core, Cli cli) {
+export string test_a_cast_into_a_packed_type_is_a_cast_like_any_other() {
   T t = T.create();
   i32[] lossy = dumpTypeErrors("export u8 f(i32 a) { return a as u8; }".toBytes());
   t.isTrue(lossy.len() >= 3 && lossy[0] == errWrongCastOp(), "plain `as` into u8 is not the operator's");

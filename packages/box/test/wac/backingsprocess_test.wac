@@ -24,34 +24,36 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
+import { Cli, Exec, execReason, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
 /** Build one box binary, and say why not if it did not build. */
-bool build(T t, Cli cli, string entry, string stem, string[] grants) {
+bool build(T t, Env env, Procs procs, string entry, string stem, string[] grants) {
   string[] argv = string[].filled(grants.len() + 4, "");
   argv[0] = "build";
   argv[1] = entry;
   argv[2] = "-o";
   argv[3] = stem;
   for (i32 i = 0; i < grants.len(); i++) { argv[i + 4] = grants[i]; }
-  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
-  t.isTrue(r.ran() && r.status == 0,
-           "built \{entry} — \{execReason(r)}");
-  return r.ran() && r.status == 0;
+  auto rRan = flatten(procs.exec(binary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null) && r!.status == 0,
+           "built \{entry} — \{(r is null ? "\{rRan.err()!}" : execReason(r!))}");
+  return (r is not null) && r!.status == 0;
 }
 
 /** Run a built box shell over a script, and hand back what it said. */
-Exec run(Cli cli, string stem, string[] extra, string script) {
+Exec run(Env env, Procs procs, string stem, string[] extra, string script) {
   string[] argv = string[].filled(extra.len() + 3, "");
   argv[0] = "\{stem}.wasm";
   for (i32 i = 0; i < extra.len(); i++) { argv[i + 1] = extra[i]; }
   argv[extra.len() + 1] = "-c";
   argv[extra.len() + 2] = "mkdir -p /tmp; \{script}";
-  return cli.exec(binary(cli), argv, u8[]()).wait();
+  return flatten(procs.exec(binary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 string show(Exec r) {
@@ -59,48 +61,49 @@ string show(Exec r) {
          "\{r.status})";
 }
 
-export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with(
-    Core core, Cli cli) {
+export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/backings";
-  string whyDir1 = madeDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/backings";
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
 
   string sealed = "\{dir}/sealedsh";
   string imaged = "\{dir}/imaged";
   string host = "\{dir}/hostsh";
-  if (!build(t, cli, "packages/box/src/bin/sealedsh.wac", sealed, string[].filled(0, ""))) {
+  if (!build(t, env, procs, "packages/box/src/bin/sealedsh.wac", sealed, string[].filled(0, ""))) {
     return t.report();
   }
-  if (!build(t, cli, "packages/box/src/bin/imaged.wac", imaged,
-             ["--allow-read", "--allow-write"])) { return t.report(); }
-  if (!build(t, cli, "packages/box/src/bin/sh.wac", host,
-             ["--allow-read", "--allow-write", "--allow-env"])) { return t.report(); }
+  if (!build(t, env, procs, "packages/box/src/bin/imaged.wac", imaged, ["--allow-read", "--allow-write"])) { return t.report(); }
+  if (!build(t, env, procs, "packages/box/src/bin/sh.wac", host, ["--allow-read", "--allow-write", "--allow-env"])) { return t.report(); }
 
   // **What makes an image an image** is that a second process finds what the first wrote.
   string image = "\{dir}/persist.img";
-  cli.remove(image, false).wait();   // a leftover from an earlier run would make this pass for free
-  Exec first = run(cli, imaged, [image], "echo kept > /keep; ls /");
+  fs.remove(image, false).wait();   // a leftover from an earlier run would make this pass for free
+  Exec first = run(env, procs, imaged, [image], "echo kept > /keep; ls /");
   t.isTrue(contains(string.fromBytes(first.stdout), "keep"), show(first));
-  Exec second = run(cli, imaged, [image], "cat /keep");
+  Exec second = run(env, procs, imaged, [image], "cat /keep");
   t.eqStr(string.fromBytes(second.stdout), "kept\n",
           "an image did not survive its own process: \{show(second)}");
 
   // **And what makes a memory session memory** is that it does not.
-  Exec forgot = run(cli, sealed, string[].filled(0, ""), "cat /keep; echo status=$?");
+  Exec forgot = run(env, procs, sealed, string[].filled(0, ""), "cat /keep; echo status=$?");
   t.eqStr(string.fromBytes(forgot.stdout), "status=1\n",
           "a sealed session remembered something: \{show(forgot)}");
 
   // The host mount is a third thing again: what it wrote is on the real disk, where the other two
   // cannot see it and this test can.
   string work = "\{dir}/persist";
-  string whyDir2 = madeDir(cli, work);
+  string whyDir2 = madeDir(fs, work);
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.remove("\{work}/here", false).wait();
-  run(cli, host, string[].filled(0, ""), "cd \{work}; echo ondisk > here");
-  FileResult wrote = cli.readFile("\{work}/here").wait();
-  t.isTrue(wrote.ok, "the host mount wrote nothing to the real disk — \{wrote.error}");
-  if (!wrote.ok) { return t.report(); }
-  t.eqStr(string.fromBytes(wrote.bytes), "ondisk\n", "the host mount wrote the wrong thing");
+  fs.remove("\{work}/here", false).wait();
+  run(env, procs, host, string[].filled(0, ""), "cd \{work}; echo ondisk > here");
+  auto wroteRead = flatten(fs.readFile("\{work}/here").wait());
+  u8[]? wrote = wroteRead.ok();
+  t.isTrue((wrote is not null), "the host mount wrote nothing to the real disk — \{wroteRead.isErr() ? "\{wroteRead.err()!}" : ""}");
+  if (wrote is null) { return t.report(); }
+  t.eqStr(string.fromBytes(wrote!), "ondisk\n", "the host mount wrote the wrong thing");
   return t.report();
 }

@@ -3,12 +3,12 @@
 // The difference from `none.wac` is what one capability struct costs: its fields, the `Pending<T>`
 // monomorphisations its answers need, and the trampolines that call back into the host.
 
-import { Core, Sys } from "std";
+import { Core, Sys, Output } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
+  Output out = sys.stdout();
   i32 acc = 0;
   for (i32 i = 1; i < 1000; i++) { acc = (acc + i * i) % 65521; }
-  core.log("acc");
+  out.line("acc");
   return acc == 0 ? 1 : 0;
 }

@@ -19,11 +19,14 @@
 // never started — and the stopped arm would pass for that reason.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Core, Cli, Exec, Change, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
+// **Still on `Cli`**: through std the spawn ticket is settled by the first wait after the child starts, and
+// `cancel` on a settled ticket does nothing — `issues/system/0370a`, as for `lostbytes_test`'s connect arm.
 static string PROGRAM =
   "import { Core, Cli, HostChild, Pending, FileResult, GRANT_ALL, DETACHED, Sys } from \"std\";\n" +
   "\n" +
@@ -49,37 +52,41 @@ static string PROGRAM =
   "}\n";
 
 /** Run the program in `mode` with a fresh marker path, both streams together. */
-string ran(Cli cli, string binary, string path, string mode, string marker) {
-  cli.remove(marker, false).wait();
-  Exec r = cli.exec(binary,
-                    ["run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", path, mode, marker],
-                    u8[]()).wait();
-  if (!r.ran()) { return "the binary did not run — \{r.error}"; }
-  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+string ran(Files fs, Procs procs, string binary, string path, string mode, string marker) {
+  fs.remove(marker, false).wait();
+  auto rRan = flatten(procs.exec(binary, ["run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", path, mode, marker], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return "the binary did not run — \{rRan.isErr() ? "\{rRan.err()!}" : ""}"; }
+  return string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
 }
 
-void check(T t, Cli cli, string binary, string path, string dir, string host) {
+void check(T t, Files fs, Procs procs, string binary, string path, string dir, string host) {
   string marker = "\{dir}/marker-\{host}";
-  string detached = ran(cli, binary, path, "detached", marker);
+  string detached = ran(fs, procs, binary, path, "detached", marker);
   t.isTrue(contains(detached, "VERDICT ran-on"),
            "\{host}: a detached child should outlive its ticket, so this case cannot fail — \{detached}");
-  string dropped = ran(cli, binary, path, "drop", marker);
+  string dropped = ran(fs, procs, binary, path, "drop", marker);
   t.isTrue(contains(dropped, "VERDICT stopped"), "\{host}: a dropped child ran on — \{dropped}");
-  cli.remove(marker, false).wait();
+  fs.remove(marker, false).wait();
 }
 
-export string test_a_dropped_spawn_ticket_stops_its_child(Core core, Cli cli) {
+export string test_a_dropped_spawn_ticket_stops_its_child(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/droppedchild";
-  cli.mkdir(dir, true).wait();
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/droppedchild";
+  fs.mkdir(dir, true).wait();
   string path = "\{dir}/probe.wac";
-  Change wrote = cli.writeFile(path, PROGRAM.toBytes()).wait();
-  t.isTrue(wrote.fault == 0, "could not write the probe");
-  if (wrote.fault != 0) { return t.report(); }
+  auto wrote = flatten(fs.writeFile(path, PROGRAM.toBytes()).wait());
+  t.isTrue(wrote.isOk(), "could not write the probe");
+  if (wrote.isErr()) { return t.report(); }
 
-  check(t, cli, binaryPath(cli), path, dir, "v8");
-  string native = nativeBinaryPath(cli, t);
-  if (native != "") { check(t, cli, native, path, dir, "wasmtime"); }
-  cli.remove(path, false).wait();
+  check(t, fs, procs, binaryPath(env), path, dir, "v8");
+  string native = nativeBinaryPath(env, fs, t);
+  if (native != "") { check(t, fs, procs, native, path, dir, "wasmtime"); }
+  fs.remove(path, false).wait();
   return t.report();
 }

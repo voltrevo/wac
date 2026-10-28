@@ -20,9 +20,10 @@
 // whatever the host writes descriptors with, rather than reconstructed by a parent that never had it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
+import { flatten } from "core";
 
 static string PROBE = "packages/wac/test/wac/interleave_probe.wac";
 
@@ -35,22 +36,25 @@ static string PROBE = "packages/wac/test/wac/interleave_probe.wac";
  */
 static i32 RUNS = 5;
 
-export string test_a_launched_programs_error_output_lands_between_the_lines_it_was_written_between(
-    Core core, Cli cli) {
+export string test_a_launched_programs_error_output_lands_between_the_lines_it_was_written_between(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
 
-  string mod = builtProgram(cli, PROBE, "interleaveprobe", string[].filled(0, ""));
+  string mod = builtProgram(env, fs, procs, PROBE, "interleaveprobe", string[].filled(0, ""));
   t.isTrue(mod != "", "the probe built");
   if (mod == "") { return t.report(); }
 
   // `2>&1` is the whole point: one destination, so the relative order of the two streams is a fact
   // about the run rather than about which field the harness looked at first.
-  string cmd = "'\{binaryPath(cli)}' '\{mod}' 2>&1";
+  string cmd = "'\{binaryPath(env)}' '\{mod}' 2>&1";
   for (i32 i = 0; i < RUNS; i++) {
-    Exec r = cli.exec("/bin/sh", ["-c", cmd], u8[]()).wait();
-    t.isTrue(r.ran(), "run \{i} started — \{r.error}");
-    if (!r.ran()) { continue; }
-    t.eqStr(string.fromBytes(r.stdout), "one\nmid\ntwo\n",
+    auto rRan = flatten(procs.exec("/bin/sh", ["-c", cmd], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? r = rRan.ok();
+    t.isTrue((r is not null), "run \{i} started — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+    if ((r is null)) { continue; }
+    t.eqStr(string.fromBytes(r!.stdout), "one\nmid\ntwo\n",
             "run \{i}: the diagnostic is between the two lines it was written between");
   }
   return t.report();

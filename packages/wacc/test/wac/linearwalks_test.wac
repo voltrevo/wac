@@ -16,7 +16,8 @@ import { diagnoseFiles, emitFiles, lowerSources } from "../../src/api.wac";
 import { Res } from "../../src/path.wac";
 import { lex } from "../../src/lex.wac";
 import { synthSource, synthTokens } from "../../src/asyncsynth.wac";
-import { Core } from "std";
+import { Clock, Sys } from "std";
+import { flatten } from "core";
 
 /** `parts` as one string, copied once — `out = out + part` would be the cost being measured. */
 string joinedParts(string[] parts, i32 n) {
@@ -54,10 +55,10 @@ string libWithComment(i32 kb) {
   return joinedParts(parts, n + 1);
 }
 
-i64 timeCheck(Core core, string entry, string lib) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 timeCheck(Clock clock, string entry, string lib) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   diagnoseFiles(["/t/m.wac", "/t/lib.wac"], [entry, lib], "/t/m.wac");
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **The checker reads the graph's `export type` names once, not once per type name.** Until the view of
@@ -75,22 +76,23 @@ i64 timeCheck(Core core, string entry, string lib) {
 // whether the two costs *add* or *multiply*: 600 names beside the megabyte, against 600 names beside
 // nothing plus one name beside the megabyte. Reading the file per name is 600 megabytes, seconds
 // where the sum is milliseconds, and no loaded machine closes a gap that wide.
-export string test_a_large_imported_file_is_not_rescanned_per_type_name(Core core) {
+export string test_a_large_imported_file_is_not_rescanned_per_type_name(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string big = libWithComment(1024);
   string small = libWithComment(0);
   string one = namingEntry(1);
   string many = namingEntry(600);
-  timeCheck(core, many, big);
-  i64 both = timeCheck(core, many, big);
-  i64 names = timeCheck(core, many, small);
-  i64 file = timeCheck(core, one, big);
+  timeCheck(clock, many, big);
+  i64 both = timeCheck(clock, many, big);
+  i64 names = timeCheck(clock, many, small);
+  i64 file = timeCheck(clock, one, big);
   // **The best of three**, because a loaded machine only ever adds time: one slow run of either
   // side was enough to read as a ratio the code does not have.
   for (i32 k = 0; k < 2; k++) {
-    i64 b2 = timeCheck(core, many, big);
-    i64 n2 = timeCheck(core, many, small);
-    i64 f2 = timeCheck(core, one, big);
+    i64 b2 = timeCheck(clock, many, big);
+    i64 n2 = timeCheck(clock, many, small);
+    i64 f2 = timeCheck(clock, one, big);
     if (b2 < both) { both = b2; }
     if (n2 < names) { names = n2; }
     if (f2 < file) { file = f2; }
@@ -122,28 +124,29 @@ string instanceProgram(bool named) {
   return joinedParts(parts, n);
 }
 
-i64 timeEmit(Core core, string src) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 timeEmit(Clock clock, string src) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   emitFiles(["/t/m.wac"], [src], "/t/m.wac");
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **Naming an instance looks at its own variants, not at every variant once per field.** Registering
 // `Box<i32>`'s array fields walks every field of the program, and asked `enumOf` — a walk of every
 // variant — about each. The two programs are the same size; only one names the instance. It was
 // 3,408 ms against 112.
-export string test_naming_an_instance_does_not_walk_every_variant_per_field(Core core) {
+export string test_naming_an_instance_does_not_walk_every_variant_per_field(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string bare = instanceProgram(false);
   string named = instanceProgram(true);
-  timeEmit(core, bare);
-  i64 a = timeEmit(core, bare);
-  i64 b = timeEmit(core, named);
+  timeEmit(clock, bare);
+  i64 a = timeEmit(clock, bare);
+  i64 b = timeEmit(clock, named);
   // **The best of three**, because a loaded machine only ever adds time: one slow run of either
   // side was enough to read as a ratio the code does not have.
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmit(core, bare);
-    i64 b2 = timeEmit(core, named);
+    i64 a2 = timeEmit(clock, bare);
+    i64 b2 = timeEmit(clock, named);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -175,10 +178,10 @@ string importingEntry(bool named) {
   return joinedParts(parts, 301);
 }
 
-i64 timeEmitTwo(Core core, string entry, string lib) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 timeEmitTwo(Clock clock, string entry, string lib) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   emitFiles(["/t/m.wac", "/t/lib.wac"], [entry, lib], "/t/m.wac");
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **Resolving a name does not walk every declaration.** The emitter found a name's key by walking
@@ -186,20 +189,21 @@ i64 timeEmitTwo(Core core, string entry, string lib) {
 // declaration walked them all again to see whether its key was taken. So the same entry cost twice as
 // much beside a file of 8,000 functions as beside one of 4,000, though the entry calls one of them and
 // the rest are pruned: 231 ms against 111. Found through an index, the two are the same.
-export string test_resolving_a_name_does_not_walk_every_declaration(Core core) {
+export string test_resolving_a_name_does_not_walk_every_declaration(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string fewer = declsLib(4000);
   string more = declsLib(8000);
   string entry = importingEntry(false);
-  timeEmitTwo(core, entry, fewer);
-  timeEmitTwo(core, entry, more);
-  i64 a = timeEmitTwo(core, entry, fewer);
-  i64 b = timeEmitTwo(core, entry, more);
+  timeEmitTwo(clock, entry, fewer);
+  timeEmitTwo(clock, entry, more);
+  i64 a = timeEmitTwo(clock, entry, fewer);
+  i64 b = timeEmitTwo(clock, entry, more);
   // **The best of three**, because a loaded machine only ever adds time: one slow run of either
   // side was enough to read as a ratio the code does not have.
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmitTwo(core, entry, fewer);
-    i64 b2 = timeEmitTwo(core, entry, more);
+    i64 a2 = timeEmitTwo(clock, entry, fewer);
+    i64 b2 = timeEmitTwo(clock, entry, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -218,10 +222,10 @@ string manyStructs(i32 n) {
   return joinedParts(parts, n);
 }
 
-i64 timeLower(Core core, string src) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 timeLower(Clock clock, string src) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   lowerSources(["/t/m.wac"], [src], Res.empty());
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **Lowering reads a source once, however many types it declares.** Asking whether a file declares
@@ -230,19 +234,20 @@ i64 timeLower(Core core, string src) {
 // `std`, embedded in every build, is such a file. Doubling the structs should double the time; it took
 // 4.2× (376 ms against 1,595 at 3,000 and 6,000). The sizes are large enough that a linear pass takes
 // tens of milliseconds, since at 18 ms a busy gate once read a correct pass as 2.7×.
-export string test_lowering_reads_a_source_once_however_many_types_it_declares(Core core) {
+export string test_lowering_reads_a_source_once_however_many_types_it_declares(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string fewer = manyStructs(6000);
   string more = manyStructs(12000);
-  timeLower(core, fewer);
-  timeLower(core, more);
-  i64 a = timeLower(core, fewer);
-  i64 b = timeLower(core, more);
+  timeLower(clock, fewer);
+  timeLower(clock, more);
+  i64 a = timeLower(clock, fewer);
+  i64 b = timeLower(clock, more);
   // **The best of three**, because a loaded machine only ever adds time: one slow run of either
   // side was enough to read as a ratio the code does not have.
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeLower(core, fewer);
-    i64 b2 = timeLower(core, more);
+    i64 a2 = timeLower(clock, fewer);
+    i64 b2 = timeLower(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -279,20 +284,21 @@ string manyImports(i32 k) {
 // declaration — `std` has several — each type name the emitter met that was not one walked every import
 // of the graph for a renaming of it. Importing three times as many names should cost what the extra
 // import lines cost and no more; it cost a share of every type name.
-export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Core core) {
+export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string lib = typedLib();
   string fewer = manyImports(1000);
   string more = manyImports(3000);
-  timeEmitTwo(core, fewer, lib);
-  timeEmitTwo(core, more, lib);
-  i64 a = timeEmitTwo(core, fewer, lib);
-  i64 b = timeEmitTwo(core, more, lib);
+  timeEmitTwo(clock, fewer, lib);
+  timeEmitTwo(clock, more, lib);
+  i64 a = timeEmitTwo(clock, fewer, lib);
+  i64 b = timeEmitTwo(clock, more, lib);
   // **The best of three**, because a loaded machine only ever adds time: one slow run of either
   // side was enough to read as a ratio the code does not have.
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmitTwo(core, fewer, lib);
-    i64 b2 = timeEmitTwo(core, more, lib);
+    i64 a2 = timeEmitTwo(clock, fewer, lib);
+    i64 b2 = timeEmitTwo(clock, more, lib);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -305,12 +311,12 @@ export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Co
   return t.report();
 }
 
-i64 timeSynth(Core core, i32 states) {
+i64 timeSynth(Clock clock, i32 states) {
   u8[] src = "i32 f() { return 0; }\n".toBytes();
   u8[] tailed = synthSource(src, 4, states, 2);
-  i64 t0 = core.monotonicNanos().wait();
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   synthTokens(lex(src), tailed, 4, states, 2, 1, 1);
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **The async lowering's tail of spellings is placed in one walk, not one walk per word.** Each word's
@@ -318,14 +324,15 @@ i64 timeSynth(Core core, i32 states) {
 // rebuilt the whole list of words and summed the lengths of every word before it. A file's tail carries
 // a numeral per state, so the cost was the square of its states: `std` has enough that this was a
 // tenth of checking a one-line program that imports it. Doubling the states should double the work.
-export string test_placing_the_async_tail_does_not_rebuild_it_per_word(Core core) {
+export string test_placing_the_async_tail_does_not_rebuild_it_per_word(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
-  timeSynth(core, 1500);
-  i64 a = timeSynth(core, 1500);
-  i64 b = timeSynth(core, 3000);
+  timeSynth(clock, 1500);
+  i64 a = timeSynth(clock, 1500);
+  i64 b = timeSynth(clock, 3000);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeSynth(core, 1500);
-    i64 b2 = timeSynth(core, 3000);
+    i64 a2 = timeSynth(clock, 1500);
+    i64 b2 = timeSynth(clock, 3000);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -351,10 +358,10 @@ string[] reachedTypes(i32 n) {
           + "export i32 main() { return 0; }\n", joinedParts(lib, n), joinedParts(other, n)] as string[];
 }
 
-i64 timeReached(Core core, string[] texts) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 timeReached(Clock clock, string[] texts) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   diagnoseFiles(["/t/m.wac", "/t/lib.wac", "/t/other.wac"], texts, "/t/m.wac");
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **Whether a reached type is declared by another file is asked of an index, not of every file.** For
@@ -362,17 +369,18 @@ i64 timeReached(Core core, string[] texts) {
 // — copying each one's whole text, `std` and `core` included — to see whether the name was ambiguous.
 // The product of reached types and closure size: 6% of checking `packages/box`. Here both double, so
 // the work should double; it took 2.9 times as long.
-export string test_a_reached_type_is_not_looked_for_in_every_file(Core core) {
+export string test_a_reached_type_is_not_looked_for_in_every_file(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string[] fewer = reachedTypes(200);
   string[] more = reachedTypes(400);
-  timeReached(core, fewer);
-  timeReached(core, more);
-  i64 a = timeReached(core, fewer);
-  i64 b = timeReached(core, more);
+  timeReached(clock, fewer);
+  timeReached(clock, more);
+  i64 a = timeReached(clock, fewer);
+  i64 b = timeReached(clock, more);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeReached(core, fewer);
-    i64 b2 = timeReached(core, more);
+    i64 a2 = timeReached(clock, fewer);
+    i64 b2 = timeReached(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -389,27 +397,28 @@ string[] staticEntry(i32 n) {
           joinedParts(lib, n)] as string[];
 }
 
-i64 timeStatic(Core core, string[] texts) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 timeStatic(Clock clock, string[] texts) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   diagnoseFiles(["/t/m.wac", "/t/lib.wac"], texts, "/t/m.wac");
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **The static evaluator keys its declarations in one pass.** Each declaration's key is its name, or
 // its name and file when another declaration shares the name — and whether one does was asked by
 // comparing it with every other declaration of the closure. A file that says `static` builds that view
 // up front, so importing a large library cost the square of its size: 9% of checking `packages/box`.
-export string test_keying_the_static_view_does_not_compare_every_pair(Core core) {
+export string test_keying_the_static_view_does_not_compare_every_pair(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string[] fewer = staticEntry(3000);
   string[] more = staticEntry(6000);
-  timeStatic(core, fewer);
-  timeStatic(core, more);
-  i64 a = timeStatic(core, fewer);
-  i64 b = timeStatic(core, more);
+  timeStatic(clock, fewer);
+  timeStatic(clock, more);
+  i64 a = timeStatic(clock, fewer);
+  i64 b = timeStatic(clock, more);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeStatic(core, fewer);
-    i64 b2 = timeStatic(core, more);
+    i64 a2 = timeStatic(clock, fewer);
+    i64 b2 = timeStatic(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -439,17 +448,18 @@ string wideStructs(i32 n) {
 // tables from the top for each name it met, so twice the structs cost more than three times as much:
 // 4,654 ms for 800 structs of ten fields against 15,616 for 1,600. Found through an index, 163
 // against 361.
-export string test_emitting_a_field_does_not_walk_every_field(Core core) {
+export string test_emitting_a_field_does_not_walk_every_field(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string fewer = wideStructs(1000);
   string more = wideStructs(2000);
-  timeEmit(core, fewer);
-  timeEmit(core, more);
-  i64 a = timeEmit(core, fewer);
-  i64 b = timeEmit(core, more);
+  timeEmit(clock, fewer);
+  timeEmit(clock, more);
+  i64 a = timeEmit(clock, fewer);
+  i64 b = timeEmit(clock, more);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmit(core, fewer);
-    i64 b2 = timeEmit(core, more);
+    i64 a2 = timeEmit(clock, fewer);
+    i64 b2 = timeEmit(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -473,17 +483,18 @@ string genericMethods(i32 n) {
 // **Inferring a generic method's instance does not walk every declaration.** Each call to one found its
 // owner's declaration by reading the name of every declaration of the program in turn, so twice the
 // structs cost about three times as much and the walk was 86% of emitting 2,000 of them.
-export string test_inferring_a_method_instance_does_not_walk_every_declaration(Core core) {
+export string test_inferring_a_method_instance_does_not_walk_every_declaration(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string fewer = genericMethods(1500);
   string more = genericMethods(3000);
-  timeEmit(core, fewer);
-  timeEmit(core, more);
-  i64 a = timeEmit(core, fewer);
-  i64 b = timeEmit(core, more);
+  timeEmit(clock, fewer);
+  timeEmit(clock, more);
+  i64 a = timeEmit(clock, fewer);
+  i64 b = timeEmit(clock, more);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmit(core, fewer);
-    i64 b2 = timeEmit(core, more);
+    i64 a2 = timeEmit(clock, fewer);
+    i64 b2 = timeEmit(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -513,7 +524,8 @@ string funcrefStructs(i32 n) {
 // the emitter met was looked for in every signature registered so far, and each call looked for a
 // generic declaration of its name by reading every declaration's name, so twice the structs cost three
 // times as much.
-export string test_a_signature_is_not_looked_for_in_every_signature(Core core) {
+export string test_a_signature_is_not_looked_for_in_every_signature(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string fewer = funcrefStructs(1000);
   string more = funcrefStructs(2000);
@@ -521,11 +533,11 @@ export string test_a_signature_is_not_looked_for_in_every_signature(Core core) {
   // out and the module is declined in a fraction of the time.
   t.isTrue(emitFiles(["/t/m.wac"], [fewer], "/t/m.wac").len() > 1000, "1,000 structs emitted");
   t.isTrue(emitFiles(["/t/m.wac"], [more], "/t/m.wac").len() > 1000, "2,000 structs emitted");
-  i64 a = timeEmit(core, fewer);
-  i64 b = timeEmit(core, more);
+  i64 a = timeEmit(clock, fewer);
+  i64 b = timeEmit(clock, more);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmit(core, fewer);
-    i64 b2 = timeEmit(core, more);
+    i64 a2 = timeEmit(clock, fewer);
+    i64 b2 = timeEmit(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -557,18 +569,19 @@ string manyEnums(i32 n) {
 // **Asking which enum a variant belongs to does not walk every variant.** Every type name the emitter
 // canonicalised was looked for among all the program's variants, so twice the enums cost nearly four
 // times as much: 444 ms for 320 of them against 1,650 for 640.
-export string test_canonicalising_a_type_does_not_walk_every_variant(Core core) {
+export string test_canonicalising_a_type_does_not_walk_every_variant(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string fewer = manyEnums(320);
   string more = manyEnums(640);
   // **Both must be emitted**: past about 2,048 variants a table runs out and the module is declined.
   t.isTrue(emitFiles(["/t/m.wac"], [fewer], "/t/m.wac").len() > 1000, "320 enums emitted");
   t.isTrue(emitFiles(["/t/m.wac"], [more], "/t/m.wac").len() > 1000, "640 enums emitted");
-  i64 a = timeEmit(core, fewer);
-  i64 b = timeEmit(core, more);
+  i64 a = timeEmit(clock, fewer);
+  i64 b = timeEmit(clock, more);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmit(core, fewer);
-    i64 b2 = timeEmit(core, more);
+    i64 a2 = timeEmit(clock, fewer);
+    i64 b2 = timeEmit(clock, more);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
@@ -594,18 +607,19 @@ string hundredCallees(bool generic) {
 // that read the name of every declaration — for every generic declaration each instance walk passed.
 // Beside a file of 8,000 functions, 100 generic callees took 2,710 ms against 95 for 100 plain ones.
 // Still quadratic and not tested here: those walks pair every instance with every declaration.
-export string test_keying_a_generic_function_does_not_walk_every_declaration(Core core) {
+export string test_keying_a_generic_function_does_not_walk_every_declaration(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string lib = declsLib(8000);
   string plain = hundredCallees(false);
   string generic = hundredCallees(true);
   t.isTrue(emitFiles(["/t/m.wac", "/t/lib.wac"], [generic, lib], "/t/m.wac").len() > 1000,
            "the generic callees emitted");
-  i64 a = timeEmitTwo(core, plain, lib);
-  i64 b = timeEmitTwo(core, generic, lib);
+  i64 a = timeEmitTwo(clock, plain, lib);
+  i64 b = timeEmitTwo(clock, generic, lib);
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeEmitTwo(core, plain, lib);
-    i64 b2 = timeEmitTwo(core, generic, lib);
+    i64 a2 = timeEmitTwo(clock, plain, lib);
+    i64 b2 = timeEmitTwo(clock, generic, lib);
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }

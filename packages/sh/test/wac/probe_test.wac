@@ -15,22 +15,17 @@
 // saying so here is cheaper than the next person wondering why it asserts so little.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Sys } from "std";
 import { shBuiltinCount, shBuiltinsAgree, shOut, shStatus } from "./probe.wac";
 
-export async string test_the_coverage_probe_compiles_against_the_current_platform() {
+export async string test_the_coverage_probe_compiles_against_the_current_platform(Sys sys) {
   T t = T.create();
-  // And it runs, so a probe that compiles but cannot build its fake world is caught too.
-  t.eqI32(await shStatus("exit 3"), 3, "the probe ran `exit 3` and reported something else");
-
-  // A world with no `spawn` falls through to the shell's own implementations rather than reporting the
-  // program broken. The fake world answers -2 for `/bin/echo`, which is both a name on `$WACPATH` and a
-  // builtin — so "hi" proves the fallthrough and 126 would prove the bug. This is an embedded world's
-  // case — a `Cli` with no `spawn` wired, which answers -2 and means it. **Not the browser's**, which
-  // this said before anyone checked `host/browser.ts`: a page spawns, and every applet in the browser
-  // terminal is a real child of it.
-  t.eqStr(string.fromBytes((await shOut("WACPATH=/bin; echo hi"))), "hi\n",
-          "a world without `spawn` did not fall through");
-  t.eqI32(await shStatus("WACPATH=/bin; echo hi"), 0, "...and its status was not 0");
+  // And it runs, so a probe that compiles but cannot build its world is caught too.
+  t.eqI32(await shStatus(sys, "exit 3"), 3, "the probe ran `exit 3` and reported something else");
+  // Its world is the store: the files it was seeded with are there, and the one it may not write is refused.
+  t.eqStr(string.fromBytes(await shOut(sys, "read a < in.txt; echo $a")), "first line\n", "the seeded file reads back");
+  t.eqStr(string.fromBytes(await shOut(sys, "echo dir/*")), "dir/one dir/three dir/two\n", "a glob sorts and skips the dotfile");
+  t.isTrue(await shStatus(sys, "echo x > readonly.txt") != 0, "a redirection onto a 0444 file fails");
   return t.report();
 }
 

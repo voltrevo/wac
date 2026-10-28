@@ -13,22 +13,30 @@
 // Every line is a verdict rather than a measurement: the ports differ per run, so printing them would
 // make two hosts disagree about nothing.
 
-import { Core, Cli, HostSocket, Datagram, Sys } from "std";
+import { Datagram, Sys, Net, Output, Datagrams } from "std";
+import { flatten } from "core";
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  HostSocket a = cli.bindDatagram("127.0.0.1", 0).wait();
-  HostSocket b = cli.bindDatagram("127.0.0.1", 0).wait();
-  cli.write(("bound: " + (a.handle >= 0 ? "yes" : "no") + " " + (b.handle >= 0 ? "yes" : "no")
-             + " distinct-ports " + (a.port != b.port ? "yes" : "no") + "\n").toBytes());
-  if (a.handle < 0 || b.handle < 0) { return 1; }
-  bool sent = cli.sendTo(a.handle, "127.0.0.1", b.port, "ping".toBytes()).wait();
-  cli.write(("sent: " + (sent ? "yes" : "no") + "\n").toBytes());
-  Datagram d = cli.receiveFrom(b.handle).wait();
-  cli.write(("got: " + string.fromBytes(d.bytes) + " from " + d.peer
-             + " sender-is-a " + (d.port == a.port ? "yes" : "no")
-             + " error '" + d.error + "'\n").toBytes());
-  cli.closeSocket(a.handle);
-  cli.closeSocket(b.handle);
+  Output out = sys.stdout();
+  Net net = sys.net();
+  auto aBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? a = aBind.ok();
+  auto bBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? b = bBind.ok();
+  out.write(("bound: " + (a is not null ? "yes" : "no") + " " + (b is not null ? "yes" : "no")
+             + " distinct-ports " + (a!.port != b!.port ? "yes" : "no") + "\n").toBytes());
+  if (a is null || b is null) { return 1; }
+  bool sent = flatten(a!.sendTo("127.0.0.1", b!.port, "ping".toBytes()).wait()).isOk();
+  out.write(("sent: " + (sent ? "yes" : "no") + "\n").toBytes());
+  auto got = flatten(b!.receive().wait());
+  if (got.isErr()) {
+    out.write(("got nothing: error '\{got.err()!}'\n").toBytes());
+    return 1;
+  }
+  Datagram d = got.unwrap();
+  out.write(("got: " + string.fromBytes(d.bytes) + " from " + d.peer
+             + " sender-is-a " + (d.port == a!.port ? "yes" : "no")
+             + " error ''\n").toBytes());
+  a!.close();
+  b!.close();
   return 0;
 }

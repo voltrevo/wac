@@ -16,7 +16,7 @@
 //
 // ## The one line that is a race, on both hosts
 //
-// `overlap` asks `isDone()` immediately after submitting two reads, and no host promises *when* a
+// `overlap` asks `settled()` immediately after submitting two reads, and no host promises *when* a
 // read completes. On an idle machine Deno says "one finished already" every time and the native
 // runtime says "both still running" every time — which looks exactly like a property of each host,
 // and is not: under the full suite Deno says "both still running" too.
@@ -38,16 +38,17 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, Pending } from "std";
+import { ChildEnv, Exec, Clock, Env, Files, Launch, Net, Output, Procs, SpawnFault, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
 import { stale } from "./hostfs.wac";
 import { builtProgram, builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { Result, Ticket, flatten } from "core";
 
 static string BUILT = ".cache/hostexamples";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
 /**
  * The native host binary, or `""` — **asked for, not built here.**
@@ -63,7 +64,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
  * `tools/wac/seedfresh_test.wac` fails when the binary is older than its sources — over the whole crate,
  * recursively. `issues/system/0208`.
  */
-string nativeBinary(Cli cli, T t) { return requireNativeHost(cli, t); }
+string nativeBinary(Env env, Files fs, T t) { return requireNativeHost(env, fs, t); }
 
 /** One example: what to build it with, what to run it with, and what it reads. */
 struct Case {
@@ -131,7 +132,7 @@ Case[] cases() {
     // makes it one is that the child never writes again after its first line.
     caseOf("stop", none(), "", none()),
     // **The three clocks**, which were named gaps because a clock answers differently on every run.
-    // What is comparable is the *shape* `Core` promises — monotonic never goes backwards, a sleep
+    // What is comparable is the *shape* `Clock` promises — monotonic never goes backwards, a sleep
     // waits at least as long as it was asked and reports a monotonic reading, the wall clock dates —
     // so the example prints verdicts rather than measurements and two hosts can agree on all five.
     caseOf("clocks", none(), "", none()),
@@ -169,11 +170,11 @@ Case[] cases() {
  * every case into the same place between the two runs. The hosts agreed perfectly and the directory
  * had changed underneath them, which reads exactly like a difference and is not one.
  */
-string workspace(Cli cli, string tmp, string name, string which) {
+string workspace(Files fs, string tmp, string name, string which) {
   string dir = "\{tmp}/run/\{name}-\{which}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
-  cli.writeFile("\{dir}/in.txt", ("a b c\nd e\n").toBytes()).wait();
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
+  fs.writeFile("\{dir}/in.txt", ("a b c\nd e\n").toBytes()).wait();
   return dir;
 }
 
@@ -231,16 +232,16 @@ string lineFor(string where, string prog, string[] args) {
  * `arrival_test.wac` hit exactly that on 2026-08-19. So each is built under `<name>` and copied under
  * `<name>`, and the copy is what keeps the per-case workspaces separate.
  */
-string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
+string builtOnce(Env env, Files fs, Procs procs, string tmp, Case c, bool haveNative) {
   string entry = "packages/platform/example/\{c.name}.wac";
-  string deno = builtByDeno(cli, entry, "\{c.name}-deno", c.grants, "deno", false);
+  string deno = builtByDeno(env, fs, procs, entry, "\{c.name}-deno", c.grants, "deno", false);
   if (deno == "") { return "\{entry} did not build for the JavaScript host\n"; }
-  if (!copyBuilt(cli, deno, "\{tmp}/\{c.name}-deno", true)) {
+  if (!copyBuilt(fs, deno, "\{tmp}/\{c.name}-deno", true)) {
     return "\{entry}: its built script would not copy into \{tmp}\n";
   }
   if (!haveNative) { return ""; }
-  string mod = builtProgram(cli, entry, c.name, c.grants);
-  if (!copyBuilt(cli, mod, "\{tmp}/\{c.name}.wasm", false)) {
+  string mod = builtProgram(env, fs, procs, entry, c.name, c.grants);
+  if (!copyBuilt(fs, mod, "\{tmp}/\{c.name}.wasm", false)) {
     return "\{entry}: its module would not copy into \{tmp}\n";
   }
   return "";
@@ -263,11 +264,17 @@ string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
  */
 static i32 AT_ONCE = 3;
 
-export string test_the_capability_examples_answer_the_same_on_both_hosts(Core core, Cli cli) {
+export string test_the_capability_examples_answer_the_same_on_both_hosts(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string native = nativeBinary(cli, t);
-  string tmp = "\{root(cli)}/\{BUILT}";
-  string whyDir1 = madeDir(cli, tmp);
+  string native = nativeBinary(env, fs, t);
+  string tmp = "\{root(env)}/\{BUILT}";
+  string whyDir1 = madeDir(fs, tmp);
   t.isTrue(whyDir1 == "", whyDir1);
 
   Case[] all = cases();
@@ -279,26 +286,25 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
     // ── The builds are kept rather than repeated — `builtOnce` above says why.
     string why = "";
     for (i32 i = 0; i < n; i++) {
-      why = why + builtOnce(cli, tmp, all[base + i], native != "");
+      why = why + builtOnce(env, fs, procs, tmp, all[base + i], native != "");
     }
     t.eqStr(why, "", "the examples in this batch built");
     if (why != "") { continue; }
 
     // ── Run both hosts for all three cases at once: six programs in flight.
-    Pending<Exec>[] runs = Pending<Exec>[].filled(n * 2, cli.exec("/bin/sh", ["-c", "true"],
-                                                               u8[]()));
+    Ticket<Result<Exec, SpawnFault>>?[] runs = Ticket<Result<Exec, SpawnFault>>?[].defaulted(n * 2);
     string[] dirsDeno = string[].filled(n, "");
     string[] dirsNative = string[].filled(n, "");
     i32[] ports = i32[].filled(n * 2, 0);
     for (i32 i = 0; i < n; i++) {
       Case c = all[base + i];
-      dirsDeno[i] = workspace(cli, tmp, c.name, "deno");
-      dirsNative[i] = workspace(cli, tmp, c.name, "native");
+      dirsDeno[i] = workspace(fs, tmp, c.name, "deno");
+      dirsNative[i] = workspace(fs, tmp, c.name, "native");
 
       // Held until the moment the program binds — a free number kept open is the difference between
       // avoiding a collision and reducing the odds of one.
-      Held hd = c.port ? Held.take(cli) : Held(0, -1);
-      Held hn = c.port ? Held.take(cli) : Held(0, -1);
+      Held hd = c.port ? Held.take(net) : Held(0, null);
+      Held hn = c.port ? Held.take(net) : Held(0, null);
       ports[i * 2] = hd.port;
       ports[i * 2 + 1] = hn.port;
 
@@ -311,20 +317,23 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
       for (i32 k = 0; k < c.args.len(); k++) { nativeArgs[1 + k] = c.args[k]; }
       if (c.port) { nativeArgs[1 + c.args.len()] = "\{hn.port}"; }
 
-      hd.release(cli);
-      hn.release(cli);
-      runs[i * 2] = cli.exec("/bin/sh",
+      hd.release();
+      hn.release();
+      runs[i * 2] = procs.exec("/bin/sh",
         ["-c", lineFor(dirsDeno[i], "\{tmp}/\{c.name}-deno", denoArgs)],
-        c.stdin.toBytes());
+        c.stdin.toBytes(), ChildEnv.inherited(), Launch.plain());
       if (native != "") {
-        runs[i * 2 + 1] = cli.exec("/bin/sh",
-          ["-c", lineFor(dirsNative[i], native, nativeArgs)], c.stdin.toBytes());
+        runs[i * 2 + 1] = procs.exec("/bin/sh",
+          ["-c", lineFor(dirsNative[i], native, nativeArgs)], c.stdin.toBytes(), ChildEnv.inherited(), Launch.plain());
       }
     }
 
     for (i32 i = 0; i < n; i++) {
       Case c = all[base + i];
-      Exec js = runs[i * 2].wait();
+      auto jsRan = flatten(runs[i * 2]!.wait());
+      t.isTrue(jsRan.isOk(), "deno \{c.name}: the shell did not run — \{jsRan.isErr() ? "\{jsRan.err()!}" : ""}");
+      if (jsRan.isErr()) { continue; }
+      Exec js = jsRan.unwrap();
       string jsOut = string.fromBytes(js.stdout);
       string jsErr = string.fromBytes(js.stderr);
       // Each example is asserted to have *said something* on its own, so a skipped native half still
@@ -334,7 +343,10 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
       t.isTrue(jsOut.len() + jsErr.len() > 0, "deno \{c.name} printed nothing");
       if (native == "") { continue; }
 
-      Exec rs = runs[i * 2 + 1].wait();
+      auto rsRan = flatten(runs[i * 2 + 1]!.wait());
+      t.isTrue(rsRan.isOk(), "native \{c.name}: the shell did not run — \{rsRan.isErr() ? "\{rsRan.err()!}" : ""}");
+      if (rsRan.isErr()) { continue; }
+      Exec rs = rsRan.unwrap();
       string rsOut = string.fromBytes(rs.stdout);
       string rsErr = string.fromBytes(rs.stderr);
 
@@ -356,6 +368,6 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
     }
   }
 
-  cli.remove("\{tmp}/run", true).wait();
+  fs.remove("\{tmp}/run", true).wait();
   return t.report();
 }

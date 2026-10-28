@@ -18,16 +18,16 @@
 // stage spawns the test binary, which is not a shell that will stop. That test stays in `bin.test.ts`,
 // which builds a real program and runs it — the "one build-and-spawn per area" of `issues/system/0193`.
 
-import { Cli, Core } from "std";
-import { Fs } from "../../../fs/src/fs.wac";
-import { Vec } from "core";
+import { Files, MemoryStore, Sys } from "std";
+import { systemFiles } from "../../../fs/src/trees.wac";
+import { ProcTable } from "../../../fs/src/proc.wac";
 import { boxNames } from "../../src/shrun.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runSealed, show } from "./replay.wac";
 
-export async string test_bin_lists_exactly_the_programs_this_build_has(Core core, Cli cli) {
+export async string test_bin_lists_exactly_the_programs_this_build_has(Sys sys) {
   T t = T.create();
-  Ran listing = await runSealed(core, cli, "ls /bin");
+  Ran listing = await runSealed(sys, "ls /bin");
   t.eqI32(listing.status, 0, listing.err);
   // **Sorted**, because a listing is: `boxNames()` is in dispatcher order and `ls` is in the order a
   // person reads. Comparing the two without this reports every name as wrong from the first that moves.
@@ -41,41 +41,41 @@ export async string test_bin_lists_exactly_the_programs_this_build_has(Core core
   return t.report();
 }
 
-export async string test_a_program_in_bin_is_a_file_with_a_mode_and_a_size(Core core, Cli cli) {
+export async string test_a_program_in_bin_is_a_file_with_a_mode_and_a_size(Sys sys) {
   T t = T.create();
-  Ran one = await runSealed(core, cli, "stat /bin/wc");
+  Ran one = await runSealed(sys, "stat /bin/wc");
   t.eqI32(one.status, 0, one.err);
   // `<path> file <size> <when>` — a file, not a directory, with a real length.
   t.isTrue(one.out.len() > 13 && one.out.slice(0, 13) == "/bin/wc file ", show(one.out));
 
-  Ran said = await runSealed(core, cli, "cat /bin/wc");
+  Ran said = await runSealed(sys, "cat /bin/wc");
   t.eqStr(said.out, "wc is built into this program; there is no file here to copy elsewhere.\n",
           "what /bin/wc says");
   // `stat` and `cat` agree about the length, which is the pair that would drift apart unnoticed.
-  Ran counted = await runSealed(core, cli, "cat /bin/wc | wc -c");
+  Ran counted = await runSealed(sys, "cat /bin/wc | wc -c");
   t.isTrue(one.out.indexOf(" \{trimmedOf(counted.out)} ") >= 0,
            "stat and cat disagree about the length: \{show(one.out)} vs \{show(counted.out)}");
 
   // And a name that is not a program is absent rather than empty — the two are different answers.
-  Ran missing = await runSealed(core, cli, "cat /bin/nosuch");
+  Ran missing = await runSealed(sys, "cat /bin/nosuch");
   t.eqI32(missing.status, 1, "cat /bin/nosuch");
   t.isTrue(missing.err.indexOf("No such file") >= 0, missing.err);
   return t.report();
 }
 
-export async string test_a_path_into_bin_runs_the_program_however_it_is_spelled(Core core, Cli cli) {
+export async string test_a_path_into_bin_runs_the_program_however_it_is_spelled(Sys sys) {
   T t = T.create();
-  t.eqStr((await runSealed(core, cli, "echo a b c | /bin/wc -w")).out, "3\n", "the plain path");
+  t.eqStr((await runSealed(sys, "echo a b c | /bin/wc -w")).out, "3\n", "the plain path");
   // Relative, from inside `/bin` — the same program by another spelling, which a shell that matched on
   // the text of the word rather than the resolved path would get wrong.
-  t.eqStr((await runSealed(core, cli, "cd /bin; echo x y | ./wc -w")).out, "2\n", "relative from inside /bin");
+  t.eqStr((await runSealed(sys, "cd /bin; echo x y | ./wc -w")).out, "2\n", "relative from inside /bin");
   // A name that is not one of the programs. **`command not found` is what a shell says about a *name***
   // — bash says `No such file or directory` about a path, and 127 either way.
-  Ran nope = await runSealed(core, cli, "/bin/nosuch; echo status=$?");
+  Ran nope = await runSealed(sys, "/bin/nosuch; echo status=$?");
   t.eqStr(nope.out, "status=127\n", nope.err);
   t.isTrue(nope.err.indexOf("No such file or directory") >= 0, nope.err);
   // A directory that merely looks like it: `/binary/wc` must not be treated as `/bin`'s.
-  Ran near = await runSealed(core, cli, "mkdir /binary; /binary/wc; echo status=$?");
+  Ran near = await runSealed(sys, "mkdir /binary; /binary/wc; echo status=$?");
   t.isTrue(near.out.indexOf("status=127") >= 0, "\{show(near.out)} / \{show(near.err)}");
   return t.report();
 }
@@ -84,36 +84,40 @@ export async string test_a_path_into_bin_runs_the_program_however_it_is_spelled(
  * A build with no programs has no `/bin` at all.
  *
  * `packages/ssh`'s server wires no applets, and an **empty** `/bin` would claim more than an absent one:
- * `ls /` would show a directory of programs with no programs in it. So `mountBin` of nothing mounts
- * nothing. Asked of `packages/fs` directly rather than by building a second shell: the rule is the
- * filesystem's, and a shell with no applets is not a thing this package builds.
+ * `ls /` would show a directory of programs with no programs in it. So `systemFiles` with no programs
+ * mounts no `/bin`. Asked of `packages/fs` directly rather than by building a second shell: the rule is
+ * the filesystem's, and a shell with no applets is not a thing this package builds.
  */
-export async string test_a_build_with_no_programs_has_no_bin_at_all(Core core, Cli cli) {
+export async string test_a_build_with_no_programs_has_no_bin_at_all(Sys sys) {
   T t = T.create();
-  Fs empty = Fs.inMemory(0);
-  // `randomBytes` is what `/dev` would need; `mountBin` takes it because the two are mounted by
-  // one call in a session. Passing the real one keeps this about the program list and nothing else.
-  empty.mountBin(Vec.create(), core.randomBytes);
-  t.eqStr(joined((await empty.readDir("/"))), "", "an empty /bin was mounted anyway");
+  Files empty = systemFiles(MemoryStore.create(sys.clock()).asUser("root"), sys.random(), ProcTable.create(),
+                            string[].filled(0, ""));
+  t.isTrue(!contains((await empty.readDir("/")).ok(), "bin"), "an empty /bin was mounted anyway");
 
-  Fs one = Fs.inMemory(0);
-  Vec<string> names = Vec.create();
-  names.push("wc");
-  one.mountBin(names, core.randomBytes);
-  t.eqStr(joined((await one.readDir("/"))), "bin", "a build with a program has a /bin");
-  t.eqStr(joined((await one.readDir("/bin"))), "wc", "/bin lists its one program");
+  Files one = systemFiles(MemoryStore.create(sys.clock()).asUser("root"), sys.random(), ProcTable.create(), ["wc"]);
+  t.isTrue(contains((await one.readDir("/")).ok(), "bin"), "a build with a program has a /bin");
+  t.eqStr(joined((await one.readDir("/bin")).ok()), "wc", "/bin lists its one program");
   return t.report();
 }
 
-export async string test_bin_is_read_only_like_every_other_synthesised_mount(Core core, Cli cli) {
+/** Whether a listing has `name` in it; no listing has nothing. */
+bool contains(string[]? entries, string name) {
+  if (entries is null) { return false; }
+  for (i32 i = 0; i < entries!.len(); i++) {
+    if (entries![i] == name) { return true; }
+  }
+  return false;
+}
+
+export async string test_bin_is_read_only_like_every_other_synthesised_mount(Sys sys) {
   T t = T.create();
   string[] refused = ["echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d"];
   for (i32 i = 0; i < refused.len(); i++) {
-    t.isTrue((await runSealed(core, cli, refused[i])).status != 0, "\{refused[i]} was allowed");
+    t.isTrue((await runSealed(sys, refused[i])).status != 0, "\{refused[i]} was allowed");
   }
   // A program cannot be added by writing one either, which is the same statement from the other side:
   // what is in `/bin` is what this build has.
-  Ran added = await runSealed(core, cli, "echo x > /bin/newthing; ls /bin | wc -l");
+  Ran added = await runSealed(sys, "echo x > /bin/newthing; ls /bin | wc -l");
   t.eqStr(trimmedOf(added.out), "\{boxNames().len()}", added.err);
   return t.report();
 }

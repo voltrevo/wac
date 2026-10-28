@@ -5,16 +5,16 @@
 // answered 1, 10, 11 — which is the right answer to a question nobody asked. Found by typing it
 // into the browser shell the day `box`'s applets became commands there.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, readAll } from "../lib/input.wac";
+import { Opened, readAll } from "../lib/input.wac";
 import { cmpBytes, cmpNumeric, cmpNumericThenBytes, joinLines, mergeSortWith, splitLines } from "../lib/lines.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { flatten } from "core";
 
-export async i32 sort(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await readAll(core, cli, fs, a, 0);
+export async i32 sort(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await readAll(stdin, err, fs, a, 0);
   // **2, not 1.** GNU's `sort` reserves 1 for "the input was not sorted" under `-c` and answers 2 for
   // anything that went wrong, which a caller checking `$?` can tell apart. `grep` does the same.
   if (!in.ok) { return 2; }
@@ -33,7 +33,7 @@ export async i32 sort(Core core, Cli cli, Fs fs, Args a) {
   if (numeric) { order = unique ? cmpNumeric : cmpNumericThenBytes; }
   u8[][] sorted = mergeSortWith(lines, n, order);
 
-  u8[][] out = u8[][].filled(n, u8[]());
+  u8[][] kept = u8[][].filled(n, u8[]());
   i32 at = 0;
   for (i32 i = 0; i < n; i++) {
     // `-u` drops what the *sort* considers equal, so `-nu` over `1` and `01` keeps one of them,
@@ -41,19 +41,19 @@ export async i32 sort(Core core, Cli cli, Fs fs, Args a) {
     // depending on how the duplicates were spelled.
     // `i > 0` first: the comparison reads `sorted[i - 1]`, so hoisting it above the guard reads
     // index -1 on the first line. It did, and every `sort` in the suite went from a listing to
-    // "array element access out of bounds".
+    // "array element access kept of bounds".
     bool same = i > 0 &&
       (numeric
         ? cmpNumeric(sorted[i], sorted[i - 1]) == 0
         : cmpBytes(sorted[i], sorted[i - 1]) == 0);
     if (unique && same) { continue; }
-    out[at] = sorted[i];
+    kept[at] = sorted[i];
     at++;
   }
-  if (!reverse) { cli.write(joinLines(out, at)); return 0; }
+  if (!reverse) { flatten(out.write(joinLines(kept, at)).wait()).isOk(); return 0; }
 
   u8[][] flipped = u8[][].filled(at, u8[]());
-  for (i32 i = 0; i < at; i++) { flipped[i] = out[at - 1 - i]; }
-  cli.write(joinLines(flipped, at));
+  for (i32 i = 0; i < at; i++) { flipped[i] = kept[at - 1 - i]; }
+  out.write(joinLines(flipped, at));
   return 0;
 }

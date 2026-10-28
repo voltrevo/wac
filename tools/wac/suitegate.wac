@@ -37,11 +37,12 @@
 // the TypeScript does; `main` returning 75 is what wac does, so `take` answers a `Slot` and the
 // caller decides. That is not politeness: a `main` that returns is a `main` whose lock gets released.
 
-import { Cli, Core, FileResult, Stat } from "std";
+import { Cli, Stat, Clock, Env, Files, Output } from "std";
 import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { parse } from "../../packages/json/src/json.wac";
 import { JsonValue, JsonObject } from "../../packages/json/src/value.wac";
+import { flatten } from "core";
 
 /** Shared by every agent, because the resource being protected is shared. */
 string lockPath() { return "/tmp/wac-suite.lock"; }
@@ -137,8 +138,8 @@ export string marker() { return "WAC_SUITE_RUNNING"; }
  * with the grant, and `wac task docs` runs the `tools/` tests *without* it — which is why nothing
  * here is tested by reading a variable that happens to be in the environment.
  */
-export string envOf(Cli cli, string name) {
-  u8[]? v = cli.env(name).wait();
+export string envOf(Env env, string name) {
+  u8[]? v = flatten(env.get(name).wait()).orElse(null);
   return v is null ? "" : string.fromBytes(v!);
 }
 
@@ -149,18 +150,18 @@ export string envOf(Cli cli, string name) {
  * a lock with a pid nobody can check is worse than a lock file that was never written, because the
  * next agent would then wait on it for ever.
  */
-export i32 ownPid(Cli cli) {
-  FileResult f = cli.readFile("/proc/self/stat").wait();
-  if (!f.ok) { return 0; }
-  string s = string.fromBytes(f.bytes);
+export i32 ownPid(Files fs) {
+  u8[]? f = flatten(fs.readFile("/proc/self/stat").wait()).ok();
+  if ((f is null)) { return 0; }
+  string s = string.fromBytes(f!);
   i32 sp = s.indexOf(" ");
   return sp <= 0 ? 0 : atoi(s.slice(0, sp));
 }
 
 /** Whether a pid is still running — the `kill -0` question, asked of the filesystem. */
-export bool alive(Cli cli, i32 pid) {
+export bool alive(Files fs, i32 pid) {
   if (pid <= 0) { return false; }
-  return cli.stat("/proc/" + itoa(pid)).wait().exists;
+  return flatten(fs.stat("/proc/" + itoa(pid)).wait()).isOk();
 }
 
 /**
@@ -170,8 +171,8 @@ export bool alive(Cli cli, i32 pid) {
  * differs per agent. An unrecognised layout answers `unknown`, which still works — it just shares a
  * cooldown. A scan rather than the TypeScript's regex, which wac does not have.
  */
-export string agentName(Cli cli) {
-  string cwd = cli.cwd().wait();
+export string agentName(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   i32 at = cwd.indexOf("/agent-");
   if (at < 0) { return "unknown"; }
   i32 from = at + 1;
@@ -218,12 +219,12 @@ i32 loadTenthsOf(string text) {
  * Unreadable is not a reason to block: this gate exists to save time, and refusing a run because it
  * could not read `/proc` would be the gate costing what it is meant to protect.
  */
-Machine machine(Cli cli) {
-  FileResult mem = cli.readFile("/proc/meminfo").wait();
-  FileResult load = cli.readFile("/proc/loadavg").wait();
-  if (!mem.ok || !load.ok) { return Machine(false, 0, 0); }
-  i32 kb = memKb(string.fromBytes(mem.bytes), "MemAvailable:");
-  i32 tenths = loadTenthsOf(string.fromBytes(load.bytes));
+Machine machine(Files fs) {
+  u8[]? mem = flatten(fs.readFile("/proc/meminfo").wait()).ok();
+  u8[]? load = flatten(fs.readFile("/proc/loadavg").wait()).ok();
+  if ((mem is null) || (load is null)) { return Machine(false, 0, 0); }
+  i32 kb = memKb(string.fromBytes(mem!), "MemAvailable:");
+  i32 tenths = loadTenthsOf(string.fromBytes(load!));
   if (kb < 0 || tenths < 0) { return Machine(false, 0, 0); }
   return Machine(true, kb / 1024, tenths);
 }
@@ -278,10 +279,10 @@ bool boolField(JsonObject o, string key) {
  * does and the sweep deleted somebody else's file on every gate check. A value that is not an object
  * with a numeric `pid` is not a note.
  */
-Note readNote(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return noNote(); }
-  JsonValue? v = parse(f.bytes).ok();
+Note readNote(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  if ((f is null)) { return noNote(); }
+  JsonValue? v = parse(f!).ok();
   if (v is null) { return noNote(); }
   match (v!) {
     Object(members): {
@@ -295,16 +296,16 @@ Note readNote(Cli cli, string path) {
 }
 
 /** The lock, if one is held by a process that is still running. */
-Note readLock(Cli cli) {
-  Note n = readNote(cli, lockPath());
+Note readLock(Files fs) {
+  Note n = readNote(fs, lockPath());
   if (!n.present) { return noNote(); }
   // A lock whose process is gone is not a lock.
-  if (!alive(cli, n.pid)) { return noNote(); }
+  if (!alive(fs, n.pid)) { return noNote(); }
   return n;
 }
 
-i32 minutesSince(Core core, i64 ms) {
-  i64 now = core.nowMillis().wait();
+i32 minutesSince(Clock clock, i64 ms) {
+  i64 now = flatten(clock.nowMillis().wait()).unwrap();
   return ((now - ms + (30000 as i64)) / (60000 as i64)) as! i32;
 }
 
@@ -359,7 +360,7 @@ export struct Slot {
  * the lock; `WAC_SUITE_RETRY=1` skips only the cooldown, which is the rule about reaching for the
  * suite by reflex rather than about a script finishing a job it started.
  */
-export Slot take(Core core, Cli cli) { return takeAs(core, cli, ownPid(cli)); }
+export Slot take(Output err, Clock clock, Env env, Files fs) { return takeAs(err, clock, env, fs, ownPid(fs)); }
 
 /**
  * `take`, recording `pid` as the holder rather than this process.
@@ -369,10 +370,10 @@ export Slot take(Core core, Cli cli) { return takeAs(core, cli, ownPid(cli)); }
  * Recording *that* pid would leave a lock whose holder is dead the instant it is written, and
  * `alive()` would let the next agent walk straight through it.
  */
-export Slot takeAs(Core core, Cli cli, i32 pid) {
-  string who = agentName(cli);
-  bool forced = envOf(cli, "WAC_SUITE_ANYWAY") == "1";
-  bool retry = envOf(cli, "WAC_SUITE_RETRY") == "1";
+export Slot takeAs(Output err, Clock clock, Env env, Files fs, i32 pid) {
+  string who = agentName(env);
+  bool forced = envOf(env, "WAC_SUITE_ANYWAY") == "1";
+  bool retry = envOf(env, "WAC_SUITE_RETRY") == "1";
 
   // **The gate above us already holds it.** `tools/push.sh` takes this lock before it pulls and keeps
   // it until it has pushed, so that a run which *starts* is a run that can *land* — the suite alone
@@ -382,18 +383,18 @@ export Slot takeAs(Core core, Cli cli, i32 pid) {
   // So a suite invoked *by* that gate must not ask for a lock its own parent is holding. The parent
   // says so by exporting its pid, which is checked against the lock rather than trusted: an inherited
   // variable from a dead gate would otherwise wave a run straight past every refusal there is.
-  string held = envOf(cli, gateEnv());
+  string held = envOf(env, gateEnv());
   if (held != "") {
-    Note mine = readLock(cli);
-    if (mine.present && itoa(mine.pid) == held && alive(cli, mine.pid)) {
+    Note mine = readLock(fs);
+    if (mine.present && itoa(mine.pid) == held && alive(fs, mine.pid)) {
       return Slot(true, 0, "", 0);
     }
   }
 
   if (!forced) {
-    Note held = readLock(cli);
+    Note held = readLock(fs);
     if (held.present) {
-      return Slot(false, 75, held.who + " started one " + itoa(minutesSince(core, held.since)) +
+      return Slot(false, 75, held.who + " started one " + itoa(minutesSince(clock, held.since)) +
                   "m ago (pid " + itoa(held.pid) + ")" +
                   (held.forced ? ", with WAC_SUITE_ANYWAY" : ""), pid);
     }
@@ -401,19 +402,19 @@ export Slot takeAs(Core core, Cli cli, i32 pid) {
     // **Said before the thresholds, because it explains them.** The memory and load readings
     // describe this instant; a heavy runner next door describes the next ten minutes, which is what
     // a suite actually has to survive. Not a refusal — see `announce`.
-    Note[] others = heavyOthers(core, cli, pid);
+    Note[] others = heavyOthers(fs, pid);
     if (others.len() > 0) {
       string said = "";
       for (i32 i = 0; i < others.len(); i++) {
         said = said + (i > 0 ? ", " : "") + others[i].label + " (" + others[i].who + ", " +
-               itoa(minutesSince(core, others[i].since)) + "m)";
+               itoa(minutesSince(clock, others[i].since)) + "m)";
       }
-      core.warn("\n== heavy work is running next door: " + said + " ==");
-      core.warn("   Not a refusal. If this run is killed without reporting a failure, that is");
-      core.warn("   the likeliest reason — issues/system 0142.\n");
+      err.line("\n== heavy work is running next door: " + said + " ==");
+      err.line("   Not a refusal. If this run is killed without reporting a failure, that is");
+      err.line("   the likeliest reason — issues/system 0142.\n");
     }
 
-    Machine m = machine(cli);
+    Machine m = machine(fs);
     if (m.known) {
       if (m.availableMb < minAvailableMb()) {
         return Slot(false, 75, "only " + itoa(m.availableMb) +
@@ -427,16 +428,16 @@ export Slot takeAs(Core core, Cli cli, i32 pid) {
     }
 
     if (!retry) {
-      FileResult last = cli.readFile(lastRunPath(who)).wait();
-      if (last.ok) {
-        string text = string.fromBytes(last.bytes);
+      u8[]? last = flatten(fs.readFile(lastRunPath(who)).wait()).ok();
+      if ((last is not null)) {
+        string text = string.fromBytes(last!);
         i64 at = 0 as i64;
         for (i32 i = 0; i < text.len(); i++) {
           string c = text.slice(i, i + 1);
           if (c < "0" || c > "9") { break; }
           at = at * (10 as i64) + (atoi(c) as i64);
         }
-        i32 ago = minutesSince(core, at);
+        i32 ago = minutesSince(clock, at);
         if (at > (0 as i64) && ago < cooldownMin()) {
           return Slot(false, 75, who + " ran one " + itoa(ago) + "m ago — the cooldown is " +
                       itoa(cooldownMin()) + "m", pid);
@@ -444,16 +445,16 @@ export Slot takeAs(Core core, Cli cli, i32 pid) {
       }
     }
   } else {
-    core.warn("\n== WAC_SUITE_ANYWAY=1: running the suite despite the gate ==");
-    core.warn("   Recorded in the lock, so another agent can see why it is held.\n");
+    err.line("\n== WAC_SUITE_ANYWAY=1: running the suite despite the gate ==");
+    err.line("   Recorded in the lock, so another agent can see why it is held.\n");
   }
 
   // `JSON.stringify({who, pid, since, forced})`, byte for byte: the TypeScript runner reads this.
-  i64 now = core.nowMillis().wait();
+  i64 now = flatten(clock.nowMillis().wait()).unwrap();
   string json = "{\"who\":\"" + who + "\",\"pid\":" + itoa(pid) + ",\"since\":" + itoa64(now) +
                 ",\"forced\":" + (forced ? "true" : "false") + "}";
   // An unwritable lock should not stop a run that has been allowed.
-  cli.writeFile(lockPath(), json.toBytes()).wait();
+  fs.writeFile(lockPath(), json.toBytes()).wait();
   return Slot(true, 0, "", pid);
 }
 
@@ -472,13 +473,13 @@ export Slot takeAs(Core core, Cli cli, i32 pid) {
  * suite invoked *by* the gate takes the `WAC_GATE_LOCK` early return above and never saw the old
  * write either.
  */
-export void markRun(Core core, Cli cli) {
-  cli.writeFile(lastRunPath(agentName(cli)), itoa64(core.nowMillis().wait()).toBytes()).wait();
+export void markRun(Clock clock, Env env, Files fs) {
+  fs.writeFile(lastRunPath(agentName(env)), itoa64(flatten(clock.nowMillis().wait()).unwrap()).toBytes()).wait();
 }
 
 /** Print what the gate said and hand back its exit code. */
-export i32 refused(Core core, Slot slot) {
-  core.warn("\n== not running the suite: " + slot.why + " ==\n" + advice() + "\n");
+export i32 refused(Output err, Slot slot) {
+  err.line("\n== not running the suite: " + slot.why + " ==\n" + advice() + "\n");
   return slot.code;
 }
 
@@ -489,10 +490,10 @@ export i32 refused(Core core, Slot slot) {
  * releasing theirs would be worse than leaving ours.
  */
 /** Release only what we took: a `Slot` with no pid is a borrowed lock and is not ours to drop. */
-export void release(Cli cli, Slot slot) {
+export void release(Files fs, Slot slot) {
   if (!slot.taken) { return; }
-  Note now = readLock(cli);
-  if (now.present && now.pid == slot.pid) { cli.remove(lockPath(), false).wait(); }
+  Note now = readLock(fs);
+  if (now.present && now.pid == slot.pid) { fs.remove(lockPath(), false).wait(); }
 }
 
 /**
@@ -503,21 +504,21 @@ export void release(Cli cli, Slot slot) {
  * needs to know is not "is there room this instant" — the readings answer that — but "is something
  * going to keep running while I do".
  */
-export string announce(Core core, Cli cli, string label) {
-  i32 pid = ownPid(cli);
+export string announce(Clock clock, Env env, Files fs, string label) {
+  i32 pid = ownPid(fs);
   string path = heavyPath(pid);
-  string json = "{\"who\":\"" + agentName(cli) + "\",\"label\":\"" + label + "\",\"pid\":" +
-                itoa(pid) + ",\"since\":" + itoa64(core.nowMillis().wait()) + "}";
-  cli.writeFile(path, json.toBytes()).wait();
+  string json = "{\"who\":\"" + agentName(env) + "\",\"label\":\"" + label + "\",\"pid\":" +
+                itoa(pid) + ",\"since\":" + itoa64(flatten(clock.nowMillis().wait()).unwrap()) + "}";
+  fs.writeFile(path, json.toBytes()).wait();
   return path;
 }
 
 /** The other half of `announce`. */
-export void unannounce(Cli cli, string path) { cli.remove(path, false).wait(); }
+export void unannounce(Files fs, string path) { fs.remove(path, false).wait(); }
 
 /** Every heavy runner that is not this process and whose pid is still alive. */
-export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
-  string[]? entries = cli.readDir("/tmp").wait();
+export Note[] heavyOthers(Files fs, i32 mine) {
+  string[]? entries = flatten(fs.readDir("/tmp").wait()).ok();
   if (entries is null) { return Note[].filled(0, noNote()); }
   string[] names = entries!;
   Note[] found = Note[].filled(names.len(), noNote());
@@ -525,12 +526,12 @@ export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
   for (i32 i = 0; i < names.len(); i++) {
     if (!startsWith(names[i], "wac-heavy-")) { continue; }
     string path = "/tmp/" + names[i];
-    Note note = readNote(cli, path);
+    Note note = readNote(fs, path);
     if (!note.present) { continue; }
     if (note.pid == mine) { continue; }
-    if (!alive(cli, note.pid)) {
+    if (!alive(fs, note.pid)) {
       // A note whose process is gone is not a presence. Swept, and only because it was recognised.
-      cli.remove(path, false).wait();
+      fs.remove(path, false).wait();
       continue;
     }
     found[n] = note;
@@ -547,10 +548,10 @@ export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
  * Answers the exit code — 2 — or 0 when there is nothing above us. `wac-mono 0077`'s shape is
  * something running under the suite invoking a whole suite, which recurses without bound.
  */
-export i32 refuseIfNested(Core core, Cli cli, string what) {
-  string why = nestedWhy(envOf(cli, marker()), what);
+export i32 refuseIfNested(Output err, Env env, string what) {
+  string why = nestedWhy(envOf(env, marker()), what);
   if (why == "") { return 0; }
-  core.warn(why);
+  err.line(why);
   return 2;
 }
 

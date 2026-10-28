@@ -20,10 +20,11 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult, Sys } from "std";
+import { Files, Output, Sys } from "std";
 import { canonicalize } from "../../src/json.wac";
 import { JsonError } from "../../src/parse.wac";
 import { Trees, sameTrees } from "./questions.wac";
+import { flatten } from "core";
 
 static string DIR = "packages/json/test/jsontestsuite";
 
@@ -40,10 +41,10 @@ bool endsWith(string s, string p) {
 }
 
 /** Every `.json` document in the corpus, sorted by name so a failure list is stable. */
-Case[] load(Core core, Cli cli) {
-  string[]? entries = cli.readDir(DIR).wait();
+Case[] load(Output err, Files fs) {
+  string[]? entries = flatten(fs.readDir(DIR).wait()).ok();
   if (entries is null) {
-    core.warn("json: cannot list \{DIR}");
+    err.line("json: cannot list \{DIR}");
     trap;
   }
   string[] names = sorted(entries!);
@@ -51,13 +52,14 @@ Case[] load(Core core, Cli cli) {
   i32 n = 0;
   for (i32 i = 0; i < names.len(); i++) {
     if (!endsWith(names[i], ".json")) { continue; }
-    FileResult r = cli.readFile("\{DIR}/\{names[i]}").wait();
-    if (!r.ok) {
-      core.warn("json: cannot read \{names[i]} — \{r.error}");
+    auto rRead = flatten(fs.readFile("\{DIR}/\{names[i]}").wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) {
+      err.line("json: cannot read \{names[i]} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
       trap;
     }
     string prefix = names[i].slice(0, 2);
-    out[n] = Case(names[i], r.bytes,
+    out[n] = Case(names[i], r!,
                   prefix == "y_" ? "accept" : (prefix == "n_" ? "reject" : "either"));
     n = n + 1;
   }
@@ -85,9 +87,11 @@ string[] sorted(string[] names) {
  * total, because a corpus that lost all its `n_` documents would still have 318 files if somebody
  * had added 188 of something else.
  */
-export string test_the_corpus_is_present_and_complete(Core core, Cli cli) {
+export string test_the_corpus_is_present_and_complete(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  Case[] cases = load(core, cli);
+  Case[] cases = load(err, fs);
   t.eqI32(cases.len(), 318, "expected 318 documents");
   i32 accept = 0;
   i32 reject = 0;
@@ -103,9 +107,11 @@ export string test_the_corpus_is_present_and_complete(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_every_valid_document_is_accepted(Core core, Cli cli) {
+export string test_every_valid_document_is_accepted(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  Case[] cases = load(core, cli);
+  Case[] cases = load(err, fs);
   i32 checked = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "accept") { continue; }
@@ -116,9 +122,11 @@ export string test_every_valid_document_is_accepted(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_every_invalid_document_is_rejected(Core core, Cli cli) {
+export string test_every_invalid_document_is_rejected(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  Case[] cases = load(core, cli);
+  Case[] cases = load(err, fs);
   i32 checked = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "reject") { continue; }
@@ -138,7 +146,7 @@ export string test_every_invalid_document_is_rejected(Core core, Cli cli) {
  */
 export async string test_accepted_documents_re_serialize_to_the_same_tree(Sys sys) {
   T t = T.create();
-  Case[] cases = load(sys.core, sys.cli);
+  Case[] cases = load(sys.stderr(), sys.files());
   Trees trees = Trees.create();
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "accept") { continue; }
@@ -157,9 +165,12 @@ export async string test_accepted_documents_re_serialize_to_the_same_tree(Sys sy
  * The requirement here is only that nothing traps, hangs or reports nonsense. The split is printed so
  * that a change in behaviour shows up as a diff.
  */
-export string test_implementation_defined_documents_terminate(Core core, Cli cli) {
+export string test_implementation_defined_documents_terminate(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
   T t = T.create();
-  Case[] cases = load(core, cli);
+  Case[] cases = load(err, fs);
   i32 accepted = 0;
   i32 seen = 0;
   // How many were refused for each reason, in the order first seen.
@@ -182,7 +193,7 @@ export string test_implementation_defined_documents_terminate(Core core, Cli cli
   for (i32 k = 0; k < kinds; k++) {
     codes = (codes == "" ? "" : "\{codes}, ") + "\{faults[k]}×\{counts[k]}";
   }
-  core.log("  i_: \{accepted} accepted, \{seen - accepted} rejected (" +
+  out.line("  i_: \{accepted} accepted, \{seen - accepted} rejected (" +
            "\{codes})");
   return t.report();
 }

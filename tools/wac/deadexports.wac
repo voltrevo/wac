@@ -30,8 +30,8 @@
 // The unexported half has no such caveat: a private function is reachable only from its own file,
 // which is why the report says so where it prints them.
 
-import { Core, Cli, FileResult, Stat, Sys } from "std";
-import { Vec } from "core";
+import { Stat, Sys, Files, Output } from "std";
+import { Vec, flatten } from "core";
 import { sortStrings } from "./covledger.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
@@ -67,16 +67,16 @@ struct Exempt {
  * `node_modules`, `.git` and `.cache` are skipped, as the original skips them — the first is npm's
  * and the last two hold copies of files that are already in the walk.
  */
-export void walk(Cli cli, string base, string rel, string ext, Vec<string> out) {
-  string[]? names = cli.readDir(base + "/" + rel).wait();
+export void walk(Files fs, string base, string rel, string ext, Vec<string> out) {
+  string[]? names = flatten(fs.readDir(base + "/" + rel).wait()).ok();
   if (names is null) { return; }
   string[] all = names!;
   for (i32 i = 0; i < all.len(); i++) {
     if (all[i] == "node_modules" || all[i] == ".git" || all[i] == ".cache") { continue; }
     string next = rel + "/" + all[i];
-    Stat s = cli.stat(base + "/" + next).wait();
-    if (!s.exists) { continue; }
-    if (s.isDir) { walk(cli, base, next, ext, out); continue; }
+    Stat? s = flatten(fs.stat(base + "/" + next).wait()).ok();
+    if ((s is null)) { continue; }
+    if ((s is not null && s!.isDir)) { walk(fs, base, next, ext, out); continue; }
     if (next.len() > ext.len() && next.slice(next.len() - ext.len(), next.len()) == ext) {
       out.push(next);
     }
@@ -132,9 +132,9 @@ export string[] codeLines(string text) {
 }
 
 /** The whole file, or `""` — a file that cannot be read is not a file with no exports. */
-string readAll(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string readAll(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 /**
@@ -143,9 +143,9 @@ string readAll(Cli cli, string path) {
  * These are constants of this file and a failure here is a bug in it rather than in the tree, so
  * there is nothing for a caller to do about one.
  */
-Program mustCompile(Core core, string pattern) {
+Program mustCompile(Output err, string pattern) {
   Program? p = compile(pattern.toBytes());
-  if (p is null) { core.warn("deadexports: cannot compile /" + pattern + "/"); trap; }
+  if (p is null) { err.line("deadexports: cannot compile /" + pattern + "/"); trap; }
   return p!;
 }
 
@@ -476,14 +476,14 @@ export struct Scan {
 }
 
 /** Every exported wac function under `base` that nothing calls, and the private ones too. */
-export Scan scanAt(Core core, Cli cli, string base) {
+export Scan scanAt(Output err, Files fs, string base) {
   Vec<string> files = Vec.create();
   string[] roots = wacRoots();
-  for (i32 i = 0; i < roots.len(); i++) { walk(cli, base, roots[i], ".wac", files); }
+  for (i32 i = 0; i < roots.len(); i++) { walk(fs, base, roots[i], ".wac", files); }
 
-  Program exportPat = mustCompile(core, "^\\s*export\\s+" + typeAhead()
+  Program exportPat = mustCompile(err, "^\\s*export\\s+" + typeAhead()
       + "\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
-  Program privatePat = mustCompile(core, "^" + typeAhead()
+  Program privatePat = mustCompile(err, "^" + typeAhead()
       + "\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
 
   Vec<string> exemptFile = Vec.create();
@@ -498,7 +498,7 @@ export Scan scanAt(Core core, Cli cli, string base) {
   // Pass one: what each file declares, what it exempts, and every `X as Y` anywhere.
   for (i32 i = 0; i < files.len(); i++) {
     string f = files.get(i);
-    string text = readAll(cli, base + "/" + f);
+    string text = readAll(fs, base + "/" + f);
     collectAliases(text, aliasOrig, aliasLocal);
     // **Every file is searched for callers; only some are searched for declarations.** A probe
     // exists to be called from TypeScript, so its own exports are not the subject — but it is wac,
@@ -600,12 +600,12 @@ export Scan scanAt(Core core, Cli cli, string base) {
   // a name with a wac caller is live whatever TypeScript says about it.
   Vec<string> tsFiles = Vec.create();
   string[] tr = tsRoots();
-  for (i32 i = 0; i < tr.len(); i++) { walk(cli, base, tr[i], ".ts", tsFiles); }
+  for (i32 i = 0; i < tr.len(); i++) { walk(fs, base, tr[i], ".ts", tsFiles); }
   Vec<string> tsText = Vec.create();
   Vec<string> tsPkg = Vec.create();
   bool[] tsOpen = bool[].filled(tsFiles.len(), false);
   for (i32 i = 0; i < tsFiles.len(); i++) {
-    string text = readAll(cli, base + "/" + tsFiles.get(i));
+    string text = readAll(fs, base + "/" + tsFiles.get(i));
     tsText.push(text);
     tsPkg.push(packageOf(tsFiles.get(i)));
     tsOpen[i] = text.indexOf("wacBind") >= 0 || text.indexOf("entry:") >= 0;
@@ -668,18 +668,20 @@ export string report(Scan s) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  Scan s = scanAt(core, cli, ".");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Scan s = scanAt(err, fs, ".");
   bool quiet = false;
   bool strict = false;
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--quiet") { quiet = true; }
     if (a == "--strict") { strict = true; }
   }
-  if (!quiet) { core.log(report(s)); }
+  if (!quiet) { out.line(report(s)); }
   // Reporting only unless asked otherwise — the original's reason, unchanged: a check that turns
   // somebody else's tree red the day it lands is a check that gets deleted rather than acted on.
   return (s.dead + s.privDead) == 0 || !strict ? 0 : 1;

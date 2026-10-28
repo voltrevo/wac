@@ -20,20 +20,21 @@
 // `issues/system/0132` is the conformance tier this belongs in.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_REPRESENTABLE, FAULT_REFUSED,
-         FileResult, HostSocket, Stat, faultWords } from "std";
+import { Denied, Exec, NotGranted, NotRepresentable, Refused, ChildEnv, Env, Files, Launch, Net, Output, Procs, Sys, Socket } from "std";
 import { has, isSpace, trimmed } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 static string V8_HOST = "native/v8/src/main.rs";
 static string WASMTIME_HOST = "native/src/main.rs";
 
-string read(Core core, Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
-    core.warn("platform: cannot read \{path} — \{r.error}");
+string read(Output err, Files fs, string path) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("platform: cannot read \{path} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  return string.fromBytes(r.bytes);
+  return string.fromBytes(r!);
 }
 
 /** The lines of `s`, trimmed, with the empty ones dropped. */
@@ -104,10 +105,12 @@ string squeezed(string line) {
  * host knows and the other does not is a divergence whichever way round it is, and the direction it
  * happened in this time was the one nobody would have guessed: the primary platform was the poorer.
  */
-export string test_the_two_rust_hosts_classify_an_error_the_same_way(Core core, Cli cli) {
+export string test_the_two_rust_hosts_classify_an_error_the_same_way(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string[] v8 = armsOf(read(core, cli, V8_HOST));
-  string[] wasmtime = armsOf(read(core, cli, WASMTIME_HOST));
+  string[] v8 = armsOf(read(err, fs, V8_HOST));
+  string[] wasmtime = armsOf(read(err, fs, WASMTIME_HOST));
 
   // The extraction has to have found something, or every comparison below holds vacuously — which is
   // exactly how a source scan goes quietly wrong.
@@ -135,10 +138,12 @@ export string test_the_two_rust_hosts_classify_an_error_the_same_way(Core core, 
  * and shifting everything above it is the failure `faults_agree.test.ts` describes for the other two
  * copies, and it is available here in the same way.
  */
-export string test_the_two_rust_hosts_number_the_faults_the_same_way(Core core, Cli cli) {
+export string test_the_two_rust_hosts_number_the_faults_the_same_way(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string[] v8 = constantsOf(read(core, cli, V8_HOST));
-  string[] wasmtime = constantsOf(read(core, cli, WASMTIME_HOST));
+  string[] v8 = constantsOf(read(err, fs, V8_HOST));
+  string[] wasmtime = constantsOf(read(err, fs, WASMTIME_HOST));
   t.isTrue(v8.len() >= 8, "\{V8_HOST}: found \{v8.len()} FAULT_ constants");
   t.isTrue(wasmtime.len() >= 8, "\{WASMTIME_HOST}: found \{wasmtime.len()}" +
            " FAULT_ constants");
@@ -183,24 +188,27 @@ string[] constantsOf(string source) {
  * binding does. A closed port on loopback is refused rather than dropped on every Unix, which is what
  * makes this an assertion rather than a race.
  */
-export string test_a_refused_connection_is_refused_and_not_merely_failed(Core core, Cli cli) {
+export string test_a_refused_connection_is_refused_and_not_merely_failed(Sys sys) {
+  Net net = sys.net();
   T t = T.create();
-  HostSocket s = cli.connect("127.0.0.1", 1).wait();
-  if (s.handle >= 0) {
-    cli.closeSocket(s.handle);
+  auto sDial = flatten(net.connect("127.0.0.1", 1).wait());
+  Socket? s = sDial.ok();
+  if (s is not null) {
+    s!.close();
     t.isTrue(false, "something is listening on 127.0.0.1:1, so this cannot test a refusal");
     return t.report();
   }
-  // A run with no network grant would answer `FAULT_NOT_GRANTED` and fail the assertion below for a
-  // reason that is nothing to do with the subject -- so it is named rather than left to look wrong.
-  if (s.fault == FAULT_NOT_GRANTED()) {
+  // A run with no network grant would answer `NotGranted` and fail the assertion below for a reason
+  // that is nothing to do with the subject -- so it is named rather than left to look wrong.
+  auto e = sDial.err()!;
+  if (e is NotGranted) {
     t.isTrue(false, "this run was not granted the network, so it cannot see how a dial failed");
     return t.report();
   }
-  t.eqI32(s.fault, FAULT_REFUSED(),
-          "a refused dial is its own category, not FAULT_OTHER — got \{s.fault}"
-          + " with the message \{s.error}");
-  t.eqStr(faultWords(s.fault), "Connection refused", "and the words strerror uses for it");
+  t.isTrue(e is Refused, "a refused dial is its own category, not Other — got \{e}");
+  // The host's own sentence follows the words — "(os error 111)" on the Rust hosts — so the claim is
+  // about how it starts.
+  t.isTrue("\{e}".indexOf("Connection refused") == 0, "and it opens with the words strerror uses — got \{e}");
   return t.report();
 }
 
@@ -221,35 +229,43 @@ export string test_a_refused_connection_is_refused_and_not_merely_failed(Core co
  * **Not the same as `FAULT_NOT_GRANTED`**, which is this program's own capability world refusing
  * before anything is attempted. This is the machine refusing something the program was allowed to try.
  */
-export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core core, Cli cli) {
+export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/hostfaults-denied";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
-  Change wrote = cli.writeFile("\{dir}/inside.txt", "here\n".toBytes()).wait();
-  t.isTrue(wrote.ok(), "the fixture was written — \{wrote.message}");
-  if (!wrote.ok()) { return t.report(); }
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/hostfaults-denied";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
+  auto wrote = flatten(fs.writeFile("\{dir}/inside.txt", "here\n".toBytes()).wait());
+  t.isTrue(wrote.isOk(), "the fixture was written — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
+  if (wrote.isErr()) { return t.report(); }
 
-  // No execute bit, so the kernel refuses to walk into it. `chmod` through the shell because
-  // `Cli` has no mode-setting capability beyond `setExecutable`, which sets rather than clears.
-  Exec locked = cli.exec("/bin/sh", ["-c", "chmod 000 '\{dir}'"], u8[]()).wait();
-  t.isTrue(locked.ran() && locked.status == 0, "the directory was locked");
-  if (!locked.ran() || locked.status != 0) { return t.report(); }
+  // No execute bit, so the kernel refuses to walk into it. `chmod` through the shell because the
+  // fixture must not go through the `Files` under test.
+  auto lockedRan = flatten(procs.exec("/bin/sh", ["-c", "chmod 000 '\{dir}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? locked = lockedRan.ok();
+  t.isTrue((locked is not null) && locked!.status == 0, "the directory was locked");
+  if ((locked is null) || locked!.status != 0) { return t.report(); }
 
-  FileResult r = cli.readFile("\{dir}/inside.txt").wait();
-  Stat s = cli.stat("\{dir}/inside.txt").wait();
+  auto r = flatten(fs.readFile("\{dir}/inside.txt").wait());
+  auto s = flatten(fs.stat("\{dir}/inside.txt").wait());
 
   // Unlocked before the assertions, so a failure does not leave a directory the suite cannot remove.
-  cli.exec("/bin/sh", ["-c", "chmod 755 '\{dir}'"], u8[]()).wait();
+  procs.exec("/bin/sh", ["-c", "chmod 755 '\{dir}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
 
-  t.isTrue(!r.ok, "reading through a locked directory failed");
-  t.eqI32(r.fault, FAULT_DENIED(), "and the fault says denied rather than \{faultWords(r.fault)}");
+  t.isTrue(r.isErr(), "reading through a locked directory failed");
+  if (r.isErr()) {
+    t.isTrue(r.err()! is Denied, "and the fault says denied rather than \{r.err()!}");
+  }
   // **The `stat` half is the one a script acts on.** A `test -e` built on a `stat` that answered
   // "absent" would tell a script the file is not there, and the script would go on to create it.
-  t.eqI32(s.fault, FAULT_DENIED(), "stat says denied rather than \{faultWords(s.fault)}");
-  t.isTrue(!s.exists, "and does not claim it exists, which it cannot know");
+  t.isTrue(s.isErr(), "and does not claim it exists, which it cannot know");
+  if (s.isErr()) {
+    t.isTrue(s.err()! is Denied, "stat says denied rather than \{s.err()!}");
+  }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -274,23 +290,25 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
  * Three hosts were measured against this fixture; all three satisfy it and they do not agree on how:
  * Deno and V8 mangle the name and answer `fault=6`, wasmtime holds it and answers `exists=true`.
  */
-export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core, Cli cli) {
+export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/hostfaults-unnameable";
-  cli.exec("/bin/sh", ["-c", "rm -rf '\{dir}'"], u8[]()).wait();
-  cli.mkdir(dir, true).wait();
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/hostfaults-unnameable";
+  procs.exec("/bin/sh", ["-c", "rm -rf '\{dir}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  fs.mkdir(dir, true).wait();
 
   // A raw `0xFF` byte: a name the filesystem holds happily and UTF-8 cannot spell. Made through the
   // shell because a wac string cannot carry it *to* `writeFile` on a host that would mangle it on the
   // way out — which is the thing under test, so the fixture must not go through it.
-  Exec made = cli.exec("/bin/sh",
-                       ["-c", "cd '\{dir}' && touch \"$(printf 'bad-\\377-name')\""],
-                       u8[]()).wait();
-  t.isTrue(made.ran() && made.status == 0,
-           "the fixture was made — \{string.fromBytes(made.stderr)}");
-  if (!made.ran() || made.status != 0) { return t.report(); }
+  auto madeRan = flatten(procs.exec("/bin/sh", ["-c", "cd '\{dir}' && touch \"$(printf 'bad-\\377-name')\""], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? made = madeRan.ok();
+  t.isTrue((made is not null) && made!.status == 0,
+           "the fixture was made — \{(made is not null) ? string.fromBytes(made!.stderr) : "\{madeRan.err()!}"}");
+  if ((made is null) || made!.status != 0) { return t.report(); }
 
-  string[]? listed = cli.readDir(dir).wait();
+  string[]? listed = flatten(fs.readDir(dir).wait()).ok();
   t.isTrue(!(listed is null), "and the directory listed");
   if (listed is null) { return t.report(); }
   string[] names = listed!;
@@ -298,14 +316,13 @@ export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core
   t.eqI32(names.len(), 1, "the listing has exactly the one fixture in it");
 
   for (i32 i = 0; i < names.len(); i++) {
-    Stat s = cli.stat("\{dir}/\{names[i]}").wait();
-    t.isTrue(s.exists || s.fault == FAULT_NOT_REPRESENTABLE(),
-             "a file that is on the disk came back as exists="
-               + (s.exists ? "true" : "false") + " fault=\{s.fault}"
-               + " (" + faultWords(s.fault) + ") — a caller acts on that by creating it");
+    auto s = flatten(fs.stat("\{dir}/\{names[i]}").wait());
+    t.isTrue(s.isOk() || s.err()! is NotRepresentable,
+             "a file that is on the disk came back as "
+               + (s.isOk() ? "present" : "\{s.err()!}") + " — a caller acts on that by creating it");
   }
 
-  cli.exec("/bin/sh", ["-c", "rm -rf '\{dir}'"], u8[]()).wait();
+  procs.exec("/bin/sh", ["-c", "rm -rf '\{dir}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   return t.report();
 }
 
@@ -323,10 +340,12 @@ export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core
  * can import, and a scan that finds *nothing* where a match is required fails rather than passes.
  * Counting the five names rather than matching a block, so reformatting cannot quietly satisfy it.
  */
-export string test_the_two_rust_hosts_hand_the_seed_the_same_grants(Core core, Cli cli) {
+export string test_the_two_rust_hosts_hand_the_seed_the_same_grants(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string v8 = read(core, cli, V8_HOST);
-  string wasmtime = read(core, cli, WASMTIME_HOST);
+  string v8 = read(err, fs, V8_HOST);
+  string wasmtime = read(err, fs, WASMTIME_HOST);
 
   string[] names = ["read", "write", "env", "net", "run"];
   for (string grant in names) {

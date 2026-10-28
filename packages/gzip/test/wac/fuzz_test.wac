@@ -17,13 +17,14 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat, FileResult } from "std";
+import { Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { gzipBest, gzipDynamic } from "../../src/gzip.wac";
 import { gunzipBytes } from "../../src/inflate.wac";
 import { firstDifference } from "./external.wac";
 import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
 import { Swept, assertSwept, sweepCorruptions } from "./corruption.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static i32 CORPUS_SIZE = 260;
 static i32 SEED = 20260731;
@@ -31,10 +32,10 @@ static i32 SEED = 20260731;
 static string ORACLE = "packages/gzip/test/fuzz/oracle.py";
 static string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
 
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
-string workDir(Cli cli, string what) {
-  string who = agentDir(cli);
+string workDir(Env env, string what) {
+  string who = agentDir(env);
   return "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-\{who}");
 }
 
@@ -52,28 +53,33 @@ string sameBytes(u8[] got, u8[] want) {
  * the runtime. `oracle.py` reads `in/` and `ours/`, reports failures on stdout and leaves `theirs/`
  * behind for the second half.
  */
-export string test_python_reads_everything_we_write_and_the_reverse(Core core, Cli cli) {
+export string test_python_reads_everything_we_write_and_the_reverse(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   Case[] corpus = buildCorpus(CORPUS_SIZE, SEED);
-  string work = workDir(cli, "differential");
-  Change gone = cli.remove(work, true).wait();      // a leftover `theirs/` would be read as fresh
-  Change made = cli.mkdir("\{work}/in", true).wait();
-  Change made2 = cli.mkdir("\{work}/ours", true).wait();
-  t.isTrue(made.ok() && made2.ok(), "a working directory: \{made.message}\{made2.message}");
-  if (!made.ok() || !made2.ok()) { return t.report(); }
+  string work = workDir(env, "differential");
+  auto gone = flatten(fs.remove(work, true).wait());      // a leftover `theirs/` would be read as fresh
+  auto made = flatten(fs.mkdir("\{work}/in", true).wait());
+  auto made2 = flatten(fs.mkdir("\{work}/ours", true).wait());
+  t.isTrue(made.isOk() && made2.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}\{made2.isErr() ? "\{made2.err()!}" : ""}");
+  if (made.isErr() || made2.isErr()) { return t.report(); }
 
   for (i32 i = 0; i < corpus.len(); i++) {
-    cli.writeFile("\{work}/in/\{i}.bin", corpus[i].data).wait();
-    cli.writeFile("\{work}/ours/\{i}.gz", gzipBest(corpus[i].data)).wait();
+    fs.writeFile("\{work}/in/\{i}.bin", corpus[i].data).wait();
+    fs.writeFile("\{work}/ours/\{i}.gz", gzipBest(corpus[i].data)).wait();
   }
 
-  Exec r = cli.exec("python3", [ORACLE, work, "\{corpus.len()}"], u8[]()).wait();
-  t.isTrue(r.ran(), "the oracle ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "the oracle exited zero: \{string.fromBytes(r.stderr)}");
-  if (r.status != 0) { return t.report(); }
+  auto rRan = flatten(procs.exec("python3", [ORACLE, work, "\{corpus.len()}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the oracle ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0, "the oracle exited zero: \{string.fromBytes(r!.stderr)}");
+  if (r!.status != 0) { return t.report(); }
 
-  string[] lines = splitLines(string.fromBytes(r.stdout));
+  string[] lines = splitLines(string.fromBytes(r!.stdout));
   t.isTrue(lines.len() > 0 && lines[lines.len() - 1] == "DONE \{corpus.len()}",
            "the oracle finished cleanly, last line: " +
            (lines.len() > 0 ? lines[lines.len() - 1] : "(no output)"));
@@ -85,15 +91,16 @@ export string test_python_reads_everything_we_write_and_the_reverse(Core core, C
 
   // Now the other direction: read python's output with our decompressor.
   for (i32 i = 0; i < corpus.len(); i++) {
-    FileResult theirs = cli.readFile("\{work}/theirs/\{i}.gz").wait();
-    t.isTrue(theirs.ok, "\{i} [\{corpus[i].name}]: the oracle wrote it — \{theirs.error}");
-    if (!theirs.ok) { continue; }
-    t.eqStr(sameBytes(gunzipBytes(theirs.bytes), corpus[i].data), "",
+    auto theirsRead = flatten(fs.readFile("\{work}/theirs/\{i}.gz").wait());
+    u8[]? theirs = theirsRead.ok();
+    t.isTrue((theirs is not null), "\{i} [\{corpus[i].name}]: the oracle wrote it — \{theirsRead.isErr() ? "\{theirsRead.err()!}" : ""}");
+    if ((theirs is null)) { continue; }
+    t.eqStr(sameBytes(gunzipBytes(theirs!), corpus[i].data), "",
             "\{i} [\{corpus[i].name}] level \{i % 10}");
   }
 
-  Change cleaned = cli.remove(work, true).wait();
-  if (!cleaned.ok()) { core.warn("fuzz: could not remove \{work} — \{cleaned.message}"); }
+  auto cleaned = flatten(fs.remove(work, true).wait());
+  if (cleaned.isErr()) { err.line("fuzz: could not remove \{work} — \{cleaned.isErr() ? "\{cleaned.err()!}" : ""}"); }
   return t.report();
 }
 
@@ -162,9 +169,14 @@ export string test_our_own_round_trip_over_the_same_corpus() {
  * is the same code (`corruption.wac`) at a size the regular lane can afford, on a different seed, so
  * it is a sample of the same population rather than the first slice of the sweep.
  */
-export string test_a_sample_of_corrupted_streams_decode_correctly_or_trap(Core core, Cli cli) {
+export string test_a_sample_of_corrupted_streams_decode_correctly_or_trap(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Swept s = sweepCorruptions(core, cli, 40, 9, 2, "sample", SEED ^ 0x51A3);
-  assertSwept(t, core, s, 2, "corruption sample");
+  Swept s = sweepCorruptions(err, env, fs, procs, 40, 9, 2, "sample", SEED ^ 0x51A3);
+  assertSwept(t, out, s, 2, "corruption sample");
   return t.report();
 }

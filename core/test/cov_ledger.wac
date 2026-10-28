@@ -43,8 +43,8 @@
 // the guard is one point. The count of tests is not the count of what they reach, and only the canary
 // knows which.
 
-import { Core, Cli, Sys } from "std";
-import { Pin, Rule, Measured, measure, report, ratchet } from "../../tools/wac/covledger.wac";
+import { Sys, Env, Files, Output, Procs } from "std";
+import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../tools/wac/covledger.wac";
 
 static string EXERCISE = "core/test/cov_exercise.wac";
 static string PREFIX = "core/";
@@ -53,22 +53,22 @@ static string PREFIX = "core/";
 string[] cases() { return ["trapCase:11"] as string[]; }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  bool verbose = false;
-  i32 argc = cli.argCount().wait();
-  for (i32 i = 0; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
-  }
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  LedgerFlags flags = LedgerFlags.read(sys.args());
 
   // No grants: `core` is the layer everything else stands on and its tests touch nothing outside the
   // program — no file, no process, no socket. A driver given a capability it does not need is one
   // whose exercises could quietly start using it.
-  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), cases());
+  Measured m = measure(err, env, fs, procs, EXERCISE, string[].filled(0, ""), cases());
   if (m.nPoints == 0) { return 1; }
+  if (flags.points) { reportPoints(out, m.points, m.nPoints, m.counts); return 0; }
 
-  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+  report(out, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
+  return ratchet(err, out, fs, procs, m.points, m.nPoints, m.counts, PREFIX,
                  Pin[].filled(0, Pin("", 0, "", true, "")), rules()) ? 1 : 0;
 }
 

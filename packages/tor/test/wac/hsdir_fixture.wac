@@ -11,21 +11,21 @@
 
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Cli } from "std";
+import { Files } from "std";
 import { arrayOf, boolOf, jsonFile, num64Of, strOf } from "../../../wactest/src/jsonfile.wac";
 
-JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdir_vectors.json"); }
+JsonObject top(Files fs) { return jsonFile(fs, "packages/tor/test/data/hsdir_vectors.json"); }
 
 // ── the service's uploads ─────────────────────────────────────────────────────
 
-JsonArray cases(Cli cli) { return arrayOf(top(cli), "cases"); }
-JsonObject caseAt(Cli cli, i32 c) { return cases(cli).get(c).object()!; }
+JsonArray cases(Files fs) { return arrayOf(top(fs), "cases"); }
+JsonObject caseAt(Files fs, i32 c) { return cases(fs).get(c).object()!; }
 
-export i32 caseCount(Cli cli) { return cases(cli).len(); }
-export u8[] caseBlinded(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "blindedKey")); }
-export u8[] caseSrv(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "sharedRandomValue")); }
-export i64 caseTimePeriod(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "timePeriod"); }
-export i64 casePeriodLength(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "periodLength"); }
+export i32 caseCount(Files fs) { return cases(fs).len(); }
+export u8[] caseBlinded(Files fs, i32 c) { return decoded(strOf(caseAt(fs, c), "blindedKey")); }
+export u8[] caseSrv(Files fs, i32 c) { return decoded(strOf(caseAt(fs, c), "sharedRandomValue")); }
+export i64 caseTimePeriod(Files fs, i32 c) { return num64Of(caseAt(fs, c), "timePeriod"); }
+export i64 casePeriodLength(Files fs, i32 c) { return num64Of(caseAt(fs, c), "periodLength"); }
 
 /**
  * Which of the consensus's two shared random values tor used for this upload.
@@ -33,17 +33,17 @@ export i64 casePeriodLength(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "pe
  * Recorded by the capture from the service's own log rather than inferred here — the whole point is
  * that it is tor's choice and not ours.
  */
-export bool caseUsedCurrentSrv(Cli cli, i32 c) { return strOf(caseAt(cli, c), "srvName") == "current"; }
+export bool caseUsedCurrentSrv(Files fs, i32 c) { return strOf(caseAt(fs, c), "srvName") == "current"; }
 
-JsonArray caseDirs(Cli cli, i32 c) { return arrayOf(caseAt(cli, c), "hsdirs"); }
+JsonArray caseDirs(Files fs, i32 c) { return arrayOf(caseAt(fs, c), "hsdirs"); }
 
-export i32 caseHsdirCount(Cli cli, i32 c) { return caseDirs(cli, c).len(); }
-export u8[] caseHsdirEd(Cli cli, i32 c, i32 i) {
-  return decoded(strOf(caseDirs(cli, c).get(i).object()!, "ed25519"));
+export i32 caseHsdirCount(Files fs, i32 c) { return caseDirs(fs, c).len(); }
+export u8[] caseHsdirEd(Files fs, i32 c, i32 i) {
+  return decoded(strOf(caseDirs(fs, c).get(i).object()!, "ed25519"));
 }
 /** The relay index tor logged in `upload_descriptor_to_hsdir()` — the value with no local oracle. */
-export u8[] caseHsdirIndex(Cli cli, i32 c, i32 i) {
-  return decoded(strOf(caseDirs(cli, c).get(i).object()!, "relayIndex"));
+export u8[] caseHsdirIndex(Files fs, i32 c, i32 i) {
+  return decoded(strOf(caseDirs(fs, c).get(i).object()!, "relayIndex"));
 }
 
 // ── the network ───────────────────────────────────────────────────────────────
@@ -61,8 +61,8 @@ export u8[] caseHsdirIndex(Cli cli, i32 c, i32 i) {
  * but the filter *on this list* is inert, and a recapture from a network with unflagged nodes is
  * what would make it matter.
  */
-export i32 candidateCount(Cli cli) {
-  JsonArray rs = arrayOf(top(cli), "relays");
+export i32 candidateCount(Files fs) {
+  JsonArray rs = arrayOf(top(fs), "relays");
   i32 n = 0;
   for (i32 i = 0; i < rs.len(); i++) {
     if (boolOf(rs.get(i).object()!, "hsdir")) { n = n + 1; }
@@ -70,8 +70,8 @@ export i32 candidateCount(Cli cli) {
   return n;
 }
 
-export u8[] candidateEd(Cli cli, i32 want) {
-  JsonArray rs = arrayOf(top(cli), "relays");
+export u8[] candidateEd(Files fs, i32 want) {
+  JsonArray rs = arrayOf(top(fs), "relays");
   i32 n = 0;
   for (i32 i = 0; i < rs.len(); i++) {
     JsonObject r = rs.get(i).object()!;
@@ -82,5 +82,5 @@ export u8[] candidateEd(Cli cli, i32 want) {
   trap;
 }
 
-export u8[] consensusDocument(Cli cli) { return strOf(top(cli), "consensusDocument").toBytes(); }
-export u8[] microdescriptors(Cli cli) { return strOf(top(cli), "microdescriptors").toBytes(); }
+export u8[] consensusDocument(Files fs) { return strOf(top(fs), "consensusDocument").toBytes(); }
+export u8[] microdescriptors(Files fs) { return strOf(top(fs), "microdescriptors").toBytes(); }

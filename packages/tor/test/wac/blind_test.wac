@@ -4,12 +4,13 @@ import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { BLIND_PREFIX_STRING, blindedSecretKey } from "../../src/hsblind.wac";
 import {
   ed25519ExpandedSecret, ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519Verify,
 } from "../../../crypto/src/ed25519.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { flatten } from "core";
 
 
 
@@ -24,10 +25,10 @@ import { equal } from "../../../bytes/src/slice.wac";
  * two cases sharing a blinded secret would mean the inputs are not reaching the computation, and
  * every case here would still pass.
  */
-JsonObject blindTop(Cli cli) {
-  FileResult r = cli.readFile("packages/tor/test/data/blind_vectors.json").wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes).ok();
+JsonObject blindTop(Files fs) {
+  u8[]? r = flatten(fs.readFile("packages/tor/test/data/blind_vectors.json").wait()).ok();
+  if ((r is null)) { trap; }
+  JsonValue? v = parse(r!).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }
@@ -35,8 +36,8 @@ JsonObject blindTop(Cli cli) {
   }
 }
 
-JsonArray blindCases(Cli cli) {
-  JsonValue? cs = blindTop(cli).getStr("cases");
+JsonArray blindCases(Files fs) {
+  JsonValue? cs = blindTop(fs).getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
     Array(items): { return items; }
@@ -44,7 +45,7 @@ JsonArray blindCases(Cli cli) {
   }
 }
 
-i32 caseCount(Cli cli) { return blindCases(cli).len(); }
+i32 caseCount(Files fs) { return blindCases(fs).len(); }
 
 string textOfObject(JsonObject o, string key) {
   JsonValue? v = o.getStr(key);
@@ -55,26 +56,27 @@ string textOfObject(JsonObject o, string key) {
   }
 }
 
-string fieldOf(Cli cli, i32 i, string key) {
-  match (blindCases(cli).get(i)) {
+string fieldOf(Files fs, i32 i, string key) {
+  match (blindCases(fs).get(i)) {
     Object(members): { return textOfObject(members, key); }
     default: { trap; }
   }
 }
 
-u8[] hexOf(Cli cli, i32 i, string key) { return decoded(fieldOf(cli, i, key)); }
-u8[] textOf(Cli cli, i32 i, string key) { return fieldOf(cli, i, key).toBytes(); }
+u8[] hexOf(Files fs, i32 i, string key) { return decoded(fieldOf(fs, i, key)); }
+u8[] textOf(Files fs, i32 i, string key) { return fieldOf(fs, i, key).toBytes(); }
 
-export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
+export string test_the_vectors_are_what_the_tests_assume(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string source = textOfObject(blindTop(cli), "source");
+  string source = textOfObject(blindTop(fs), "source");
   t.isTrue(source.indexOf("ed25519_keypair_blind") >= 0,
            "the values must come from tor's blinding, not ours — source is \{source}");
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   t.isTrue(n >= 3, "expected several cases, found \{n}");
   for (i32 i = 0; i < n; i++) {
     for (i32 j = i + 1; j < n; j++) {
-      t.isFalse(fieldOf(cli, i, "blindedSecret") == fieldOf(cli, j, "blindedSecret"),
+      t.isFalse(fieldOf(fs, i, "blindedSecret") == fieldOf(fs, j, "blindedSecret"),
                 "cases \{i} and \{j}" +
                 " share a blinded secret, so the inputs are not being used");
     }
@@ -82,15 +84,16 @@ export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_blinded_secret_is_tors(Core core, Cli cli) {
+export string test_the_blinded_secret_is_tors(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   t.isTrue(n >= 3, "there are several cases, not one");
 
   for (i32 i = 0; i < n; i++) {
-    u8[] got = blindedSecretKey(hexOf(cli, i, "identitySecret"), hexOf(cli, i, "factor"));
+    u8[] got = blindedSecretKey(hexOf(fs, i, "identitySecret"), hexOf(fs, i, "factor"));
     t.eqI32(got.len(), 64, "the blinded secret is scalar and prefix");
-    t.eqBytes(got, hexOf(cli, i, "blindedSecret"), "and it is the one tor derived");
+    t.eqBytes(got, hexOf(fs, i, "blindedSecret"), "and it is the one tor derived");
   }
   return t.report();
 }
@@ -102,14 +105,15 @@ export string test_the_blinded_secret_is_tors(Core core, Cli cli) {
  * secret, a client derives only the public half from the identity *public* key, and the two must
  * agree or the descriptor a service signs is one no client will accept.
  */
-export string test_the_public_half_agrees_with_tors(Core core, Cli cli) {
+export string test_the_public_half_agrees_with_tors(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
 
   for (i32 i = 0; i < n; i++) {
-    u8[] blinded = blindedSecretKey(hexOf(cli, i, "identitySecret"),
-                                    hexOf(cli, i, "factor"));
-    t.eqBytes(ed25519PublicKeyExpanded(blinded), hexOf(cli, i, "blindedPublic"),
+    u8[] blinded = blindedSecretKey(hexOf(fs, i, "identitySecret"),
+                                    hexOf(fs, i, "factor"));
+    t.eqBytes(ed25519PublicKeyExpanded(blinded), hexOf(fs, i, "blindedPublic"),
               "the public half of our blinded secret is tor's blinded public key");
   }
   return t.report();
@@ -122,21 +126,22 @@ export string test_the_public_half_agrees_with_tors(Core core, Cli cli) {
  * plausible bytes; comparing keys alone would not tell the two apart. Two directions are checked:
  * tor's signature verifies under the key we derived, and ours verifies under tor's.
  */
-export string test_the_blinded_key_signs(Core core, Cli cli) {
+export string test_the_blinded_key_signs(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
 
   for (i32 i = 0; i < n; i++) {
-    u8[] blinded = blindedSecretKey(hexOf(cli, i, "identitySecret"),
-                                    hexOf(cli, i, "factor"));
-    u8[] msg = textOf(cli, i, "message");
+    u8[] blinded = blindedSecretKey(hexOf(fs, i, "identitySecret"),
+                                    hexOf(fs, i, "factor"));
+    u8[] msg = textOf(fs, i, "message");
 
     // tor signed this message with the key it derived; it must verify under ours.
-    t.isTrue(ed25519Verify(ed25519PublicKeyExpanded(blinded), msg, hexOf(cli, i, "signature")),
+    t.isTrue(ed25519Verify(ed25519PublicKeyExpanded(blinded), msg, hexOf(fs, i, "signature")),
              "tor's signature verifies under the key we derived");
 
     // And ours must be tor's exactly — ed25519 is deterministic, so the bytes are comparable.
-    t.eqBytes(ed25519SignExpanded(blinded, msg), hexOf(cli, i, "signature"),
+    t.eqBytes(ed25519SignExpanded(blinded, msg), hexOf(fs, i, "signature"),
               "and our signature with that key is byte-identical to tor's");
   }
   return t.report();
@@ -148,32 +153,34 @@ export string test_the_blinded_key_signs(Core core, Cli cli) {
  * Without this the tests above could pass while agreeing about the wrong starting point — the whole
  * chain would be self-consistent and rooted in a key nobody else has.
  */
-export string test_the_identity_key_is_the_seeds(Core core, Cli cli) {
+export string test_the_identity_key_is_the_seeds(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
 
   for (i32 i = 0; i < n; i++) {
-    u8[] expanded = ed25519ExpandedSecret(hexOf(cli, i, "seed"));
-    t.eqBytes(expanded, hexOf(cli, i, "identitySecret"),
+    u8[] expanded = ed25519ExpandedSecret(hexOf(fs, i, "seed"));
+    t.eqBytes(expanded, hexOf(fs, i, "identitySecret"),
               "the expanded secret is the seed's own");
-    t.eqBytes(ed25519PublicKeyExpanded(expanded), hexOf(cli, i, "identityPublic"),
+    t.eqBytes(ed25519PublicKeyExpanded(expanded), hexOf(fs, i, "identityPublic"),
               "and the identity public key follows from it");
   }
   return t.report();
 }
 
 /** Every input matters, and the wrong sizes are refused rather than padded with zeros. */
-export string test_blinding_refuses_what_it_should(Core core, Cli cli) {
+export string test_blinding_refuses_what_it_should(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] secret = hexOf(cli, 0, "identitySecret");
-  u8[] factor = hexOf(cli, 0, "factor");
+  u8[] secret = hexOf(fs, 0, "identitySecret");
+  u8[] factor = hexOf(fs, 0, "factor");
   u8[] good = blindedSecretKey(secret, factor);
 
   t.isTrue(!equal(good, blindedSecretKey(secret, flipScalar(factor))),
            "a different factor gives a different key");
   t.isTrue(!equal(good, blindedSecretKey(flipPrefix(secret), factor)),
            "a different prefix half gives a different key, because the prefix is rehashed");
-  t.isTrue(!equal(good, blindedSecretKey(hexOf(cli, 1, "identitySecret"), factor)),
+  t.isTrue(!equal(good, blindedSecretKey(hexOf(fs, 1, "identitySecret"), factor)),
            "another identity gives another key");
 
   t.eqI32(blindedSecretKey(u8[].filled(32, 0), factor).len(), 0, "a 32-byte secret is not an expanded one");

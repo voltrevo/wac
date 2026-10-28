@@ -21,8 +21,8 @@
 // test keeps a live case per mode as a canary — a wholesale change of environment trips those, and a
 // subtler one is caught when somebody re-runs this and reads the diff.
 
-import { Change, Cli, Core, Exec, Sys } from "std";
-import { Buf } from "core";
+import { Change, Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Buf, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { SHARED, modeCases, modes, show, typed } from "../../packages/tty/test/wac/cases.wac";
 // The same helpers the replay uses, so the file that writes the vectors and the file that reads them
@@ -30,13 +30,15 @@ import { SHARED, modeCases, modes, show, typed } from "../../packages/tty/test/w
 import { discipline, pty, vectorsPath } from "../../packages/tty/test/wac/replay.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Output stdout = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   Buf out = Buf.create();
   out.pushAll("wac-tty-vectors 1\n".toBytes());
-  out.pushAll(("kernel: " + versionOf(cli, "uname", ["-sr"]) + "\n").toBytes());
-  out.pushAll(("script: " + versionOf(cli, "script", ["--version"]) + "\n").toBytes());
-  out.pushAll(("python3: " + versionOf(cli, "python3", ["--version"]) + "\n").toBytes());
+  out.pushAll(("kernel: " + versionOf(procs, "uname", ["-sr"]) + "\n").toBytes());
+  out.pushAll(("script: " + versionOf(procs, "script", ["--version"]) + "\n").toBytes());
+  out.pushAll(("python3: " + versionOf(procs, "python3", ["--version"]) + "\n").toBytes());
 
   // **The oracles agree before anything is recorded.** `script` cannot hold an `stty`, which is why the
   // mode cases go through `discipline.py`; that makes it a second oracle, and a second oracle is worth
@@ -44,19 +46,19 @@ export i32 main(Sys sys) {
   u8[][] mc = modeCases();
   i32 agreed = 0;
   for (i32 i = 0; i < SHARED; i++) {
-    u8[] theirs = pty(core, cli, "cat", mc[i]);
-    u8[] ours = discipline(core, cli, "canonical", mc[i]);
+    u8[] theirs = pty(err, procs, "cat", mc[i]);
+    u8[] ours = discipline(err, procs, "canonical", mc[i]);
     if (show(theirs) == show(ours)) {
       agreed = agreed + 1;
       continue;
     }
-    core.warn("ttyvectors: discipline.py is not a drop-in for script on case " + itoa(i) +
+    err.line("ttyvectors: discipline.py is not a drop-in for script on case " + itoa(i) +
               "\n  script       " + show(theirs) + "\n  discipline.py " + show(ours));
     return 1;
   }
   // And that `script` answered at all, so the agreement above is not two silences.
-  if (show(pty(core, cli, "cat", "abc\n".toBytes())) != show("abc\r\nabc\r\n".toBytes())) {
-    core.warn("ttyvectors: script did not answer — there is no oracle here to capture");
+  if (show(pty(err, procs, "cat", "abc\n".toBytes())) != show("abc\r\nabc\r\n".toBytes())) {
+    err.line("ttyvectors: script did not answer — there is no oracle here to capture");
     return 1;
   }
   out.pushAll(("canonical-matches-script: " + itoa(agreed) + " of " + itoa(SHARED) + "\n").toBytes());
@@ -67,22 +69,22 @@ export i32 main(Sys sys) {
 
   // The editing rules, through the pty `line_test.wac` has always trusted.
   for (i32 i = 0; i < rules.len(); i++) {
-    record(out, "canonical", rules[i], pty(core, cli, "cat", rules[i]));
+    record(out, "canonical", rules[i], pty(err, procs, "cat", rules[i]));
   }
   // The modes, through the pty that can hold one. Canonical is recorded twice over the nine shared
   // cases — once from each oracle — which is deliberate: it is the agreement above, kept in the file.
   for (i32 m = 0; m < ms.len(); m++) {
     for (i32 i = 0; i < mc.len(); i++) {
-      record(out, ms[m], mc[i], discipline(core, cli, ms[m], mc[i]));
+      record(out, ms[m], mc[i], discipline(err, procs, ms[m], mc[i]));
     }
   }
 
-  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
-  if (!wrote.ok()) {
-    core.warn("ttyvectors: cannot write " + vectorsPath() + " — " + wrote.message);
+  auto wrote = flatten(fs.writeFile(vectorsPath(), out.bytes()).wait());
+  if (wrote.isErr()) {
+    err.line("ttyvectors: cannot write " + vectorsPath() + " — " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  core.log(vectorsPath() + ": " + itoa(rules.len() + ms.len() * mc.len()) + " vectors, " +
+  stdout.line(vectorsPath() + ": " + itoa(rules.len() + ms.len() * mc.len()) + " vectors, " +
            itoa(out.len / 1024) + " KB");
   return 0;
 }
@@ -101,10 +103,11 @@ void field(Buf out, string tag, u8[] bytes) {
 }
 
 /** A tool's first line of `--version`, or `"(absent)"`, so the file says what produced it. */
-string versionOf(Cli cli, string program, string[] args) {
-  Exec r = cli.exec(program, args, u8[]()).wait();
-  if (!r.ran()) { return "(absent)"; }
-  u8[] said = r.stdout.len() > 0 ? r.stdout : r.stderr;
+string versionOf(Procs procs, string program, string[] args) {
+  auto rRan = flatten(procs.exec(program, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return "(absent)"; }
+  u8[] said = r!.stdout.len() > 0 ? r!.stdout : r!.stderr;
   string all = string.fromBytes(said);
   i32 nl = all.indexOf("\n");
   return nl < 0 ? all : all.slice(0, nl);

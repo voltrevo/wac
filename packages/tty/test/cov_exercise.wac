@@ -14,7 +14,7 @@
 //
 // All eight tests take `(Core, Cli)`: every one of them opens a pty or asks a recorded oracle.
 
-import { Core, Cli, Sys } from "std";
+import { Core, Cli, Sys, Files, Output, Procs } from "std";
 import {
   test_the_oracle_is_the_configuration_this_module_implements as ln__the_oracle_is_the_configuration_this_module_implements,
   test_every_editing_rule_answers_what_the_kernel_answers as ln__every_editing_rule_answers_what_the_kernel_answers,
@@ -30,45 +30,46 @@ import {
 } from "./wac/modes_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   i32 bad = 0;
   if (ln__cbreak_still_answers_a_signal_and_the_unused_accessors_work().len() > 0) {
-    core.warn("error: FAILED line_test test_cbreak_still_answers_a_signal_and_the_unused_accessors_work");
+    err.line("error: FAILED line_test test_cbreak_still_answers_a_signal_and_the_unused_accessors_work");
     bad = bad + 1;
   }
-  if (ln__the_oracle_is_the_configuration_this_module_implements(core, cli).len() > 0) {
-    core.warn("error: FAILED line_test test_the_oracle_is_the_configuration_this_module_implements");
+  if (ln__the_oracle_is_the_configuration_this_module_implements(sys).len() > 0) {
+    err.line("error: FAILED line_test test_the_oracle_is_the_configuration_this_module_implements");
     bad = bad + 1;
   }
-  if (ln__every_editing_rule_answers_what_the_kernel_answers(core, cli).len() > 0) {
-    core.warn("error: FAILED line_test test_every_editing_rule_answers_what_the_kernel_answers");
+  if (ln__every_editing_rule_answers_what_the_kernel_answers(sys).len() > 0) {
+    err.line("error: FAILED line_test test_every_editing_rule_answers_what_the_kernel_answers");
     bad = bad + 1;
   }
-  if (ln__interrupt_and_end_of_input(core, cli).len() > 0) {
-    core.warn("error: FAILED line_test test_interrupt_and_end_of_input");
+  if (ln__interrupt_and_end_of_input().len() > 0) {
+    err.line("error: FAILED line_test test_interrupt_and_end_of_input");
     bad = bad + 1;
   }
-  if (ln__the_live_pty_still_answers_what_was_recorded(core, cli).len() > 0) {
-    core.warn("error: FAILED line_test test_the_live_pty_still_answers_what_was_recorded");
+  if (ln__the_live_pty_still_answers_what_was_recorded(sys).len() > 0) {
+    err.line("error: FAILED line_test test_the_live_pty_still_answers_what_was_recorded");
     bad = bad + 1;
   }
-  if (md__the_pty_harness_reproduces_the_oracle_line_test_trusts(core, cli).len() > 0) {
-    core.warn("error: FAILED modes_test test_the_pty_harness_reproduces_the_oracle_line_test_trusts");
+  if (md__the_pty_harness_reproduces_the_oracle_line_test_trusts(sys).len() > 0) {
+    err.line("error: FAILED modes_test test_the_pty_harness_reproduces_the_oracle_line_test_trusts");
     bad = bad + 1;
   }
-  if (md__the_three_modes_differ_in_the_ways_that_were_measured(core, cli).len() > 0) {
-    core.warn("error: FAILED modes_test test_the_three_modes_differ_in_the_ways_that_were_measured");
+  if (md__the_three_modes_differ_in_the_ways_that_were_measured(sys).len() > 0) {
+    err.line("error: FAILED modes_test test_the_three_modes_differ_in_the_ways_that_were_measured");
     bad = bad + 1;
   }
-  if (md__line_answers_what_the_kernel_answers_in_every_mode(core, cli).len() > 0) {
-    core.warn("error: FAILED modes_test test_line_answers_what_the_kernel_answers_in_every_mode");
+  if (md__line_answers_what_the_kernel_answers_in_every_mode(sys).len() > 0) {
+    err.line("error: FAILED modes_test test_line_answers_what_the_kernel_answers_in_every_mode");
     bad = bad + 1;
   }
-  if (md__the_live_pty_still_answers_what_was_recorded_in_each_mode(core, cli).len() > 0) {
-    core.warn("error: FAILED modes_test test_the_live_pty_still_answers_what_was_recorded_in_each_mode");
+  if (md__the_live_pty_still_answers_what_was_recorded_in_each_mode(sys).len() > 0) {
+    err.line("error: FAILED modes_test test_the_live_pty_still_answers_what_was_recorded_in_each_mode");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("tty: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("tty: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

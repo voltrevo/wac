@@ -28,7 +28,7 @@ import { equal } from "../../../bytes/src/slice.wac";
 import { jsonFile, strOf, num64Of } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Files, Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 
 static string ORACLE = "packages/tor/test/oracle.mjs";
@@ -86,9 +86,10 @@ u8[] base64Of(u8[] doc, i32 from, i32 to) {
   return decoded is null ? u8[]() : decoded!;
 }
 
-export string test_the_certificate_tor_accepted_is_reproduced(Core core, Cli cli) {
+export string test_the_certificate_tor_accepted_is_reproduced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject v = jsonFile(cli, VECTOR);
+  JsonObject v = jsonFile(fs, VECTOR);
   AuthorityKeys k = keysFrom(v);
   u8[] want = strOf(v, "certificate").toBytes();
 
@@ -98,9 +99,11 @@ export string test_the_certificate_tor_accepted_is_reproduced(Core core, Cli cli
   return t.report();
 }
 
-export string test_each_signature_was_made_by_the_key_that_should_have_made_it(Core core, Cli cli) {
+export string test_each_signature_was_made_by_the_key_that_should_have_made_it(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonObject v = jsonFile(cli, VECTOR);
+  JsonObject v = jsonFile(fs, VECTOR);
   u8[] cert = strOf(v, "certificate").toBytes();
   u8[] fingerprint = rsaFingerprint(decoded(strOf(v, "identityN")), decoded(strOf(v, "identityE")));
   t.eqI32(fingerprint.len(), 20, "the identity fingerprint is 20 bytes");
@@ -125,7 +128,7 @@ export string test_each_signature_was_made_by_the_key_that_should_have_made_it(C
             hex(crosscert));
   lines.add("rsarecover " + strOf(v, "identityN") + " " + strOf(v, "identityE") + " " +
             hex(certification));
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "the two recovered payloads");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "the two recovered payloads");
   if (!a.ok) { return t.report(); }
 
   t.eqBytes(decoded(word(a.lines[0], 1)), fingerprint,

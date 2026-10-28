@@ -10,10 +10,11 @@
 // side owns — there is no listener to speak QUIC back, and none is wanted.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Pending, HostSocket } from "std";
+import { Datagram, Pending, Env, Files, Net, Procs, Datagrams, Clock } from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string CLIENT = "packages/quic/test/quicclient.ts";
 
@@ -23,38 +24,38 @@ static string CLIENT = "packages/quic/test/quicclient.ts";
  * The client retransmits its flight, so a caller that missed the first datagram gets another —
  * which is why the read is retried rather than being a single bounded wait.
  */
-export u8[] anInitial(T t, Core core, Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/quic/\{name}";
-  string whyDir = freshDir(cli, dir);
+export u8[] anInitial(T t, Clock clock, Env env, Files fs, Net net, Procs procs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/quic/\{name}";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) {
-    t.fail("our socket did not bind — \{sock.error}");
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) {
+    t.fail("our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
     return u8[]();
   }
-  Daemon d = start(cli, "deno run -A --unstable-net \{quoted(CLIENT)} \{sock.port}",
-                   "\{dir}/client.log");
+  Daemon d = start(procs, "deno run -A --unstable-net \{quoted(CLIENT)} \{sock!.port}", "\{dir}/client.log");
   if (!d.ok()) {
     t.fail("the QUIC client did not start — \{d.error}");
-    cli.closeSocket(sock.handle);
+    sock!.close();
     return u8[]();
   }
 
   u8[] got = u8[]();
   for (i32 i = 0; i < 40 && got.len() == 0; i++) {
-    Pending<Datagram> p = cli.receiveFrom(sock.handle);
-    if (core.waitAny([p.id], 1000) < 0) { p.drop(p.id); continue; }
-    Datagram dg = p.wait();
+    auto pGot = flatten(clock.within(sock!.receive(), 1000).wait());
+    if (pGot.isErr()) { continue; }
+    Datagram dg = pGot.unwrap();
     if (dg.error == "" && dg.bytes.len() > 0) { got = dg.bytes; }
   }
   if (got.len() == 0) {
     t.fail("Deno's QUIC client sent no Initial. It said: " +
-           string.fromBytes(cli.readFile("\{dir}/client.log").wait().bytes));
+           string.fromBytes(flatten(fs.readFile("\{dir}/client.log").wait()).orElse(u8[]())));
   }
 
-  stop(cli, d);
-  cli.closeSocket(sock.handle);
-  cli.remove(dir, true).wait();
+  stop(procs, d);
+  sock!.close();
+  fs.remove(dir, true).wait();
   return got;
 }

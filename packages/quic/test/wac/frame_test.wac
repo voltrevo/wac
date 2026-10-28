@@ -11,7 +11,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Net, Procs, Sys, Clock } from "std";
 import { ackLargest, closeReason, closeReasonAtIn, cryptoLen, cryptoWhole, frameCount,
          handshakeType, helloKeyShareLen, helloOffersTls13, helloRandomLen, helloSuite, kindAt,
          kindAtIn, opens, paddingBytes, sizeAt, sizeAtIn, streamByte, streamLen, streamWhole,
@@ -34,10 +34,14 @@ u8[] prefix(u8[] b, i32 n) {
   return out;
 }
 
-export string test_a_real_initials_payload_walks_to_frames_with_nothing_left_over(
-    Core core, Cli cli) {
+export string test_a_real_initials_payload_walks_to_frames_with_nothing_left_over(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[] packet = anInitial(t, core, cli, "frame-walk");
+  u8[] packet = anInitial(t, clock, env, fs, net, procs, "frame-walk");
   if (packet.len() == 0) { return t.report(); }
 
   t.isTrue(opens(packet), "step 3's claim, restated: the packet decrypts");
@@ -53,9 +57,14 @@ export string test_a_real_initials_payload_walks_to_frames_with_nothing_left_ove
   return t.report();
 }
 
-export string test_the_crypto_frames_reassemble_into_a_clienthello(Core core, Cli cli) {
+export string test_the_crypto_frames_reassemble_into_a_clienthello(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[] packet = anInitial(t, core, cli, "frame-hello");
+  u8[] packet = anInitial(t, clock, env, fs, net, procs, "frame-hello");
   if (packet.len() == 0) { return t.report(); }
 
   t.isTrue(cryptoWhole(packet), "no hole in the CRYPTO stream");

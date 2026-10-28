@@ -30,8 +30,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, hex } from "../../../wactest/src/oracle.wac";
 import { askScript } from "../../../wactest/src/inline.wac";
 import { endsWith, joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult, Sys } from "std";
-import { Result } from "core";
+import { Files, Sys } from "std";
+import { Result, flatten } from "core";
 import { decoded } from "../../../codec/src/hex.wac";
 import { canonicalize, canonicalizeJson5, parse, parseJson5 } from "../../src/json.wac";
 import { JsonValue } from "../../src/value.wac";
@@ -97,9 +97,9 @@ export async string test_every_vendored_case_agrees_with_the_reference(Sys sys) 
   T t = T.create();
 
   // Batch one: the corpus, whole, split into cases by the host.
-  Result<u8[], string> file = await sys.readFile(CORPUS);
+  auto file = await sys.files().readFile(CORPUS);
   if (file.isErr()) {
-    t.fail("cannot read \{CORPUS} — \{file.err() ?? ""}");
+    t.fail("cannot read \{CORPUS} — \{file.err()!}");
     return t.report();
   }
   Lines want = Lines.create();
@@ -172,7 +172,7 @@ export async string test_every_vendored_case_agrees_with_the_reference(Sys sys) 
   return t.report();
 }
 
-export string test_the_comparison_can_fail(Core core, Cli cli) {
+export string test_the_comparison_can_fail() {
   // Two runs of a parser against a corpus it was tuned on agree perfectly, and so does a comparison
   // that never ran. These are the two answers the loop above can give, forced.
   T t = T.create();
@@ -183,7 +183,7 @@ export string test_the_comparison_can_fail(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident(Core core, Cli cli) {
+export string test_an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident() {
   // The refusal in parseKey is the documented gap, so it has its own fault. Reporting `Unexpected`
   // instead would read as "that is not a name", which is untrue.
   T t = T.create();
@@ -195,7 +195,7 @@ export string test_an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident
   return t.report();
 }
 
-export string test_an_unterminated_block_comment_reports_where_it_opened(Core core, Cli cli) {
+export string test_an_unterminated_block_comment_reports_where_it_opened() {
   T t = T.create();
   // At the opening delimiter, not at the end of the input where the parser noticed.
   t.eqStr(canonicalizeJson5("[1, /* unterminated".toBytes()).err()?.text() ?? "", "open comment at byte 4",
@@ -203,9 +203,10 @@ export string test_an_unterminated_block_comment_reports_where_it_opened(Core co
   return t.report();
 }
 
-export string test_json5_accepts_every_json_document_with_the_same_tree(Core core, Cli cli) {
+export string test_json5_accepts_every_json_document_with_the_same_tree(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[]? entries = cli.readDir(DIR).wait();
+  string[]? entries = flatten(fs.readDir(DIR).wait()).ok();
   t.isTrue(entries is not null, "the JSONTestSuite corpus is listable");
   if (entries is null) { return t.report(); }
 
@@ -215,12 +216,13 @@ export string test_json5_accepts_every_json_document_with_the_same_tree(Core cor
   string[] names = entries!;
   for (i32 i = 0; i < names.len(); i++) {
     if (!endsWith(names[i], ".json")) { continue; }
-    FileResult r = cli.readFile("\{DIR}/\{names[i]}").wait();
-    if (!r.ok) { t.fail("cannot read \{names[i]} — \{r.error}"); continue; }
-    u8[]? asJson = canonicalize(r.bytes).ok();
+    auto rRead = flatten(fs.readFile("\{DIR}/\{names[i]}").wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) { t.fail("cannot read \{names[i]} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}"); continue; }
+    u8[]? asJson = canonicalize(r!).ok();
     if (asJson is null) { continue; }      // not JSON, so this invariant says nothing
     compared = compared + 1;
-    Result<u8[], JsonError> asJson5 = canonicalizeJson5(r.bytes);
+    Result<u8[], JsonError> asJson5 = canonicalizeJson5(r!);
     JsonError? refused = asJson5.err();
     if (refused is not null) {
       if (nWrong < wrong.len()) {
@@ -247,7 +249,7 @@ export string test_json5_accepts_every_json_document_with_the_same_tree(Core cor
   return t.report();
 }
 
-export string test_a_comment_is_not_accepted_by_the_json_parser(Core core, Cli cli) {
+export string test_a_comment_is_not_accepted_by_the_json_parser() {
   // The reason this is a second entry point rather than a widening of the first. A file written with
   // comments and read back with `parse` has to fail, or the two ends disagree silently.
   T t = T.create();

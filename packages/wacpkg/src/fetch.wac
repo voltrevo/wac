@@ -26,11 +26,11 @@
 // **A mapping the lock already covers is not fetched and not consulted.** That is `plan`'s rule and
 // the whole point of a lockfile; the loop below skips a `USE` step before it looks at the network.
 
-import { Change, Cli, Core, FileResult, Sys } from "std";
+import { Change, FileResult, Sys, Clock, Env, Files, Net, Output, Random, Stat } from "std";
 // `decode` as well as `encode`: the first version of this had its own `hexBytes` and `nib`,
 // which is a third implementation of a rule `packages/codec` already owns.
 import { decode, encode } from "../../codec/src/hex.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { Ad, AdRef, findPack, offers, parseAdvertisement, wantRequest, Reply }
   from "../../git/src/fetch.wac";
 import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../../git/src/pack.wac";
@@ -49,12 +49,18 @@ import { resolveRef, Resolved } from "./refs.wac";
 i32 depth() { return 1; }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 argc = cli.argCount().wait();
-  string dir = argc > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
-  string wacHome = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".wac";
-  return fetchAll(core, cli, dir, wacHome);
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  i32 argc = argv.len();
+  string dir = argc > 0 ? argv[0] : ".";
+  string wacHome = argc > 1 ? argv[1] : ".wac";
+  return fetchAll(err, out, clock, rnd, env, fs, net, dir, wacHome);
 }
 
 /**
@@ -68,23 +74,23 @@ export i32 main(Sys sys) {
  * `dir` is the project and `wacHome` is the cache root — the same two the native handed the payload,
  * and the second has to be the real `$WAC_HOME` or a fetch fills a cache nothing later reads.
  */
-export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
-  FileResult mf = cli.readFile(join(dir, MANIFEST_NAME())).wait();
-  if (!mf.ok) {
-    core.warn("wacfetch: \{join(dir, MANIFEST_NAME())} could not be read, so \{dir}"
+export i32 fetchAll(Output err, Output out, Clock clock, Random rnd, Env env, Files fs, Net net, string dir, string wacHome) {
+  u8[]? mf = flatten(fs.readFile(join(dir, MANIFEST_NAME())).wait()).ok();
+  if (mf is null) {
+    err.line("wacfetch: \{join(dir, MANIFEST_NAME())} could not be read, so \{dir}"
               + " is not a project");
     return 1;
   }
-  Manifest m = readManifest(mf.bytes);
+  Manifest m = readManifest(mf!);
   if (!m.ok) {
-    core.warn("wacfetch: " + MANIFEST_NAME() + " is not valid: code \{m.code}"
+    err.line("wacfetch: " + MANIFEST_NAME() + " is not valid: code \{m.code}"
               + (m.detail == "" ? "" : " (\{m.detail})"));
     return 1;
   }
-  FileResult lf = cli.readFile(join(dir, "wac.lock")).wait();
-  Lock l = lf.ok ? readLock(lf.bytes) : Lock.empty();
+  u8[]? lf = flatten(fs.readFile(join(dir, "wac.lock")).wait()).ok();
+  Lock l = (lf is not null) ? readLock(lf!) : Lock.empty();
   if (!l.ok) {
-    core.warn("wacfetch: wac.lock is not valid: code \{l.code}"
+    err.line("wacfetch: wac.lock is not valid: code \{l.code}"
               + (l.detail == "" ? "" : " (\{l.detail})"));
     return 1;
   }
@@ -96,13 +102,13 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
     string why = unsupportedTransport(m.imports[i].git);
     if (why == "") { continue; }
     refused = refused + 1;
-    core.warn("wacfetch: \{m.imports[i].name}: \{why}");
+    err.line("wacfetch: \{m.imports[i].name}: \{why}");
   }
   if (refused > 0) { return 1; }
 
   Step[] steps = plan(m, l);
   string[] resolved = string[].filled(steps.len(), "");
-  Store store = systemStore(cli);
+  Store store = systemStore(fs);
   i32 fetched = 0;
 
   for (i32 i = 0; i < steps.len(); i++) {
@@ -119,19 +125,18 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
       // absent-cache case is a *restore*: fetch the commit the lock already chose, without
       // consulting the ref, and leave the lock exactly as it was.
       string at = cachePath(wacHome, map.git, steps[i].commit);
-      if (at != "" && cli.stat("\{at}/pack.pack").wait().isFile) {
+      if (at != "" && flatten(fs.stat("\{at}/pack.pack").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) {
         // Not consulted, not counted. The lock covers it and a branch that moved is not a reason.
         resolved[i] = steps[i].commit;
         continue;
       }
-      string back = fetchOne(core, cli, store, wacHome, map, "locked, and not in the cache",
-                             steps[i].commit);
+      string back = fetchOne(err, out, clock, rnd, env, fs, net, store, wacHome, map, "locked, and not in the cache", steps[i].commit);
       if (back == "") { return 1; }
       resolved[i] = back;
       fetched = fetched + 1;
       continue;
     }
-    string got = fetchOne(core, cli, store, wacHome, map, steps[i].why, "");
+    string got = fetchOne(err, out, clock, rnd, env, fs, net, store, wacHome, map, steps[i].why, "");
     if (got == "") { return 1; }
     resolved[i] = got;
     fetched = fetched + 1;
@@ -139,19 +144,19 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
 
   LockEntry[] next = applyPlan(m, l, steps, resolved);
   if (next.len() != m.imports.len()) {
-    core.warn("wacfetch: the lock could not be built from what was resolved");
+    err.line("wacfetch: the lock could not be built from what was resolved");
     return 1;
   }
   if (fetched == 0) {
-    core.log("wacfetch: nothing to fetch; \{steps.len()} mapping(s) already locked");
+    out.line("wacfetch: nothing to fetch; \{steps.len()} mapping(s) already locked");
     return 0;
   }
-  Change wrote = cli.writeFile(join(dir, "wac.lock"), writeLock(next)).wait();
-  if (!wrote.ok()) {
-    core.warn("wacfetch: cannot write wac.lock: \{wrote.message}");
+  auto wrote = flatten(fs.writeFile(join(dir, "wac.lock"), writeLock(next)).wait());
+  if (wrote.isErr()) {
+    err.line("wacfetch: cannot write wac.lock: \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  core.log("wacfetch: \{fetched} fetched, \{steps.len() - fetched}"
+  out.line("wacfetch: \{fetched} fetched, \{steps.len() - fetched}"
            + " already locked");
   return 0;
 }
@@ -175,19 +180,17 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
  * have moved since the lock was written, and following it would quietly relock the project to
  * something else — which is the one thing a lockfile exists to prevent.
  */
-string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping map, string why,
-                string pin) {
+string fetchOne(Output err, Output out, Clock clock, Random rnd, Env env, Files fs, Net net, const Store store, string wacHome, Mapping map, string why, string pin) {
   string what = "\{map.name} (\{map.git} @ \{map.ref})";
-  core.log("wacfetch: " + what + (why == "" ? "" : " — \{why}"));
+  out.line("wacfetch: " + what + (why == "" ? "" : " — \{why}"));
 
   Remote r = parseRemote(map.git);
-  if (!r.ok) { core.warn("wacfetch: \{map.name}: \{map.git} is not an https url"); return ""; }
+  if (!r.ok) { err.line("wacfetch: \{map.name}: \{map.git} is not an https url"); return ""; }
 
-  Answer refs = request(core, cli, store, r.host,
-    "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
-  if (!refs.ok) { core.warn("wacfetch: \{map.name}: \{refs.error}"); return ""; }
+  Answer refs = request(clock, rnd, env, net, store, r.host, "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
+  if (!refs.ok) { err.line("wacfetch: \{map.name}: \{refs.error}"); return ""; }
   if (refs.status != 200) {
-    core.warn("wacfetch: \{map.name}: \{r.host} answered \{refs.status}"
+    err.line("wacfetch: \{map.name}: \{r.host} answered \{refs.status}"
               + " for the advertisement");
     return "";
   }
@@ -197,7 +200,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   string caps = "agent=wac/0";
   match (parseAdvertisement(refs.body)) {
     Garbled(why2): {
-      core.warn("wacfetch: \{map.name}: the advertisement did not parse: \{why2}");
+      err.line("wacfetch: \{map.name}: the advertisement did not parse: \{why2}");
       return "";
     }
     Said(ad) : {
@@ -214,12 +217,12 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
 
   Resolved hit = pin != "" ? Resolved(true, 0, pin, "the lock") : resolveRef(names, oids, map.ref);
   if (!hit.ok) {
-    core.warn("wacfetch: " + map.name + ": `" + map.ref + "` "
+    err.line("wacfetch: " + map.name + ": `" + map.ref + "` "
               + (hit.code == 2 ? "is both a branch and a tag there; name it in full"
                                : "names nothing the server advertised"));
     return "";
   }
-  core.log("  " + map.ref + " -> " + hit.commit.slice(0, 12)
+  out.line("  " + map.ref + " -> " + hit.commit.slice(0, 12)
            + (hit.via == "" ? " (an object name)" : " via \{hit.via}"));
 
   // **Already here?** The pack below is 8.75 MB for this repository and the checkout it writes is a
@@ -237,8 +240,8 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // The ref is still resolved first, because a lockfile that does not yet name a commit cannot say
   // which directory to look in. This saves the pack, not the round trip.
   string have = cachePath(wacHome, map.git, hit.commit);
-  if (have != "" && cli.stat("\{have}/pack.pack").wait().isFile) {
-    core.log("  \{hit.commit.slice(0, 12)} is already in the cache -> \{have}");
+  if (have != "" && flatten(fs.stat("\{have}/pack.pack").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) {
+    out.line("  \{hit.commit.slice(0, 12)} is already in the cache -> \{have}");
     return hit.commit;
   }
 
@@ -246,7 +249,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // a null rather than by trapping, and answering it is cheaper than explaining why it is safe.
   u8[]? raw = decode(hit.commit.toBytes());
   if (raw is null) {
-    core.warn("wacfetch: \{map.name}: \{hit.commit} is not an object name");
+    err.line("wacfetch: \{map.name}: \{hit.commit} is not an object name");
     return "";
   }
   u8[] want = raw!;
@@ -254,18 +257,17 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   Vec<u8[]> wants = Vec.create();
   wants.push(want);
   Vec<u8[]> haves = Vec.create();
-  Answer packed = request(core, cli, store, r.host, "\{r.path}/git-upload-pack",
-    wantRequest(wants, haves, caps, depth()), "application/x-git-upload-pack-request");
-  if (!packed.ok) { core.warn("wacfetch: \{map.name}: \{packed.error}"); return ""; }
+  Answer packed = request(clock, rnd, env, net, store, r.host, "\{r.path}/git-upload-pack", wantRequest(wants, haves, caps, depth()), "application/x-git-upload-pack-request");
+  if (!packed.ok) { err.line("wacfetch: \{map.name}: \{packed.error}"); return ""; }
   if (packed.status != 200) {
-    core.warn("wacfetch: \{map.name}: \{r.host} answered \{packed.status}"
+    err.line("wacfetch: \{map.name}: \{r.host} answered \{packed.status}"
               + " for the pack");
     return "";
   }
   u8[] pack = u8[]();
   match (findPack(packed.body)) {
     NoPack(why3): {
-      core.warn("wacfetch: \{map.name}: no pack in the reply: \{why3}");
+      err.line("wacfetch: \{map.name}: no pack in the reply: \{why3}");
       return "";
     }
     Packfile(bytes): { pack = bytes; }
@@ -277,20 +279,20 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // **Where it goes, decided before the pack is opened**, so the checkout can use the `Pack` the
   // verification below already has. Indexing a pack twice is half a million objects twice.
   string into = cachePath(wacHome, map.git, hit.commit);
-  if (into == "") { core.warn("wacfetch: \{map.name}: no cache path"); return ""; }
-  Change made = cli.mkdir(into, true).wait();
-  if (!made.ok()) { core.warn("wacfetch: cannot make \{into}: \{made.message}"); return ""; }
+  if (into == "") { err.line("wacfetch: \{map.name}: no cache path"); return ""; }
+  auto made = flatten(fs.mkdir(into, true).wait());
+  if (made.isErr()) { err.line("wacfetch: cannot make \{into}: \{made.isErr() ? "\{made.err()!}" : ""}"); return ""; }
 
   match (indexPack(pack)) {
     Unindexable(why4): {
-      core.warn("wacfetch: \{map.name}: the pack did not index: \{why4}");
+      err.line("wacfetch: \{map.name}: the pack did not index: \{why4}");
       return "";
     }
     // Not reachable while every request sends no `have` — a server with nothing to delta against
     // sends a complete pack. Answered rather than left to fall through, because the day this asks
     // for an incremental fetch it will be, and a thin pack is not a damaged one.
     Thin(bases): {
-      core.warn("wacfetch: \{map.name}: a thin pack, wanting \{bases.len()}"
+      err.line("wacfetch: \{map.name}: a thin pack, wanting \{bases.len()}"
                 + " object(s) we did not ask about");
       return "";
     }
@@ -299,13 +301,13 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
       Pack p = openIndexed(pack, idx);
       match (objectNamed(p, want)) {
         Absent(why5): {
-          core.warn("wacfetch: \{map.name}: the pack does not contain "
+          err.line("wacfetch: \{map.name}: the pack does not contain "
                     + "\{hit.commit.slice(0, 12)}: \{why5}");
           return "";
         }
         Found(kind, data): {
           if (kind != 1) {
-            core.warn("wacfetch: \{map.name}: \{hit.commit.slice(0, 12)}"
+            err.line("wacfetch: \{map.name}: \{hit.commit.slice(0, 12)}"
                       + " came back as kind \{kind} rather than a commit");
             return "";
           }
@@ -317,12 +319,12 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
           Parsed c = parseCommit(data);
           match (c) {
             Malformed(why6): {
-              core.warn("wacfetch: \{map.name}: unreadable commit: \{why6}");
+              err.line("wacfetch: \{map.name}: unreadable commit: \{why6}");
               return "";
             }
             Understood(commit): {
-              if (!writeTreeOut(core, cli, p, commit.tree, into)) { return ""; }
-              core.log("  checked out \{commit.treeHex().slice(0, 8)} -> \{into}");
+              if (!writeTreeOut(err, fs, p, commit.tree, into)) { return ""; }
+              out.line("  checked out \{commit.treeHex().slice(0, 8)} -> \{into}");
             }
           }
         }
@@ -330,12 +332,12 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
     }
   }
 
-  Change wrotePack = cli.writeFile("\{into}/pack.pack", pack).wait();
-  if (!wrotePack.ok()) {
-    core.warn("wacfetch: cannot write \{into}/pack.pack: \{wrotePack.message}");
+  auto wrotePack = flatten(fs.writeFile("\{into}/pack.pack", pack).wait());
+  if (wrotePack.isErr()) {
+    err.line("wacfetch: cannot write \{into}/pack.pack: \{wrotePack.isErr() ? "\{wrotePack.err()!}" : ""}");
     return "";
   }
-  core.log("  \{pack.len()} bytes, \{objects} objects -> "
+  out.line("  \{pack.len()} bytes, \{objects} objects -> "
            + "\{into}/pack.pack");
 
   return hit.commit;
@@ -360,41 +362,41 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
  * reader wanting a `.wac` file needs and avoids handing a fetched repository the power to point
  * outside its own checkout.
  */
-bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
+bool writeTreeOut(Output err, Files fs, Pack pk, u8[] treeHash, string into) {
   Got got = objectNamed(pk, treeHash);
   match (got) {
     Absent(why): {
-      core.warn("wacfetch: a tree is missing from the pack: \{why}");
+      err.line("wacfetch: a tree is missing from the pack: \{why}");
       return false;
     }
     Found(kind, data): {
       Tree t = parseTree(data);
       match (t) {
-        Bad(why): { core.warn("wacfetch: unreadable tree: \{why}"); return false; }
+        Bad(why): { err.line("wacfetch: unreadable tree: \{why}"); return false; }
         Ok(entries): {
           for (i32 i = 0; i < entries.len(); i++) {
             Entry e = entries.get(i);
             string at = "\{into}/\{e.name}";
             if (e.mode == "160000") { continue; }
             if (e.isTree()) {
-              Change made = cli.mkdir(at, true).wait();
-              if (!made.ok()) {
-                core.warn("wacfetch: cannot make \{at}: \{made.message}");
+              auto made = flatten(fs.mkdir(at, true).wait());
+              if (made.isErr()) {
+                err.line("wacfetch: cannot make \{at}: \{made.isErr() ? "\{made.err()!}" : ""}");
                 return false;
               }
-              if (!writeTreeOut(core, cli, pk, e.hash, at)) { return false; }
+              if (!writeTreeOut(err, fs, pk, e.hash, at)) { return false; }
               continue;
             }
             Got blob = objectNamed(pk, e.hash);
             match (blob) {
               Absent(why2): {
-                core.warn("wacfetch: \{e.name} is missing from the pack: \{why2}");
+                err.line("wacfetch: \{e.name} is missing from the pack: \{why2}");
                 return false;
               }
               Found(k2, bytes): {
-                Change wrote = cli.writeFile(at, bytes).wait();
-                if (!wrote.ok()) {
-                  core.warn("wacfetch: cannot write \{at}: \{wrote.message}");
+                auto wrote = flatten(fs.writeFile(at, bytes).wait());
+                if (wrote.isErr()) {
+                  err.line("wacfetch: cannot write \{at}: \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
                   return false;
                 }
               }

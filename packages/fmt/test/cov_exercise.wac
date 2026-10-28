@@ -25,7 +25,7 @@ import { ftoa, ftoa32, writeF32 } from "../src/ftoa.wac";
 import { Buf } from "core";
 import { Rng } from "../../wactest/src/rng.wac";
 
-import { Core, Cli, Sys } from "std";
+import { Output, Sys } from "std";
 import {
   test_itoa_writes_the_sign_and_the_extremes as it__itoa_writes_the_sign_and_the_extremes,
   test_atoi_reads_the_sign_and_stops_at_the_first_non_digit as it__atoi_reads_the_sign_and_stops_at_the_first_non_digit,
@@ -77,8 +77,7 @@ f64 doubleOf(i32 hi, i32 lo) {
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
   i32 seen = 0;
 
   // Random bit patterns, which is the only way to reach subnormals and huge exponents.
@@ -154,113 +153,113 @@ export async i32 main(Sys sys) {
 
   // ── The package's own 21 tests, none of which were being called ──
   //
-  // Fifteen take `(Core, Cli)` — every claim this package makes is against the host's own `Number`
+  // Fifteen take `Sys` — every claim this package makes is against the host's own `Number`
   // formatting and parsing, so its tests spawn a process — and before `issues/system/0221` a coverage
   // driver could call none of them. `src/itoa.wac` was at 10 of 29 as a result: the exercise formats
   // floats, and the integer writer it reaches is the one `ftoa` happens to call.
   i32 bad = 0;
   if (it__itoa_writes_the_sign_and_the_extremes().len() > 0) {
-    core.warn("error: FAILED itoa_test test_itoa_writes_the_sign_and_the_extremes");
+    err.line("error: FAILED itoa_test test_itoa_writes_the_sign_and_the_extremes");
     bad = bad + 1;
   }
   if (it__atoi_reads_the_sign_and_stops_at_the_first_non_digit().len() > 0) {
-    core.warn("error: FAILED itoa_test test_atoi_reads_the_sign_and_stops_at_the_first_non_digit");
+    err.line("error: FAILED itoa_test test_atoi_reads_the_sign_and_stops_at_the_first_non_digit");
     bad = bad + 1;
   }
   if (it__atoi_span_scans_bytes_and_says_where_it_stopped().len() > 0) {
-    core.warn("error: FAILED itoa_test test_atoi_span_scans_bytes_and_says_where_it_stopped");
+    err.line("error: FAILED itoa_test test_atoi_span_scans_bytes_and_says_where_it_stopped");
     bad = bad + 1;
   }
   if (bi__fixedbig_add_in_place_agrees_with_the_three_operand_sum().len() > 0) {
-    core.warn("error: FAILED bigint_test test_fixedbig_add_in_place_agrees_with_the_three_operand_sum");
+    err.line("error: FAILED bigint_test test_fixedbig_add_in_place_agrees_with_the_three_operand_sum");
     bad = bad + 1;
   }
   if ((await af__atof_the_cases_that_break_naive_conversions(sys)).len() > 0) {
-    core.warn("error: FAILED atof_test test_atof_the_cases_that_break_naive_conversions");
+    err.line("error: FAILED atof_test test_atof_the_cases_that_break_naive_conversions");
     bad = bad + 1;
   }
   if ((await af__atof_exact_halfway_cases_round_to_even(sys)).len() > 0) {
-    core.warn("error: FAILED atof_test test_atof_exact_halfway_cases_round_to_even");
+    err.line("error: FAILED atof_test test_atof_exact_halfway_cases_round_to_even");
     bad = bad + 1;
   }
   if ((await af__atof_round_trips_every_shortest_representation(sys)).len() > 0) {
-    core.warn("error: FAILED atof_test test_atof_round_trips_every_shortest_representation");
+    err.line("error: FAILED atof_test test_atof_round_trips_every_shortest_representation");
     bad = bad + 1;
   }
   if ((await af__atof_random_decimals_across_the_exponent_range(sys)).len() > 0) {
-    core.warn("error: FAILED atof_test test_atof_random_decimals_across_the_exponent_range");
+    err.line("error: FAILED atof_test test_atof_random_decimals_across_the_exponent_range");
     bad = bad + 1;
   }
   if ((await af__atof_the_spellings_a_generator_does_not_produce(sys)).len() > 0) {
-    core.warn("error: FAILED atof_test test_atof_the_spellings_a_generator_does_not_produce");
+    err.line("error: FAILED atof_test test_atof_the_spellings_a_generator_does_not_produce");
     bad = bad + 1;
   }
   if (af__atof_the_estimate_is_inside_the_bisection_window().len() > 0) {
-    core.warn("error: FAILED atof_test test_atof_the_estimate_is_inside_the_bisection_window");
+    err.line("error: FAILED atof_test test_atof_the_estimate_is_inside_the_bisection_window");
     bad = bad + 1;
   }
   if ((await bi__fixedbig_shift_left_across_every_limb_boundary(sys)).len() > 0) {
-    core.warn("error: FAILED bigint_test test_fixedbig_shift_left_across_every_limb_boundary");
+    err.line("error: FAILED bigint_test test_fixedbig_shift_left_across_every_limb_boundary");
     bad = bad + 1;
   }
   if ((await bi__fixedbig_mul_small_carries(sys)).len() > 0) {
-    core.warn("error: FAILED bigint_test test_fixedbig_mul_small_carries");
+    err.line("error: FAILED bigint_test test_fixedbig_mul_small_carries");
     bad = bad + 1;
   }
   if ((await bi__fixedbig_random_add_subtract_and_compare(sys)).len() > 0) {
-    core.warn("error: FAILED bigint_test test_fixedbig_random_add_subtract_and_compare");
+    err.line("error: FAILED bigint_test test_fixedbig_random_add_subtract_and_compare");
     bad = bad + 1;
   }
   if ((await bi__fixedbig_subtraction_that_borrows_across_zero_limbs(sys)).len() > 0) {
-    core.warn("error: FAILED bigint_test test_fixedbig_subtraction_that_borrows_across_zero_limbs");
+    err.line("error: FAILED bigint_test test_fixedbig_subtraction_that_borrows_across_zero_limbs");
     bad = bad + 1;
   }
   if ((await bi__fixedbig_zero_and_equality_edge_cases(sys)).len() > 0) {
-    core.warn("error: FAILED bigint_test test_fixedbig_zero_and_equality_edge_cases");
+    err.line("error: FAILED bigint_test test_fixedbig_zero_and_equality_edge_cases");
     bad = bad + 1;
   }
   if (f32__f32_specials_and_zeros().len() > 0) {
-    core.warn("error: FAILED f32_test test_f32_specials_and_zeros");
+    err.line("error: FAILED f32_test test_f32_specials_and_zeros");
     bad = bad + 1;
   }
   if ((await f32__f32_output_round_trips_and_is_shortest(sys)).len() > 0) {
-    core.warn("error: FAILED f32_test test_f32_output_round_trips_and_is_shortest");
+    err.line("error: FAILED f32_test test_f32_output_round_trips_and_is_shortest");
     bad = bad + 1;
   }
   if (f32__f32_the_string_and_bytes_spellings_agree().len() > 0) {
-    core.warn("error: FAILED f32_test test_f32_the_string_and_bytes_spellings_agree");
+    err.line("error: FAILED f32_test test_f32_the_string_and_bytes_spellings_agree");
     bad = bad + 1;
   }
   if (f32__f32_the_boundary_values().len() > 0) {
-    core.warn("error: FAILED f32_test test_f32_the_boundary_values");
+    err.line("error: FAILED f32_test test_f32_the_boundary_values");
     bad = bad + 1;
   }
   if ((await f32__f32_parsing_is_correctly_rounded(sys)).len() > 0) {
-    core.warn("error: FAILED f32_test test_f32_parsing_is_correctly_rounded");
+    err.line("error: FAILED f32_test test_f32_parsing_is_correctly_rounded");
     bad = bad + 1;
   }
   if (f32__f32_parse_and_format_are_inverse().len() > 0) {
-    core.warn("error: FAILED f32_test test_f32_parse_and_format_are_inverse");
+    err.line("error: FAILED f32_test test_f32_parse_and_format_are_inverse");
     bad = bad + 1;
   }
   if (ft__ftoa_specials_and_zeros().len() > 0) {
-    core.warn("error: FAILED ftoa_test test_ftoa_specials_and_zeros");
+    err.line("error: FAILED ftoa_test test_ftoa_specials_and_zeros");
     bad = bad + 1;
   }
   if ((await ft__ftoa_hand_picked_hard_cases(sys)).len() > 0) {
-    core.warn("error: FAILED ftoa_test test_ftoa_hand_picked_hard_cases");
+    err.line("error: FAILED ftoa_test test_ftoa_hand_picked_hard_cases");
     bad = bad + 1;
   }
   if ((await ft__ftoa_random_bit_patterns(sys)).len() > 0) {
-    core.warn("error: FAILED ftoa_test test_ftoa_random_bit_patterns");
+    err.line("error: FAILED ftoa_test test_ftoa_random_bit_patterns");
     bad = bad + 1;
   }
   if ((await ft__ftoa_random_decimals_and_integers(sys)).len() > 0) {
-    core.warn("error: FAILED ftoa_test test_ftoa_random_decimals_and_integers");
+    err.line("error: FAILED ftoa_test test_ftoa_random_decimals_and_integers");
     bad = bad + 1;
   }
   if ((await ft__ftoa_every_output_round_trips(sys)).len() > 0) {
-    core.warn("error: FAILED ftoa_test test_ftoa_every_output_round_trips");
+    err.line("error: FAILED ftoa_test test_ftoa_every_output_round_trips");
     bad = bad + 1;
   }
   seen = seen + bad;

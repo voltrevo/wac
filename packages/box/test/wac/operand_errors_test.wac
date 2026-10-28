@@ -18,35 +18,38 @@
 // the merged order is a behaviour rather than a libc artefact; and for one case only that we said
 // *something*, since GNU's sentence there describes neither the fault nor its own convention.
 
-import { Cli, Core, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { ErrCase, operandErrorCases, operandErrorFixtures } from "./cases.wac";
 import { Loaded, Ran, Vector, layFixtures, load, runCase, show } from "./replay.wac";
+import { flatten } from "core";
 
 string vectorsPath() { return "packages/box/test/operand-error-vectors.txt"; }
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-operanderrors"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-operanderrors"; }
 
-export async string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end_of_the_run(Core core, Cli cli) {
+export async string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end_of_the_run(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
   ErrCase[] list = operandErrorCases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 ran = 0;
   i32 wrong = 0;
   i32 unknown = 0;
   string detail = "";
   for (i32 i = 0; i < list.len() && i < v.n; i++) {
     if (v.items[i].script != list[i].script) { unknown = unknown + 1; continue; }
-    if (!layFixtures(cli, dir, operandErrorFixtures())) {
+    if (!layFixtures(fs, dir, operandErrorFixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran r = await runCase(core, cli, dir, list[i].script);
+    Ran r = await runCase(sys, dir, list[i].script);
     ran = ran + 1;
     string why = complaint(r, v.items[i], list[i]);
     if (why != "") {
@@ -54,7 +57,7 @@ export async string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end
       if (wrong <= 5) { detail = detail + "\n  $ \{list[i].script}\{why}"; }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
   t.eqI32(ran, list.len(), "not every case replayed — \{list.len()} cases, \{v.n}" +
                            " vectors");
@@ -99,42 +102,44 @@ string complaint(Ran ours, Vector want, ErrCase rule) {
 }
 
 /** The canary: five of these asked of the *live* tools, so a changed environment is noticed. */
-export async string test_the_live_tools_still_skip_the_same_way(Core core, Cli cli) {
+export async string test_the_live_tools_still_skip_the_same_way(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   ErrCase[] list = operandErrorCases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 checked = 0;
   for (i32 k = 0; k < 5; k++) {
     i32 i = (k * list.len()) / 5;
-    if (!layFixtures(cli, dir, operandErrorFixtures())) {
+    if (!layFixtures(fs, dir, operandErrorFixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Exec want = cli.exec("env",
-                         [
+    auto wantRan = flatten(procs.exec("env", [
                                   "-i",
                                   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                                   "LC_ALL=C", "HOME=\{dir}",
                                   "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                                   "bash", dir, list[i].script
-                         ],
-                         u8[]()).wait();
-    if (!want.ran()) {
-      t.isTrue(checked > 0, "bash would not start: \{want.error}");
+                         ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? want = wantRan.ok();
+    if ((want is null)) {
+      t.isTrue(checked > 0, "bash would not start: \{wantRan.isErr() ? "\{wantRan.err()!}" : ""}");
       return t.report();
     }
-    if (!layFixtures(cli, dir, operandErrorFixtures())) {
+    if (!layFixtures(fs, dir, operandErrorFixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran ours = await runCase(core, cli, dir, list[i].script);
+    Ran ours = await runCase(sys, dir, list[i].script);
     checked = checked + 1;
-    t.eqI32(ours.status, want.status, "the live tool's status differs: $ \{list[i].script}");
+    t.eqI32(ours.status, want!.status, "the live tool's status differs: $ \{list[i].script}");
     if (list[i].interleaves) {
-      t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tool disagrees: $ \{list[i].script}");
+      t.eqStr(ours.out, string.fromBytes(want!.stdout), "the live tool disagrees: $ \{list[i].script}");
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   t.eqI32(checked, 5, "not every canary ran");
   return t.report();
 }

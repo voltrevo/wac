@@ -61,10 +61,11 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { emitFilesSelfDescribing, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+import { flatten } from "core";
 
 static string SELFDRIVE = "packages/wacc/test/wac/selfdrive.wac";
 /**
@@ -116,12 +117,12 @@ string driverSource() {
  * have to be asked of `selfdrive.wac` itself. That is two entries, so two processes; the several
  * exports of each are one.
  */
-i32[] ladderAnswers(Cli cli, string file, string exports, i32 want, i32[] okOut) {
+i32[] ladderAnswers(Procs procs, string file, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", ["run", "-A", "harness/ladderRun.ts", file, exports],
-                    u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return i32[].filled(want, 0); }
-  string[] lines = splitLines(string.fromBytes(r.stdout));
+  auto rRan = flatten(procs.exec("deno", ["run", "-A", "harness/ladderRun.ts", file, exports], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return i32[].filled(want, 0); }
+  string[] lines = splitLines(string.fromBytes(r!.stdout));
   i32[] out = i32[].filled(want, 0);
   i32 n = 0;
   for (i32 i = 0; i < lines.len() && n < want; i++) {
@@ -134,9 +135,12 @@ i32[] ladderAnswers(Cli cli, string file, string exports, i32 want, i32[] okOut)
   return out;
 }
 
-export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core core, Cli cli) {
+export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "bootstrapemit_test");
+  Corpus c = loadCorpus(fs, "bootstrapemit_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
@@ -151,10 +155,10 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
   paths[c.paths.len()] = DRIVER;
 
-  scratchDir(cli);   // `.cache/` may not exist yet
-  Change wrote = cli.writeFile(DRIVER, driverSource().toBytes()).wait();
-  t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
-  if (wrote.fault != 0) { return t.report(); }
+  scratchDir(env, fs);   // `.cache/` may not exist yet
+  auto wrote = flatten(fs.writeFile(DRIVER, driverSource().toBytes()).wait());
+  t.isTrue(wrote.isOk(), "the driver was written to " + DRIVER);
+  if (wrote.isErr()) { return t.report(); }
 
   sources[c.paths.len()] = driverSource();
   string why = blockedFiles(paths, sources, DRIVER);
@@ -164,22 +168,22 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   // a driver that accepted the program it is supposed to reject proves nothing about either
   // compiler. Both are asked of the reference because it is the side that answers in full.
   i32[] ok = i32[].filled(1, 0);
-  i32[] canaries = ladderAnswers(cli, SELFDRIVE, "dumpSum,badErrorCount", 2, ok);
+  i32[] canaries = ladderAnswers(procs, SELFDRIVE, "dumpSum,badErrorCount", 2, ok);
   t.eqI32(ok[0], 1, "the ladder's wacc ran the driver and answered both canaries");
   if (ok[0] != 1) { return t.report(); }
   t.isTrue(canaries[0] != 0, "the ladder's own dump checksum is not 0 — the driver ran something");
   t.isTrue(canaries[1] != 0,
            "the program that must be rejected was rejected — the driver proves something");
 
-  i32[] fold = ladderAnswers(cli, DRIVER, "fold", 1, ok);
+  i32[] fold = ladderAnswers(procs, DRIVER, "fold", 1, ok);
   t.eqI32(ok[0], 1, "the ladder's wacc answered the fold");
   i32 theirs = fold[0];
 
   // Ours: one compile, and the fold read back whole.
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "bootdrive.wasm", 0);
-  Ran r = runModule(cli, wasm, dir, "bootdrive.wasm", ["fold"]);
-  cli.remove(DRIVER, false).wait();
+  Ran r = runModule(env, fs, procs, wasm, dir, "bootdrive.wasm", ["fold"]);
+  fs.remove(DRIVER, false).wait();
   if (!r.ok || wasRejected(r) || r.trapped) {
     t.fail("wacc's module did not run — " + (r.ok ? r.stderr : r.error));
     return t.report();

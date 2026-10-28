@@ -18,9 +18,9 @@
 // missing is the end of the selection story — `Grid.selectedText` exists and nothing here calls it,
 // so text can be selected and not copied out.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Unsupported } from "std";
 import { Element, ElementEvent, Listen, MOD_CTRL, MOD_META, Node, Page, Ref, Ui, html.canvas, html.style } from "../../web";
-import { Ticket, TicketBase } from "core";
+import { Result, Ticket, TicketBase } from "core";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Grid } from "../../raster/src/grid.wac";
 import { Surface, cellHeight, cellWidth } from "../../raster/src/surface.wac";
@@ -28,7 +28,7 @@ import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
 
 /** What a copy of this page started by `spawnSelf` runs — `--spawn applet`, as in `term.wac`. */
-export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
+export async i32 applet(Sys sys) { return await boxApplet(sys); }
 
 static string STYLE = "body { margin: 0; background: #0b0e0f; } canvas { display: block; image-rendering: pixelated; }";
 
@@ -118,13 +118,11 @@ Node Layout(Ui ui, Ref screen) {
 
 export async i32 main(Page page) {
   Sys sys = page.sys;
-  Core core = sys.core;
-  Cli cli = sys.cli;
   Ref at = Ref {};
   page.mount((Ui ui) => Layout(ui, at));
   Element screen = at.element()!;
 
-  Session s = Session.start(core, cli, "rasterterm");
+  Session s = Session.start(sys, "rasterterm");
   Grid g = Grid.create(COLS(), ROWS(), SCROLLBACK());
   Surface surf = Surface.create(COLS() * cellWidth(), ROWS() * cellHeight());
 
@@ -154,7 +152,7 @@ export async i32 main(Page page) {
   // **The blink is a timer among the things waited on**: whichever of the next event, the half-blink and
   // a running command comes first. A command runs as a task, as in `term.wac`, so `^C` reaches it.
   Ticket<ElementEvent> next = screen.next();
-  Ticket<i64> blink = core.sleepMillis(BLINK()).ticket();
+  Ticket<Result<void, union<Unsupported>>> blink = sys.clock().sleepMillis(BLINK());
   Ticket<void>? running = null;
 
   for (;;) {
@@ -163,7 +161,7 @@ export async i32 main(Page page) {
       : [next, blink, running!] as TicketBase[];
     i32 which = await Ticket.first(parts);
     if (which == 1) {
-      blink = core.sleepMillis(BLINK()).ticket();
+      blink = sys.clock().sleepMillis(BLINK());
       // Only where a caret is drawn at all: scrolled back there is none, and blinking one that is
       // not there would redraw the whole screen twice a second for nothing.
       if (back == 0) {

@@ -25,8 +25,9 @@ import { T } from "../../../wactest/src/assert.wac";
 import { verifyPath, parseCert, Cert, certVerifySignature, certMatchesHost, keyP256, keyP384, keyRsa,
          sigEcdsaSha256, sigEcdsaSha384 } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
-import { Core, Cli, FileResult } from "std";
+import { Cli, Files, Sys } from "std";
 import { slice } from "../../../bytes/src/slice.wac";
+import { flatten } from "core";
 
 // Fixture numbering. The names are here now, not on the host side.
 static i32 ROOT = 0;
@@ -86,13 +87,14 @@ i32 check(Bundle chain, Bundle roots, string host, i64 now, i32 maxDepth) {
                     host.toBytes(), now, maxDepth);
 }
 
-export string test_the_fixtures_are_the_shape_the_tests_assume(Core core, Cli cli) {
+export string test_the_fixtures_are_the_shape_the_tests_assume(Sys sys) {
+  Files fs = sys.files();
   // If a fixture were regenerated wrongly every result below would be explicable and
   // wrong, so the shape is asserted before anything is concluded from it.
   T t = T.create();
-  Cert root = parseCert(load(cli, ROOT));
-  Cert inter = parseCert(load(cli, INTER));
-  Cert leaf = parseCert(load(cli, LEAF));
+  Cert root = parseCert(load(fs, ROOT));
+  Cert inter = parseCert(load(fs, INTER));
+  Cert leaf = parseCert(load(fs, LEAF));
   t.eqI32(root.keyType, keyP384(), "the root is P-384");
   t.eqI32(inter.keyType, keyP256(), "the intermediate is P-256");
   t.eqI32(leaf.keyType, keyP256(), "the leaf is P-256");
@@ -107,49 +109,53 @@ export string test_the_fixtures_are_the_shape_the_tests_assume(Core core, Cli cl
   return t.report();
 }
 
-export string test_a_two_deep_chain_verifies_to_a_p384_root(Core core, Cli cli) {
+export string test_a_two_deep_chain_verifies_to_a_p384_root(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  t.eqI32(check(Bundle.of2(load(cli, LEAF), load(cli, INTER)), Bundle.of1(load(cli, ROOT)),
+  t.eqI32(check(Bundle.of2(load(fs, LEAF), load(fs, INTER)), Bundle.of1(load(fs, ROOT)),
                 "wac.test", NOW, 8), 0, "the path holds");
   return t.report();
 }
 
-export string test_the_path_has_to_be_built(Core core, Cli cli) {
+export string test_the_path_has_to_be_built(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // Without the intermediate there is no way up, and the answer must be "unknown
   // authority" rather than a success that skipped a link.
-  t.eqI32(check(Bundle.of1(load(cli, LEAF)), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8), 5,
+  t.eqI32(check(Bundle.of1(load(fs, LEAF)), Bundle.of1(load(fs, ROOT)), "wac.test", NOW, 8), 5,
           "the intermediate is genuinely required");
   // RFC 8446 §4.4.2 says the sender should order the chain and some do not, so anything
   // after the leaf is searched by name rather than assumed to be in sequence.
-  t.eqI32(check(of3(load(cli, LEAF), load(cli, OTHER_CA), load(cli, INTER)), Bundle.of1(load(cli, ROOT)),
+  t.eqI32(check(of3(load(fs, LEAF), load(fs, OTHER_CA), load(fs, INTER)), Bundle.of1(load(fs, ROOT)),
                 "wac.test", NOW, 8), 0, "an unordered chain still resolves");
-  t.eqI32(check(Bundle.of2(load(cli, LEAF), load(cli, INTER)), Bundle.of1(load(cli, OTHER_CA)),
+  t.eqI32(check(Bundle.of2(load(fs, LEAF), load(fs, INTER)), Bundle.of1(load(fs, OTHER_CA)),
                 "wac.test", NOW, 8), 5, "an untrusted root is refused");
   // The real store is 121 certificates, almost all irrelevant to any given chain.
-  t.eqI32(check(Bundle.of2(load(cli, LEAF), load(cli, INTER)),
-                of3(load(cli, OTHER_CA), load(cli, ROOT), load(cli, OTHER_CA)), "wac.test", NOW, 8), 0,
+  t.eqI32(check(Bundle.of2(load(fs, LEAF), load(fs, INTER)),
+                of3(load(fs, OTHER_CA), load(fs, ROOT), load(fs, OTHER_CA)), "wac.test", NOW, 8), 0,
           "the right root is found among several");
-  t.eqI32(check(Bundle.of2(load(cli, LEAF), load(cli, INTER)), Bundle.of1(load(cli, ROOT)),
+  t.eqI32(check(Bundle.of2(load(fs, LEAF), load(fs, INTER)), Bundle.of1(load(fs, ROOT)),
                 "wac.test", NOW, 1), 9, "a chain past the depth limit is refused");
-  t.eqI32(check(Bundle.empty(), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8), 8,
+  t.eqI32(check(Bundle.empty(), Bundle.of1(load(fs, ROOT)), "wac.test", NOW, 8), 8,
           "an empty chain is refused rather than trusted");
   return t.report();
 }
 
-export string test_validity_is_checked_at_the_time_given(Core core, Cli cli) {
+export string test_validity_is_checked_at_the_time_given(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Bundle chain = Bundle.of2(load(cli, LEAF), load(cli, INTER));
-  Bundle roots = Bundle.of1(load(cli, ROOT));
+  Bundle chain = Bundle.of2(load(fs, LEAF), load(fs, INTER));
+  Bundle roots = Bundle.of1(load(fs, ROOT));
   t.eqI32(check(chain, roots, "wac.test", 1500000000, 8), 1, "not yet valid in 2017");
   t.eqI32(check(chain, roots, "wac.test", 2500000000, 8), 2, "expired by 2049");
   return t.report();
 }
 
-export string test_the_host_name_is_checked_against_the_leaf(Core core, Cli cli) {
+export string test_the_host_name_is_checked_against_the_leaf(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Bundle chain = Bundle.of2(load(cli, LEAF), load(cli, INTER));
-  Bundle roots = Bundle.of1(load(cli, ROOT));
+  Bundle chain = Bundle.of2(load(fs, LEAF), load(fs, INTER));
+  Bundle roots = Bundle.of1(load(fs, ROOT));
   t.eqI32(check(chain, roots, "sub.wac.test", NOW, 8), 0, "the wildcard matches one label");
   string[] wrong = ["wac.test.evil.com", "evil.com", "acwac.test", "a.b.wac.test"];
   for (i32 i = 0; i < wrong.len(); i++) {
@@ -158,29 +164,30 @@ export string test_the_host_name_is_checked_against_the_leaf(Core core, Cli cli)
   return t.report();
 }
 
-export string test_tampering_and_the_anchors_own_signature(Core core, Cli cli) {
+export string test_tampering_and_the_anchors_own_signature(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The last byte of a certificate is the last byte of its signature, so flipping it
   // leaves the DER intact and only the cryptography wrong.
-  u8[] leaf = load(cli, LEAF);
-  u8[] inter = load(cli, INTER);
+  u8[] leaf = load(fs, LEAF);
+  u8[] inter = load(fs, INTER);
   u8[] badLeaf = u8[].filled(leaf.len(), 0);
   for (i32 i = 0; i < leaf.len(); i++) { badLeaf[i] = leaf[i]; }
   badLeaf[leaf.len() - 1] = badLeaf[leaf.len() - 1] ^ 1;
-  t.isFalse(check(Bundle.of2(badLeaf, inter), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8) == 0,
+  t.isFalse(check(Bundle.of2(badLeaf, inter), Bundle.of1(load(fs, ROOT)), "wac.test", NOW, 8) == 0,
             "a tampered leaf breaks the path");
 
   u8[] badInter = u8[].filled(inter.len(), 0);
   for (i32 i = 0; i < inter.len(); i++) { badInter[i] = inter[i]; }
   badInter[inter.len() - 1] = badInter[inter.len() - 1] ^ 1;
-  t.isFalse(check(Bundle.of2(leaf, badInter), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8) == 0,
+  t.isFalse(check(Bundle.of2(leaf, badInter), Bundle.of1(load(fs, ROOT)), "wac.test", NOW, 8) == 0,
             "a tampered intermediate breaks the path");
 
   // But a trust anchor's own signature is not what makes it trusted. RFC 5280 §6.1 takes
   // the anchor's name and key as given and starts verifying below it — asserted because
   // the opposite looks equally plausible, and because checking would reject real roots
   // whose self-signatures use algorithms nobody verifies any more.
-  u8[] root = load(cli, ROOT);
+  u8[] root = load(fs, ROOT);
   u8[] selfBroken = u8[].filled(root.len(), 0);
   for (i32 i = 0; i < root.len(); i++) { selfBroken[i] = root[i]; }
   selfBroken[root.len() - 1] = selfBroken[root.len() - 1] ^ 1;
@@ -189,53 +196,56 @@ export string test_tampering_and_the_anchors_own_signature(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_root_with_the_right_name_and_wrong_key(Core core, Cli cli) {
+export string test_a_root_with_the_right_name_and_wrong_key(Sys sys) {
+  Files fs = sys.files();
   // The imposter's subject is byte-identical to the real root's, so every name comparison
   // succeeds and only the signature can reject it. Two authorities sharing a subject name
   // is not hypothetical, which is why verifyPath keeps searching after a name matches but
   // the signature does not.
   T t = T.create();
-  Bundle chain = Bundle.of2(load(cli, LEAF), load(cli, INTER));
-  t.eqI32(check(chain, Bundle.of1(load(cli, IMPOSTER)), "wac.test", NOW, 8), 5,
+  Bundle chain = Bundle.of2(load(fs, LEAF), load(fs, INTER));
+  t.eqI32(check(chain, Bundle.of1(load(fs, IMPOSTER)), "wac.test", NOW, 8), 5,
           "the imposter cannot vouch");
-  t.eqI32(check(chain, Bundle.of2(load(cli, IMPOSTER), load(cli, ROOT)), "wac.test", NOW, 8), 0,
+  t.eqI32(check(chain, Bundle.of2(load(fs, IMPOSTER), load(fs, ROOT)), "wac.test", NOW, 8), 0,
           "the genuine root is found past it");
-  t.eqI32(check(chain, Bundle.of2(load(cli, ROOT), load(cli, IMPOSTER)), "wac.test", NOW, 8), 0,
+  t.eqI32(check(chain, Bundle.of2(load(fs, ROOT), load(fs, IMPOSTER)), "wac.test", NOW, 8), 0,
           "in either order");
   return t.report();
 }
 
-export string test_critical_extensions_and_key_usage(Core core, Cli cli) {
+export string test_critical_extensions_and_key_usage(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Bundle roots = Bundle.of1(load(cli, ROOT));
-  u8[] inter = load(cli, INTER);
+  Bundle roots = Bundle.of1(load(fs, ROOT));
+  u8[] inter = load(fs, INTER);
   // RFC 5280 §4.2: reject rather than ignore. "Critical" is the issuer saying this
   // restriction is load-bearing, so skipping one accepts the certificate on terms nobody
   // checked — and the extension nobody checked could be the one that mattered.
-  t.eqI32(check(Bundle.of2(load(cli, LEAF_CRIT), inter), roots, "wac.test", NOW, 8), 12,
+  t.eqI32(check(Bundle.of2(load(fs, LEAF_CRIT), inter), roots, "wac.test", NOW, 8), 12,
           "an unrecognised critical extension makes the leaf unusable");
   // The other half of the rule, and why it can be applied at all: unrecognised and not
   // critical means the issuer says it is safe to skip.
-  t.eqI32(check(Bundle.of2(load(cli, LEAF_NONCRIT), inter), roots, "wac.test", NOW, 8), 0,
+  t.eqI32(check(Bundle.of2(load(fs, LEAF_NONCRIT), inter), roots, "wac.test", NOW, 8), 0,
           "the same extension non-critical is ignored");
-  t.eqI32(check(Bundle.of2(load(cli, LEAF_CLIENTAUTH), inter), roots, "wac.test", NOW, 8), 11,
+  t.eqI32(check(Bundle.of2(load(fs, LEAF_CLIENTAUTH), inter), roots, "wac.test", NOW, 8), 11,
           "a certificate issued for client authentication is not a server");
-  t.eqI32(check(Bundle.of2(load(cli, LEAF_SERVERAUTH), inter), roots, "wac.test", NOW, 8), 0,
+  t.eqI32(check(Bundle.of2(load(fs, LEAF_SERVERAUTH), inter), roots, "wac.test", NOW, 8), 0,
           "an explicit serverAuth leaf is accepted");
-  t.eqI32(check(Bundle.of2(load(cli, LEAF), inter), roots, "wac.test", NOW, 8), 0,
+  t.eqI32(check(Bundle.of2(load(fs, LEAF), inter), roots, "wac.test", NOW, 8), 0,
           "and absent extKeyUsage still means unrestricted");
   return t.report();
 }
 
-export string test_name_constraints(Core core, Cli cli) {
+export string test_name_constraints(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Bundle roots = Bundle.of1(load(cli, ROOT));
-  u8[] leaf = load(cli, LEAF);
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_OK)), roots, "wac.test", NOW, 8), 0,
+  Bundle roots = Bundle.of1(load(fs, ROOT));
+  u8[] leaf = load(fs, LEAF);
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_OK)), roots, "wac.test", NOW, 8), 0,
           "a CA constrained to the right namespace works");
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_BAD)), roots, "wac.test", NOW, 8), 10,
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_BAD)), roots, "wac.test", NOW, 8), 10,
           "a CA constrained elsewhere cannot vouch for this name");
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_EXCL)), roots, "wac.test", NOW, 8), 10,
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_EXCL)), roots, "wac.test", NOW, 8), 10,
           "an excluded subtree is excluded");
 
   // **A base exactly as long as the name and different in every letter that matters.**
@@ -250,19 +260,19 @@ export string test_name_constraints(Core core, Cli cli) {
   // `wac.test`. Every other case here is refused a step earlier — `nc_bad` on length, `nc_suffix` on
   // the label boundary, `nc_excl` on being excluded at all — so `xyz.test` against `wac.test` is the
   // only one that gets as far as comparing bytes and needs them to disagree.
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_SAMELEN)), roots, "wac.test", NOW, 8), 10,
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_SAMELEN)), roots, "wac.test", NOW, 8), 10,
           "a CA constrained to a name the same length as the leaf's vouched for it anyway");
   // A constraint on a name form this does not enforce must make the CA unusable rather
   // than be applied in part — so there is no issuer left, and the answer is 5 not 10.
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_IP)), roots, "wac.test", NOW, 8), 5,
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_IP)), roots, "wac.test", NOW, 8), 5,
           "an unenforceable constraint makes the CA unusable");
   // `wac.test` ends with `c.test` and is not inside it. A suffix comparison accepts this,
   // which is how a constrained CA escapes its namespace by registering the right letters.
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_SUFFIX)), roots, "wac.test", NOW, 8), 10,
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_SUFFIX)), roots, "wac.test", NOW, 8), 10,
           "subtrees match on label boundaries, not suffixes");
   // And case-insensitively, per RFC 5280 §4.2.1.10 — a case-sensitive matcher fails
   // closed, refusing a CA that is genuinely entitled to the name.
-  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_UPPER)), roots, "wac.test", NOW, 8), 0,
+  t.eqI32(check(Bundle.of2(leaf, load(fs, NC_UPPER)), roots, "wac.test", NOW, 8), 0,
           "WAC.TEST covers wac.test");
   return t.report();
 }
@@ -314,20 +324,21 @@ string fixtureName(i32 n) {
  * Trapping on a missing fixture rather than returning empty: an absent input makes every case that
  * uses it fail somewhere further on, in a parse, with nothing pointing back at the file.
  */
-u8[] load(Cli cli, i32 n) {
+u8[] load(Files fs, i32 n) {
   string path = "packages/tls/test/data/\{fixtureName(n)}.pem";
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { trap; }
-  Store s = pemBundle(r.bytes);
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) { trap; }
+  Store s = pemBundle(r!);
   if (s.offsets.len() < 2) { trap; }
   u8[] der = u8[].filled(s.offsets[1] - s.offsets[0], 0);
   der.copyFrom(s.der, s.offsets[0], 0, der.len());
   return der;
 }
 
-export string test_an_ip_literal_matches_an_ip_san(Core core, Cli cli) {
+export string test_an_ip_literal_matches_an_ip_san(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Cert c = parseCert(load(cli, EC_LEAF));
+  Cert c = parseCert(load(fs, EC_LEAF));
   t.isTrue(certMatchesHost(c, "127.0.0.1".toBytes()), "the address in the iPAddress SAN");
   t.isTrue(!certMatchesHost(c, "127.0.0.2".toBytes()), "and not a neighbouring one");
   t.isTrue(!certMatchesHost(c, "1.2.3.4".toBytes()), "nor an unrelated one");
@@ -337,26 +348,28 @@ export string test_an_ip_literal_matches_an_ip_san(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_an_ip_literal_never_matches_a_dns_entry(Core core, Cli cli) {
+export string test_an_ip_literal_never_matches_a_dns_entry(Sys sys) {
+  Files fs = sys.files();
   // RFC 6125 §6.4: when the reference identity is an address, dNSName entries are not
   // consulted. This certificate carries `DNS:127.0.0.1` and no iPAddress, which is
   // something a CA might issue as an ordinary name — treating it as authority over the
   // address would let it stand in for a host it was never meant to cover.
   T t = T.create();
-  Cert c = parseCert(load(cli, IP_AS_DNS));
+  Cert c = parseCert(load(fs, IP_AS_DNS));
   t.isTrue(!certMatchesHost(c, "127.0.0.1".toBytes()),
            "a dNSName that looks like an address does not cover the address");
   t.isTrue(certMatchesHost(c, "example.test".toBytes()), "its real name still matches");
   return t.report();
 }
 
-export string test_only_a_strict_dotted_quad_is_an_address(Core core, Cli cli) {
+export string test_only_a_strict_dotted_quad_is_an_address(Sys sys) {
+  Files fs = sys.files();
   // The parser is deliberately not inet_aton, which accepts octal, hex and short forms —
   // `0177.0.0.1` and `2130706433` are both 127.0.0.1 to it. Anything it rejects falls
   // through to name matching, so a loose parser here would let one identity be checked
   // under the other's rules.
   T t = T.create();
-  Cert ec = parseCert(load(cli, EC_LEAF));
+  Cert ec = parseCert(load(fs, EC_LEAF));
   string[] notAddresses = [
                                    "0177.0.0.1", "2130706433", "127.0.0.1.", "127.0.0",
                                    "127.0.0.256", "127.0.0.01a", "127..0.1", ""
@@ -382,16 +395,17 @@ export string test_only_a_strict_dotted_quad_is_an_address(Core core, Cli cli) {
  * bundle makes the other hundred unusable — which is exactly what happened before `parseCert`
  * learned to leave `keyType` at 0 rather than trap.
  */
-export string test_the_system_trust_store_parses(Core core, Cli cli) {
+export string test_the_system_trust_store_parses(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  FileResult f = cli.readFile("/etc/ssl/certs/ca-certificates.crt").wait();
-  if (!f.ok) {
+  u8[]? f = flatten(fs.readFile("/etc/ssl/certs/ca-certificates.crt").wait()).ok();
+  if ((f is null)) {
     // No system store on this machine; there is nothing to check and nothing wrong.
     t.isTrue(true, "no system trust store here");
     return t.report();
   }
 
-  Store store = pemBundle(f.bytes);
+  Store store = pemBundle(f!);
   i32 n = store.offsets.len() / 2;
   t.isTrue(n >= 50, "a real trust store, not a stub: \{n as i64} certificates");
 
@@ -431,10 +445,11 @@ export string test_the_system_trust_store_parses(Core core, Cli cli) {
  * are overwhelmingly signed this way, so this is the ordinary path and the one that had never run
  * in-process.
  */
-export string test_an_rsa_chain_verifies(Core core, Cli cli) {
+export string test_an_rsa_chain_verifies(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] leaf = load(cli, RSA_LEAF);
-  Bundle rsaRoots = Bundle.of1(load(cli, RSA_CA));
+  u8[] leaf = load(fs, RSA_LEAF);
+  Bundle rsaRoots = Bundle.of1(load(fs, RSA_CA));
   t.isTrue(leaf.len() > 200, "the RSA leaf did not load");
 
   t.eqI32(check(Bundle.of1(leaf), rsaRoots, "wac.test", NOW, 8), 0,
@@ -446,11 +461,11 @@ export string test_an_rsa_chain_verifies(Core core, Cli cli) {
 
   // **The controls, because a verifier that accepted everything would pass the three above.**
   // Against the ed25519 root: same leaf, an anchor that did not sign it.
-  t.isTrue(check(Bundle.of1(leaf), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8) != 0,
+  t.isTrue(check(Bundle.of1(leaf), Bundle.of1(load(fs, ROOT)), "wac.test", NOW, 8) != 0,
            "the RSA leaf verified against a root that did not sign it");
   // And the ed25519 leaf against the RSA CA, so the refusal above is about the pairing rather than
   // about RSA being refused everywhere.
-  t.isTrue(check(Bundle.of1(load(cli, LEAF)), rsaRoots, "wac.test", NOW, 8) != 0,
+  t.isTrue(check(Bundle.of1(load(fs, LEAF)), rsaRoots, "wac.test", NOW, 8) != 0,
            "a leaf this CA never signed verified against it");
 
   // Outside its window, which reaches the date arms with an RSA certificate rather than an EC one.
@@ -497,13 +512,14 @@ export string test_an_rsa_chain_verifies(Core core, Cli cli) {
  * property — a key-type mismatch is refused *without* verifying, so a mismatched pair cannot spend
  * a signature check, and a wrong answer cannot depend on the bytes.
  */
-export string test_a_signature_scheme_is_refused_against_the_wrong_key_type(Core core, Cli cli) {
+export string test_a_signature_scheme_is_refused_against_the_wrong_key_type(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // One certificate of each key type this package can parse.
-  Cert ed = parseCert(load(cli, ED_LEAF));
-  Cert p256 = parseCert(load(cli, EC_LEAF));
-  Cert p384 = parseCert(load(cli, ROOT));
-  Cert rsa = parseCert(load(cli, RSA_LEAF));
+  Cert ed = parseCert(load(fs, ED_LEAF));
+  Cert p256 = parseCert(load(fs, EC_LEAF));
+  Cert p384 = parseCert(load(fs, ROOT));
+  Cert rsa = parseCert(load(fs, RSA_LEAF));
   t.eqI32(ed.keyType, 1, "the ed25519 fixture is not ed25519");
   t.eqI32(p256.keyType, keyP256(), "the P-256 fixture is not P-256");
   t.eqI32(p384.keyType, keyP384(), "the P-384 fixture is not P-384");

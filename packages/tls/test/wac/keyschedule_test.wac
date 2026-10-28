@@ -31,7 +31,7 @@ import {
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Cli, Procs, Sys } from "std";
 
 static string ORACLE = "packages/tls/test/oracle.mjs";
 
@@ -84,7 +84,7 @@ Expansion expansion(u8[] secret, string label, u8[] ctx, i32 len) {
  * *longest* expansion rather than the total. Returns false if the oracle would not answer, in which
  * case `ask` has already recorded why.
  */
-bool refExpand(T t, Cli cli, Expansion[] e) {
+bool refExpand(T t, Procs procs, Expansion[] e) {
   bool more = true;
   while (more) {
     Lines lines = Lines.create();
@@ -101,7 +101,7 @@ bool refExpand(T t, Cli cli, Expansion[] e) {
       n = n + 1;
     }
     if (n == 0) { return true; }
-    Answers a = ask(t, cli, "node", [ORACLE], lines, "HMAC-SHA256");
+    Answers a = ask(t, procs, "node", [ORACLE], lines, "HMAC-SHA256");
     if (!a.ok) { return false; }
     for (i32 k = 0; k < n; k++) {
       Expansion x = e[which[k]];
@@ -116,7 +116,7 @@ bool refExpand(T t, Cli cli, Expansion[] e) {
   return true;
 }
 
-export string test_the_rfc_8448_chain(Core core, Cli cli) {
+export string test_the_rfc_8448_chain() {
   // RFC 8448 §3, the simple 1-RTT handshake. Published values, so this is agreement with
   // the protocol rather than with ourselves. Values that did not match the trace were
   // removed when this was written rather than adjusted to what we produce.
@@ -139,7 +139,8 @@ export string test_the_rfc_8448_chain(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_expand_label_agrees_with_an_independent_build(Core core, Cli cli) {
+export string test_expand_label_agrees_with_an_independent_build(Sys sys) {
+  Procs procs = sys.procs();
   // Every label the schedule uses, plus the shapes around them: an empty context, a
   // hash-length context, a one-byte output and a multi-block one.
   T t = T.create();
@@ -157,7 +158,7 @@ export string test_expand_label_agrees_with_an_independent_build(Core core, Cli 
   for (i32 i = 0; i < labels.len(); i++) {
     want[i] = expansion(secret, labels[i], fill(ctxLens[i], 13, 1), outLens[i]);
   }
-  if (!refExpand(t, cli, want)) { return t.report(); }
+  if (!refExpand(t, procs, want)) { return t.report(); }
 
   for (i32 i = 0; i < labels.len(); i++) {
     t.eqBytes(expandLabel(secret, labels[i].toBytes(), fill(ctxLens[i], 13, 1), outLens[i]),
@@ -167,7 +168,8 @@ export string test_expand_label_agrees_with_an_independent_build(Core core, Cli 
   return t.report();
 }
 
-export string test_traffic_keys_come_from_the_pinned_secret(Core core, Cli cli) {
+export string test_traffic_keys_come_from_the_pinned_secret(Sys sys) {
+  Procs procs = sys.procs();
   // Derived from a secret RFC 8448 has already pinned above, so a failure here is in the
   // key derivation rather than anywhere upstream of it.
   T t = T.create();
@@ -178,7 +180,7 @@ export string test_traffic_keys_come_from_the_pinned_secret(Core core, Cli cli) 
     want[k * 2] = expansion(serverHs, "key", u8[](), keyLens[k]);
     want[k * 2 + 1] = expansion(serverHs, "iv", u8[](), 12);
   }
-  if (!refExpand(t, cli, want)) { return t.report(); }
+  if (!refExpand(t, procs, want)) { return t.report(); }
 
   for (i32 k = 0; k < keyLens.len(); k++) {
     i32 keyLen = keyLens[k];
@@ -236,7 +238,7 @@ export string test_finished_binds_to_the_transcript_and_the_sender() {
   return t.report();
 }
 
-export string test_the_empty_context_hash_is_sha256_of_nothing(Core core, Cli cli) {
+export string test_the_empty_context_hash_is_sha256_of_nothing() {
   // Not checkable against the HMAC oracle directly, so it is pinned to the published
   // constant — the SHA-256 of the empty string, which appears in RFC 8446 §7.1 itself.
   T t = T.create();

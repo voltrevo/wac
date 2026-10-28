@@ -2,26 +2,26 @@
 // an interruption partway can hurt. See `lib/safe.wac` for why the temporary name is
 // worth the extra step.
 
-import { Change, Cli, Core, reasonOf } from "std";
+import { Files, Input, Output, Random } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream } from "../lib/input.wac";
+import { Opened, openStream } from "../lib/input.wac";
 import { streamAtomic } from "../lib/safe.wac";
 import { missingAfter, missingOperand } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
+import { reason } from "../../../fs/src/words.wac";
 
-export async i32 cp(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() == 0) { return missingOperand(core, a.name, "file"); }
+export async i32 cp(Input stdin, Output err, Random rnd, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (a.rest.len() == 0) { return missingOperand(err, a.name, "file"); }
   // GNU names the one it *did* get, which is the difference between "you forgot both" and "you forgot
   // where to put it" — and the second is the mistake people actually make.
-  if (a.rest.len() < 2) { return missingAfter(core, a.name, "destination file operand", a.rest[0]); }
-  Input in = await openStream(core, cli, fs, a, 0, -1);
+  if (a.rest.len() < 2) { return missingAfter(err, a.name, "destination file operand", a.rest[0]); }
+  Opened in = await openStream(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
   Feed fed = in.fed;
-  Change wrote = await streamAtomic(core, cli, fs, fed, a.rest[1]);
-  if (wrote.ok()) { return 0; }
+  auto wrote = await streamAtomic(rnd, fs, fed, a.rest[1]);
+  if (wrote.isOk()) { return 0; }
   // GNU's frame for a destination it could not write: `cp: cannot create regular file 'x/y': …`.
   //
   // **Not every one of GNU's frames, and the difference is sequencing rather than wording.** `cp f f/g`
@@ -30,6 +30,6 @@ export async i32 cp(Core core, Cli cli, Fs fs, Args a) {
   // directory behaviour, so it has no reason to stat first and no honest way to print "cannot stat"
   // about something it never stat'd. The reason matches; that prefix does not, and `notdir_test.wac`
   // names it rather than choosing kinder cases.
-  core.warn("\{a.name}: cannot create regular file '\{a.rest[1]}': \{reasonOf(wrote)}");
+  err.line("\{a.name}: cannot create regular file '\{a.rest[1]}': \{reason(wrote.err()!)}");
   return 1;
 }

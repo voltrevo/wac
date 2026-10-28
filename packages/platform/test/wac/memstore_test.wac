@@ -3,7 +3,7 @@
 // A store is one tree; `store.asUser(user)` is a `Files` acting as that user, so two views of one store are two
 // people on one machine. The checks assert the fault's type, which is what a caller matches on.
 
-import { Sys, Files, Stat, MemoryStore, StoreEntry, Input, Output, NotFound, NotADir, Denied, Exists, IsDir, NotEmpty, Procs,
+import { Sys, Files, Mount, Stat, MemoryStore, StoreEntry, Input, Output, NotFound, NotADir, NotGranted, Denied, Exists, IsDir, NotEmpty, Other, Procs,
          Exec, SpawnFault, ChildEnv, Launch,
          Unsupported } from "std";
 import { Result, Read, flatten } from "core";
@@ -42,6 +42,11 @@ export async string test_a_store_starts_as_an_empty_root_directory(Sys sys) {
   t.isTrue(s.isDir, "the root is a directory");
   t.eqStr(s.owner, "root", "owned by root");
   t.eqI32(s.mode, 493, "0755");
+  t.eqStr(root.user, "root", "the view acts as root");
+  t.eqStr(root.readOnly().relativeTo("/tmp").user, "root", "and so does any view of it");
+  t.eqStr(sys.files().user, "", "the host's files act as nobody with a name");
+  t.eqStr(Files.mounted([Mount("/tmp", sys.files()), Mount("/", root)]).user, "root", "a mount table acts as its root's");
+  t.eqStr(Files.mounted([Mount("/tmp", root)]).user, "", "and with nothing at the root, as nobody");
   return t.report();
 }
 
@@ -264,8 +269,8 @@ void servedSaid(T t, string host, Result<Exec, SpawnFault> ran) {
     Ok(r): {
       t.eqI32(r.status, 0, host + ": the probe ran: " + string.fromBytes(r.stderr));
       t.eqStr(string.fromBytes(r.stdout),
-              "read hello\nowner root\nroot's directory refused\nlisted in report\ngrandchild exit 0\n"
-                + "deep deep owned by ada\nchild exit 0\n",
+              "read hello\nacting as ada\nowner root\nroot's directory refused\nlisted in report\ngrandchild exit 0\n"
+                + "deep deep, as ada owned by ada\nchild exit 0\n",
               host + ": the child and its child worked on the parent's store, as ada");
     }
     Err(e): { t.fail(host + ": did not run"); }
@@ -288,5 +293,238 @@ export async string test_a_composed_files_is_served_to_a_child_on_every_host(Sys
   await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
                             "--target", "node", "-o", nodeOut], u8[](), ChildEnv.inherited(), Launch.plain());
   servedSaid(t, "node", await procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  return t.report();
+}
+
+export async string test_write_only_files_refuse_every_read_and_keep_every_change(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  t.isTrue((await root.writeFile("/seen", "there".toBytes())).isOk(), "a file to look for");
+  Files wo = root.writeOnly();
+  t.isTrue((await wo.writeFile("/drop", "in".toBytes())).isOk(), "a write lands");
+  t.eqStr(await text(root, "/drop"), "in", "and is there for a reader");
+  t.isTrue((await wo.mkdir("/d", false)).isOk(), "a mkdir lands");
+  match (await wo.readFile("/seen")) {
+    Ok(b): { t.fail("readFile through writeOnly read"); }
+    Err(e): { t.isTrue(e is NotGranted, "readFile answers NotGranted"); }
+  }
+  match (await wo.openRead("/seen")) {
+    Ok(in): { t.fail("openRead through writeOnly opened"); }
+    Err(e): { t.isTrue(e is NotGranted, "openRead answers NotGranted"); }
+  }
+  match (await wo.stat("/seen")) {
+    Ok(s): { t.fail("stat through writeOnly answered"); }
+    Err(e): { t.isTrue(e is NotGranted, "stat answers NotGranted, so existence is not told"); }
+  }
+  match (await wo.linkStat("/seen")) {
+    Ok(s): { t.fail("linkStat through writeOnly answered"); }
+    Err(e): { t.isTrue(e is NotGranted, "linkStat answers NotGranted"); }
+  }
+  match (await wo.readDir("/")) {
+    Ok(n): { t.fail("readDir through writeOnly listed"); }
+    Err(e): { t.isTrue(e is NotGranted, "readDir answers NotGranted"); }
+  }
+  t.eqI32(sys.files().writeOnly().hostGrants, 2, "the host's, write-only, hands a child GRANT_WRITE alone");
+  return t.report();
+}
+
+// ── Ported from packages/fs's fs_test.wac, whose `Fs` this store replaces ─────────────────────────────────────────
+
+export async string test_a_write_replaces_rather_than_appends(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.writeFile("/a.txt", "hello\n".toBytes());
+  t.eqI32((await statOr(t, root, "/a.txt")).size as~ i32, 6, "six bytes");
+  await root.writeFile("/a.txt", "bye\n".toBytes());
+  t.eqStr(await text(root, "/a.txt"), "bye\n", "a second write replaces");
+  t.eqI32((await statOr(t, root, "/a.txt")).size as~ i32, 4, "with the new size");
+  return t.report();
+}
+
+export async string test_a_file_where_a_directory_was_wanted_is_not_a_dir_everywhere(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.writeFile("/nd", "x\n".toBytes());
+  await root.mkdir("/e", false);
+  match (await root.writeFile("/nd/x", u8[]())) { Ok(v): { t.fail("wrote under a file"); } Err(e): { t.isTrue(e is NotADir, "writing under a file"); } }
+  match (await root.mkdir("/nd/x", false)) { Ok(v): { t.fail("made a directory under a file"); } Err(e): { t.isTrue(e is NotADir, "mkdir under a file"); } }
+  match (await root.remove("/nd/x", false)) { Ok(v): { t.fail("removed under a file"); } Err(e): { t.isTrue(e is NotADir, "removing under a file"); } }
+  match (await root.rename("/nd/x", "/e/x")) { Ok(v): { t.fail("moved from under a file"); } Err(e): { t.isTrue(e is NotADir, "moving out from under a file"); } }
+  match (await root.rename("/e", "/nd")) { Ok(v): { t.fail("moved a directory onto a file"); } Err(e): { t.isTrue(e is NotADir, "a directory onto a file, as rename(2) has it"); } }
+  match (await root.readFile("/nd/x/y/z")) { Ok(b): { t.fail("read deep under a file"); } Err(e): { t.isTrue(e is NotADir, "however far down the file sits"); } }
+  match (await root.stat("/nd/x")) { Ok(s): { t.fail("stat through a file answered"); } Err(e): { t.isTrue(e is NotADir, "stat says which kind of nothing"); } }
+  match (await root.writeFile("/e", "no".toBytes())) { Ok(v): { t.fail("wrote over a directory"); } Err(e): { t.isTrue(e is IsDir, "writing over a directory"); } }
+  match (await root.mkdir("/x/y", false)) { Ok(v): { t.fail("made parents unasked"); } Err(e): { t.isTrue(e is NotFound, "no parents without -p"); } }
+  match (await root.writeFile("/x/y.txt", u8[]())) { Ok(v): { t.fail("wrote into nothing"); } Err(e): { t.isTrue(e is NotFound, "nor for a write"); } }
+  t.isTrue((await root.remove("/e", false)).isOk(), "an empty directory goes");
+  match (await root.remove("/e", false)) { Ok(v): { t.fail("removed twice"); } Err(e): { t.isTrue(e is NotFound, "and twice is NotFound"); } }
+  return t.report();
+}
+
+export async string test_a_listing_is_sorted_by_bytes_and_shallow(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.writeFile("/b", u8[]());
+  await root.writeFile("/a", u8[]());
+  await root.mkdir("/c", false);
+  await root.writeFile("/c/inside", u8[]());
+  string[] names = (await root.readDir("/")).orElse(string[]());
+  t.eqI32(names.len(), 3, "three names at the root");
+  t.isTrue(names.len() == 3 && names[0] == "a" && names[1] == "b" && names[2] == "c", "sorted, and nothing from inside c");
+  t.eqI32((await root.readDir("/c")).orElse(string[]()).len(), 1, "c has its own");
+  match (await root.readDir("/nope")) { Ok(n): { t.fail("listed nothing"); } Err(e): { t.isTrue(e is NotFound, "a missing directory"); } }
+  return t.report();
+}
+
+export async string test_rename_replaces_and_says_what_is_missing(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.mkdir("/d", false);
+  await root.writeFile("/a", "one\n".toBytes());
+  t.isTrue((await root.rename("/a", "/d/b")).isOk(), "a move into a directory");
+  t.isTrue((await root.stat("/a")).isErr(), "the old name is gone");
+  t.eqStr(await text(root, "/d/b"), "one\n", "the bytes came with it");
+  await root.writeFile("/c", "two\n".toBytes());
+  t.isTrue((await root.rename("/d/b", "/c")).isOk(), "a move over an existing name");
+  t.eqStr(await text(root, "/c"), "one\n", "replaces it with the mover's bytes");
+  match (await root.rename("/gone", "/x")) { Ok(v): { t.fail("moved nothing"); } Err(e): { t.isTrue(e is NotFound, "moving what is not there"); } }
+  match (await root.rename("/c", "/nodir/x")) { Ok(v): { t.fail("moved into nothing"); } Err(e): { t.isTrue(e is NotFound, "moving into what is not there"); } }
+  return t.report();
+}
+
+export async string test_a_mount_takes_the_longest_prefix_and_shadows(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  Files home = MemoryStore.create(sys.clock()).asUser("root");
+  await root.mkdir("/home", false);
+  await root.writeFile("/home/outside", "root fs\n".toBytes());
+  Files fs = Files.mounted([Mount("/home", home), Mount("/", root)]);
+  t.isTrue((await fs.stat("/home/outside")).isErr(), "the mount shadows the directory it covers");
+  t.isTrue((await fs.writeFile("/home/inside", "mounted\n".toBytes())).isOk(), "a write lands in it");
+  t.eqStr(await text(home, "/inside"), "mounted\n", "inside the mounted store, at its root");
+  t.eqI32((await fs.readDir("/home")).orElse(string[]()).len(), 1, "which is its own root");
+  t.isTrue((await fs.writeFile("/homework", "elsewhere\n".toBytes())).isOk(), "/homework is not /home");
+  t.eqStr(await text(root, "/homework"), "elsewhere\n", "and lands in the root store");
+  string[] top = (await fs.readDir("/")).orElse(string[]());
+  t.isTrue(top.len() == 2 && top[0] == "home" && top[1] == "homework", "a mount point over a directory lists once");
+  Files deep = Files.mounted([Mount("/a/b", home), Mount("/dev", home), Mount("/", root)]);
+  string[] under = (await deep.readDir("/a")).orElse(string[]());
+  t.isTrue(under.len() == 1 && under[0] == "b", "a directory that is only a mount's parent lists the mount");
+  string[] rootNames = (await deep.readDir("/")).orElse(string[]());
+  t.isTrue(rootNames.len() == 3 && rootNames[0] == "dev" && rootNames[1] == "home" && rootNames[2] == "homework",
+           "and the root lists its own names and the mounts directly under it, sorted: \{rootNames.len()}");
+  match (await fs.rename("/homework", "/home/hw")) {
+    Ok(v): { t.fail("renamed across mounts"); }
+    Err(e): { t.isTrue(e is Other, "across mounts is Other, as across two devices"); }
+  }
+  return t.report();
+}
+
+export async string test_names_are_bytes(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  u8[] odd = u8[].filled(4, 0);
+  odd[0] = 'x'; odd[1] = 0xff; odd[2] = 0xfe; odd[3] = 'y';
+  string name = "/\{string.fromBytes(odd)}";
+  t.isTrue((await root.writeFile(name, "held\n".toBytes())).isOk(), "a write under a name that is not text");
+  t.eqStr(await text(root, name), "held\n", "reads back");
+  string[] names = (await root.readDir("/")).orElse(string[]());
+  t.eqI32(names.len(), 1, "one name");
+  t.isTrue(names.len() == 1 && names[0].toBytes().len() == 4 && names[0].toBytes()[1] as i32 == 0xff,
+           "of four bytes, the one a decoder would replace included");
+  return t.report();
+}
+
+export async string test_an_unset_user_is_nobody_not_everybody(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.writeFile("/secret", "engine\n".toBytes());
+  await root.chmod("/secret", 384);
+  await root.chown("/secret", "ada");
+  await root.writeFile("/public", "open\n".toBytes());
+  Files nobody = store.asUser("");
+  match (await nobody.readFile("/secret")) { Ok(b): { t.fail("nobody read a 0600 file"); } Err(e): { t.isTrue(e is Denied, "nobody is denied a private file"); } }
+  match (await nobody.chmod("/secret", 438)) { Ok(v): { t.fail("nobody widened it"); } Err(e): { t.isTrue(e is Denied, "nor may widen it"); } }
+  match (await nobody.chown("/secret", "nobody")) { Ok(v): { t.fail("nobody took it"); } Err(e): { t.isTrue(e is Denied, "nor take it"); } }
+  t.eqStr(await text(nobody, "/public"), "open\n", "but reads a 0644 file");
+  t.eqStr(await text(store.asUser("ada"), "/secret"), "engine\n", "and its owner reads the private one");
+  return t.report();
+}
+
+export async string test_0444_refuses_its_own_owner(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.writeFile("/half", "readable\n".toBytes());
+  await root.chmod("/half", 292);
+  await root.chown("/half", "ada");
+  match (await store.asUser("ada").writeFile("/half", "x".toBytes())) {
+    Ok(v): { t.fail("the owner wrote a 0444 file"); }
+    Err(e): { t.isTrue(e is Denied, "0444 means no, to its owner too"); }
+  }
+  return t.report();
+}
+
+export async string test_a_directory_carries_its_own_permission(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.mkdir("/private", false);
+  await root.writeFile("/private/note", "hello\n".toBytes());
+  await root.chmod("/private", 448);
+  await root.chown("/private", "ada");
+  await root.chown("/private/note", "ada");
+  Files grace = store.asUser("grace");
+  match (await grace.readDir("/private")) { Ok(n): { t.fail("grace listed a 0700 directory"); } Err(e): { t.isTrue(e is Denied, "another user cannot list it"); } }
+  match (await grace.writeFile("/private/new", "x".toBytes())) { Ok(v): { t.fail("grace created in it"); } Err(e): { t.isTrue(e is Denied, "or create in it"); } }
+  match (await grace.remove("/private/note", false)) { Ok(v): { t.fail("grace removed from it"); } Err(e): { t.isTrue(e is Denied, "or remove from it"); } }
+  t.eqStr(await text(grace, "/private/note"), "hello\n", "traversal is not enforced: the file's own mode protects it");
+  t.isTrue((await store.asUser("ada").readDir("/private")).isOk(), "its owner lists it");
+  return t.report();
+}
+
+export async string test_every_way_of_changing_a_directory_is_checked(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.mkdir("/home/ada", true);
+  await root.writeFile("/home/ada/secret", "engine\n".toBytes());
+  await root.chmod("/home/ada", 448);
+  await root.chown("/home/ada", "ada");
+  await root.chmod("/home/ada/secret", 384);
+  await root.chown("/home/ada/secret", "ada");
+  await root.mkdir("/tmp", false);
+  await root.chmod("/tmp", 511);
+  Files grace = store.asUser("grace");
+  match (await grace.mkdir("/home/ada/mine", false)) { Ok(v): { t.fail("mkdir in ada's"); } Err(e): { t.isTrue(e is Denied, "mkdir in another user's directory"); } }
+  match (await grace.mkdir("/home/ada/a/b", true)) { Ok(v): { t.fail("mkdir -p in ada's"); } Err(e): { t.isTrue(e is Denied, "and with -p"); } }
+  match (await grace.rename("/home/ada/secret", "/tmp/taken")) { Ok(v): { t.fail("took ada's file"); } Err(e): { t.isTrue(e is Denied, "moving it out of the directory"); } }
+  t.isTrue((await grace.writeFile("/tmp/x", "mine\n".toBytes())).isOk(), "a file of her own in /tmp");
+  match (await grace.rename("/tmp/x", "/home/ada/planted")) { Ok(v): { t.fail("planted a file"); } Err(e): { t.isTrue(e is Denied, "cannot be moved into another user's directory"); } }
+  t.isTrue((await root.stat("/home/ada/secret")).isOk(), "the file is where its owner left it");
+  Files ada = store.asUser("ada");
+  t.isTrue((await ada.mkdir("/home/ada/mine", false)).isOk(), "its owner may make one");
+  t.isTrue((await ada.rename("/home/ada/secret", "/home/ada/mine/secret")).isOk(), "and move it about");
+  return t.report();
+}
+
+export async string test_opening_to_write_truncates_and_what_cannot_open_says_why(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.writeFile("/log", "old and long\n".toBytes());
+  match (await root.openWrite("/log")) {
+    Ok(out): {
+      await out.write("new\n".toBytes());
+      await out.close();
+    }
+    Err(e): { return failed(t, "openWrite of an existing file"); }
+  }
+  t.eqStr(await text(root, "/log"), "new\n", "the old contents are gone, as a redirect leaves them");
+  await root.mkdir("/d", false);
+  match (await root.openWrite("/d")) { Ok(out): { t.fail("opened a directory to write"); } Err(e): { t.isTrue(e is IsDir, "a directory does not open for writing"); } }
+  match (await root.openWrite("/nosuch/deep")) { Ok(out): { t.fail("opened under nothing"); } Err(e): { t.isTrue(e is NotFound, "nor a path whose parent is absent"); } }
+  t.isTrue((await root.stat("/nosuch")).isErr(), "and a failed open made nothing");
   return t.report();
 }

@@ -24,7 +24,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -32,6 +32,7 @@ import { blsG1Status, blsG1X, blsG1Y, blsG1RoundTrip, blsG1MulGenerator, blsG1Ge
          blsG1DegenerateAddition, blsG1OrderIsR, blsOrderIsNotSmaller,
          blsG2Status, blsG2X, blsG2Y, blsG2RoundTrip, blsG2MulGenerator, blsG2GeneratorBytes,
          blsG2DegenerateAddition, blsG2OrderIsR } from "./probe.wac";
+import { flatten } from "core";
 
 i32 G1() { return 0; }
 i32 G2() { return 1; }
@@ -105,13 +106,14 @@ string coordinate(JsonValue v, string key) {
   }
 }
 
-Vectors vectors(T t, Cli cli, i32 g) {
+Vectors vectors(T t, Files fs, i32 g) {
   Vectors none = Vectors(false, Good[].filled(0, Good("", "", "")), Bad[].filled(0, Bad("", "")));
   string path = "packages/bls/test/" + (g == G1() ? "g1.json" : "g2.json");
-  FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
-  if (!f.ok) { return none; }
-  JsonValue? doc = parse(f.bytes).ok();
+  auto fRead = flatten(fs.readFile(path).wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{path} could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return none; }
+  JsonValue? doc = parse(f!).ok();
   t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return none; }
 
@@ -135,10 +137,11 @@ Vectors vectors(T t, Cli cli, i32 g) {
 
 // ── The tests ─────────────────────────────────────────────────────────────────
 
-export string test_valid_points_decompress_to_the_coordinates_python_computed(Core core, Cli cli) {
+export string test_valid_points_decompress_to_the_coordinates_python_computed(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   for (i32 g = 0; g < 2; g++) {
-    Vectors v = vectors(t, cli, g);
+    Vectors v = vectors(t, fs, g);
     if (!v.ok) { continue; }
     t.isTrue(v.good.len() > 3, "\{groupName(g)}: only \{v.good.len()} good vectors");
     for (i32 i = 0; i < v.good.len(); i++) {
@@ -154,7 +157,8 @@ export string test_valid_points_decompress_to_the_coordinates_python_computed(Co
   return t.report();
 }
 
-export string test_compression_round_trips_so_there_is_one_encoding_per_point(Core core, Cli cli) {
+export string test_compression_round_trips_so_there_is_one_encoding_per_point(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The sign bit is recovered from y, so a point whose y is the smaller root and one whose y is
   // the larger must come back as different bytes — and as the same bytes they went in as.
@@ -162,7 +166,7 @@ export string test_compression_round_trips_so_there_is_one_encoding_per_point(Co
   // On G2 the sign convention compares `c1` before `c0`, which is easy to get backwards and shows
   // up only as a y that is the negation of the right one — invisible without a round trip.
   for (i32 g = 0; g < 2; g++) {
-    Vectors v = vectors(t, cli, g);
+    Vectors v = vectors(t, fs, g);
     if (!v.ok) { continue; }
     for (i32 i = 0; i < v.good.len(); i++) {
       t.eqStr(hex(roundTripOf(g, decoded(v.good[i].hexBytes))), v.good[i].hexBytes,
@@ -172,15 +176,15 @@ export string test_compression_round_trips_so_there_is_one_encoding_per_point(Co
   return t.report();
 }
 
-export string test_every_malformed_encoding_is_refused_and_refused_as_malformed(
-    Core core, Cli cli) {
+export string test_every_malformed_encoding_is_refused_and_refused_as_malformed(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // Status 1 means the *encoding* was rejected, which is the correct answer for all of these — a
   // point that decodes and then fails the curve check would be status 2, and that would mean the
   // encoding reader let something through it should have caught.
   i32[][] lengths = [[0, 47, 49, 96] as i32[], [0, 48, 95, 97, 192] as i32[]];
   for (i32 g = 0; g < 2; g++) {
-    Vectors v = vectors(t, cli, g);
+    Vectors v = vectors(t, fs, g);
     if (!v.ok) { continue; }
     t.isTrue(v.bad.len() > 0, "\{groupName(g)}: no bad vectors");
     for (i32 i = 0; i < v.bad.len(); i++) {
@@ -208,12 +212,13 @@ export string test_the_generators_have_order_r_and_the_degenerate_additions_are_
   return t.report();
 }
 
-export string test_scalar_multiples_of_the_generators_match_python(Core core, Cli cli) {
+export string test_scalar_multiples_of_the_generators_match_python(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The vectors were built as 1·G, 2·G, 3·G and (r−1)·G among others; check the small ones
   // directly against their own encodings.
   for (i32 g = 0; g < 2; g++) {
-    Vectors v = vectors(t, cli, g);
+    Vectors v = vectors(t, fs, g);
     if (!v.ok || v.good.len() < 4) { continue; }
     t.eqStr(hex(generatorOf(g)), v.good[1].hexBytes, "\{groupName(g)} generator");
     t.eqStr(hex(mulGeneratorOf(g, scalar(2))), v.good[2].hexBytes, "\{groupName(g)} 2·G");

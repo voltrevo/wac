@@ -35,11 +35,12 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeBinaryPath } from "../../../wactest/src/host.wac";
-import { Change, Core, Cli, Exec, FileResult } from "std";
+import { Change, Core, Cli, Exec, ChildEnv, Launch, Env, Files, Output, Procs, Stat, Sys, NotFound } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
 import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, DEFAULT_SECONDS } from "./hostfs.wac";
 import { Built, OPEN, SEALED, buildOne, builds, denoAll, difference, root, shell } from "./hostfs.wac";
+import { flatten } from "core";
 
 /** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs them all. */
 static i32 SAMPLE = 25;
@@ -61,16 +62,16 @@ static i32 SAMPLE = 25;
  * is the ordinary case on a first run, and `Change.absent` is the question `rm -f` asks. Anything else
  * is reported with the host's own words, because those are the only thing that knows.
  */
-string scratch(Core core, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/hostshell-\{name}";
-  Change gone = cli.remove(dir, true).wait();
-  if (!gone.ok() && !gone.absent()) {
-    core.warn("native_shell: could not clear \{dir} — \{gone.message}");
+string scratch(Output err, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/hostshell-\{name}";
+  auto gone = flatten(fs.remove(dir, true).wait());
+  if (gone.isErr() && !(gone.isErr() && gone.err()! is NotFound)) {
+    err.line("native_shell: could not clear \{dir} — \{gone.isErr() ? "\{gone.err()!}" : ""}");
     trap;
   }
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) {
-    core.warn("native_shell: could not create \{dir} — \{made.message}");
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) {
+    err.line("native_shell: could not create \{dir} — \{made.isErr() ? "\{made.err()!}" : ""}");
     trap;
   }
   return dir;
@@ -86,28 +87,31 @@ string scratch(Core core, Cli cli, string name) {
 
 
 
-export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not(
-    Core core, Cli cli) {
+export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Built b = builds(cli);
+  Built b = builds(env, fs, procs);
   t.isTrue(b.ok, "the shells built — \{b.error}");
   if (!b.ok) { return t.report(); }
-  string tmp = scratch(core, cli, "corpus");
+  string tmp = scratch(err, env, fs, "corpus");
 
   const string ALIVE = "mkdir /x; echo deep > /x/f; cat /x/f; seq 1 3 | tac | head -2";
   // The Deno half asserted on its own, so a skipped native half still tests something — and so that a
   // sealed session is known to be *doing* something rather than refusing everything.
-  Ran alive = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), ALIVE);
+  Ran alive = shell(env, procs, tmp, b.sealedDeno, string[].filled(0, ""), ALIVE);
   t.eqStr(alive.out, "deep\n3\n2\n", alive.err);
 
-  string native = nativeBinaryPath(cli, t);
+  string native = nativeBinaryPath(env, fs, t);
   if (native == "") {
-    cli.remove(tmp, true).wait();
+    fs.remove(tmp, true).wait();
     return t.report();
   }
   // The same assertion through the native host, before any comparison: two hosts that both did
   // nothing would agree on everything below.
-  Ran aliveNative = shell(core, cli, tmp, native, [b.sealedManifest], ALIVE);
+  Ran aliveNative = shell(env, procs, tmp, native, [b.sealedManifest], ALIVE);
   t.eqStr(aliveNative.out, "deep\n3\n2\n", aliveNative.err);
 
   string[] scripts = corpus();
@@ -115,13 +119,13 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   t.eqI32(n, SAMPLE, "the corpus is big enough to take a sample from");
   string[] sample = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { sample[i] = scripts[i]; }
-  Ran[] denoAnswers = denoAll(cli, tmp, string[].filled(0, ""), sample);
+  Ran[] denoAnswers = denoAll(env, procs, tmp, string[].filled(0, ""), sample);
 
   for (i32 i = 0; i < n; i++) {
     Ran a = denoAnswers[i];
     // A batch that did not answer marks every case hung; the retry is the process this replaced.
-    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), scripts[i]); }
-    Ran c = shell(core, cli, tmp, native, [b.sealedManifest], scripts[i]);
+    if (a.hung) { a = shell(env, procs, tmp, b.sealedDeno, string[].filled(0, ""), scripts[i]); }
+    Ran c = shell(env, procs, tmp, native, [b.sealedManifest], scripts[i]);
     // **A bound that fired is not an answer.** `timeout` reports 124, which no program chose, so a
     // run that never finished used to be printed as a host that disagreed — `native "" (124)` — and
     // read as a conformance failure. Issue 0128 is what that cost.
@@ -129,21 +133,24 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
     if (hung != "") { t.fail(hung); continue; }
     t.eqStr(difference(scripts[i], a, c), "", "the hosts differ");
   }
-  cli.remove(tmp, true).wait();
+  fs.remove(tmp, true).wait();
   return t.report();
 }
 
-export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle(
-    Core core, Cli cli) {
+export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string native = nativeBinaryPath(cli, t);
+  string native = nativeBinaryPath(env, fs, t);
   if (native == "") {
     return t.report();
   }
-  Built b = builds(cli);
+  Built b = builds(env, fs, procs);
   t.isTrue(b.ok, "the shells built — \{b.error}");
   if (!b.ok) { return t.report(); }
-  string tmp = scratch(core, cli, "applets");
+  string tmp = scratch(err, env, fs, "applets");
 
   // Chosen because each reaches a different part of the boundary: an applet's own output through
   // `Core.log`, a pipeline through `pushChild`'s captured frame, the synthesised files, the process
@@ -158,11 +165,11 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
     "echo hello | sha256sum",
     "for i in 1 2 3; do echo $i; done | tac"
   ];
-  Ran[] denoAnswers = denoAll(cli, tmp, string[].filled(0, ""), scripts);
+  Ran[] denoAnswers = denoAll(env, procs, tmp, string[].filled(0, ""), scripts);
   for (i32 i = 0; i < scripts.len(); i++) {
     Ran a = denoAnswers[i];
-    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), scripts[i]); }
-    Ran c = shell(core, cli, tmp, native, [b.sealedManifest], scripts[i]);
+    if (a.hung) { a = shell(env, procs, tmp, b.sealedDeno, string[].filled(0, ""), scripts[i]); }
+    Ran c = shell(env, procs, tmp, native, [b.sealedManifest], scripts[i]);
     string stuck = hangReport(scripts[i], ["deno", "native"], [a, c]);
     if (stuck != "") { t.fail(stuck); continue; }
     t.eqStr(c.out, a.out, "\{scripts[i]} — stdout");
@@ -172,18 +179,18 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
 
   // And one answer that is right rather than merely shared: `sha256sum` of "hello\n" is a number
   // neither host chose. Two hosts agreeing on a wrong hash would pass every assertion above.
-  Ran hash = shell(core, cli, tmp, native, [b.sealedManifest], "echo hello | sha256sum");
+  Ran hash = shell(env, procs, tmp, native, [b.sealedManifest], "echo hello | sha256sum");
   t.eqStr(hash.out,
           "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  -\n", hash.err);
-  cli.remove(tmp, true).wait();
+  fs.remove(tmp, true).wait();
   return t.report();
 }
 
 /** The first file of these that this machine has, so an empty answer means withheld not absent. */
-string hostFile(Cli cli) {
+string hostFile(Files fs) {
   string[] candidates = ["/etc/hostname", "/etc/hosts", "/etc/passwd"];
   for (string candidate in candidates) {
-    if (cli.stat(candidate).wait().isFile) { return candidate; }
+    if (flatten(fs.stat(candidate).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) { return candidate; }
   }
   return "";
 }
@@ -211,24 +218,27 @@ string firstLine(string text) {
  * withheld at build time instead, every assertion below would pass for the wrong reason, which is the
  * mistake `sealing.test.ts` records making once already.
  */
-export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on(
-    Core core, Cli cli) {
+export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string native = nativeBinaryPath(cli, t);
+  string native = nativeBinaryPath(env, fs, t);
   if (native == "") {
     return t.report();
   }
-  Built b = builds(cli);
+  Built b = builds(env, fs, procs);
   t.isTrue(b.ok, "the shells built — \{b.error}");
   if (!b.ok) { return t.report(); }
-  string tmp = scratch(core, cli, "seal");
+  string tmp = scratch(err, env, fs, "seal");
 
   // The machine has these, so an empty answer means they were withheld rather than absent.
   string home = "";
-  u8[]? h = cli.env("HOME").wait();
+  u8[]? h = flatten(env.get("HOME").wait()).orElse(null);
   if (h is not null) { home = string.fromBytes(h!); }
   t.isTrue(home.len() > 0, "this machine has no HOME to leak");
-  if (home.len() == 0) { cli.remove(tmp, true).wait(); return t.report(); }
+  if (home.len() == 0) { fs.remove(tmp, true).wait(); return t.report(); }
 
   // **And the grant is live on *both* hosts**, which is the canary this test cannot do without: a
   // seal assertion passes just as well against a runtime that never reads the environment for
@@ -254,21 +264,19 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   // `$USER` stays empty, and nothing below asks the open shell about it. The sealed shells are the ones
   // held to `[] [] []`.
   string path = "";
-  u8[]? pv = cli.env("PATH").wait();
+  u8[]? pv = flatten(env.get("PATH").wait()).orElse(null);
   if (pv is not null) { path = string.fromBytes(pv!); }
   string[] onlyHome = ["HOME=\{home}", "PATH=\{path}"];
-  Exec seesDeno = cli.execWith(b.openDeno, ["-c", "echo HOME=[$HOME]"], u8[](),
-                               onlyHome, true, false).wait();
+  Exec seesDeno = flatten(procs.exec(b.openDeno, ["-c", "echo HOME=[$HOME]"], u8[](), ChildEnv(true, onlyHome), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(contains(string.fromBytes(seesDeno.stdout), home),
            "the deno host does not read the environment at all, so the seal below proves nothing: " +
            string.fromBytes(seesDeno.stdout) + string.fromBytes(seesDeno.stderr));
-  Exec seesNative = cli.execWith(native, [b.openManifest, "-c", "echo HOME=[$HOME]"],
-                                 u8[](), onlyHome, true, false).wait();
+  Exec seesNative = flatten(procs.exec(native, [b.openManifest, "-c", "echo HOME=[$HOME]"], u8[](), ChildEnv(true, onlyHome), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(contains(string.fromBytes(seesNative.stdout), home),
            "the native host does not read the environment at all, so the seal below proves nothing: " +
            string.fromBytes(seesNative.stdout) + string.fromBytes(seesNative.stderr));
 
-  string file = hostFile(cli);
+  string file = hostFile(fs);
   if (file == "") { file = "/etc/hostname"; }
 
   string[] scripts = [
@@ -306,11 +314,11 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   // Built *with* read, write and env, which is what makes this a test of the seal rather than of a
   // build that could not reach anything — so the batch is given the same three grants.
   string[] granted = ["--allow-read", "--allow-write", "--allow-env"];
-  Ran[] denoAnswers = denoAll(cli, tmp, granted, scripts);
+  Ran[] denoAnswers = denoAll(env, procs, tmp, granted, scripts);
   for (i32 i = 0; i < scripts.len() && i < wants.len(); i++) {
     Ran a = denoAnswers[i];
-    if (a.hung) { a = shell(core, cli, tmp, b.grantedDeno, string[].filled(0, ""), scripts[i]); }
-    Ran c = shell(core, cli, tmp, native, [b.grantedManifest], scripts[i]);
+    if (a.hung) { a = shell(env, procs, tmp, b.grantedDeno, string[].filled(0, ""), scripts[i]); }
+    Ran c = shell(env, procs, tmp, native, [b.grantedManifest], scripts[i]);
     string stuck = hangReport(scripts[i], ["deno", "native"], [a, c]);
     if (stuck != "") { t.fail(stuck); continue; }
     // **Each host against the claim first, then against the other.** Two hosts that leaked the same
@@ -325,17 +333,15 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
 
   // The host's own file must not appear in either answer — checked on the text rather than on the
   // status, because `cat x | head -1` reports `head`'s status and not `cat`'s.
-  FileResult f = cli.readFile(file).wait();
-  string first = f.ok ? firstLine(string.fromBytes(f.bytes)) : "";
+  u8[]? f = flatten(fs.readFile(file).wait()).ok();
+  string first = (f is not null) ? firstLine(string.fromBytes(f!)) : "";
   t.isTrue(first.len() > 0, "the host file this checks for is empty, so the check below is vacuous");
   if (first.len() > 0) {
-    Ran seenDeno = shell(core, cli, tmp, b.grantedDeno, string[].filled(0, ""),
-                         "cat \{file} | head -1");
+    Ran seenDeno = shell(env, procs, tmp, b.grantedDeno, string[].filled(0, ""), "cat \{file} | head -1");
     t.isFalse(contains(seenDeno.out, first), "deno read \{file}: \{seenDeno.out}");
-    Ran seenNative = shell(core, cli, tmp, native, [b.grantedManifest],
-                           "cat \{file} | head -1");
+    Ran seenNative = shell(env, procs, tmp, native, [b.grantedManifest], "cat \{file} | head -1");
     t.isFalse(contains(seenNative.out, first), "native read \{file}: \{seenNative.out}");
   }
-  cli.remove(tmp, true).wait();
+  fs.remove(tmp, true).wait();
   return t.report();
 }

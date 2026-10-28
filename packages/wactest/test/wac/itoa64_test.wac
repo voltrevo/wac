@@ -23,7 +23,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 
 static string ORACLE = "packages/wactest/test/oracle.ts";
 
@@ -47,7 +47,8 @@ void both(Lines lines, u64 v) {
   lines.add("i \{bits(v)} \{signed}");
 }
 
-export string test_itoa64_and_utoa64_agree_with_bigint(Core core, Cli cli) {
+export string test_itoa64_and_utoa64_agree_with_bigint(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Lines lines = Lines.create();
 
@@ -69,6 +70,6 @@ export string test_itoa64_and_utoa64_agree_with_bigint(Core core, Cli cli) {
     both(lines, s);
   }
   t.isTrue(lines.n > 800, "the sweep is both readings of every pattern — \{lines.n} rows");
-  checkDeno(t, cli, ORACLE, lines, "interpolating u64 and i64");
+  checkDeno(t, procs, ORACLE, lines, "interpolating u64 and i64");
   return t.report();
 }

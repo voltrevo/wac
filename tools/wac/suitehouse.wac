@@ -14,16 +14,17 @@
 // asks `/bin/chmod` for it, through the capability that runs a host program, and says so where it
 // happens. That is a real gap rather than a translation: three of these entries exist per week.
 
-import { Cli, Core, Exec, FileResult, Stat } from "std";
+import { Cli, Exec, Stat, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { startsWith, endsWith, splitLines } from "../../packages/wactest/src/strings.wac";
 import { envOf } from "./suitegate.wac";
+import { flatten } from "core";
 
 /** Deno's cache directory, wherever this environment puts it. */
-export string denoDir(Cli cli) {
-  string dir = envOf(cli, "DENO_DIR");
+export string denoDir(Env env) {
+  string dir = envOf(env, "DENO_DIR");
   if (dir != "") { return dir; }
-  string home = envOf(cli, "HOME");
+  string home = envOf(env, "HOME");
   return (home == "" ? "/root" : home) + "/.cache/deno";
 }
 
@@ -36,18 +37,18 @@ i64 dayMs() { return 24 as i64 * (3600000 as i64); }
 i64 mb(i64 bytes) { return bytes / (1024 as i64) / (1024 as i64); }
 
 /** Whether anything is at this path, following no links — `existsSync`'s question. */
-bool present(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
+bool present(Files fs, string path) { return flatten(fs.linkStat(path).wait()).isOk(); }
 
 /** Every byte under `path`, counting a file as itself and a directory as its contents. */
-i64 sizeOf(Cli cli, string path) {
-  Stat s = cli.linkStat(path).wait();
-  if (!s.exists) { return 0 as i64; }
-  if (!s.isDir) { return s.size; }
-  string[]? entries = cli.readDir(path).wait();
+i64 sizeOf(Files fs, string path) {
+  Stat? s = flatten(fs.linkStat(path).wait()).ok();
+  if ((s is null)) { return 0 as i64; }
+  if (!(s is not null && s!.isDir)) { return s!.size; }
+  string[]? entries = flatten(fs.readDir(path).wait()).ok();
   if (entries is null) { return 0 as i64; }
   string[] names = entries!;
   i64 total = 0 as i64;
-  for (i32 i = 0; i < names.len(); i++) { total = total + sizeOf(cli, path + "/" + names[i]); }
+  for (i32 i = 0; i < names.len(); i++) { total = total + sizeOf(fs, path + "/" + names[i]); }
   return total;
 }
 
@@ -59,13 +60,12 @@ i64 sizeOf(Cli cli, string path) {
  * whether the path is gone, so the caller can name what it could not sweep rather than swallowing it
  * — a cleanup that fails quietly is how 2,300 temp entries accumulated in the first place.
  */
-export bool removeWidening(Cli cli, string path) {
-  cli.remove(path, true).wait();
-  if (!present(cli, path)) { return true; }
-  cli.execWith("/bin/chmod", ["-R", "u+rwX", path], u8[](), string[].filled(0, ""),
-               false, false).wait();
-  cli.remove(path, true).wait();
-  return !present(cli, path);
+export bool removeWidening(Files fs, Procs procs, string path) {
+  fs.remove(path, true).wait();
+  if (!present(fs, path)) { return true; }
+  flatten(procs.exec("/bin/chmod", ["-R", "u+rwX", path], u8[](), ChildEnv(false, string[].filled(0, "")), Launch("", false, false, false)).wait()).unwrap();
+  fs.remove(path, true).wait();
+  return !present(fs, path);
 }
 
 /**
@@ -74,25 +74,25 @@ export bool removeWidening(Cli cli, string path) {
  * One implementation, because `tools/push.sh` calls this too — through the runner's `guard`
  * subcommand rather than by knowing where the cache is.
  */
-export void guardCodeCache(Core core, Cli cli) {
-  string db = denoDir(cli) + "/v8_code_cache_v2";
-  Stat s = cli.stat(db).wait();
-  if (!s.exists) { return; }                       // no cache yet, nothing to bound
-  if (s.size <= cacheLimitBytes()) { return; }
-  core.log("clearing Deno's code cache: " + itoa64(mb(s.size)) + " MB, over the " +
+export void guardCodeCache(Output out, Env env, Files fs) {
+  string db = denoDir(env) + "/v8_code_cache_v2";
+  Stat? s = flatten(fs.stat(db).wait()).ok();
+  if ((s is null)) { return; }                       // no cache yet, nothing to bound
+  if (s!.size <= cacheLimitBytes()) { return; }
+  out.line("clearing Deno's code cache: " + itoa64(mb(s!.size)) + " MB, over the " +
            itoa64(mb(cacheLimitBytes())) + " MB limit");
-  cli.remove(db, false).wait();
-  cli.remove(db + "-wal", false).wait();
-  cli.remove(db + "-shm", false).wait();
+  fs.remove(db, false).wait();
+  fs.remove(db + "-wal", false).wait();
+  fs.remove(db + "-shm", false).wait();
 }
 
 /** Everything Deno caches, for when the disk is actually full. `push.sh free` calls this. */
-export void freeCaches(Cli cli) {
-  string dir = denoDir(cli);
-  cli.remove(dir + "/v8_code_cache_v2", false).wait();
-  cli.remove(dir + "/v8_code_cache_v2-wal", false).wait();
-  cli.remove(dir + "/v8_code_cache_v2-shm", false).wait();
-  cli.remove(dir + "/gen", true).wait();
+export void freeCaches(Env env, Files fs) {
+  string dir = denoDir(env);
+  fs.remove(dir + "/v8_code_cache_v2", false).wait();
+  fs.remove(dir + "/v8_code_cache_v2-wal", false).wait();
+  fs.remove(dir + "/v8_code_cache_v2-shm", false).wait();
+  fs.remove(dir + "/gen", true).wait();
 }
 
 /**
@@ -108,9 +108,9 @@ export void freeCaches(Cli cli) {
  * *could* delete a lock held by a live run is not something to leave resting on an arithmetic
  * argument.
  */
-export void sweepStaleTemp(Core core, Cli cli) {
-  i64 now = core.nowMillis().wait();
-  string[]? entries = cli.readDir("/tmp").wait();
+export void sweepStaleTemp(Output out, Clock clock, Files fs, Procs procs) {
+  i64 now = flatten(clock.nowMillis().wait()).unwrap();
+  string[]? entries = flatten(fs.readDir("/tmp").wait()).ok();
   if (entries is null) { return; }
   string[] names = entries!;
   i32 gone = 0;
@@ -128,11 +128,11 @@ export void sweepStaleTemp(Core core, Cli cli) {
     if (name == "wac-suite.lock") { continue; }
     if (startsWith(name, "wac-suite-last-")) { continue; }
     string path = "/tmp/" + name;
-    Stat s = cli.linkStat(path).wait();
-    if (!s.exists) { continue; }
-    if (now - s.modifiedMillis < dayMs()) { continue; }
-    i64 was = s.isDir ? 0 as i64 : s.size;
-    if (removeWidening(cli, path)) {
+    Stat? s = flatten(fs.linkStat(path).wait()).ok();
+    if ((s is null)) { continue; }
+    if (now - s!.modifiedMillis < dayMs()) { continue; }
+    i64 was = (s is not null && s!.isDir) ? 0 as i64 : s!.size;
+    if (removeWidening(fs, procs, path)) {
       gone = gone + 1;
       bytes = bytes + was;
     } else {
@@ -141,11 +141,11 @@ export void sweepStaleTemp(Core core, Cli cli) {
     }
   }
   if (gone > 0) {
-    core.log("swept " + itoa(gone) + (gone == 1 ? " temp entry" : " temp entries") +
+    out.line("swept " + itoa(gone) + (gone == 1 ? " temp entry" : " temp entries") +
              " older than a day (0136)");
   }
   if (stuck > 0) {
-    core.log("could not sweep " + itoa(stuck) + " (0136): " + first +
+    out.line("could not sweep " + itoa(stuck) + " (0136): " + first +
              (stuck > 1 ? " — and " + itoa(stuck - 1) + " more" : ""));
   }
 }
@@ -169,8 +169,8 @@ struct Dropped {
  * when the path it was built from is gone, so a surviving entry can still be hit and a removed one
  * never could.
  */
-Dropped dropOrphaned(Cli cli, string mirror, string source) {
-  string[]? entries = cli.readDir(mirror).wait();
+Dropped dropOrphaned(Files fs, Procs procs, string mirror, string source) {
+  string[]? entries = flatten(fs.readDir(mirror).wait()).ok();
   if (entries is null) { return Dropped(0, 0 as i64); }  // no such mirror, the normal state
   string[] names = entries!;
   i32 gone = 0;
@@ -179,16 +179,16 @@ Dropped dropOrphaned(Cli cli, string mirror, string source) {
     string name = names[i];
     string stem = endsWith(name, ".js") ? name.slice(0, name.len() - 3) : name;
     string path = mirror + "/" + name;
-    if (present(cli, source + "/" + stem) || present(cli, source + "/" + name)) {
-      if (cli.linkStat(path).wait().isDir) {
-        Dropped r = dropOrphaned(cli, path, source + "/" + name);
+    if (present(fs, source + "/" + stem) || present(fs, source + "/" + name)) {
+      if (flatten(fs.linkStat(path).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isDir) {
+        Dropped r = dropOrphaned(fs, procs, path, source + "/" + name);
         gone = gone + r.gone;
         bytes = bytes + r.bytes;
       }
       continue;
     }
-    i64 was = sizeOf(cli, path);
-    if (removeWidening(cli, path)) {
+    i64 was = sizeOf(fs, path);
+    if (removeWidening(fs, procs, path)) {
       gone = gone + 1;
       bytes = bytes + was;
     }
@@ -203,12 +203,12 @@ Dropped dropOrphaned(Cli cli, string mirror, string source) {
  * agent, 5.7 GB of it mirroring staging directories that had already been deleted. This is the mop,
  * and `wac-mono 0068` still asks for reuse rather than sweeping.
  */
-export void dropUnreachableTranspiles(Core core, Cli cli) {
+export void dropUnreachableTranspiles(Output out, Env env, Files fs, Procs procs) {
   // The whole mirror, from the root: an empty source root makes the first level `/home`, `/tmp` and
   // their siblings, which is why this takes one call rather than a list somebody has to keep current.
-  Dropped r = dropOrphaned(cli, denoDir(cli) + "/gen/file", "");
+  Dropped r = dropOrphaned(fs, procs, denoDir(env) + "/gen/file", "");
   if (r.gone > 0) {
-    core.log("dropped " + itoa(r.gone) + " transpile(s) of sources that no longer exist, " +
+    out.line("dropped " + itoa(r.gone) + " transpile(s) of sources that no longer exist, " +
              itoa64(mb(r.bytes)) + " MB (0068)");
   }
 }
@@ -286,8 +286,8 @@ export string mergedTimes(string existing, string[] fresh) {
  */
 static i64 STALE_MS = 7200000 as i64;
 
-export void reapStaleDaemons(Core core, Cli cli) {
-  reapMatching(core, cli, cli.cwd().wait() + "/.cache/", STALE_MS);
+export void reapStaleDaemons(Output out, Env env, Procs procs) {
+  reapMatching(out, procs, flatten(env.cwd().wait()).unwrap() + "/.cache/", STALE_MS);
 }
 
 /**
@@ -303,10 +303,9 @@ export void reapStaleDaemons(Core core, Cli cli) {
  * So `needle` is a parameter too. A caller proving the bound fires narrows to its own probe; the
  * housekeeping call passes the whole of `.cache`, which is what it means.
  */
-export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
+export void reapMatching(Output out, Procs procs, string needle, i64 staleMs) {
   string mine = needle;
-  Exec listed = cli.execWith("/bin/ps", ["-eo", "pid,etimes,args", "--no-headers"],
-                             u8[](), string[].filled(0, ""), false, false).wait();
+  Exec listed = flatten(procs.exec("/bin/ps", ["-eo", "pid,etimes,args", "--no-headers"], u8[](), ChildEnv(false, string[].filled(0, "")), Launch("", false, false, false)).wait()).unwrap();
   if (!listed.ran()) { return; }
 
   string[] lines = splitLines(string.fromBytes(listed.stdout));
@@ -333,7 +332,7 @@ export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
       seconds = seconds * (10 as i64) + ((b[d] as i32 - 48) as i64);
     }
     if (seconds * (1000 as i64) < staleMs) { continue; }
-    cli.execWith("/bin/kill", ["-9", pid], u8[](), string[].filled(0, ""), false, false).wait();
+    flatten(procs.exec("/bin/kill", ["-9", pid], u8[](), ChildEnv(false, string[].filled(0, "")), Launch("", false, false, false)).wait()).unwrap();
     if (first == "") { first = pid; }
     reaped = reaped + 1;
   }
@@ -342,7 +341,7 @@ export void reapMatching(Core core, Cli cli, string needle, i64 staleMs) {
     // the same line otherwise, and one of them reaping something is ordinary while the other is
     // news. Reading `reaped 2` in a gate log without that, I took a test's kill for a leak found —
     // it was the test with an unscoped bound taking its own probe *and* another lane's build.
-    core.log("reaped " + itoa(reaped) + (reaped == 1 ? " stale daemon" : " stale daemons") +
+    out.line("reaped " + itoa(reaped) + (reaped == 1 ? " stale daemon" : " stale daemons") +
              " matching " + needle + ", first pid " + first +
              " — a test that died before stop() (0136)");
   }

@@ -10,16 +10,15 @@
 // instead of all but the first — a different answer rather than a missing one, which is the shape of
 // mistake this repo keeps finding.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream, operandCount } from "../lib/input.wac";
+import { Opened, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 tail(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+export async i32 tail(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (a.badNum != "") { err.line(badNumberMessage(a)); return 1; }
   i32 want = a.hasNum ? a.num : 10;
   // `-n +N` counts from the front. `+0` and `+1` are both the whole input, as GNU's are.
   bool fromLine = a.numSign == "+";
@@ -32,13 +31,13 @@ export async i32 tail(Core core, Cli cli, Fs fs, Args a) {
   i32 files = operandCount(a, 0);
   i32 fileCount = files == 0 ? 1 : files;
   bool banner = files > 1;
-  Sink out = Sink.create(cli);
+  Sink sink = Sink.to(out);
   for (i32 f = 0; f < fileCount; f++) {
-  Input in = await openStream(core, cli, fs, a, f, -1);
+  Opened in = await openStream(stdin, err, fs, a, f);
   if (!in.ok) { return 1; }
   if (banner) {
-    if (f > 0) { out.line(""); }
-    out.line("==> " + in.label + " <==");
+    if (f > 0) { sink.line(""); }
+    sink.line("==> " + in.label + " <==");
   }
 
   if (bytes) {
@@ -50,7 +49,7 @@ export async i32 tail(Core core, Cli cli, Fs fs, Args a) {
     if (from > all.len()) { from = all.len(); }
     u8[] piece = u8[].filled(all.len() - from, 0);
     piece.copyFrom(all, from, 0, all.len() - from);
-    if (!emitTo(out, piece, false)) { out.flush(); return 0; }
+    if (!emitTo(sink, piece, false)) { sink.flush(); return 0; }
     continue;
   }
   if (fromLine) {
@@ -63,7 +62,7 @@ export async i32 tail(Core core, Cli cli, Fs fs, Args a) {
       if (!l.ok) { break; }
       at++;
       if (at <= skip) { continue; }
-      if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return 0; }
+      if (!emitTo(sink, l.bytes, l.nl)) { sink.flush(); return 0; }
     }
     continue;
   }
@@ -87,10 +86,10 @@ export async i32 tail(Core core, Cli cli, Fs fs, Args a) {
   i32 first = seen < want ? 0 : seen % want;
   for (i32 i = 0; i < take; i++) {
     i32 k = (first + i) % want;
-    if (!emitTo(out, ring[k], terminated[k])) { out.flush(); return 0; }
+    if (!emitTo(sink, ring[k], terminated[k])) { sink.flush(); return 0; }
   }
   }
-  out.flush();
+  sink.flush();
   return 0;
 }
 

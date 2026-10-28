@@ -696,7 +696,7 @@ export function unpackSpawn(
 /** The same, for `spawnSelf`, which needs no source: grants, arguments, directory. */
 export function unpackSpawnSelf(
   p: Uint8Array,
-): { args: Uint8Array[]; cwd: string; inheritIn: boolean; serveFs: boolean } {
+): { args: Uint8Array[]; cwd: string; inheritIn: boolean; inheritOut: boolean; serveFs: boolean } {
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
   const dec = new TextDecoder();
   const after = unpackArgs(p, 4);
@@ -704,7 +704,9 @@ export function unpackSpawnSelf(
   return {
     args: after.args,
     cwd: dec.decode(p.subarray(after.at + 4, after.at + 4 + cwdLen)),
-    inheritIn: p[after.at + 4 + cwdLen] === 1,
+    // `INHERIT_IN | INHERIT_OUT` in one byte, as `spawn` carries them in four.
+    inheritIn: (p[after.at + 4 + cwdLen] & 1) !== 0,
+    inheritOut: (p[after.at + 4 + cwdLen] & 2) !== 0,
     // **Two trailing flags now**, and the second is a promise rather than a grant: whether the
     // parent will answer this child's filesystem questions. See `spawnSelf` in platform.wac.
     serveFs: p[after.at + 5 + cwdLen] === 1,

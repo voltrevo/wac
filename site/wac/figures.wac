@@ -8,8 +8,8 @@
 // by importing them, and the test files by counting them. The pages still round the headline figures:
 // a snapshot of a moving tree should not pretend to four significant digits.
 
-import { Cli, FileResult, Stat } from "std";
-import { Vec } from "core";
+import { Stat, Files } from "std";
+import { Vec, flatten } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { appletNames } from "../../packages/box/src/box.wac";
 import { countTestsDeclaredHere } from "../../tools/wac/map.wac";
@@ -82,8 +82,8 @@ export struct Figures {
 }
 
 /** Everything the site quotes, from the tree at `root` (`"."` from the repository's root). Traps on a file whose format moved. */
-export Figures readFigures(Cli cli, string root) {
-  string map = readText(cli, root + "/MAP.md");
+export Figures readFigures(Files fs, string root) {
+  string map = readText(fs, root + "/MAP.md");
   string[] lines = linesOf(map);
   i32[] head = i32[].filled(5, 0 - 1);
   for (i32 i = 0; i + 1 < lines.len(); i++) {
@@ -112,20 +112,20 @@ export Figures readFigures(Cli cli, string root) {
 
   i32 other = 0;
   for (string dir in ["compiler", "harness", "tools", "site/tools"]) {
-    for (string f in filesUnder(cli, root + "/" + dir)) {
-      if (endsWith(f, ".test.ts")) { other += countTestsDeclaredHere(readText(cli, f)); }
+    for (string f in filesUnder(fs, root + "/" + dir)) {
+      if (endsWith(f, ".test.ts")) { other += countTestsDeclaredHere(readText(fs, f)); }
     }
   }
   i32 wacTests = 0;
-  string[]? pkgs = cli.readDir(root + "/packages").wait();
+  string[]? pkgs = flatten(fs.readDir(root + "/packages").wait()).ok();
   for (string p in pkgs ?? string[]()) {
-    for (string f in filesUnder(cli, root + "/packages/" + p + "/test")) {
+    for (string f in filesUnder(fs, root + "/packages/" + p + "/test")) {
       if (endsWith(f, ".wac")) { wacTests++; }
     }
   }
 
   SpecStatus spec = SpecStatus(0, 0, 0, 0);
-  for (string l in linesOf(readText(cli, root + "/spec/_status/STATUS.md"))) {
+  for (string l in linesOf(readText(fs, root + "/spec/_status/STATUS.md"))) {
     // `| spec/2-types/16-strings.md | 17 | 17 | 0 | 0 |`
     if (l.indexOf("| spec/") != 0) { continue; }
     string[] cells = cellsOf(l);
@@ -139,14 +139,14 @@ export Figures readFigures(Cli cli, string root) {
   for (i32 i = 0; i < rows.len(); i++) { built[i] = rows.get(i); }
   Totals t = Totals(head[0], head[1], head[2], head[3], head[4], head[2] + other, corpus().len(), appletNames().len(),
                     wacTests);
-  return Figures(t, treeOf(cli, root), built, spec);
+  return Figures(t, treeOf(fs, root), built, spec);
 }
 
-Tree treeOf(Cli cli, string root) {
+Tree treeOf(Files fs, string root) {
   Vec<string> tags = Vec.create();
-  for (string f in filesUnder(cli, root + "/spec")) {
+  for (string f in filesUnder(fs, root + "/spec")) {
     if (!endsWith(f, ".md")) { continue; }
-    string text = readText(cli, f);
+    string text = readText(fs, f);
     i32 at = text.indexOf("[§wac-");
     while (at >= 0) {
       i32 end = at + 2;
@@ -164,27 +164,27 @@ Tree treeOf(Cli cli, string root) {
   }
   i32 sources = 0;
   i32 lines = 0;
-  string[]? names = cli.readDir(root + "/packages/wacc/src").wait();
+  string[]? names = flatten(fs.readDir(root + "/packages/wacc/src").wait()).ok();
   for (string n in names ?? string[]()) {
     if (!endsWith(n, ".wac")) { continue; }
     sources++;
-    lines += newlines(readText(cli, root + "/packages/wacc/src/" + n));
+    lines += newlines(readText(fs, root + "/packages/wacc/src/" + n));
   }
   i32[] rungs = i32[].filled(5, 0);
   string[] rungFiles = ["l1.l0", "l2.l1", "l3.l2", "l4.l3", "l5.l4"];
-  for (i32 i = 0; i < 5; i++) { rungs[i] = newlines(readText(cli, root + "/bootstrap/boot/" + rungFiles[i])); }
+  for (i32 i = 0; i < 5; i++) { rungs[i] = newlines(readText(fs, root + "/bootstrap/boot/" + rungFiles[i])); }
   string[] trustedFiles = ["bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0", "bootstrap/rust-ladder/src/flatten.rs"];
   i32[] trusted = i32[].filled(3, 0);
-  for (i32 i = 0; i < 3; i++) { trusted[i] = newlines(readText(cli, root + "/" + trustedFiles[i])); }
+  for (i32 i = 0; i < 3; i++) { trusted[i] = newlines(readText(fs, root + "/" + trustedFiles[i])); }
   // As `tools/wac/coverageall.wac` derives them: a package is a directory under `packages/` with a
   // `src/`, and it carries a ledger if `tasks.json5` has a `coverage:<name>` task.
-  string tasks = readText(cli, root + "/tasks.json5");
+  string tasks = readText(fs, root + "/tasks.json5");
   Vec<string> without = Vec.create();
   i32 pkgs = 0;
-  string[]? dirs = cli.readDir(root + "/packages").wait();
+  string[]? dirs = flatten(fs.readDir(root + "/packages").wait()).ok();
   for (string d in dirs ?? string[]()) {
-    Stat st = cli.stat(root + "/packages/" + d + "/src").wait();
-    if (!st.isDir) { continue; }
+    Stat? st = flatten(fs.stat(root + "/packages/" + d + "/src").wait()).ok();
+    if (!(st is not null && st!.isDir)) { continue; }
     pkgs++;
     if (tasks.indexOf("\"coverage:" + d + "\"") < 0) { without.push(d); }
   }
@@ -223,24 +223,25 @@ export string commas(i32 v) {
 }
 
 /** A file's text; a file that cannot be read traps, since a figure read from nothing is a wrong figure. */
-export string readText(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { trap path + ": " + r.error; }
-  return string.fromBytes(r.bytes);
+export string readText(Files fs, string path) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) { trap path + ": " + "\{rRead.isErr() ? "\{rRead.err()!}" : ""}"; }
+  return string.fromBytes(r!);
 }
 
 /** Every file under `dir`, recursively; none when it is not there. */
-export string[] filesUnder(Cli cli, string dir) {
+export string[] filesUnder(Files fs, string dir) {
   Vec<string> out = Vec.create();
   Vec<string> todo = Vec.create();
   todo.push(dir);
   while (todo.len() > 0) {
     string at = todo.pop()!;
-    string[]? names = cli.readDir(at).wait();
+    string[]? names = flatten(fs.readDir(at).wait()).ok();
     for (string n in names ?? string[]()) {
       string path = at + "/" + n;
-      Stat s = cli.stat(path).wait();
-      if (s.isDir) { todo.push(path); } else { out.push(path); }
+      Stat? s = flatten(fs.stat(path).wait()).ok();
+      if ((s is not null && s!.isDir)) { todo.push(path); } else { out.push(path); }
     }
   }
   string[] all = string[].filled(out.len(), "");

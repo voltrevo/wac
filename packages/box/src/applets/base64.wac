@@ -4,31 +4,30 @@
 // by name, and the output looks like base64 either way. `packages/codec` has had `decode` all along, so
 // the flag was one import from working (wac-mono 0105).
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Buf } from "core";
-import { Input, readInput } from "../lib/input.wac";
+import { Opened, readInput } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
 
 import { decode as unb64, encode as b64, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { extraOperand } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 base64(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (extraOperand(core, a, 1)) { return 1; }
-  Input in = await readInput(core, cli, fs, a, 0);
+export async i32 base64(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (extraOperand(err, a, 1)) { return 1; }
+  Opened in = await readInput(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
   if (has(a, 'd')) {
-    u8[]? out = unb64(withoutSpace(in.bytes));
-    if (out is null) {
+    u8[]? decoded = unb64(withoutSpace(in.bytes));
+    if (decoded is null) {
       // GNU's own sentence, and its status: a decode that cannot be done is not an empty result.
-      core.warn("\{a.name}: invalid input");
+      err.line("\{a.name}: invalid input");
       return 1;
     }
-    cli.write(out!);
+    out.write(decoded!);
     return 0;
   }
   // **Wrapped at 76 columns, and nothing at all for empty input** — both GNU's, and neither was here:
@@ -39,7 +38,7 @@ export async i32 base64(Core core, Cli cli, Fs fs, Args a) {
   // `-w N` sets the width and `-w 0` turns wrapping off, which is why this is a number rather than a
   // flag. A `0` has to be distinguishable from "not given", which is what `hasNum` is for.
   i32 width = a.hasNum ? a.num : 76;
-  cli.write(wrapped(b64(in.bytes, ALPHABET_STANDARD(), true), width));
+  out.write(wrapped(b64(in.bytes, ALPHABET_STANDARD(), true), width));
   return 0;
 }
 

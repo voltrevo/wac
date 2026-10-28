@@ -43,7 +43,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std";
+import { Core, Env, Files, Procs, Sys } from "std";
 import { buildFiles, manifestWire, describeSeparator } from "../../src/api.wac";
 import { Built } from "../../src/emit.wac";
 import { withManifestSection } from "../../src/manifest.wac";
@@ -58,9 +58,12 @@ string baseName(string path) {
   return path;
 }
 
-export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) {
+export string test_rung_5_how_much_of_wacc_can_wacc_compile(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "selfemit_test");
+  Corpus c = loadCorpus(fs, "selfemit_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
@@ -68,7 +71,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
   t.isTrue(own.len() >= 8, "found wacc's sources: " + itoa(own.len()));
   if (own.len() < 8) { return t.report(); }
 
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   i32 whole = 0;
   i32 invalid = 0;
   string[] declined = string[].filled(own.len(), "");
@@ -103,7 +106,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
     // load it as one artefact. `manifestWire` is `manifestFiles` given the metadata rather than
     // re-deriving it.
     u8[] wasm = withManifestSection(b.wasm, manifestWire(b.wasm, types, sigs, own[i], name, 0));
-    Ran r = runModule(cli, wasm, dir, "selfemit_" + name + ".wasm", string[].filled(0, ""));
+    Ran r = runModule(env, fs, procs, wasm, dir, "selfemit_" + name + ".wasm", string[].filled(0, ""));
     if (!r.ok || wasRejected(r)) {
       invalid = invalid + 1;
       rejected[nRejected] = name + (r.ok ? " — " + r.stderr : " — " + r.error);

@@ -27,10 +27,11 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "std";
+import { Cli, Exec, Stat, Env, Files, Procs, Sys } from "std";
 import { equal } from "../../../bytes/src/slice.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { onlyEnv } from "../../../wactest/src/childenv.wac";
+import { flatten } from "core";
 
 /**
  * One capture recipe: the two tools that implement it and the file they must both write.
@@ -50,47 +51,47 @@ struct Recipe {
 }
 
 /** `$PATH`, or "" — the recipes spawn `python3` and `deno` by name, so a child with none finds neither. */
-string pathVar(Cli cli) {
-  u8[]? v = cli.env("PATH").wait();
+string pathVar(Env env) {
+  u8[]? v = flatten(env.get("PATH").wait()).orElse(null);
   return v is null ? "" : string.fromBytes(v!);
 }
 
 /** `$HOME`, or `/root` where there is none — the same fallback the tools use. */
-string home(Cli cli) {
-  u8[]? v = cli.env("HOME").wait();
+string home(Env env) {
+  u8[]? v = flatten(env.get("HOME").wait()).orElse(null);
   return v is null ? "/root" : string.fromBytes(v!);
 }
 
 /** The path `capture-hsntor` will look for, so a skip can name the real reason. */
-string torProg(Cli cli) {
-  u8[]? set = cli.env("TOR_HS_NTOR_CL").wait();
+string torProg(Env env) {
+  u8[]? set = flatten(env.get("TOR_HS_NTOR_CL").wait()).orElse(null);
   if (!(set is null)) { return string.fromBytes(set!); }
-  return "\{home(cli)}/tor-build/torproject-tor-c8d2b17/src/test/test-hs-ntor-cl";
+  return "\{home(env)}/tor-build/torproject-tor-c8d2b17/src/test/test-hs-ntor-cl";
 }
 
 /** chutney's nodes directory under *this* agent's workspace — the tools derive it the same way. */
-string chutneyNodes(Cli cli) {
-  string cwd = cli.cwd().wait();
+string chutneyNodes(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   i32 at = cwd.indexOf("/agent-");
-  if (at < 0) { return "\{home(cli)}/chutney/net/nodes"; }
+  if (at < 0) { return "\{home(env)}/chutney/net/nodes"; }
   i32 end = at + 1;
   u8[] b = cwd.toBytes();
   while (end < b.len() && b[end] != '/') { end = end + 1; }
   return "\{cwd.slice(0, end)}/workspaces/chutney/net/nodes";
 }
 
-Recipe[] recipes(Cli cli) {
-  string lib = "\{home(cli)}/tor-build/torproject-tor-c8d2b17/libtor.a";
+Recipe[] recipes(Env env) {
+  string lib = "\{home(env)}/tor-build/torproject-tor-c8d2b17/libtor.a";
   return [
            Recipe("hsntor", "packages/tor/tools/capture-hsntor.wac",
            "packages/tor/tools/capture-hsntor.py",
-           "packages/tor/test/data/hsntor_vectors.json", torProg(cli),
+           "packages/tor/test/data/hsntor_vectors.json", torProg(env),
            ["--allow-read", "--allow-env", "--allow-run"]),
     // Spawns nothing — it reads what chutney wrote. Here because a capture recipe should not be in
     // two languages, not because `exec` unblocked it.
     Recipe("relaycert", "packages/tor/tools/capture-relaycert.wac",
            "packages/tor/tools/capture-relaycert.py",
-           "packages/tor/test/data/relaycert_vectors.json", chutneyNodes(cli),
+           "packages/tor/test/data/relaycert_vectors.json", chutneyNodes(env),
            ["--allow-read", "--allow-env"]),
     // Compiles `blind-probe.c` against tor's `libtor.a` and runs what it built, so `exec` twice
     // over. Its vectors use `indent=1`, unlike the two above.
@@ -114,9 +115,9 @@ Recipe[] recipes(Cli cli) {
   ];
 }
 
-bool present(Cli cli, string path) {
-  Stat s = cli.stat(path).wait();
-  return s.exists;
+bool present(Files fs, string path) {
+  Stat? s = flatten(fs.stat(path).wait()).ok();
+  return (s is not null);
 }
 
 /**
@@ -133,8 +134,8 @@ bool present(Cli cli, string path) {
  * recommendation in `0198`: the callers that want something declare it, so the day `exec` stops
  * inheriting is a day this file does not notice.
  */
-u8[] output(T t, Cli cli, string what, string cmd, string[] args) {
-  Exec r = onlyEnv(cli, ["PATH", "HOME"], [pathVar(cli), home(cli)], cmd, args);
+u8[] output(T t, Env env, Procs procs, string what, string cmd, string[] args) {
+  Exec r = onlyEnv(procs, ["PATH", "HOME"], [pathVar(env), home(env)], cmd, args);
   if (!r.ran()) { t.fail("\{what}: \{cmd} did not run — \{r.error}"); return u8[](); }
   if (r.status != 0) {
     t.fail("\{what}: \{cmd} exited \{r.status} — \{string.fromBytes(r.stderr)}");
@@ -156,57 +157,61 @@ string firstDifference(u8[] a, u8[] b) {
   return "no line differs, but the lengths do: \{a.len()} and \{b.len()}";
 }
 
-export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core core, Cli cli) {
+export string test_each_capture_tool_writes_the_vectors_that_are_committed(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string wacBin = "\{cli.cwd().wait()}/native/v8/target/release/wac";
-  t.isTrue(present(cli, wacBin), "there is a wac binary at \{wacBin} — `wac task seed`");
-  if (!present(cli, wacBin)) { return t.report(); }
+  string wacBin = "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
+  t.isTrue(present(fs, wacBin), "there is a wac binary at \{wacBin} — `wac task seed`");
+  if (!present(fs, wacBin)) { return t.report(); }
 
-  Recipe[] all = recipes(cli);
+  Recipe[] all = recipes(env);
   string[] skipped = string[].filled(all.len(), "");
   i32 nSkipped = 0;
   i32 ran = 0;
 
   for (i32 i = 0; i < all.len(); i++) {
     Recipe r = all[i];
-    if (r.needs != "" && !present(cli, r.needs)) {
+    if (r.needs != "" && !present(fs, r.needs)) {
       skipped[nSkipped] = "\{r.name} (no \{r.needs})";
       nSkipped = nSkipped + 1;
       continue;
     }
 
-    FileResult committed = cli.readFile(r.vectors).wait();
-    t.isTrue(committed.ok, "\{r.name}: the committed vectors are readable — \{committed.error}");
-    if (!committed.ok) { continue; }
+    auto committedRead = flatten(fs.readFile(r.vectors).wait());
+    u8[]? committed = committedRead.ok();
+    t.isTrue((committed is not null), "\{r.name}: the committed vectors are readable — \{committedRead.isErr() ? "\{committedRead.err()!}" : ""}");
+    if ((committed is null)) { continue; }
 
     // **Built rather than `wac run`**, which compiled the tor package from source per recipe. The
     // module is rebuilt when anything under the trees it is made from has moved; see
     // `wactest/src/built.wac`.
     string[] argv = string[].filled(1, "");
-    argv[0] = builtProgram(cli, r.wac, "capture-\{r.name}", r.grants);
-    u8[] fromWac = output(t, cli, r.name, wacBin, argv);
+    argv[0] = builtProgram(env, fs, procs, r.wac, "capture-\{r.name}", r.grants);
+    u8[] fromWac = output(t, env, procs, r.name, wacBin, argv);
     if (fromWac.len() == 0) { continue; }
 
     // A recipe with no second implementation compares the wac tool against the committed file only.
-    u8[] fromPy = r.py == "" ? fromWac : output(t, cli, r.name, "python3", [r.py]);
+    u8[] fromPy = r.py == "" ? fromWac : output(t, env, procs, r.name, "python3", [r.py]);
     if (fromPy.len() == 0) { continue; }
     ran = ran + 1;
 
     // Against the committed file first. If both tools have drifted the same way, the two-tool
     // comparison below would pass and say nothing.
-    t.isTrue(equal(fromWac, committed.bytes),
+    t.isTrue(equal(fromWac, committed!),
              r.name + ": the wac tool no longer writes " + r.vectors + " — " +
-             firstDifference(fromWac, committed.bytes));
-    t.isTrue(equal(fromPy, committed.bytes),
+             firstDifference(fromWac, committed!));
+    t.isTrue(equal(fromPy, committed!),
              "\{r.name}: the Python tool no longer writes \{r.vectors} — " +
-             firstDifference(fromPy, committed.bytes));
+             firstDifference(fromPy, committed!));
     t.isTrue(equal(fromWac, fromPy),
              "\{r.name}: the two tools disagree — \{firstDifference(fromWac, fromPy)}");
 
     // A floor, so a run that produced nothing at all cannot pass all three comparisons by being
     // equally empty everywhere.
-    t.isTrue(committed.bytes.len() >= 1000,
-             "\{r.vectors} is \{committed.bytes.len()} bytes — did it load?");
+    t.isTrue(committed!.len() >= 1000,
+             "\{r.vectors} is \{committed!.len()} bytes — did it load?");
   }
 
   string[] said = string[].filled(nSkipped, "");

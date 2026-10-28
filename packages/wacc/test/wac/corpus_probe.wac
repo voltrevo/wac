@@ -25,13 +25,14 @@
 // between two runs makes a diff meaningless — and byte order is what every tool this is compared
 // against does with `LC_ALL=C`.
 
-import { Cli, FileResult } from "std";
+import { Files } from "std";
 import { importSpecs } from "../../src/files.wac";
 import { Res, resolveFrom } from "../../src/path.wac";
 import { Located, Manifest, packageEntry, readManifest } from "../../../wacpkg/src/manifest.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { endsWith } from "../../../wactest/src/strings.wac";
-import { sortNames } from "../../../fs/src/fs.wac";
+import { sortNames } from "../../../fs/src/trees.wac";
+import { flatten } from "core";
 
 /** As many `.wac` files as the repository is ever expected to hold. */
 static i32 CAP = 4096;
@@ -65,8 +66,8 @@ Corpus refused(string why) {
  * gap reports itself. That is the general shape — an extractor bounds the invariant it feeds, and the
  * bound is invisible from inside.
  */
-i32 walk(Cli cli, string dir, string[] found, i32 n) {
-  string[]? listing = cli.readDir(dir).wait();
+i32 walk(Files fs, string dir, string[] found, i32 n) {
+  string[]? listing = flatten(fs.readDir(dir).wait()).ok();
   // An absent directory is the normal case here — most packages have no `bench/`.
   if (listing is null) { return n; }
   string[] names = listing!;
@@ -83,7 +84,7 @@ i32 walk(Cli cli, string dir, string[] found, i32 n) {
     // No extension is the only cheap signal for a directory here, and a `.` in the last segment is
     // the only cheap signal against: `readDir` on a plain file answers null, which `walk` treats as
     // an absent directory, so a misjudgement costs a wasted call rather than a wrong corpus.
-    if (names[i].indexOf(".") < 0) { n = walk(cli, full, found, n); }
+    if (names[i].indexOf(".") < 0) { n = walk(fs, full, found, n); }
   }
   return n;
 }
@@ -95,24 +96,24 @@ i32 walk(Cli cli, string dir, string[] found, i32 n) {
  * a pair sort written by hand is where this would go wrong silently, by pairing a path with another
  * file's source.
  */
-string[] paths(Cli cli, i32[] countOut) {
+string[] paths(Files fs, i32[] countOut) {
   string[] found = string[].filled(CAP, "");
   i32 n = 0;
 
-  string[]? top = cli.readDir("packages").wait();
+  string[]? top = flatten(fs.readDir("packages").wait()).ok();
   if (top is null) { countOut[0] = -1; return found; }
   string[] packages = top!;
   sortNames(packages);
 
   for (i32 p = 0; p < packages.len(); p++) {
-    n = walk(cli, "packages/" + packages[p], found, n);
+    n = walk(fs, "packages/" + packages[p], found, n);
     if (n < 0) { countOut[0] = -2; return found; }
   }
   // **`tools/` too, because `packages/` imports it.** Nine import edges from `packages/box`,
   // `packages/sh` and others name `tools/wac/covledger.wac` and `tools/wac/shfuzz.wac`, and a corpus
   // that walks only `packages/` supplies neither — so those files were checked without them and
   // reported clean. `issues/lang/0157`.
-  n = walk(cli, "tools", found, n);
+  n = walk(fs, "tools", found, n);
   if (n < 0) { countOut[0] = -2; return found; }
   countOut[0] = n;
   return found;
@@ -124,9 +125,9 @@ string[] paths(Cli cli, i32[] countOut) {
  * `caller` appears in a failure because the same broken walk from two test files otherwise looks
  * like one flaky test.
  */
-export Corpus loadCorpus(Cli cli, string caller) {
+export Corpus loadCorpus(Files fs, string caller) {
   i32[] countOut = i32[].filled(1, 0);
-  string[] all = paths(cli, countOut);
+  string[] all = paths(fs, countOut);
   i32 n = countOut[0];
   if (n == -1) { return refused(caller + ": cannot read `packages/` — these run from the repo root"); }
   if (n == -2) { return refused(caller + ": more than " + itoa(CAP) + " files; the cap is too low"); }
@@ -142,9 +143,10 @@ export Corpus loadCorpus(Cli cli, string caller) {
 
   string[] sources = string[].filled(wanted.len(), "");
   for (i32 i = 0; i < wanted.len(); i++) {
-    FileResult r = cli.readFile(wanted[i]).wait();
-    if (!r.ok) { return refused(caller + ": cannot read " + wanted[i] + " — " + r.error); }
-    sources[i] = string.fromBytes(r.bytes);
+    auto rRead = flatten(fs.readFile(wanted[i]).wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) { return refused(caller + ": cannot read " + wanted[i] + " — " + "\{rRead.isErr() ? "\{rRead.err()!}" : ""}"); }
+    sources[i] = string.fromBytes(r!);
   }
 
   if (wanted.len() < 10) {
@@ -182,7 +184,7 @@ export string[] waccSources(Corpus c) {
  * example — they all import `"../../web"` — emitted with its imports half-resolved and was counted
  * partial.
  */
-export Res nestedProjects(Cli cli, string[] keys, string[] sources) {
+export Res nestedProjects(Files fs, string[] keys, string[] sources) {
   string[] from = string[]();
   string[] spec = string[]();
   string[] to = string[]();
@@ -196,9 +198,9 @@ export Res nestedProjects(Cli cli, string[] keys, string[] sources) {
       string dir = resolveFrom(keys[i], sp);
       bool rooted = dir.len() > 0 && dir.slice(0, 1) == "/";
       string disk = rooted ? dir.slice(1, dir.len()) : dir;
-      FileResult m = cli.readFile(disk + "/wac.json5").wait();
-      if (!m.ok) { continue; }
-      Manifest mf = readManifest(m.bytes);
+      u8[]? m = flatten(fs.readFile(disk + "/wac.json5").wait()).ok();
+      if ((m is null)) { continue; }
+      Manifest mf = readManifest(m!);
       if (!mf.ok || mf.exports == "") { continue; }
       Located entry = packageEntry(disk, mf.exports);
       if (!entry.ok) { continue; }

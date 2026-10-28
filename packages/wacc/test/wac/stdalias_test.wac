@@ -7,21 +7,24 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
-import { Cli, Exec, Sys } from "std";
+import { ChildEnv, Env, Exec, Files, Launch, Sys } from "std";
+import { flatten } from "core";
 
 export string test_a_std_fault_alias_imported_alone_converts_to_text(Sys sys) {
-  Cli cli = sys.cli;
   T t = T.create();
-  string dir = scratch(cli, "stdalias");
-  string why = freshDir(cli, dir);
+  Env env = sys.env();
+  Files fs = sys.files();
+  string dir = scratch(env, "stdalias");
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
-  cli.writeFile(dir + "/main.wac",
-                ("import { SpawnFault } from \"std\";\n" +
-                 "string said(SpawnFault e) { return \"\\{e}\"; }\n" +
-                 "export i32 main() { return 0; }\n").toBytes()).wait();
-  Exec r = cli.exec(binaryPath(cli), ["check", dir + "/main.wac"], u8[]()).wait();
+  fs.writeFile(dir + "/main.wac",
+               ("import { SpawnFault } from \"std\";\n" +
+                "string said(SpawnFault e) { return \"\\{e}\"; }\n" +
+                "export i32 main() { return 0; }\n").toBytes()).wait();
+  Exec r = flatten(sys.procs().exec(binaryPath(env), ["check", dir + "/main.wac"], u8[](), ChildEnv.inherited(),
+                                    Launch.plain()).wait()).unwrap();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.isTrue(r.ran() && r.status == 0 && said.indexOf("no diagnostics") >= 0, "the alias converts: " + said);
+  t.isTrue(r.status == 0 && said.indexOf("no diagnostics") >= 0, "the alias converts: " + said);
   return t.report();
 }

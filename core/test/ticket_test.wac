@@ -112,3 +112,49 @@ export string test_a_part_settled_by_driving_it_settles_any_once() {
   t.eqI32(Ticket.all(e, f).wait().unwrap().0, 6, "all");
   return t.report();
 }
+
+/**
+ * A ticket raced over and over settles without recursing once per race.
+ *
+ * Every `Ticket.first` adds a watcher to each of its parts, and a connection polling for input races the
+ * same outstanding read against a zero timer on every look — `packages/ssh`'s `Conn.ready`, thousands of
+ * times during one long command. Each watcher used to be a closure calling the one before it, so the read
+ * settling ran them as one recursion as deep as the polls: `wacsshd` died of *Maximum call stack size
+ * exceeded* the first time a command outlasted a few seconds.
+ */
+export string test_a_ticket_watched_many_times_settles_without_recursing() {
+  T t = T.create();
+  Ticket<i32> read;
+  i32[] seen = [0];
+  for (i32 i = 0; i < 200000; i++) { read.whenSettled(() => { seen[0] = seen[0] + 1; }); }
+  read.resolve(1);
+  t.eqI32(seen[0], 200000, "every watcher ran once");
+  return t.report();
+}
+
+/**
+ * `settledNow` asks the host once, without waiting, and settles the ticket when its answer is in hand.
+ *
+ * What a poll needs: `packages/ssh`'s `Conn.ready` looks for a `^C` between steps of a running command,
+ * and did it by racing the outstanding read against a zero timer — three host calls a look, where one
+ * question is enough, which made a 200,000-step loop under `wacsshd` take minutes instead of a second.
+ */
+export string test_settled_now_asks_the_host_once_and_never_waits() {
+  T t = T.create();
+  bool[] ready = [false, false];
+  i32[] waits = [0];
+  i32[] released = [0];
+  Ticket<i32> read = fakeHostTicket(1, 9, ready, waits, released);
+  t.isTrue(!read.settledNow(), "nothing has arrived");
+  t.eqI32(waits[0], 1, "one question to the host");
+  t.isTrue(!read.settled(), "and it is still outstanding");
+  ready[1] = true;
+  t.isTrue(read.settledNow(), "the answer is here");
+  t.isTrue(read.settled(), "and the ticket has it");
+  t.eqI32(read.value(), 9, "the answer it settled with");
+  Ticket<i32> made;
+  t.isTrue(!made.settledNow(), "a ticket nobody hosts and nobody settled has not settled");
+  made.resolve(1);
+  t.isTrue(made.settledNow(), "and once settled, it has");
+  return t.report();
+}

@@ -22,7 +22,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Cli, Core, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /**
  * `wac <cmd> <args…>` **with the working directory inside the fixture**, which is the whole point.
@@ -35,10 +36,10 @@ import { Change, Cli, Core, Exec } from "std";
  *
  * Running through `sh -c 'cd … && …'` is what makes these cases able to fail.
  */
-Exec wacc(Cli cli, string dir, string cmd, string[] args) {
-  string line = "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd;
+Exec wacc(Env env, Procs procs, string dir, string cmd, string[] args) {
+  string line = "cd " + dir + " && exec " + binaryPath(env) + " " + cmd;
   for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
-  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+  return flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** `deno run -A harness/<tool>.ts <args…>`, from the repository root. */
@@ -55,56 +56,59 @@ Exec wacc(Cli cli, string dir, string cmd, string[] args) {
  * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
  * not for these. `issues/system/0229`.
  */
-bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
+bool put(Files fs, string path, string text) { return putFile(fs, path, text) == ""; }
 
-export string test_a_std_specifier_resolves_out_of_the_compiler(Core core, Cli cli) {
+export string test_a_std_specifier_resolves_out_of_the_compiler(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "stdspec-one");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "stdspec-one");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   // No manifest and no `std/` directory: nothing on disk answers for this specifier, which is the
   // point — the text comes out of the compiler the way `core`'s does.
-  t.isTrue(put(cli, dir + "/main.wac",
-               "import { Cli, Core, Sys } from \"std\";\n" +
+  t.isTrue(put(fs, dir + "/main.wac", "import { Cli, Core, Sys } from \"std\";\n" +
                "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 7; }\n"), "wrote main");
 
-  Exec w = wacc(cli, dir, "run", ["main.wac"]);
+  Exec w = wacc(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "wacc answered " + itoa(w.status) + ", want 7 — " +
                          string.fromBytes(w.stderr));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core core, Cli cli) {
+export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "stdspec-shadow");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "stdspec-shadow");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(cli, dir + "/main.wac",
-               "import { Cli, Core, Sys } from \"std\";\n" +
+  t.isTrue(put(fs, dir + "/main.wac", "import { Cli, Core, Sys } from \"std\";\n" +
                "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 7; }\n"), "wrote main");
   // **A decoy at exactly the specifier's path.** It declares neither `Cli` nor `Core`, so if the
   // resolver preferred the file the program would not compile at all — which is what makes 7 an
   // answer about *which* module was reached rather than about arithmetic that happened to agree.
-  t.isTrue(put(cli, dir + "/std/platform.wac",
-               "export i32 decoy() { return 999; }\n"), "wrote the decoy");
+  t.isTrue(put(fs, dir + "/std/platform.wac", "export i32 decoy() { return 999; }\n"), "wrote the decoy");
 
-  Exec w = wacc(cli, dir, "run", ["main.wac"]);
+  Exec w = wacc(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "a std/ directory beside the entry won: wacc answered " + itoa(w.status) +
                          " — " + string.fromBytes(w.stderr));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -114,27 +118,28 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
  * Until spec it was the other way round — `std` had no root module and a program named its one
  * file. A package is named whole now (`§wac-no-subpath-wqatc72`), so the file is the thing refused.
  */
-export string test_std_is_named_whole(Core core, Cli cli) {
+export string test_std_is_named_whole(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "stdspec-root");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "stdspec-root");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(cli, dir + "/main.wac",
-               "import { Core, Sys } from \"std\";\n" +
+  t.isTrue(put(fs, dir + "/main.wac", "import { Core, Sys } from \"std\";\n" +
                "export i32 main(Sys sys) { Core core = sys.core; return 7; }\n"), "wrote main");
-  Exec w = wacc(cli, dir, "run", ["main.wac"]);
+  Exec w = wacc(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "a program importing \"std\" did not run — " + string.fromBytes(w.stderr));
   }
 
-  t.isTrue(put(cli, dir + "/path.wac",
-               "import { Core } from \"std/platform.wac\";\n" +
+  t.isTrue(put(fs, dir + "/path.wac", "import { Core } from \"std/platform.wac\";\n" +
                "export i32 main(Sys sys) { Core core = sys.core; return 7; }\n"), "wrote path");
-  Exec p = wacc(cli, dir, "run", ["path.wac"]);
+  Exec p = wacc(env, procs, dir, "run", ["path.wac"]);
   t.isTrue(p.ran(), "wac did not run — " + p.error);
   if (p.ran()) {
     string said = string.fromBytes(p.stderr);
@@ -144,6 +149,6 @@ export string test_std_is_named_whole(Core core, Cli cli) {
     t.isTrue(!contains(said, "cannot read"), "a path below std fell through to path arithmetic — " + said);
     t.isTrue(contains(said, "import from \"std\""), "the refusal did not name the package — " + said);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

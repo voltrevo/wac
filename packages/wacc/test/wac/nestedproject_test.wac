@@ -9,31 +9,33 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Cli, Core, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /** `wac <cmd> <args…>` with the working directory inside the fixture. */
-Exec wacIn(Cli cli, string dir, string cmd, string[] args) {
-  string line = "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd;
+Exec wacIn(Env env, Procs procs, string dir, string cmd, string[] args) {
+  string line = "cd " + dir + " && exec " + binaryPath(env) + " " + cmd;
   for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
-  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+  return flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** A fixture: `files[i]` written with `texts[i]` under a fresh `dir`; "" when every write succeeded. */
-string fixture(Cli cli, string dir, string[] files, string[] texts) {
-  cli.remove(dir, true).wait();
+string fixture(Files fs, string dir, string[] files, string[] texts) {
+  fs.remove(dir, true).wait();
   for (i32 i = 0; i < files.len(); i++) {
-    string why = putFile(cli, dir + "/" + files[i], texts[i]);
+    string why = putFile(fs, dir + "/" + files[i], texts[i]);
     if (why != "") { return why; }
   }
   return "";
 }
 
-export string test_a_nested_project_is_imported_by_its_directory(Core core, Cli cli) {
+export string test_a_nested_project_is_imported_by_its_directory(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "nested-ok");
-  string why = fixture(cli, dir,
-    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/src/lib.wac", "vendored/src/one.wac"],
-    ["{}",
+  string dir = scratch(env, "nested-ok");
+  string why = fixture(fs, dir, ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/src/lib.wac", "vendored/src/one.wac"], ["{}",
      "import { width } from \"./vendored\";\n" +
      "import { width as alsoWidth } from \"@/vendored\";\n" +
      "export i32 main() { return width() + alsoWidth() * 20; }\n",
@@ -43,17 +45,21 @@ export string test_a_nested_project_is_imported_by_its_directory(Core core, Cli 
      "export i32 one() { return 1; }\n"]);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
-  Exec r = wacIn(cli, dir, "run", ["main.wac"]);
+  Exec r = wacIn(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     t.eqI32(r.status, 21, "the nested project's exports — " + string.fromBytes(r.stderr));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** Each refused shape, and the boundary its sentence names. */
-export string test_every_other_path_across_a_project_boundary_is_refused(Core core, Cli cli) {
+export string test_every_other_path_across_a_project_boundary_is_refused(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] names = ["no-exports", "into-a-file", "into-a-sub-project", "out-of-its-project"];
   string[] want = ["names no `exports`", "inside the nested project", "nested inside another",
@@ -78,20 +84,20 @@ export string test_every_other_path_across_a_project_boundary_is_refused(Core co
   ];
   string[] entries = ["main.wac", "main.wac", "main.wac", "app/main.wac"];
   for (i32 i = 0; i < names.len(); i++) {
-    string dir = scratch(cli, "nested-" + names[i]);
-    string why = fixture(cli, dir, files[i], texts[i]);
+    string dir = scratch(env, "nested-" + names[i]);
+    string why = fixture(fs, dir, files[i], texts[i]);
     t.isTrue(why == "", names[i] + ": " + why);
     if (why != "") { continue; }
-    Exec r = wacIn(cli, dir, "check", [entries[i]]);
+    Exec r = wacIn(env, procs, dir, "check", [entries[i]]);
     t.isTrue(r.ran(), names[i] + ": wac did not run — " + r.error);
     if (r.ran()) {
       string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
       t.isTrue(r.status != 0, names[i] + " was accepted: " + said);
       t.isTrue(contains(said, want[i]), names[i] + " did not say \"" + want[i] + "\": " + said);
     }
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
   }
-  core.log("    " + itoa(names.len()) + " boundaries refused");
+  out.line("    " + itoa(names.len()) + " boundaries refused");
   return t.report();
 }
 
@@ -99,20 +105,21 @@ export string test_every_other_path_across_a_project_boundary_is_refused(Core co
  * The control: the project inside may reach its own nested project, which is what makes the third case
  * above a refusal about *depth* rather than about nesting at all.
  */
-export string test_a_nested_project_may_import_its_own_nested_project(Core core, Cli cli) {
+export string test_a_nested_project_may_import_its_own_nested_project(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "nested-depth-ok");
-  string why = fixture(cli, dir,
-    ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/lib.wac", "vendored/inner/wac.json5",
-     "vendored/inner/lib.wac"],
-    ["{}", "import { depth } from \"./vendored\";\nexport i32 main() { return depth(); }\n",
+  string dir = scratch(env, "nested-depth-ok");
+  string why = fixture(fs, dir, ["wac.json5", "main.wac", "vendored/wac.json5", "vendored/lib.wac", "vendored/inner/wac.json5",
+     "vendored/inner/lib.wac"], ["{}", "import { depth } from \"./vendored\";\nexport i32 main() { return depth(); }\n",
      "{ exports: \"./lib.wac\" }", "export { depth } from \"./inner\";\n", "{ exports: \"./lib.wac\" }",
      "export i32 depth() { return 2; }\n"]);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
-  Exec r = wacIn(cli, dir, "run", ["main.wac"]);
+  Exec r = wacIn(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) { t.eqI32(r.status, 2, "through vendored's re-export — " + string.fromBytes(r.stderr)); }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

@@ -28,6 +28,11 @@ async MemoryStore sample(Sys sys) {
   return store;
 }
 
+string failed(T t, string what) {
+  t.fail(what);
+  return t.report();
+}
+
 string why(Result<StoreEntry[], Other> r) {
   match (r) {
     Ok(e): { return "read"; }
@@ -88,6 +93,10 @@ export async string test_a_damaged_image_says_what_is_wrong(Sys sys) {
   extra[3] = 0;
   extra.copyFrom(rootDir, 0, 4, rootDir.len());
   t.eqStr(why(entriesOf(resealed(image, extra))), "trailing bytes after the last entry", "bytes after the last");
+  // A count with the top bit set: read as a signed length it is negative, which a reader refuses rather than
+  // looping over — and says why.
+  t.eqStr(why(entriesOf(resealed(image, [0, 0, 0, 128]))), "a length above two gigabytes, which cannot be one",
+          "a count above two gigabytes");
   return t.report();
 }
 
@@ -117,5 +126,146 @@ export async string test_a_store_is_booted_from_and_saved_to_another(Sys sys) {
   t.isTrue((await saveStore(disk, store, "/no/such/dir/s.img")).isErr(), "saving where there is no directory fails");
   await disk.writeFile("/rootless.img", imageOf([StoreEntry("/a", false, u8[](), 420, "root", 0 as i64)]));
   t.isTrue((await bootStore(disk, sys.clock(), "/rootless.img")).isErr(), "an image that does not start at the root");
+  return t.report();
+}
+
+// ── Ported from the version-1 image_test.wac: the round trip over many stores, not one ───────────────────────────
+
+string oneByte(i32 c) {
+  u8[] one = u8[].filled(1, 0);
+  one[0] = c as@ u8;
+  return string.fromBytes(one);
+}
+
+struct Rng {
+  i32 s;
+
+  i32 upto(this, i32 n) {
+    this.s = (this.s * 1103515245 + 12345) & 0x7FFFFFFF;
+    return (this.s >> 8) % n;
+  }
+}
+
+/** Names that are bytes rather than tidy identifiers: a space, a flag, UTF-8, and three that are not text at all. */
+string[] names() {
+  string forty = "";
+  for (i32 i = 0; i < 40; i++) { forty = forty + "z"; }
+  return ["a", "b c", "-x", ".hidden", "ünïcode", forty, "1", "d", oneByte(0xFF), "c\{oneByte(0xC3)}",
+          "\{oneByte(0x01)}ctl"];
+}
+
+/** A store built from a seed: names, depths, contents, modes and owners all vary with it. */
+async MemoryStore build(Sys sys, i32 seed) {
+  Rng rng = Rng(seed * 0x9E3779B1 + 12345);
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files fs = store.asUser("root");
+  string[] ns = names();
+  string[] dirs = string[].filled(64, "");
+  i32 dirCount = 1;
+  i32 rounds = 6 + rng.upto(10);
+  for (i32 i = 0; i < rounds; i++) {
+    string path = "\{dirs[rng.upto(dirCount)]}/\{ns[rng.upto(ns.len())]}\{i}";
+    if (rng.upto(3) == 0) {
+      if ((await fs.mkdir(path, false)).isOk() && dirCount < dirs.len()) {
+        dirs[dirCount] = path;
+        dirCount = dirCount + 1;
+      }
+    } else {
+      i32 len = rng.upto(200);
+      u8[] data = u8[].filled(len, 0);
+      for (i32 j = 0; j < len; j++) { data[j] = rng.upto(256) as@ u8; }
+      await fs.writeFile(path, data);
+      if (rng.upto(2) == 0) { await fs.chmod(path, rng.upto(512)); }
+      if (rng.upto(3) == 0) { await fs.chown(path, ["root", "claude", "nobody"][rng.upto(3)]); }
+    }
+  }
+  await fs.writeFile("/empty", u8[]());
+  await fs.mkdir("/emptydir", false);
+  return store;
+}
+
+/**
+ * Everything an entry claims to preserve, as text — one string, so a field the image stops recording shows up as a
+ * difference rather than going unchecked.
+ */
+string describe(StoreEntry[] entries) {
+  string out = "";
+  for (StoreEntry e in entries) {
+    string body = "";
+    for (i32 k = 0; k < e.data.len(); k++) { body = body + (k == 0 ? " " : ",") + "\{e.data[k] as i32}"; }
+    out = out + (e.isDir ? "d " : "- ") + e.path + " mode=\{e.mode} owner=\{e.owner} mtime=\{e.modifiedMillis}"
+          + body + "\n";
+  }
+  return out;
+}
+
+export async string test_any_store_survives_an_image_and_rewriting_gives_the_same_bytes(Sys sys) {
+  T t = T.create();
+  for (i32 seed = 0; seed < 40; seed++) {
+    MemoryStore store = await build(sys, seed);
+    string before = describe(store.entries());
+    u8[] first = imageOf(store.entries());
+    match (entriesOf(first)) {
+      Ok(entries): {
+        match (MemoryStore.restore(sys.clock(), entries)) {
+          Ok(back): {
+            t.eqStr(describe(back.entries()), before, "seed \{seed}: the store changed");
+            t.eqBytes(imageOf(back.entries()), first, "seed \{seed}: rewriting gave other bytes");
+          }
+          Err(e): { return failed(t, "seed \{seed}: restore: \{e}"); }
+        }
+      }
+      Err(e): { return failed(t, "seed \{seed}: " + e.message); }
+    }
+  }
+  return t.report();
+}
+
+export async string test_a_name_that_is_not_text_survives_an_image(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files fs = store.asUser("root");
+  string[] awkward = ["/\{oneByte(0xFF)}", "/lone\{oneByte(0xC3)}", "/\{oneByte(0x01)}\{oneByte(0x02)}",
+                      "/\{oneByte(0xED)}\{oneByte(0xA0)}\{oneByte(0x80)}"];
+  for (i32 i = 0; i < awkward.len(); i++) {
+    t.isTrue((await fs.writeFile(awkward[i], [i as@ u8])).isOk(), "a byte name writes");
+  }
+  match (entriesOf(imageOf(store.entries()))) {
+    Ok(entries): {
+      Files back = MemoryStore.restore(sys.clock(), entries).unwrap().asUser("root");
+      for (i32 i = 0; i < awkward.len(); i++) {
+        u8[] b = (await back.readFile(awkward[i])).orElse(u8[]());
+        t.eqI32(b.len() == 1 ? b[0] as i32 : -1, i, "name \{i} came back with its own contents");
+      }
+    }
+    Err(e): { t.fail(e.message); }
+  }
+  return t.report();
+}
+
+// **The format is pinned by a committed image as well as by the round trip**, because a round trip alone passes for a
+// format that changed shape overnight: an image written by one build has to load in the next.
+export async string test_the_committed_fixture_still_loads(Sys sys) {
+  T t = T.create();
+  string path = "packages/fs/test/fixtures/image-v2.wacimg";
+  match (await sys.files().readFile(path)) {
+    Ok(bytes): {
+      t.eqStr(dumpImage(bytes),
+              "d 0755 root /\nd 0755 root /etc\n- 0644 root 4 bytes /etc/hostname\nd 0755 root /home\n"
+                + "d 0755 claude /home/claude\n- 0600 claude 21 bytes /home/claude/notes\n",
+              "the fixture's entries, owners and modes");
+      match (entriesOf(bytes)) {
+        Ok(entries): {
+          Files back = MemoryStore.restore(sys.clock(), entries).unwrap().asUser("claude");
+          match (await back.readFile("/home/claude/notes")) {
+            Ok(b): { t.eqStr(string.fromBytes(b), "this lives in memory\n", "and its bytes, read by their owner"); }
+            Err(e): { t.fail("the owner could not read the fixture's private file: \{e}"); }
+          }
+        }
+        Err(e): { t.fail("entriesOf: " + e.message); }
+      }
+    }
+    Err(e): { t.fail("\{path} is not there: \{e}"); }
+  }
   return t.report();
 }

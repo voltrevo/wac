@@ -26,6 +26,12 @@ import { Vec } from "./vec.wac";
 export struct Continuation {
   TicketBase? t;
   fn<void()> call;
+  /**
+   * Whether this is still the suspension its machine is at. **A `wait` can run a machine itself**, past a
+   * continuation already handed to a queue, and that one then does nothing when called — so a scheduler
+   * asking what is left counts only the current ones.
+   */
+  fn<bool()> current;
 }
 
 /**
@@ -40,8 +46,12 @@ export struct TicketBase {
   fn<bool()>? drive = null;
   /** Set while this ticket's own `advance` is following what it is parked on. */
   bool following = false;
-  /** Called once when the ticket settles — every watcher `whenSettled` added, in the order added. */
-  fn<void()>? onSettle = null;
+  /**
+   * Called once when the ticket settles, in the order added. **A list, not a closure around the one before**:
+   * a long-lived read raced on every poll gains a watcher each time, and nesting them made settling it a
+   * recursion as deep as the polls (`ticket_test.wac`).
+   */
+  Vec<fn<void()>>? watchers = null;
 
   /**
    * **For a ticket the host answers**, the host's id for the work, or -1 for any other ticket. Set beside
@@ -65,14 +75,26 @@ export struct TicketBase {
    * knows which of its tickets settled first, which driving them later cannot tell.
    */
   void whenSettled(this, fn<void()> f) {
-    fn<void()>? before = this.onSettle;
-    this.onSettle = () => {
-      if (before is not null) { before!(); }
-      f();
-    };
+    if (this.watchers is null) { this.watchers = Vec.create(); }
+    this.watchers!.push(f);
   }
 
   bool settled(const this) { return this.done; }
+
+  /**
+   * Whether this ticket has settled, **asking the host without waiting** when the answer is the host's — and
+   * settling it then, since the answer is in hand. One question per call, for a poll between steps of other
+   * work; `settled` alone never asks, and racing a zero timer asks three times.
+   */
+  bool settledNow(this) {
+    if (this.done) { return true; }
+    fn<i32(i32[], i32)>? ask = this.waitHost;
+    if (ask is null || this.hostId < 0) { return false; }
+    if (ask!([this.hostId], 0) < 0) { return false; }
+    // Answered, so driving it does not block.
+    this.advance();
+    return this.done;
+  }
 
   /**
    * Stop caring about the answer. **On a ticket the host answers** it releases the host's slot and the
@@ -169,8 +191,10 @@ export struct Ticket<T> : TicketBase {
     if (this.done) { trap; }
     this.answer = f;
     this.done = true;
-    fn<void()>? watchers = this.onSettle;
-    if (watchers is not null) { watchers!(); }
+    Vec<fn<void()>>? watching = this.watchers;
+    if (watching is not null) {
+      for (i32 i = 0; i < watching!.len(); i++) { watching!.get(i)(); }
+    }
   }
 
   /** The answer. Traps if the ticket has not settled. */
@@ -605,7 +629,7 @@ export struct __wacMachine<R> {
     __wacResumer<R> r = __wacResumer<R>(this, this.seq);
     TicketBase? t = on;
     if (on is __wacReadyTicket) { t = null; }
-    this.ticket.parked = Continuation(t, r.call);
+    this.ticket.parked = Continuation(t, r.call, r.current);
   }
 }
 
@@ -613,6 +637,9 @@ export struct __wacMachine<R> {
 struct __wacResumer<R> {
   __wacMachine<R> m;
   i32 seq;
+
+  /** Whether the machine is still parked at this suspension. */
+  bool current(const this) { return this.m.seq == this.seq && this.m.ticket.parked is not null; }
 
   void call(this) {
     if (this.m.seq != this.seq) { return; }

@@ -29,37 +29,39 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Cli, Files, Output, Sys } from "std";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { AccountProof, StorageProof, accountAt, storageAt } from "../../src/account.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
+import { flatten } from "core";
 
 static string FIXTURE = "packages/mpt/test/vendor/getproof.json";
 
 // ── The fixture ───────────────────────────────────────────────────────────────
 
-JsonValue fixture(Core core, Cli cli) {
-  FileResult r = cli.readFile(FIXTURE).wait();
-  if (!r.ok) {
-    core.warn("mpt: cannot read \{FIXTURE} — \{r.error}");
+JsonValue fixture(Output err, Files fs) {
+  auto rRead = flatten(fs.readFile(FIXTURE).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("mpt: cannot read \{FIXTURE} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  Parser p = Parser.create(r.bytes);
+  Parser p = Parser.create(r!);
   JsonValue? doc = parseDocument(p);
   if (doc is null) {
-    core.warn("mpt: \{FIXTURE} is not valid JSON");
+    err.line("mpt: \{FIXTURE} is not valid JSON");
     trap;
   }
   return doc!;
 }
 
 /** The case whose `note` contains `needle` — the fixture is read by description, not by index. */
-JsonValue byNote(Core core, JsonArray cases, string needle) {
+JsonValue byNote(Output err, JsonArray cases, string needle) {
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases.get(i).member("note")!.text()!.indexOf(needle) >= 0) { return cases.get(i); }
   }
-  core.warn("mpt: no case matching \"\{needle}\" — the fixture has changed shape");
+  err.line("mpt: no case matching \"\{needle}\" — the fixture has changed shape");
   trap;
 }
 
@@ -113,13 +115,15 @@ u8[][] nodes(JsonValue v) {
   return out;
 }
 
-export string test_an_account_with_storage_verifies_against_a_real_state_root(Core core, Cli cli) {
+export string test_an_account_with_storage_verifies_against_a_real_state_root(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
+  JsonValue doc = fixture(err, fs);
   JsonArray cases = doc.member("cases")!.array()!;
   t.isTrue(cases.len() >= 3, "only \{cases.len()} cases — is the vendored file intact?");
   u8[] stateRoot = unhex(doc.member("stateRoot")!.text()!);
-  JsonValue c = byNote(core, cases, "an account with storage");
+  JsonValue c = byNote(err, cases, "an account with storage");
 
   AccountProof got = accountAt(stateRoot, unhex(c.member("address")!.text()!),
                                nodes(c.member("accountProof")!));
@@ -148,10 +152,12 @@ export string test_an_account_with_storage_verifies_against_a_real_state_root(Co
 
 string strip(string s) { return s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s; }
 
-export string test_an_account_that_does_not_exist_is_proved_absent(Core core, Cli cli) {
+export string test_an_account_that_does_not_exist_is_proved_absent(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
-  JsonValue c = byNote(core, doc.member("cases")!.array()!, "does not exist");
+  JsonValue doc = fixture(err, fs);
+  JsonValue c = byNote(err, doc.member("cases")!.array()!, "does not exist");
   AccountProof got = accountAt(unhex(doc.member("stateRoot")!.text()!),
                                unhex(c.member("address")!.text()!),
                                nodes(c.member("accountProof")!));
@@ -166,10 +172,12 @@ export string test_an_account_that_does_not_exist_is_proved_absent(Core core, Cl
  * The case that found the `["0x80"]` spelling. The client sends one node where this repo's builder
  * sends none, and both mean the same empty trie.
  */
-export string test_a_funded_account_with_no_storage(Core core, Cli cli) {
+export string test_a_funded_account_with_no_storage(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
-  JsonValue c = byNote(core, doc.member("cases")!.array()!, "never written a storage slot");
+  JsonValue doc = fixture(err, fs);
+  JsonValue c = byNote(err, doc.member("cases")!.array()!, "never written a storage slot");
   AccountProof got = accountAt(unhex(doc.member("stateRoot")!.text()!),
                                unhex(c.member("address")!.text()!),
                                nodes(c.member("accountProof")!));
@@ -203,10 +211,12 @@ export string test_a_funded_account_with_no_storage(Core core, Cli cli) {
  * checked against what a third-party client reports for an account with no storage — and the code
  * hash against what it reports for an account with no code.
  */
-export string test_the_clients_roots_are_this_packages_constants(Core core, Cli cli) {
+export string test_the_clients_roots_are_this_packages_constants(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
-  JsonValue c = byNote(core, doc.member("cases")!.array()!, "never written a storage slot");
+  JsonValue doc = fixture(err, fs);
+  JsonValue c = byNote(err, doc.member("cases")!.array()!, "never written a storage slot");
   t.eqStr(c.member("storageHash")!.text()!,
           "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
           "the empty storage root the client reports");
@@ -224,12 +234,14 @@ export string test_the_clients_roots_are_this_packages_constants(Core core, Cli 
  * Two valid proofs against one root, swapped. The state root is the same for both, so nothing about
  * the bytes is wrong — only which key they are a path for.
  */
-export string test_a_proof_from_one_account_does_not_verify_against_another(Core core, Cli cli) {
+export string test_a_proof_from_one_account_does_not_verify_against_another(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
+  JsonValue doc = fixture(err, fs);
   JsonArray cases = doc.member("cases")!.array()!;
-  JsonValue a = byNote(core, cases, "an account with storage");
-  JsonValue b = byNote(core, cases, "never written a storage slot");
+  JsonValue a = byNote(err, cases, "an account with storage");
+  JsonValue b = byNote(err, cases, "never written a storage slot");
   AccountProof got = accountAt(unhex(doc.member("stateRoot")!.text()!),
                                unhex(a.member("address")!.text()!),
                                nodes(b.member("accountProof")!));

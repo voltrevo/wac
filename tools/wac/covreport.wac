@@ -35,20 +35,24 @@
 // that reports it. The six string helpers went the same way, and four of them turned out to be the
 // third copy of what `packages/wactest/src/strings.wac` already exported.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Env, Files, Output, Procs } from "std";
 import { Measured, measure, report, reportPoints } from "./covledger.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 argc = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  i32 argc = argv.len();
   if (argc < 2) {
-    core.warn("usage: covreport <exercise.wac> <prefix/> [--verbose] [--allow-…] " +
+    err.line("usage: covreport <exercise.wac> <prefix/> [--verbose] [--allow-…] " +
               "[export|export:<cases>…]");
     return 2;
   }
-  string entry = string.fromBytes(cli.arg(0).wait());
-  string prefix = string.fromBytes(cli.arg(1).wait());
+  string entry = argv[0];
+  string prefix = argv[1];
   bool verbose = false;
   bool points = false;
   // **Grants go to the build and export names go to the run**, and both are new on 2026-08-20 with
@@ -64,21 +68,21 @@ export i32 main(Sys sys) {
   string[] exports = string[].filled(64, "");
   i32 nExports = 0;
   for (i32 i = 2; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--verbose") {
       verbose = true;
     } else if (a == "--points") {
       points = true;
     } else if (a.len() > 8 && a.slice(0, 8) == "--allow-") {
-      if (nGrants >= 8) { core.warn("covreport: too many grants"); return 2; }
+      if (nGrants >= 8) { err.line("covreport: too many grants"); return 2; }
       grants[nGrants] = a;
       nGrants = nGrants + 1;
     } else if (a.len() > 0 && a.slice(0, 2) != "--") {
-      if (nExports >= 64) { core.warn("covreport: too many export names"); return 2; }
+      if (nExports >= 64) { err.line("covreport: too many export names"); return 2; }
       exports[nExports] = a;
       nExports = nExports + 1;
     } else {
-      core.warn("covreport: " + a + " is not --verbose, --points, a --allow-… grant, or an "
+      err.line("covreport: " + a + " is not --verbose, --points, a --allow-… grant, or an "
               + "export name");
       return 2;
     }
@@ -88,16 +92,16 @@ export i32 main(Sys sys) {
   g.copyFrom(grants, 0, 0, nGrants);
   string[] e = string[].filled(nExports, "");
   e.copyFrom(exports, 0, 0, nExports);
-  Measured m = measure(core, cli, entry, g, e);
+  Measured m = measure(err, env, fs, procs, entry, g, e);
   if (m.nPoints == 0) { return 1; }
 
   if (points) {
     // Machine-readable and unfiltered — `issues/system/0241b`. The prefix is still taken, because
     // the caller names one, and still ignored here: what a union needs is every point the exercise
     // reached, including the ones in somebody else's package.
-    reportPoints(core, m.points, m.nPoints, m.counts);
+    reportPoints(out, m.points, m.nPoints, m.counts);
     return 0;
   }
-  report(core, m.points, m.nPoints, m.counts, prefix, verbose);
+  report(out, m.points, m.nPoints, m.counts, prefix, verbose);
   return 0;
 }

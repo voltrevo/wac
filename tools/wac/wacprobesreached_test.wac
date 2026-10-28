@@ -36,10 +36,11 @@
 // set: a probe reached only from a file nobody has committed is not reached.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Launch, Output, Procs, Sys } from "std";
 import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /** The part of `path` after the last slash. */
 string basename(string path) {
@@ -55,8 +56,8 @@ string basename(string path) {
  * finding and neither is a probe somewhere unexpected — it would simply not be checked, which is why
  * the floor below matters.
  */
-string[] probeFiles(Core core, Cli cli) {
-  string[] all = tracked(core, cli);
+string[] probeFiles(Output err, Procs procs) {
+  string[] all = tracked(err, procs);
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) { if (isProbe(all[i])) { n = n + 1; } }
   string[] out = string[].filled(n, "");
@@ -80,22 +81,23 @@ bool isProbe(string path) {
  * `git grep` exits 1 for no matches, which is an answer rather than a failure — only a status above
  * one is a broken search, and that is asserted rather than read as "nothing names it".
  */
-string[] naming(Core core, Cli cli, string needle, i32[] status) {
-  Exec r = cli.exec("git",
-    ["grep", "-lF", needle, "--", "*.ts", "*.wac", "*.md", "*.json", ":!site/"],
-    u8[]()).wait();
-  if (!r.ran()) {
+string[] naming(Output err, Procs procs, string needle, i32[] status) {
+  auto rRan = flatten(procs.exec("git", ["grep", "-lF", needle, "--", "*.ts", "*.wac", "*.md", "*.json", ":!site/"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) {
     status[0] = -1;
-    core.warn("probes: git grep did not run — " + r.error);
+    err.line("probes: git grep did not run — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
     return string[].filled(0, "");
   }
-  status[0] = r.status;
-  return nonEmptyLines(string.fromBytes(r.stdout));
+  status[0] = r!.status;
+  return nonEmptyLines(string.fromBytes(r!.stdout));
 }
 
-export string test_every_probe_file_is_named_by_something_that_could_reach_it(Core core, Cli cli) {
+export string test_every_probe_file_is_named_by_something_that_could_reach_it(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] probes = probeFiles(core, cli);
+  string[] probes = probeFiles(err, procs);
 
   // A floor, so a search that silently resolved nothing cannot pass. There were 38 when this moved;
   // the number only matters as evidence the search ran.
@@ -107,7 +109,7 @@ export string test_every_probe_file_is_named_by_something_that_could_reach_it(Co
   i32 n = 0;
   i32[] status = i32[].filled(1, 0);
   for (i32 i = 0; i < probes.len(); i++) {
-    string[] hits = naming(core, cli, basename(probes[i]), status);
+    string[] hits = naming(err, procs, basename(probes[i]), status);
     t.isTrue(status[0] <= 1,
              "git grep failed with " + itoa(status[0]) + " for " + basename(probes[i]));
     if (status[0] > 1) { return t.report(); }

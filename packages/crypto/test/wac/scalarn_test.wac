@@ -25,7 +25,6 @@
 // imported by half this package, and gives 32 bytes at a time — two of them for P-384's 48.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Big, DivMod, add, mul, divmod } from "../../../bignum/src/big.wac";
 import { fromBytes, toBytes } from "../../src/rsa.wac";
@@ -84,7 +83,7 @@ void compareMultiplies(T t, string curve, u8[] orderBE) {
   }
 }
 
-export string test_the_montgomery_product_agrees_with_long_division(Core core, Cli cli) {
+export string test_the_montgomery_product_agrees_with_long_division() {
   T t = T.create();
   compareMultiplies(t, "P-256", p256Order());
   compareMultiplies(t, "P-384", p384Order());
@@ -117,7 +116,7 @@ void compareEdges(T t, string curve, u8[] orderBE) {
   }
 }
 
-export string test_the_product_is_right_at_zero_one_and_n_minus_one(Core core, Cli cli) {
+export string test_the_product_is_right_at_zero_one_and_n_minus_one() {
   T t = T.create();
   compareEdges(t, "P-256", p256Order());
   compareEdges(t, "P-384", p384Order());
@@ -138,7 +137,7 @@ void checkRoundTrip(T t, string curve, u8[] orderBE) {
   t.eqBytes(scnToBytes(scnLeave(o, scnOne(o))), one, "\{curve}: scnOne is not one");
 }
 
-export string test_a_value_survives_entering_and_leaving_the_form(Core core, Cli cli) {
+export string test_a_value_survives_entering_and_leaving_the_form() {
   T t = T.create();
   checkRoundTrip(t, "P-256", p256Order());
   checkRoundTrip(t, "P-384", p384Order());
@@ -160,7 +159,7 @@ void checkInverses(T t, string curve, u8[] orderBE) {
   }
 }
 
-export string test_an_inverse_multiplies_back_to_one(Core core, Cli cli) {
+export string test_an_inverse_multiplies_back_to_one() {
   T t = T.create();
   checkInverses(t, "P-256", p256Order());
   checkInverses(t, "P-384", p384Order());
@@ -182,7 +181,7 @@ void checkAdds(T t, string curve, u8[] orderBE) {
   }
 }
 
-export string test_addition_agrees_with_long_division(Core core, Cli cli) {
+export string test_addition_agrees_with_long_division() {
   T t = T.create();
   checkAdds(t, "P-256", p256Order());
   checkAdds(t, "P-384", p384Order());

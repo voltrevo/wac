@@ -14,8 +14,8 @@
 // takes a moment; that is the reason this is a tool and the keys are committed with the vector rather
 // than generated inside a test.
 
-import { Core, Cli, Change, FileResult, Sys } from "std";
-import { Buf } from "core";
+import { Change, Sys, Clock, Files, Output } from "std";
+import { Buf, flatten } from "core";
 import { encode as hexEncode, encodeUpper } from "../../codec/src/hex.wac";
 import { rsaFingerprint } from "./routerdesc.wac";
 import { generateRsaKey, RsaKey } from "../../crypto/src/rsagen.wac";
@@ -45,30 +45,33 @@ u8[] ntorSecret() {
 }
 
 /** One document, on its own, as it goes over the wire. */
-bool writeWire(Core core, Cli cli, string path, u8[] doc, string what) {
-  Change c = cli.writeFile(path, doc).wait();
-  if (!c.ok()) {
-    core.warn("gendesc: \{path}: \{c.message}");
+bool writeWire(Output err, Output out, Files fs, string path, u8[] doc, string what) {
+  auto c = flatten(fs.writeFile(path, doc).wait());
+  if (c.isErr()) {
+    err.line("gendesc: \{path}: \{c.isErr() ? "\{c.err()!}" : ""}");
     return false;
   }
-  core.log("gendesc: wrote the \{what} to \{path}");
+  out.line("gendesc: wrote the \{what} to \{path}");
   return true;
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 1) {
-    core.warn("usage: gendesc <out-path>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Files fs = sys.files();
+  if (argv.len() < 1) {
+    err.line("usage: gendesc <out-path>");
     return 1;
   }
-  string out = string.fromBytes(cli.arg(0).wait());
+  string descPath = argv[0];
 
-  core.log("gendesc: generating two RSA-1024 keys (a prime search, so this takes a moment)");
+  out.line("gendesc: generating two RSA-1024 keys (a prime search, so this takes a moment)");
   RsaKey identity = generateRsaKey(1024, seedFor(1));
   RsaKey onion = generateRsaKey(1024, seedFor(2));
   if (!identity.ok || !onion.ok) {
-    core.warn("gendesc: RSA key generation failed");
+    err.line("gendesc: RSA key generation failed");
     return 1;
   }
 
@@ -90,20 +93,20 @@ export i32 main(Sys sys) {
   // compute the seconds and pass them, and by hand that is what happens — but nothing in a static
   // description can, so the program that needs the time asks for it.
   i64 published = 1785931200;
-  bool live = cli.argCount().wait() >= 5;
+  bool live = argv.len() >= 5;
   if (live) {
-    string when = string.fromBytes(cli.arg(4).wait());
+    string when = argv[4];
     if (when == "-") {
       // A window back, not now. `valid-after` is `published + window` — a consensus is published
       // before the period it covers — so `-` meaning literally *now* produces documents that become
       // valid in an hour, which is not what anybody asking for "now" wants. This was wrong when `-`
       // was added and no test could see it: nothing that read a consensus checked its validity
       // window, so the whole network came up around a document that was not yet in force.
-      published = core.nowMillis().wait() / 1000 - 3600;
+      published = flatten(clock.nowMillis().wait()).unwrap() / 1000 - 3600;
     } else {
-      i64 given = atoi64(cli.arg(4).wait());
+      i64 given = atoi64(argv[4].toBytes());
       if (given <= 0) {
-        core.warn("gendesc: the fifth argument must be a unix time in seconds, or `-` for now");
+        err.line("gendesc: the fifth argument must be a unix time in seconds, or `-` for now");
         return 1;
       }
       published = given;
@@ -116,29 +119,29 @@ export i32 main(Sys sys) {
 
   u8[] desc = routerDescriptor(keys, info);
   if (desc.len() == 0) {
-    core.warn("gendesc: could not build a descriptor");
+    err.line("gendesc: could not build a descriptor");
     return 1;
   }
 
   // Written as the test's vector, not as a bare document: reproducing these bytes needs the private
   // exponents, and an RSA-1024 prime search is far too slow to run inside the suite. With the keys
   // committed the test is a byte-for-byte comparison that costs nothing.
-  Change c = cli.writeFile(out, vectorJson(keys, info, desc).toBytes()).wait();
-  if (!c.ok()) {
-    core.warn("gendesc: \{out}: \{c.message}");
+  auto c = flatten(fs.writeFile(descPath, vectorJson(keys, info, desc).toBytes()).wait());
+  if (c.isErr()) {
+    err.line("gendesc: \{descPath}: \{c.isErr() ? "\{c.err()!}" : ""}");
     return 1;
   }
-  core.log("gendesc: wrote a \{desc.len()}-byte descriptor, with its keys, to \{out}");
+  out.line("gendesc: wrote a \{desc.len()}-byte descriptor, with its keys, to \{descPath}");
 
   // The authority key certificate, when a second path is given. Same tool because it needs the same
   // slow prime search, and doing both in one run means one wait instead of two.
-  if (cli.argCount().wait() >= 2) {
-    string certOut = string.fromBytes(cli.arg(1).wait());
-    core.log("gendesc: generating the authority's two keys");
+  if (argv.len() >= 2) {
+    string certOut = argv[1];
+    out.line("gendesc: generating the authority's two keys");
     RsaKey authIdentity = generateRsaKey(1024, seedFor(5));
     RsaKey authSigning = generateRsaKey(1024, seedFor(6));
     if (!authIdentity.ok || !authSigning.ok) {
-      core.warn("gendesc: authority key generation failed");
+      err.line("gendesc: authority key generation failed");
       return 1;
     }
     AuthorityKeys ak = AuthorityKeys(
@@ -148,22 +151,22 @@ export i32 main(Sys sys) {
     i64 expires = published + 31536000;
     u8[] cert = authorityCertificate(ak, published, expires);
     if (cert.len() == 0) {
-      core.warn("gendesc: could not build an authority certificate");
+      err.line("gendesc: could not build an authority certificate");
       return 1;
     }
-    Change cc = cli.writeFile(certOut, certVectorJson(ak, published, expires, cert).toBytes()).wait();
-    if (!cc.ok()) {
-      core.warn("gendesc: \{certOut}: \{cc.message}");
+    auto cc = flatten(fs.writeFile(certOut, certVectorJson(ak, published, expires, cert).toBytes()).wait());
+    if (cc.isErr()) {
+      err.line("gendesc: \{certOut}: \{cc.isErr() ? "\{cc.err()!}" : ""}");
       return 1;
     }
-    core.log("gendesc: wrote a \{cert.len()}-byte authority certificate to \{certOut}");
+    out.line("gendesc: wrote a \{cert.len()}-byte authority certificate to \{certOut}");
     // The certificate on its own, for the same reason as the consensus below: `relayd -K` and `dird`
     // want the document, not a vector with the document inside it.
-    if (!writeWire(core, cli, "\{certOut}.cert", cert, "authority certificate")) { return 1; }
+    if (!writeWire(err, out, fs, "\{certOut}.cert", cert, "authority certificate")) { return 1; }
     // And the one line a client needs: the fingerprint of the authority it should trust.
     //
     // This is the whole basis of a client's trust, which is why `app.wac` takes it as a file the
-    // user chooses rather than reading it out of the directory being checked — a list taken from the
+    // user chooses rather than reading it descPath of the directory being checked — a list taken from the
     // documents it is verifying would make the verification vacuous. That argument is about where the
     // list comes *from*, not about who types it: on a network generated from scratch, the authority
     // is whoever this program just made keys for, and nothing else knows the answer.
@@ -172,40 +175,40 @@ export i32 main(Sys sys) {
     // the two spellings is a comparison that silently never matches.
     string fpLine =
       string.fromBytes(encodeUpper(rsaFingerprint(ak.identityN, ak.identityE))) + "\n";
-    if (!writeWire(core, cli, "\{certOut}.fingerprint", fpLine.toBytes(),
-                   "authority fingerprint a client should trust")) { return 1; }
+    if (!writeWire(err, out, fs, "\{certOut}.fingerprint", fpLine.toBytes(), "authority fingerprint a client should trust")) { return 1; }
 
     // And a vote, when a third path is given. The relay it votes about is the one whose descriptor
     // this run produced, so the whole set is consistent and reproducible from the same seeds.
-    if (cli.argCount().wait() >= 3) {
-      string voteOut = string.fromBytes(cli.arg(2).wait());
+    if (argv.len() >= 3) {
+      string voteOut = argv[2];
       // A sixth argument names a descriptor to vote about instead of the one generated here. That is
       // what makes the documents describe a relay that *exists*: `relayd --descriptor` writes the one
       // for the keys it actually serves with, and an authority voting about anything else describes a
       // relay a client would connect to and find the wrong identity at.
       // Every argument from the sixth on names a descriptor to vote about, so a network of several
       // relays is described by listing them. With none, the one generated here stands in.
-      i32 extra = cli.argCount().wait() - 5;
+      i32 extra = argv.len() - 5;
       i32 count = extra > 0 ? extra : 1;
       RelayOpinion[] relays = RelayOpinion[].defaulted(count);
       for (i32 ri = 0; ri < count; ri++) {
         u8[] subject = desc;
         if (extra > 0) {
-          string subjectPath = string.fromBytes(cli.arg(5 + ri).wait());
-          FileResult sf = cli.readFile(subjectPath).wait();
-          if (!sf.ok) {
-            core.warn("gendesc: \{subjectPath}: \{sf.error}");
+          string subjectPath = argv[5 + ri];
+          auto sfRead = flatten(fs.readFile(subjectPath).wait());
+          u8[]? sf = sfRead.ok();
+          if ((sf is null)) {
+            err.line("gendesc: \{subjectPath}: \{sfRead.isErr() ? "\{sfRead.err()!}" : ""}");
             return 1;
           }
-          subject = sf.bytes;
-          core.log("gendesc: voting about the relay described in \{subjectPath}");
+          subject = sf!;
+          out.line("gendesc: voting about the relay described in \{subjectPath}");
         }
         // `V2Dir` is back, because it became true: `relayd -C -K -D` answers RELAY_BEGIN_DIR now, and
         // a relay that serves directory documents *is* a cache. It was dropped when it was a false
         // claim, and dropping it had a cost that took two runs to see — **a guard must be a directory
         // cache**, so without the flag tor found "0 eligible guards", could sample no entry guard, and
         // would not build a path however many relays the consensus listed. The descriptors were fine:
-        // it logged "3 elements to add" and then ran out of guards.
+        // it logged "3 elements to add" and then ran descPath of guards.
         //
         // `HSDir` is here now, and it is the third flag to arrive by becoming true rather than by
         // being wanted. It was withheld while nothing served a hidden-service directory — a client
@@ -230,21 +233,21 @@ export i32 main(Sys sys) {
                              published + window * 2, published + window * 3, 4, 4);
       u8[] vote = voteDocument(vi, ak, cert, relays);
       if (vote.len() == 0) {
-        core.warn("gendesc: could not build a vote");
+        err.line("gendesc: could not build a vote");
         return 1;
       }
-      Change vc = cli.writeFile(voteOut, voteVectorJson(ak, vi, relays[0], cert, vote).toBytes()).wait();
-      if (!vc.ok()) {
-        core.warn("gendesc: \{voteOut}: \{vc.message}");
+      auto vc = flatten(fs.writeFile(voteOut, voteVectorJson(ak, vi, relays[0], cert, vote).toBytes()).wait());
+      if (vc.isErr()) {
+        err.line("gendesc: \{voteOut}: \{vc.isErr() ? "\{vc.err()!}" : ""}");
         return 1;
       }
-      core.log("gendesc: wrote a \{vote.len()}-byte vote to \{voteOut}");
+      out.line("gendesc: wrote a \{vote.len()}-byte vote to \{voteOut}");
 
       // And a consensus, when a fourth path is given. One authority, so the agreement is trivial and
       // the document is the point: the vote-digest is this vote's own digest, which is what a real
       // consensus records about each vote it was computed from.
-      if (cli.argCount().wait() >= 4) {
-        string consOut = string.fromBytes(cli.arg(3).wait());
+      if (argv.len() >= 4) {
+        string consOut = argv[3];
         ConsensusVoter[] voters = ConsensusVoter[].defaulted(1);
         voters[0] = ConsensusVoter("wacauth", rsaFingerprint(ak.identityN, ak.identityE),
                                    "127.0.0.1", "127.0.0.1", 7000, 5000, "agent-b@wac-mono",
@@ -253,7 +256,7 @@ export i32 main(Sys sys) {
                                          published + window * 3, 4, 4, WEIGHTS);
         u8[] cons = consensusDocument(ci, voters, relays, ak);
         if (cons.len() == 0) {
-          core.warn("gendesc: could not build a consensus");
+          err.line("gendesc: could not build a consensus");
           return 1;
         }
         // Both flavours, because a client of this package asks for the microdesc one and a C tor with
@@ -261,17 +264,17 @@ export i32 main(Sys sys) {
         // client does not use is how this went unnoticed until step 5 needed a network with no C in it.
         u8[] micro = microdescConsensusDocument(ci, voters, relays, ak);
         if (micro.len() == 0) {
-          core.warn("gendesc: could not build a microdesc consensus");
+          err.line("gendesc: could not build a microdesc consensus");
           return 1;
         }
         u8[] mds = allMicrodescriptors(relays);
-        Change cc2 = cli.writeFile(consOut,
-          consVectorJson(ak, ci, voters[0], relays[0], cons, micro, mds).toBytes()).wait();
-        if (!cc2.ok()) {
-          core.warn("gendesc: \{consOut}: \{cc2.message}");
+        auto cc2 = flatten(fs.writeFile(consOut,
+          consVectorJson(ak, ci, voters[0], relays[0], cons, micro, mds).toBytes()).wait());
+        if (cc2.isErr()) {
+          err.line("gendesc: \{consOut}: \{cc2.isErr() ? "\{cc2.err()!}" : ""}");
           return 1;
         }
-        core.log("gendesc: wrote a \{cons.len()}-byte consensus and a " +
+        out.line("gendesc: wrote a \{cons.len()}-byte consensus and a " +
                  "\{micro.len()}-byte microdesc one to \{consOut}");
 
         // And the documents themselves, on their own, in the form they go over the wire.
@@ -285,11 +288,11 @@ export i32 main(Sys sys) {
         //
         // A description file for `network.wac` can only name wac programs, so this is what makes an
         // authority something a launcher can run rather than a step a human does in between.
-        if (!writeWire(core, cli, "\{consOut}.consensus", cons, "consensus")) { return 1; }
-        if (!writeWire(core, cli, "\{consOut}.consensus.micro", micro, "microdesc consensus")) {
+        if (!writeWire(err, out, fs, "\{consOut}.consensus", cons, "consensus")) { return 1; }
+        if (!writeWire(err, out, fs, "\{consOut}.consensus.micro", micro, "microdesc consensus")) {
           return 1;
         }
-        if (!writeWire(core, cli, "\{consOut}.consensus.mds", mds, "microdescriptors")) { return 1; }
+        if (!writeWire(err, out, fs, "\{consOut}.consensus.mds", mds, "microdescriptors")) { return 1; }
       }
     }
   }

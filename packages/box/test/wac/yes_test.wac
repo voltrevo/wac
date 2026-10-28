@@ -5,44 +5,52 @@
 // From `box.test.ts`, where it was the last thing said to need a process — "it stops because `write`
 // reports the closed pipe, and closing a pipe is a process lifecycle a frame does not have".
 //
-// **A frame has exactly that**, and `frame.wac` says so twenty lines into the file: output is capped at
-// 8 MiB, `write` answers false past it, and *"`packages/box`'s `yes` is written as
-// `while (cli.write(block)) {}` precisely so a full buffer stops it"*. The applet's stopping condition
-// and the frame's cap were built for each other; only the test had not noticed.
-//
-// The pipe and the cap are not the same mechanism, and that is worth saying rather than glossing: a
-// closed pipe is the reader leaving, a full buffer is the writer running out of room. What `yes`
-// depends on is neither — it is that `write` can answer false at all, which is the property both have
-// and the reason `write` returns a bool.
+// The test hands it an `Output` that takes a megabyte and then answers `OutputClosed`, which is what a
+// reader leaving looks like from the writer's side. The pipe and the cap are not the same mechanism, and that
+// is worth saying rather than glossing: a closed pipe is the reader leaving, a full buffer is the writer
+// running out of room. What `yes` depends on is neither — it is that `write` can be refused at all.
 
-import { Cli, Core, GRANT_ALL, Sys } from "std";
+import { Sys, Output, OutputClosed, OutputFault } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
-import { main } from "../../src/box.wac";
+import { yes } from "../../src/applets/yes.wac";
+import { parseList } from "../../src/lib/args.wac";
+import { Kept } from "../../../platform/src/stream.wac";
+import { Buf, Result } from "core";
 
-export async string test_yes_stops_when_the_sink_stops_taking(Core core, Cli cli) {
+static i32 CAP = 1 << 20;
+
+/** `b` kept, until the buffer holds `CAP`; then refused, as a reader that has gone refuses it. */
+async Result<void, OutputFault> upTo(Buf held, bool[] refused, u8[] b) {
+  if (held.len + b.len() > CAP) {
+    refused[0] = true;
+    return Result.Err(OutputClosed("the reader has gone"));
+  }
+  held.pushAll(b);
+  return Result.Ok();
+}
+
+async Result<void, OutputFault> stillOpen() { return Result.Ok(); }
+
+bool never() { return false; }
+
+export async string test_yes_stops_when_the_sink_stops_taking(Sys sys) {
   T t = T.create();
-
-  Frame f = Frame.of(["yes", "wac"], u8[](), cli.cwd().wait(), false);
+  Buf held = Buf.create();
+  bool[] refused = bool[].filled(1, false);
+  Output out = Output((u8[] b) => upTo(held, refused, b), stillOpen);
   // **This returns.** That is the assertion, and nothing after it would run if it were wrong — a `yes`
   // that ignored `write`'s answer would spin here until the run was killed, which is the failure this
   // test is for and the one a timeout reports as an unhelpful nothing.
-  i32 code = await main(Sys.__wacOf(childCore(f, core), childCli(f, cli)));
-
-  string out = string.fromBytes(f.out.bytes());
-  t.isTrue(out.len() > 0, "yes wrote something");
-  t.eqStr(out.slice(0, 8), "wac\nwac\n", "it wrote its operand, repeatedly");
-
-  // It stopped because the sink refused, not because it decided to. `overflowed` is recorded rather
-  // than inferred precisely so this is askable: a child that stops cleanly leaves nothing in the bytes
-  // themselves to say they are short.
-  t.isTrue(f.overflowed, "yes stopped because the buffer filled, not for some other reason");
-  t.isTrue(out.len() > 1000000, "and it filled it: \{out.len()} bytes");
-
+  i32 code = yes(Kept.create().out, out, never, parseList(["yes", "wac"], 1, "yes"));
+  string said = string.fromBytes(held.bytes());
+  t.isTrue(said.len() > 0, "yes wrote something");
+  t.eqStr(said.slice(0, 8), "wac\nwac\n", "it wrote its operand, repeatedly");
+  // It stopped because the sink refused, not because it decided to.
+  t.isTrue(refused[0], "yes stopped because the output refused, not for some other reason");
+  t.isTrue(said.len() > CAP / 2, "and it filled it: \{said.len()} bytes");
   // Every byte is the operand repeated — a `yes` that stopped early for a *different* reason could
   // still have written a plausible prefix, so the length above and the shape here are two claims.
-  t.eqI32(out.len() % 4, 0, "whole repetitions of 'wac\\n'");
+  t.eqI32(said.len() % 4, 0, "whole repetitions of 'wac\\n'");
   t.eqI32(code, 0, "and it ended cleanly");
-
   return t.report();
 }

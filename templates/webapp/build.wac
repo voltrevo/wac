@@ -2,4 +2,4 @@
 import { Sys } from "std";
 import { buildPage } from "webbuild";
 
-export i32 main(Sys sys) { return buildPage(sys.core, sys.cli); }
+export i32 main(Sys sys) { return buildPage(sys.args(), sys.stderr(), sys.stdout(), sys.files(), sys.procs()); }

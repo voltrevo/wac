@@ -6,10 +6,10 @@
 // is worse than an error, because the caller's next step is to act on it: `find | xargs rm` on a
 // truncated list deletes the wrong set.
 
-import { Cli, Core, Stat } from "std";
+import { Stat, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
 /**
  * How deep the walk goes.
@@ -21,40 +21,42 @@ import { Fs } from "../../../fs/src/fs.wac";
  */
 i32 MAX_DEPTH() { return 64; }
 
-export async i32 find(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 find(Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
-  Stat st = await fs.stat(root);
+  auto looked = await fs.stat(root);
+  Stat? st = looked.ok();
   // GNU quotes the path and gives no frame: `find: 'nosuch': No such file or directory`. Same story
   // as `du` next door — an invented phrase for every absence, so a path with no read grant and a path
   // that is genuinely missing were one answer.
-  if (!st.exists) {
-    core.warn(a.name + ": '" + root + "': " + st.words("No such file or directory"));
+  if (st is null) {
+    err.line(a.name + ": '" + root + "': " + reason(looked.err()!));
     return 1;
   }
-  core.log(root);
-  return await walk(core, cli, fs, a.name, root, 0) ? 0 : 1;
+  out.line(root);
+  return await walk(err, out, fs, a.name, root, 0) ? 0 : 1;
 }
 
 /** False if any part of this subtree could not be listed. */
-async bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
+async bool walk(Output err, Output out, Files fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
-    core.warn("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
+    err.line("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
       " levels, not descending (a symlink loop, or a genuinely deep tree)");
     return false;
   }
-  string[]? names = await fs.readDir(dir);
+  string[]? names = (await fs.readDir(dir)).ok();
   if (names is null) {
-    core.warn("\{name}: \{dir}: cannot read directory");
+    err.line("\{name}: \{dir}: cannot read directory");
     return false;
   }
   string[] found = names!;
   bool complete = true;
   for (i32 i = 0; i < found.len(); i++) {
     string path = "\{dir}/\{found[i]}";
-    core.log(path);
-    if ((await fs.stat(path)).isDir) {
-      if (!(await walk(core, cli, fs, name, path, depth + 1))) { complete = false; }
+    out.line(path);
+    Stat? st = (await fs.stat(path)).ok();
+    if ((st is not null) && st!.isDir) {
+      if (!(await walk(err, out, fs, name, path, depth + 1))) { complete = false; }
     }
   }
   return complete;

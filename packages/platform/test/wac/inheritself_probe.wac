@@ -1,0 +1,19 @@
+// A `spawnSelf` child handed this program's own output — `Launch.inheritOut` — writes it directly, as a `spawn`
+// child does. Run by `stdhandles_test.wac`.
+
+import { Sys, Authority, Launch } from "std";
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  if (a.len() > 0 && a[0] == "child") {
+    await sys.stdout().line("from the child");
+    return 5;
+  }
+  match (await sys.procs().spawnSelf(["child"], Authority.none(), Launch("", true, true, false))) {
+    Ok(k): { return (await k.exit()).orElse(99); }
+    Err(e): {
+      await sys.stderr().line("spawnSelf: \{e}");
+      return 98;
+    }
+  }
+}

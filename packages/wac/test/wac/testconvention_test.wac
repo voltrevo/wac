@@ -9,7 +9,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 string SOURCE() {
   return "import { Sys } from \"std\";\n" +
@@ -19,15 +20,15 @@ string SOURCE() {
          "export async string test_async_takes_sys(Sys sys) { return \"\"; }\n";
 }
 
-Exec wac(Cli cli, string[] args) { return cli.exec(binaryPath(cli), args, u8[]()).wait(); }
+Exec wac(Env env, Procs procs, string[] args) { return flatten(procs.exec(binaryPath(env), args, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap(); }
 
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
-string prepared(Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/\{name}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
-  cli.writeFile("\{dir}/conv_test.wac", SOURCE().toBytes()).wait();
+string prepared(Env env, Files fs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/\{name}";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
+  fs.writeFile("\{dir}/conv_test.wac", SOURCE().toBytes()).wait();
   return dir;
 }
 
@@ -41,35 +42,44 @@ void expectAllFour(T t, Exec r, string how) {
   t.isTrue(contains(out, "ok   test_async_takes_sys"), "\{how}: an `async` one is settled — \{out}");
 }
 
-export string test_a_file_runs_void_verbatim_and_sys_tests_u76d9ae(Core core, Cli cli) {
+export string test_a_file_runs_void_verbatim_and_sys_tests_u76d9ae(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = prepared(cli, "testconv-file");
-  expectAllFour(t, wac(cli, ["test", "--allow-read", "\{dir}/conv_test.wac"]), "a file");
-  cli.remove(dir, true).wait();
+  string dir = prepared(env, fs, "testconv-file");
+  expectAllFour(t, wac(env, procs, ["test", "--allow-read", "\{dir}/conv_test.wac"]), "a file");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_directory_runs_the_same_tests_a_file_does_u76d9ae(Core core, Cli cli) {
+export string test_a_directory_runs_the_same_tests_a_file_does_u76d9ae(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = prepared(cli, "testconv-dir");
-  Exec r = wac(cli, ["test", "--allow-read", dir]);
+  string dir = prepared(env, fs, "testconv-dir");
+  Exec r = wac(env, procs, ["test", "--allow-read", dir]);
   expectAllFour(t, r, "a directory");
   t.isTrue(contains(said(r), "1 file: 1 ok"), "and the walk counts the file — \{said(r)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_sys_test_with_nothing_granted_is_not_run_rather_than_failed(Core core, Cli cli) {
+export string test_a_sys_test_with_nothing_granted_is_not_run_rather_than_failed(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The adapter takes the run's `Core` and `Cli`, and whether a test that takes `Sys` will reach for
   // a capability cannot be known before it runs — so with nothing granted it is reported as wanting
   // one, and the run is not a failure (ch47).
   T t = T.create();
-  string dir = prepared(cli, "testconv-ungranted");
-  Exec r = wac(cli, ["test", "\{dir}/conv_test.wac"]);
+  string dir = prepared(env, fs, "testconv-ungranted");
+  Exec r = wac(env, procs, ["test", "\{dir}/conv_test.wac"]);
   t.eqI32(r.status, 0, "not a failure — \{said(r)}");
   t.isTrue(contains(said(r), "want a capability this run was not granted: test_takes_sys"),
            "named as wanting a grant — \{said(r)}");
   t.isTrue(contains(said(r), "ok   test_void_passes"), "and the others still run — \{said(r)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

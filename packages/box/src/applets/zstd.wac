@@ -4,17 +4,16 @@
 // `gzip` it has no streaming form, so this holds its input — the honest note being that
 // the limit is the package's, not the world's.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, readInput } from "../lib/input.wac";
+import { Opened, readInput } from "../lib/input.wac";
 import { compress } from "../../../zstd/src/encode.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 zstd(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await readInput(core, cli, fs, a, 0);
+export async i32 zstd(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await readInput(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
-  cli.write(compress(in.bytes));
+  out.write(compress(in.bytes));
   return 0;
 }

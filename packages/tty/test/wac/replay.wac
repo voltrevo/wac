@@ -8,7 +8,8 @@
 // use: a frozen expectation cannot see `n_tty` change under it, and the answer to that is one live case
 // per mode rather than fifty-five of them.
 
-import { Cli, Core, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { flatten } from "core";
 
 /** One measurement: what came back when `input` was typed at a terminal in `mode`. */
 export struct Vector {
@@ -26,23 +27,24 @@ export struct Loaded {
 }
 
 /** The oracle whose answers the vectors hold, spawned per call. */
-export u8[] pty(Core core, Cli cli, string command, u8[] input) {
-  return through(core, cli, "script", ["-qec", command, "/dev/null"], input);
+export u8[] pty(Output err, Procs procs, string command, u8[] input) {
+  return through(err, procs, "script", ["-qec", command, "/dev/null"], input);
 }
 
 /** The pty that can hold a mode — `script` cannot, which is what `discipline.py` exists for. */
-export u8[] discipline(Core core, Cli cli, string mode, u8[] input) {
-  return through(core, cli, "python3", ["packages/tty/tools/discipline.py", mode], input);
+export u8[] discipline(Output err, Procs procs, string mode, u8[] input) {
+  return through(err, procs, "python3", ["packages/tty/tools/discipline.py", mode], input);
 }
 
 /** One program, fed `input`, run to completion; its standard output, or a trap with the reason. */
-export u8[] through(Core core, Cli cli, string program, string[] args, u8[] input) {
-  Exec r = cli.exec(program, args, input).wait();
-  if (!r.ran()) {
-    core.warn("tty: \{program} would not start — \{r.error}");
+export u8[] through(Output err, Procs procs, string program, string[] args, u8[] input) {
+  auto rRan = flatten(procs.exec(program, args, input, ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) {
+    err.line("tty: \{program} would not start — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
     trap;
   }
-  return r.stdout;
+  return r!.stdout;
 }
 
 /** The vector for one mode and one input, or a null when nothing recorded it. */
@@ -72,14 +74,14 @@ export string vectorsPath() { return "packages/tty/test/kernel-vectors.txt"; }
  * against the case list and count the mismatches; here the lookup does it, so a case added to
  * `cases.wac` is a missing vector rather than a comparison against its neighbour's answer.
  */
-export Loaded load(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
+export Loaded load(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) {
     return Loaded(Vector[](), 0, "",
                   "cannot read \{path} — run `wac run --allow-read --allow-write --allow-run " +
                   "tools/wac/ttyvectors.wac` to write it");
   }
-  u8[] b = r.bytes;
+  u8[] b = r!;
   Line l = lineAt(b, 0);
   if (l.text != "wac-tty-vectors 1") {
     return Loaded(Vector[](), 0, "", "not a tty vectors file: \{l.text}");

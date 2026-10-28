@@ -21,35 +21,36 @@
 // the only place the answer exists once the process is reaped.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, HostSocket } from "std";
-import { Read } from "core";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs, Sys, Socket } from "std";
+import { Read, flatten } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-bool haveNode(Cli cli) {
-  Exec r = cli.exec("/bin/sh", ["-c", "command -v node >/dev/null"], u8[]()).wait();
-  return r.ran() && r.status == 0;
+bool haveNode(Procs procs) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "command -v node >/dev/null"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return (r is not null) && r!.status == 0;
 }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/nodenet-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/nodenet-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
 
-string build(Cli cli, string out, string target) {
-  Exec r = cli.exec("deno",
-    [
+string build(Procs procs, string out, string target) {
+  auto rRan = flatten(procs.exec("deno", [
              "run", "-A", "packages/platform/build.ts", "packages/platform/example/greet.wac",
              "--allow-net", "--target", target, "-o", out
-    ], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    return "greet.wac for \{target} did not build: \{string.fromBytes(r.stderr)}";
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    return "greet.wac for \{target} did not build: \{string.fromBytes(r!.stderr)}";
   }
   return "";
 }
@@ -83,7 +84,7 @@ struct Server {
  * describes, met here from the other direction — and it presents as a test that hangs rather than one
  * that fails.
  */
-Server start(Cli cli, string dir, string name, string prog, string[] args) {
+Server start(Procs procs, string dir, string name, string prog, string[] args) {
   string log = "\{dir}/\{name}.log";
   string status = "\{dir}/\{name}.status";
   string pidfile = "\{dir}/\{name}.pid";
@@ -97,25 +98,25 @@ Server start(Cli cli, string dir, string name, string prog, string[] args) {
   // the group — was chosen there on the grounds that it generalises to
   // `packages/wactest/src/daemon.wac`. It does not need to: that file uses `exec` inside the braces,
   // so its `$!` is already the program's, and its own header says why.
-  Exec r = cli.exec("/bin/sh",
-    [
+  auto rRan = flatten(procs.exec("/bin/sh", [
                    "-c", "( \{line} & child=$!; echo $child > \{quoted(pidfile)}" +
                    "; wait $child; echo EXIT=$? > \{quoted(status)} ) >\{quoted(log)}" +
                    " 2>&1 & echo $!"
-    ], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
     return Server(-1, log, status, pidfile,
-                  "the shell did not start it — \{string.fromBytes(r.stderr)}");
+                  "the shell did not start it — \{string.fromBytes(r!.stderr)}");
   }
-  u8[] b = r.stdout;
+  u8[] b = r!.stdout;
   i32 pid = 0;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] as i32 - '0'); } }
   return Server(pid, log, status, pidfile, pid > 0 ? "" : "no pid from the shell");
 }
 
-string readOr(Cli cli, string path, string fallback) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : fallback;
+string readOr(Files fs, string path, string fallback) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : fallback;
 }
 
 /** The digits after `marker`, or -1. */
@@ -138,56 +139,61 @@ i32 numberAfter(string text, string marker) {
  * The port comes out of the line because the server was started on port 0 — the kernel chose, and
  * `Socket.port` is how a program can say what it chose.
  */
-i32 waitForPort(Core core, Cli cli, Server s, i32 millis) {
-  i64 deadline = core.nowMillis().wait() + (millis as i64);
+i32 waitForPort(Clock clock, Files fs, Server s, i32 millis) {
+  i64 deadline = flatten(clock.nowMillis().wait()).unwrap() + (millis as i64);
   for (i32 guard = 0; guard < 100000; guard++) {
-    i32 port = numberAfter(readOr(cli, s.log, ""), "listening on ");
+    i32 port = numberAfter(readOr(fs, s.log, ""), "listening on ");
     if (port > 0) { return port; }
-    if (core.nowMillis().wait() >= deadline) { return -1; }
-    core.sleepMillis(20).wait();
+    if (flatten(clock.nowMillis().wait()).unwrap() >= deadline) { return -1; }
+    clock.sleepMillis(20).wait();
   }
   return -1;
 }
 
 /** Connect, read what the server sends, and close. */
-string greetedBy(Core core, Cli cli, i32 port) {
-  HostSocket s = cli.connect("127.0.0.1", port).wait();
-  if (s.handle < 0) { return "connect failed: \{s.error}"; }
+string greetedBy(Net net, i32 port) {
+  auto sDial = flatten(net.connect("127.0.0.1", port).wait());
+  Socket? s = sDial.ok();
+  if (s is null) { return "connect failed: \{sDial.isErr() ? "\{sDial.err()!}" : ""}"; }
   string said = "";
-  match (cli.recv(s.handle).wait()) {
-    Data(bytes): { said = string.fromBytes(bytes); }
-    End: { }
-    Failed(why): { said = "recv failed: \{why}"; }
+  match (flatten(s!.recv().wait())) {
+    Ok(got): {
+      match (got) {
+        Data(bytes): { said = string.fromBytes(bytes); }
+        default: { }
+      }
+    }
+    Err(why): { said = "recv failed: \{why}"; }
   }
-  cli.closeSocket(s.handle);
+  s!.close();
   return said;
 }
 
 /** The `EXIT=` the shell wrote once the job was over, or -1 while it is still running. */
-i32 exitStatus(Core core, Cli cli, Server s, i32 millis) {
-  i64 deadline = core.nowMillis().wait() + (millis as i64);
+i32 exitStatus(Clock clock, Files fs, Server s, i32 millis) {
+  i64 deadline = flatten(clock.nowMillis().wait()).unwrap() + (millis as i64);
   for (i32 guard = 0; guard < 100000; guard++) {
-    i32 code = numberAfter(readOr(cli, s.status, ""), "EXIT=");
+    i32 code = numberAfter(readOr(fs, s.status, ""), "EXIT=");
     if (code >= 0) { return code; }
-    if (core.nowMillis().wait() >= deadline) { return -1; }
-    core.sleepMillis(20).wait();
+    if (flatten(clock.nowMillis().wait()).unwrap() >= deadline) { return -1; }
+    clock.sleepMillis(20).wait();
   }
   return -1;
 }
 
 /** The pid the subshell wrote down, or 0 — it appears a moment after the shell answers. */
-i32 childPid(Core core, Cli cli, Server s) {
+i32 childPid(Clock clock, Files fs, Server s) {
   for (i32 tries = 0; tries < 100; tries++) {
-    FileResult f = cli.readFile(s.pidfile).wait();
-    if (f.ok) {
-      u8[] b = f.bytes;
+    u8[]? f = flatten(fs.readFile(s.pidfile).wait()).ok();
+    if ((f is not null)) {
+      u8[] b = f!;
       i32 pid = 0;
       for (i32 i = 0; i < b.len(); i++) {
         if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] as i32 - '0'); }
       }
       if (pid > 0) { return pid; }
     }
-    core.sleepMillis(10).wait();
+    clock.sleepMillis(10).wait();
   }
   return 0;
 }
@@ -199,21 +205,20 @@ i32 childPid(Core core, Cli cli, Server s) {
  * The answer is what makes this checkable: the assertions in these tests had all happened by the time
  * `kill` ran, so a `kill` that killed the wrong process passed every one of them for weeks.
  */
-bool kill(Core core, Cli cli, Server s) {
+bool kill(Clock clock, Files fs, Procs procs, Server s) {
   if (s.pid <= 0) { return true; }
-  i32 child = childPid(core, cli, s);
+  i32 child = childPid(clock, fs, s);
   if (child > 0) {
-    cli.exec("/bin/sh", ["-c", "kill -9 \{child} 2>/dev/null; true"],
-             u8[]()).wait();
+    procs.exec("/bin/sh", ["-c", "kill -9 \{child} 2>/dev/null; true"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   }
-  cli.exec("/bin/sh", ["-c", "kill -9 \{s.pid} 2>/dev/null; true"], u8[]()).wait();
+  procs.exec("/bin/sh", ["-c", "kill -9 \{s.pid} 2>/dev/null; true"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   if (child <= 0) { return false; }
   // `kill -0` asks whether the pid exists without touching it; a reaped child answers no.
   for (i32 tries = 0; tries < 200; tries++) {
-    Exec alive = cli.exec("/bin/sh", ["-c", "kill -0 \{child} 2>/dev/null"],
-                          u8[]()).wait();
-    if (!alive.ran() || alive.status != 0) { return true; }
-    core.sleepMillis(10).wait();
+    auto aliveRan = flatten(procs.exec("/bin/sh", ["-c", "kill -0 \{child} 2>/dev/null"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? alive = aliveRan.ok();
+    if ((alive is null) || alive!.status != 0) { return true; }
+    clock.sleepMillis(10).wait();
   }
   return false;
 }
@@ -226,41 +231,46 @@ struct Greeted {
   string error;
 }
 
-Greeted greet(Core core, Cli cli, string dir, string name, string prog, string[] args) {
-  Server s = start(cli, dir, name, prog, args);
+Greeted greet(Clock clock, Files fs, Net net, Procs procs, string dir, string name, string prog, string[] args) {
+  Server s = start(procs, dir, name, prog, args);
   if (s.error != "") { return Greeted("", "", -1, s.error); }
-  i32 port = waitForPort(core, cli, s, 30000);
+  i32 port = waitForPort(clock, fs, s, 30000);
   if (port < 0) {
-    kill(core, cli, s);
-    return Greeted("", readOr(cli, s.log, ""), -1, "the server never said its port");
+    kill(clock, fs, procs, s);
+    return Greeted("", readOr(fs, s.log, ""), -1, "the server never said its port");
   }
-  string said = greetedBy(core, cli, port);
-  i32 code = exitStatus(core, cli, s, 30000);
+  string said = greetedBy(net, port);
+  i32 code = exitStatus(clock, fs, s, 30000);
   // A server that greeted and exited is already gone, so `kill` has nothing to do and says so; a
   // `false` here would mean the program outlived a kill aimed at it.
-  bool stopped = kill(core, cli, s);
-  return Greeted(said, readOr(cli, s.log, ""), code,
+  bool stopped = kill(clock, fs, procs, s);
+  return Greeted(said, readOr(fs, s.log, ""), code,
                  stopped ? "" : "the server was still running after kill");
 }
 
-export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client(
-    Core core, Cli cli) {
+export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  if (!haveNode(cli)) {
-    core.warn("node_net: skipped — no node on this machine, so there is no second runtime");
+  if (!haveNode(procs)) {
+    err.line("node_net: skipped — no node on this machine, so there is no second runtime");
     return t.report();
   }
-  string dir = freshScratch(t, cli, "greet");
+  string dir = freshScratch(t, env, fs, "greet");
   string denoOut = "\{dir}/greet-deno";
   string nodeOut = "\{dir}/greet-node";
-  string why = build(cli, denoOut, "deno") + build(cli, nodeOut, "node");
+  string why = build(procs, denoOut, "deno") + build(procs, nodeOut, "node");
   t.eqStr(why, "", "greet built for both runtimes");
   if (why != "") { return t.report(); }
 
   // Loopback, so the peer is knowable: whatever address the client comes from is the one the server
   // must report, and on loopback that is `127.0.0.1` on both runtimes.
-  Greeted onDeno = greet(core, cli, dir, "deno", denoOut, ["127.0.0.1", "0"]);
-  Greeted onNode = greet(core, cli, dir, "node", "node", [nodeOut, "127.0.0.1", "0"]);
+  Greeted onDeno = greet(clock, fs, net, procs, dir, "deno", denoOut, ["127.0.0.1", "0"]);
+  Greeted onNode = greet(clock, fs, net, procs, dir, "node", "node", [nodeOut, "127.0.0.1", "0"]);
   t.eqStr(onDeno.error, "", "the Deno server ran");
   t.eqStr(onNode.error, "", "the Node server ran");
 
@@ -272,23 +282,28 @@ export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_c
   // And the program's own view of it, which is what `Socket.fromLoopback` is for.
   t.isTrue(contains(onDeno.logged, "peer 127.0.0.1 (loopback)"), onDeno.logged);
   t.isTrue(contains(onNode.logged, "peer 127.0.0.1 (loopback)"), onNode.logged);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface(
-    Core core, Cli cli) {
+export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The address has to reach the kernel, and the only witness is the socket table: a server that
   // answers on `127.0.0.1` answers there whether it bound loopback or the world. `ss` is asked rather
   // than a second interface, because a container may have only one and the bind is the claim.
   T t = T.create();
-  if (!haveNode(cli)) {
-    core.warn("node_net: skipped — no node on this machine");
+  if (!haveNode(procs)) {
+    err.line("node_net: skipped — no node on this machine");
     return t.report();
   }
-  string dir = freshScratch(t, cli, "bind");
+  string dir = freshScratch(t, env, fs, "bind");
   string nodeOut = "\{dir}/greet-node";
-  string why = build(cli, nodeOut, "node");
+  string why = build(procs, nodeOut, "node");
   t.eqStr(why, "", "greet built for node");
   if (why != "") { return t.report(); }
 
@@ -296,20 +311,19 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
   // started**: the window between letting it go and the child's bind is wac-mono 0069's race, and a
   // fixed number shared with every other suite on this machine is the larger one.
   for (i32 attempt = 1; attempt <= 3; attempt++) {
-    Held held = Held.take(cli);
+    Held held = Held.take(net);
     t.isTrue(held.port > 0, "a free port was bound");
     if (held.port < 0) { break; }
     i32 port = held.port;
-    held.release(cli);
+    held.release();
 
-    Server s = start(cli, dir, "bind\{attempt}", "node",
-                     [nodeOut, "127.0.0.1", "\{port}"]);
+    Server s = start(procs, dir, "bind\{attempt}", "node", [nodeOut, "127.0.0.1", "\{port}"]);
     t.eqStr(s.error, "", "node started");
     if (s.error != "") { break; }
-    i32 got = waitForPort(core, cli, s, 30000);
-    string log = readOr(cli, s.log, "");
+    i32 got = waitForPort(clock, fs, s, 30000);
+    string log = readOr(fs, s.log, "");
     if (got < 0) {
-      kill(core, cli, s);
+      kill(clock, fs, procs, s);
       // A bind failure is retried, and only that: the child's own words are kept so `Address already
       // in use` can be told from a real failure rather than guessed at.
       if (contains(log, "Address already in use") || contains(log, "EADDRINUSE")) {
@@ -319,9 +333,10 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
       break;
     }
 
-    Exec ss = cli.exec("ss", ["-ltn"], u8[]()).wait();
-    t.isTrue(ss.ran(), "ss ran — \{ss.error}");
-    string table = string.fromBytes(ss.stdout);
+    auto ssRan = flatten(procs.exec("ss", ["-ltn"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? ss = ssRan.ok();
+    t.isTrue((ss is not null), "ss ran — \{ssRan.isErr() ? "\{ssRan.err()!}" : ""}");
+    string table = string.fromBytes(ss!.stdout);
     string line = "";
     string[] rows = linesOf(table);
     for (string row in rows) {
@@ -334,12 +349,12 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     // nobody is going to make, and every other assertion here has already happened, so a `kill` that
     // killed the wrapper instead of the program passed all of them. `issues/system/0218` is the 81
     // servers that left, holding 5.1 GB and 81 ports across three workspaces.
-    t.isTrue(kill(core, cli, s),
+    t.isTrue(kill(clock, fs, procs, s),
              "the node server is gone after kill — otherwise it is holding port \{port}" +
              " and 42 MB until somebody notices");
     break;
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 

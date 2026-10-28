@@ -29,7 +29,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
 import { diagnoseFiles, emitFiles } from "../../src/api.wac";
 import { Ran, runEmitted, scratchDir } from "./artifacts_probe.wac";
 
@@ -49,8 +49,10 @@ string[] sources() {
   ];
 }
 
-export string test_a_parameter_named_like_two_files_functions_does_not_make_the_module_ambiguous(
-    Core core, Cli cli) {
+export string test_a_parameter_named_like_two_files_functions_does_not_make_the_module_ambiguous(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string entry = "/t/main.wac";
 
@@ -69,13 +71,13 @@ export string test_a_parameter_named_like_two_files_functions_does_not_make_the_
   // And it is the *right* module: `pump` calls its parameter, not either file's `write`. Run rather
   // than inspected, because the wrong resolution produces a module that compiles and answers wrongly
   // as easily as one that does not compile at all.
-  string dir = scratchDir(cli);
-  Ran r = runEmitted(cli, paths(), sources(), entry, dir, "scoping.wasm", 0, string[].filled(0, ""));
+  string dir = scratchDir(env, fs);
+  Ran r = runEmitted(env, fs, procs, paths(), sources(), entry, dir, "scoping.wasm", 0, string[].filled(0, ""));
   t.isTrue(r.ok, "the module did not run — " + r.error);
   if (!r.ok) { return t.report(); }
   t.isTrue(!r.trapped, "the module trapped rather than answering — " + r.stderr);
   t.eqI32(r.status, 2, "main() gave " + itoa(r.status) + ", the reference gives 2");
 
-  cli.remove(dir + "/scoping.wasm", false).wait();
+  fs.remove(dir + "/scoping.wasm", false).wait();
   return t.report();
 }

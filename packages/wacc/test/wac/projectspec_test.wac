@@ -26,15 +26,16 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 
 /** `wac <cmd> <args…>` — the binary, which carries wacc. */
-Exec wacc(Cli cli, string cmd, string[] args) {
+Exec wacc(Env env, Procs procs, string cmd, string[] args) {
   string[] all = string[].filled(args.len() + 1, "");
   all[0] = cmd;
   for (i32 i = 0; i < args.len(); i++) { all[i + 1] = args[i]; }
-  return cli.exec(binaryPath(cli), all, u8[]()).wait();
+  return flatten(procs.exec(binaryPath(env), all, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** One file, with its directory made first. */
@@ -50,28 +51,30 @@ Exec wacc(Cli cli, string cmd, string[] args) {
  * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
  * not for these. `issues/system/0229`.
  */
-bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
+bool put(Files fs, string path, string text) { return putFile(fs, path, text) == ""; }
 
-export string test_a_project_specifier_resolves_against_its_own_project(Core core, Cli cli) {
+export string test_a_project_specifier_resolves_against_its_own_project(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "atspec-one");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "atspec-one");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "wrote the manifest");
-  t.isTrue(put(cli, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { answer } from \"@/src/lib.wac\";\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{}\n"), "wrote the manifest");
+  t.isTrue(put(fs, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { answer } from \"@/src/lib.wac\";\n" +
                "export i32 main() { return answer(); }\n"), "wrote main");
 
   // wacc, over the same fixture. `wac run` makes `main`'s answer the exit status rather than
   // printing it, so the two are compared through what each one's interface actually reports.
-  Exec w = wacc(cli, "run", [dir + "/src/main.wac"]);
+  Exec w = wacc(env, procs, "run", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) { t.eqI32(w.status, 42, "wacc answered " + itoa(w.status) + ", want 42"); }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -93,29 +96,29 @@ export string test_a_project_specifier_resolves_against_its_own_project(Core cor
  * So the test is: the same error, in the same file, spelled both ways. The relative spelling was
  * always caught; the `@/` one is the regression guard.
  */
-export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_file(Core core, Cli cli) {
+export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_file(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "atspec-nonentry");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "atspec-nonentry");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest");
-  t.isTrue(put(cli, dir + "/src/point.wac",
-               "export struct Point {\n  i32 x;\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{}\n"), "the manifest");
+  t.isTrue(put(fs, dir + "/src/point.wac", "export struct Point {\n  i32 x;\n" +
                "  Point create(i32 x) { return Point(x); }\n}\n"), "point");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { take } from \"./b.wac\";\nimport { Point } from \"./point.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { take } from \"./b.wac\";\nimport { Point } from \"./point.wac\";\n" +
                "export i32 main() { return take(Point.create(1)); }\n"), "main");
 
   // `b.wac` is not the entry, and asks for a field `Point` does not have.
   string[] spelling = ["@/src/point.wac", "./point.wac"];
   for (i32 i = 0; i < spelling.len(); i++) {
-    t.isTrue(put(cli, dir + "/src/b.wac",
-                 "import { Point } from \"" + spelling[i] + "\";\n" +
+    t.isTrue(put(fs, dir + "/src/b.wac", "import { Point } from \"" + spelling[i] + "\";\n" +
                  "export i32 take(Point p) { return p.nofield; }\n"), "b via " + spelling[i]);
-    Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
+    Exec w = wacc(env, procs, "check", [dir + "/src/main.wac"]);
     t.isTrue(w.ran(), "wac did not run — " + w.error);
     if (!w.ran()) { continue; }
     string said = string.fromBytes(w.stdout) + string.fromBytes(w.stderr);
@@ -126,20 +129,22 @@ export string test_a_mistake_behind_a_project_import_is_caught_in_a_non_entry_fi
   }
 
   // And the same program without the mistake, so neither row is met by refusing `@/` outright.
-  t.isTrue(put(cli, dir + "/src/b.wac",
-               "import { Point } from \"@/src/point.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/b.wac", "import { Point } from \"@/src/point.wac\";\n" +
                "export i32 take(Point p) { return p.x; }\n"), "b, corrected");
-  Exec ok = wacc(cli, "check", [dir + "/src/main.wac"]);
+  Exec ok = wacc(env, procs, "check", [dir + "/src/main.wac"]);
   t.isTrue(ok.ran(), "wac did not run — " + ok.error);
   if (ok.ran()) {
     t.eqI32(ok.status, 0, "refused a correct program: " +
             string.fromBytes(ok.stdout) + string.fromBytes(ok.stderr));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_root_is_the_importing_files_project_not_the_entrys(Core core, Cli cli) {
+export string test_the_root_is_the_importing_files_project_not_the_entrys(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The case that distinguishes D7 from the easy reading of it.** `appA` imports `libB`, a project
   // nested inside it, by its directory; `libB`'s exports module writes `@/deep/five.wac`. Both projects
   // have a `deep/five.wac`, and they answer different numbers, so which one arrives *is* the test.
@@ -150,23 +155,21 @@ export string test_the_root_is_the_importing_files_project_not_the_entrys(Core c
   // project (`§wac-import-within-project-vnqu28r`); nested and entered by its directory, it asks the
   // same question.
   T t = T.create();
-  string dir = scratch(cli, "atspec-two");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "atspec-two");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  t.isTrue(put(cli, dir + "/appA/wac.json5", "{}\n"), "appA manifest");
-  t.isTrue(put(cli, dir + "/appA/libB/wac.json5", "{ exports: \"./src/b.wac\" }\n"), "libB manifest");
-  t.isTrue(put(cli, dir + "/appA/libB/deep/five.wac", "export i32 five() { return 5; }\n"), "libB five");
+  t.isTrue(put(fs, dir + "/appA/wac.json5", "{}\n"), "appA manifest");
+  t.isTrue(put(fs, dir + "/appA/libB/wac.json5", "{ exports: \"./src/b.wac\" }\n"), "libB manifest");
+  t.isTrue(put(fs, dir + "/appA/libB/deep/five.wac", "export i32 five() { return 5; }\n"), "libB five");
   // The decoy: same relative path, under the *entry's* project, answering something unmistakable.
-  t.isTrue(put(cli, dir + "/appA/deep/five.wac", "export i32 five() { return 999; }\n"), "the decoy");
-  t.isTrue(put(cli, dir + "/appA/libB/src/b.wac",
-               "import { five } from \"@/deep/five.wac\";\n" +
+  t.isTrue(put(fs, dir + "/appA/deep/five.wac", "export i32 five() { return 999; }\n"), "the decoy");
+  t.isTrue(put(fs, dir + "/appA/libB/src/b.wac", "import { five } from \"@/deep/five.wac\";\n" +
                "export i32 seven() { return five() + 2; }\n"), "libB b");
-  t.isTrue(put(cli, dir + "/appA/src/main.wac",
-               "import { seven } from \"../libB\";\n" +
+  t.isTrue(put(fs, dir + "/appA/src/main.wac", "import { seven } from \"../libB\";\n" +
                "export i32 main() { return seven(); }\n"), "appA main");
 
-  Exec w = wacc(cli, "run", [dir + "/appA/src/main.wac"]);
+  Exec w = wacc(env, procs, "run", [dir + "/appA/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7,
@@ -174,29 +177,31 @@ export string test_the_root_is_the_importing_files_project_not_the_entrys(Core c
             (w.status == 233 ? " — that is 1001 through an exit status, so it imported the decoy" : "") +
             ", want 7");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cli cli) {
+export string test_a_project_specifier_with_no_manifest_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The canary for both of the above: a change that resolved `@/` against *something* whatever the
   // situation would pass them and quietly compile this one against `src/lib.wac` relative to
   // nothing. D7 says it is a compile error, and it has to name the specifier so a reader knows what
   // to add rather than that a file is missing.
   T t = T.create();
-  string dir = scratch(cli, "atspec-none");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "atspec-none");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
-  t.isTrue(put(cli, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { answer } from \"@/src/lib.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { answer } from \"@/src/lib.wac\";\n" +
                "export i32 main() { return answer(); }\n"), "wrote main");
 
   // **wacc's first version of this answered "1 file(s), no diagnostics".** It skipped the import it
   // could not resolve and compiled what was left, which is the failure that looks like success — so
   // this asserts the refusal rather than merely that the two agree, which they did while both were
   // wrong in different ways.
-  Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
+  Exec w = wacc(env, procs, "check", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string wsaid = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
@@ -204,11 +209,14 @@ export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cl
     t.isTrue(contains(wsaid, "needs a project"), "wacc refused for the wrong reason: " + wsaid);
     t.isTrue(contains(wsaid, "@/src/lib.wac"), "wacc did not name the specifier: " + wsaid);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_project_import_of_a_file_that_does_not_exist_is_refused(Core core, Cli cli) {
+export string test_a_project_import_of_a_file_that_does_not_exist_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The question `issues/lang/0157`'s status line left open.** Its rule — an import naming a file
   // nobody supplied is a diagnostic at the import's own token — landed for plain `./` and `../`
   // specifiers, and the issue says a `@/` one is judged too *when the caller has a filesystem*,
@@ -219,29 +227,31 @@ export string test_a_project_import_of_a_file_that_does_not_exist_is_refused(Cor
   // specifier resolves cleanly, and the file it resolves *to* is absent — so the compiler has
   // everything it needs to name the file rather than the specifier.
   T t = T.create();
-  string dir = scratch(cli, "atspec-missing");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "atspec-missing");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
-  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "wrote the manifest");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { answer } from \"@/src/nosuch.wac\";\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{}\n"), "wrote the manifest");
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { answer } from \"@/src/nosuch.wac\";\n" +
                "export i32 main() { return answer(); }\n"), "wrote main");
 
   // The control for this one is `test_a_project_specifier_resolves_against_its_own_project` above:
   // the same shape with the file present is accepted there, so a rule that refused every `@/` would
   // be caught rather than met by this assertion.
-  Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
+  Exec w = wacc(env, procs, "check", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string wsaid = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
     t.isTrue(w.status != 0, "wacc accepted an import of a file that is not there: " + wsaid);
     t.isTrue(contains(wsaid, "nosuch.wac"), "wacc did not name the missing file: " + wsaid);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
+export string test_one_file_reached_two_ways_is_one_module(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **D8's half that exists today.** `design/lang/0009` D8: identity is canonical *after* resolution,
   // so a file reached by `./point.wac` and by `@/src/point.wac` is one module — and in wac that is
   // load-bearing rather than tidy, because types are nominal. Two keys would be two `Point`s, and
@@ -259,30 +269,26 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
   // through a `subdir` one, and two mappings at different commits asserted to be *two* modules —
   // belong here too, and cannot be written until D9-D11 exist.
   T t = T.create();
-  string dir = scratch(cli, "atspec-one-module");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "atspec-one-module");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest");
-  t.isTrue(put(cli, dir + "/src/point.wac",
-               "export struct Point {\n  i32 x;\n  i32 y;\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{}\n"), "the manifest");
+  t.isTrue(put(fs, dir + "/src/point.wac", "export struct Point {\n  i32 x;\n  i32 y;\n" +
                "  Point create(i32 x, i32 y) { return Point(x, y); }\n" +
                "  i32 sum(const this) { return this.x + this.y; }\n}\n"), "point");
   // One importer spells it relatively, the other through the project root.
-  t.isTrue(put(cli, dir + "/src/a.wac",
-               "import { Point } from \"./point.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/a.wac", "import { Point } from \"./point.wac\";\n" +
                "export Point make() { return Point.create(3, 4); }\n"), "a");
-  t.isTrue(put(cli, dir + "/src/b.wac",
-               "import { Point } from \"@/src/point.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/b.wac", "import { Point } from \"@/src/point.wac\";\n" +
                "export i32 take(Point p) { return p.sum(); }\n"), "b");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { make } from \"./a.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { make } from \"./a.wac\";\n" +
                "import { take } from \"./b.wac\";\n" +
                "export i32 main() { return take(make()); }\n"), "main");
 
   // wacc is the side that can actually fail here: a `Point` from two modules does not type-check
   // against itself, and when it slips past the checker the engine refuses the module.
-  Exec w = wacc(cli, "run", [dir + "/src/main.wac"]);
+  Exec w = wacc(env, procs, "run", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7,
@@ -296,16 +302,15 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
   // invisible. I canaried this case with exactly that perturbation, watched it pass, and had a
   // vacuous test until I asked why. A relative entry makes the root `.`, where that class of
   // mistake does change the key. Between them the case sees both.
-  Exec rel = cli.exec("/bin/sh",
-                      ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " run src/main.wac"],
-                      u8[]()).wait();
-  t.isTrue(rel.ran(), "wac did not run from inside the project — " + rel.error);
-  if (rel.ran()) {
-    t.eqI32(rel.status, 7,
-            "wacc answered " + itoa(rel.status) + " for a relative entry, want 7: " +
-            string.fromBytes(rel.stderr));
+  auto relRan = flatten(procs.exec("/bin/sh", ["-c", "cd " + dir + " && exec " + binaryPath(env) + " run src/main.wac"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? rel = relRan.ok();
+  t.isTrue((rel is not null), "wac did not run from inside the project — " + "\{relRan.isErr() ? "\{relRan.err()!}" : ""}");
+  if ((rel is not null)) {
+    t.eqI32(rel!.status, 7,
+            "wacc answered " + itoa(rel!.status) + " for a relative entry, want 7: " +
+            string.fromBytes(rel!.stderr));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -323,36 +328,38 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
  * directories with four spellings. The spec sentence is the invariant: where you were standing and
  * how you spelled the entry cannot change what a program means.
  */
-export string test_a_project_specifier_does_not_depend_on_the_working_directory(Core core, Cli cli) {
+export string test_a_project_specifier_does_not_depend_on_the_working_directory(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "atspec-cwd");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "atspec-cwd");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest, at the root");
-  t.isTrue(put(cli, dir + "/lib.wac", "export i32 v() { return 9; }\n"), "lib at the root");
-  t.isTrue(put(cli, dir + "/src/util/deep.wac",
-               "import { v } from \"@/lib.wac\";\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{}\n"), "the manifest, at the root");
+  t.isTrue(put(fs, dir + "/lib.wac", "export i32 v() { return 9; }\n"), "lib at the root");
+  t.isTrue(put(fs, dir + "/src/util/deep.wac", "import { v } from \"@/lib.wac\";\n" +
                "export i32 main() { return v(); }\n"), "a file two directories down");
 
   // (where to run from, what to call the entry) — the same file every time.
   string[] where = [dir, dir + "/src", dir + "/src/util", dir + "/src/util"];
   string[] entry = ["src/util/deep.wac", "util/deep.wac", "deep.wac", "./deep.wac"];
   for (i32 i = 0; i < where.len(); i++) {
-    Exec w = cli.exec("/bin/sh",
-                      [
-                                     "-c", "cd " + where[i] + " && exec " + binaryPath(cli) +
+    auto wRan = flatten(procs.exec("/bin/sh", [
+                                     "-c", "cd " + where[i] + " && exec " + binaryPath(env) +
                                      " run " + entry[i]
-                      ], u8[]()).wait();
-    t.isTrue(w.ran(), "wac did not run — " + w.error);
-    if (w.ran()) {
-      t.eqI32(w.status, 9, "wacc from " + where[i] + " with " + entry[i] + " answered " +
-                           itoa(w.status) + ", want 9 — " + string.fromBytes(w.stderr));
+                      ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? w = wRan.ok();
+    t.isTrue((w is not null), "wac did not run — " + "\{wRan.isErr() ? "\{wRan.err()!}" : ""}");
+    if ((w is not null)) {
+      t.eqI32(w!.status, 9, "wacc from " + where[i] + " with " + entry[i] + " answered " +
+                           itoa(w!.status) + ", want 9 — " + string.fromBytes(w!.stderr));
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -374,17 +381,19 @@ export string test_a_project_specifier_does_not_depend_on_the_working_directory(
  * language does not define must be refused *by name*, so a reader learns what to write rather than
  * that some file is missing.
  */
-export string test_a_bare_specifier_that_names_no_mapping_is_refused(Core core, Cli cli) {
+export string test_a_bare_specifier_that_names_no_mapping_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "barespec");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "barespec");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
-  t.isTrue(put(cli, dir + "/src/sub/lib.wac", "export i32 two() { return 42; }\n"), "wrote lib");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { two } from \"sub/lib.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/sub/lib.wac", "export i32 two() { return 42; }\n"), "wrote lib");
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { two } from \"sub/lib.wac\";\n" +
                "export i32 main() { return two(); }\n"), "wrote main");
 
-  Exec w = wacc(cli, "check", [dir + "/src/main.wac"]);
+  Exec w = wacc(env, procs, "check", [dir + "/src/main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string said = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
@@ -395,15 +404,14 @@ export string test_a_bare_specifier_that_names_no_mapping_is_refused(Core core, 
 
   // **The relative spelling of the same import still works**, which is the canary: a change that
   // refused everything would pass every assertion above.
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { two } from \"./sub/lib.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { two } from \"./sub/lib.wac\";\n" +
                "export i32 main() { return two(); }\n"), "rewrote main");
-  Exec ok = wacc(cli, "check", [dir + "/src/main.wac"]);
+  Exec ok = wacc(env, procs, "check", [dir + "/src/main.wac"]);
   t.isTrue(ok.ran() && ok.status == 0,
            "the relative spelling stopped working: " +
            string.fromBytes(ok.stderr) + string.fromBytes(ok.stdout));
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 

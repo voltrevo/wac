@@ -6,7 +6,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Net, Procs, Sys, Clock } from "std";
 import { bodyLength, dcidLen, numberAt, packetType, parseOk, scidLen, shortDcidLen, version }
   from "./packet_probe.wac";
 import { anInitial } from "./minted.wac";
@@ -40,9 +40,14 @@ u8[] withCid(i32 len) {
   return out;
 }
 
-export string test_a_real_initial_parses_to_the_fields_it_has(Core core, Cli cli) {
+export string test_a_real_initial_parses_to_the_fields_it_has(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[] packet = anInitial(t, core, cli, "packet-parse");
+  u8[] packet = anInitial(t, clock, env, fs, net, procs, "packet-parse");
   if (packet.len() == 0) { return t.report(); }
 
   t.isTrue(packet.len() >= 1200,
@@ -68,9 +73,14 @@ export string test_a_real_initial_parses_to_the_fields_it_has(Core core, Cli cli
   return t.report();
 }
 
-export string test_a_header_that_cannot_be_read_completely_is_refused(Core core, Cli cli) {
+export string test_a_header_that_cannot_be_read_completely_is_refused(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[] packet = anInitial(t, core, cli, "packet-truncated");
+  u8[] packet = anInitial(t, clock, env, fs, net, procs, "packet-truncated");
   if (packet.len() == 0) { return t.report(); }
 
   // Every truncation of a real packet, at the places a parser has a decision to make. None may

@@ -28,10 +28,11 @@
 // once.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs, Sys } from "std";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { flatten } from "core";
 
 /** This file, which quotes the spellings it forbids and must not be read as using them. */
 string SELF() { return "tools/wac/roottemp_test.wac"; }
@@ -51,22 +52,26 @@ string[] SPELLINGS() {
   ];
 }
 
-string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", ["ls-files"], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("roottemp: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+string[] tracked(Output err, Procs procs) {
+  auto rRan = flatten(procs.exec("git", ["ls-files"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("roottemp: git ls-files failed: " + ((r is not null) ? string.fromBytes(r!.stderr) : "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"));
     trap;
   }
-  return nonEmptyLines(string.fromBytes(r.stdout));
+  return nonEmptyLines(string.fromBytes(r!.stdout));
 }
 
 bool endsWith(string s, string suf) {
   return s.len() >= suf.len() && s.slice(s.len() - suf.len(), s.len()) == suf;
 }
 
-export string test_no_test_makes_a_temporary_directory_in_the_repository_root(Core core, Cli cli) {
+export string test_no_test_makes_a_temporary_directory_in_the_repository_root(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] files = tracked(core, cli);
+  string[] files = tracked(err, procs);
   // The floor is a canary: a `git ls-files` that answered nothing would leave every assertion below
   // with nothing to disagree with, and this file would pass by reading no files at all.
   t.isTrue(files.len() > 500, "git ls-files answered only " + itoa(files.len()) + " paths");
@@ -78,10 +83,10 @@ export string test_no_test_makes_a_temporary_directory_in_the_repository_root(Co
     string f = files[i];
     if (!endsWith(f, ".ts")) { continue; }
     if (f == SELF()) { continue; }
-    FileResult r = cli.readFile(f).wait();
-    if (!r.ok) { continue; }
+    u8[]? r = flatten(fs.readFile(f).wait()).ok();
+    if ((r is null)) { continue; }
     scanned = scanned + 1;
-    string text = string.fromBytes(r.bytes);
+    string text = string.fromBytes(r!);
     string[] spellings = SPELLINGS();
     for (i32 k = 0; k < spellings.len(); k++) {
       if (contains(text, spellings[k])) {

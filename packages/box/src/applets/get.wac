@@ -2,19 +2,17 @@
 //
 // The counterpart to `serve`, and the reason `connect` exists.
 
-import { Cli, Core } from "std";
+import { Net, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 get(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export i32 get(Output err, Output out, Net net, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   if (a.rest.len() < 1) {
-    core.warn("usage: \{a.name} <host> [path] [-<port>] [-i]");
+    err.line("usage: \{a.name} <host> [path] [-<port>] [-i]");
     return 2;
   }
-  return fetch(core, cli, a.name, a.rest[0],
-               a.rest.len() > 1 ? a.rest[1] : "/",
+  return fetch(err, out, net, a.name, a.rest[0], a.rest.len() > 1 ? a.rest[1] : "/",
                a.hasNum ? a.num : 80, has(a, 'i'));
 }

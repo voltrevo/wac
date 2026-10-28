@@ -2,9 +2,9 @@
 //
 //   runner <child.worker.js> <text>
 //
-// The child is a handle, so nothing here is new: `send` gives it standard input,
-// `closeSocket` ends that input, `recv` reads what it wrote, and `exitCode` waits for it.
-// The same four calls would serve a socket.
+// The child is three streams and a status, so nothing here is new: its `input()` is an `Output`
+// this program writes and closes, its `output()` an `Input` it reads to the end, and `exit()`
+// waits for it — the same handles a file or this program's own streams are.
 //
 // Build a child with `--worker`:
 //
@@ -12,59 +12,74 @@
 //   runner wc.worker.js "one two three"     ->  1 3 14
 //   runner probe.worker.js "" read          ->  the child may read, if this program may
 
-import { HostChild, Cli, Core, FileResult, GRANT_ENV, GRANT_NET, GRANT_NONE, GRANT_READ, GRANT_RUN, GRANT_WRITE, INHERIT_NONE, Pending, Sys } from "std";
-import { Read } from "core";
+import { Authority, Child, Env, Files, Input, Launch, Net, Output, Procs, Sys } from "std";
+import { Read, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: runner <child.worker.js> <text>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Env env = sys.env();
+  Procs procs = sys.procs();
+  if (argv.len() < 2) {
+    err.line("usage: runner <child.worker.js> <text>");
     return 2;
   }
 
   // Two steps rather than one: read the program, then run it. There is no registry of
   // launchable things — where the code came from is the filesystem's business.
-  FileResult prog = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!prog.ok) {
-    core.warn("runner: \{string.fromBytes(cli.arg(0).wait())}: \{prog.error}");
+  auto progRead = flatten(fs.readFile(argv[0]).wait());
+  if (progRead.isErr()) {
+    err.line("runner: \{argv[0]}: \{progRead.isErr() ? "\{progRead.err()!}" : ""}");
     return 1;
   }
 
   // A third argument names what the child may do: `read`, `write`, `net`, `env`, `run`, joined by
-  // commas, and nothing by default. The host will not exceed this program's own grants whatever
-  // is asked for, which is the property `test/spawn.test.ts` measures rather than asserts.
-  i32 grants = cli.argCount().wait() > 2 ? grantsOf(string.fromBytes(cli.arg(2).wait())) : GRANT_NONE;
-  HostChild kid = cli.spawn(prog.bytes, u8[][](), grants, "", INHERIT_NONE, false).wait();
-  if (kid.handle < 0) {
-    core.warn("runner: \{kid.error}");
+  // commas, and nothing by default. What the child is handed is a subset of the handles this program
+  // holds, so it cannot exceed this program's own grants whatever is asked for — the property
+  // `test/spawn.test.ts` measures rather than asserts.
+  Authority given = argv.len() > 2 ? authorityOf(argv[2], fs, net, env, procs) : Authority.none();
+  auto started = flatten(procs.spawn(progRead.unwrap(), string[](), given, Launch.plain()).wait());
+  if (started.isErr()) {
+    err.line("runner: \{started.err()!}");
     return 1;
   }
+  Child kid = started.unwrap();
 
   // Its standard input, then end it — a child reading to EOF gets one.
-  cli.send(kid.handle, "\{string.fromBytes(cli.arg(1).wait())}\n".toBytes()).wait();
-  cli.closeFeed(kid.handle);
+  Output feeding = kid.input();
+  feeding.write("\{argv[1]}\n".toBytes()).wait();
+  feeding.close().wait();
 
   // Everything it wrote, until it stops writing.
+  Input said = kid.output();
   while (true) {
+    auto got = flatten(said.chunk().wait());
+    if (got.isErr()) { err.line("runner: \{got.err()!}"); return 1; }
     u8[] chunk = u8[]();
-    match (cli.recv(kid.handle).wait()) {
+    match (got.unwrap()) {
       Data(bytes): { chunk = bytes; }
       End: { }                              // the child has finished writing
-      Failed(why): { core.warn("runner: \{why}"); return 1; }
+      Failed(why): { err.line("runner: \{why}"); return 1; }
     }
     if (chunk.len() == 0) { break; }
-    cli.write(chunk);
+    out.write(chunk);
   }
 
-  i32 code = cli.exitCode(kid.handle).wait();
-  if (code != 0) { core.warn("runner: child exited \{code}"); }
+  auto exited = flatten(kid.exit().wait());
+  if (exited.isErr()) { err.line("runner: \{exited.err()!}"); return 1; }
+  i32 code = exited.unwrap();
+  if (code != 0) { err.line("runner: child exited \{code}"); }
   return code;
 }
 
-/** `read,net` and friends. Unknown words are ignored rather than refused: this is an example. */
-i32 grantsOf(string spec) {
-  i32 out = GRANT_NONE;
+/** `read,net` and friends, as the handles they name. Unknown words are ignored rather than refused: this is an example. */
+Authority authorityOf(string spec, Files fs, Net net, Env env, Procs procs) {
+  bool read = false;
+  bool write = false;
+  Authority out = Authority.none();
   u8[] b = spec.toBytes();
   i32 at = 0;
   while (at < b.len()) {
@@ -73,12 +88,15 @@ i32 grantsOf(string spec) {
     u8[] word = u8[].filled(end - at, 0);
     word.copyFrom(b, at, 0, end - at);
     string w = string.fromBytes(word);
-    if (w == "read") { out = out | GRANT_READ; }
-    if (w == "write") { out = out | GRANT_WRITE; }
-    if (w == "net") { out = out | GRANT_NET; }
-    if (w == "env") { out = out | GRANT_ENV; }
-    if (w == "run") { out = out | GRANT_RUN; }
+    if (w == "read") { read = true; }
+    if (w == "write") { write = true; }
+    if (w == "net") { out.net = net; }
+    if (w == "env") { out.env = env; }
+    if (w == "run") { out.procs = procs; }
     at = end + 1;
   }
+  if (read && write) { out.files = fs; }
+  else if (read) { out.files = fs.readOnly(); }
+  else if (write) { out.files = fs.writeOnly(); }
   return out;
 }

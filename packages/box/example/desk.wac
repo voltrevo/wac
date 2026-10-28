@@ -37,14 +37,14 @@
 //
 // **Resizing** and **minimise** — there is no taskbar to minimise *to* yet.
 
-import { Core, Cli, Sys } from "std";
+import { Sys } from "std";
 import { ElementEvent, MOD_CTRL, Node, Page, State, Ui, html.button, html.div, html.input, html.pre, html.span, html.style } from "../../web";
 import { Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
 
 /** What a copy of this page started by `spawnSelf` runs — `--spawn applet`. */
-export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
+export async i32 applet(Sys sys) { return await boxApplet(sys); }
 
 /** What a window shows. */
 i32 SHELL() { return 0; }
@@ -91,12 +91,12 @@ export async i32 main(Page page) {
   page.title("wac desktop");
   // **One filesystem, and every window is on it.** The first session builds the system — `/dev`,
   // `/proc`, `/bin`, the applets — and every terminal opened afterwards is `Session.startOn` over
-  // that same `Fs`. Two terminals each building their own would be two machines that look alike, and
+  // those same files and process table. Two terminals each building their own would be two machines that look alike, and
   // a desktop whose windows do not share a disk is a set of pictures.
-  Session first = Session.start(sys.core, sys.cli, "desk");
+  Session first = Session.start(sys, "desk");
   await first.feedLine("mkdir -p /home/wac");
   await first.feedLine("seq 1 5 > /home/wac/five");
-  page.mount((Ui ui) => Desk(ui, sys.core, sys.cli, first));
+  page.mount((Ui ui) => Desk(ui, sys, first));
   return 0;
 }
 
@@ -107,7 +107,7 @@ Desktop opening(Session first) {
   return Desktop(wins, 2, 0 - 1, 0, 0);
 }
 
-Node Desk(Ui ui, Core core, Cli cli, Session first) {
+Node Desk(Ui ui, Sys sys, Session first) {
   Desktop d = ui.memo<Desktop>("", () => opening(first));
   auto changed = ui.state(0);
   // Bumped when a command ends anywhere: every files window reads the one disk again.
@@ -165,7 +165,7 @@ Node Desk(Ui ui, Core core, Cli cli, Session first) {
     <div id="launch">
       <button class="lnch" id="newterm" onclick={(ElementEvent e) => {
         // A second shell on the same filesystem, and its own row in the shared process table.
-        open(Win(SHELL(), d.nextId, Session.startOn(core, cli, first.sh.fs, "sh"),
+        open(Win(SHELL(), d.nextId, Session.startOn(sys, first.sh.fs, first.sh.table, "sh"),
                  cascadeLeft(d.wins.len()), cascadeTop(d.wins.len())));
       }}>+ terminal</button>
       <button class="lnch" id="newfiles" onclick={(ElementEvent e) => {
@@ -304,7 +304,7 @@ async void show(Session s, State<string> text) { text.set(await listing(s)); }
 
 /** The shell's working directory, as a files window shows it. */
 async string listing(Session s) {
-  string[]? names = await s.sh.fs.readDir(s.sh.cwd);
+  string[]? names = (await s.sh.fs.readDir(s.sh.cwd)).ok();
   if (names is null) { return "\{s.sh.cwd}\n  (not a directory)\n"; }
   string[] have = names!;
   string out = "\{s.sh.cwd}\n";

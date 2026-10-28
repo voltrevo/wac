@@ -16,7 +16,7 @@
 // already uses.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Change } from "std";
+import { Change, Env, Files, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
@@ -26,42 +26,44 @@ import { has, joined, contains } from "../../../wactest/src/strings.wac";
 
 
 
-export string test_the_exit_status_is_the_programs_own_answer(Core core, Cli cli) {
+export string test_the_exit_status_is_the_programs_own_answer(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
 
-  Ran three = runEmittedOne(cli, "/t/m.wac", "export i32 main() { return 3; }", dir, "ran3.wasm");
+  Ran three = runEmittedOne(env, fs, procs, "/t/m.wac", "export i32 main() { return 3; }", dir, "ran3.wasm");
   t.isTrue(three.ok, "it ran — " + three.error);
   t.eqI32(three.status, 3, "returning 3 exits 3 — stderr: " + three.stderr);
 
   // Zero as well as non-zero, because a harness that reported the *toolchain's* status rather than
   // the program's would answer 0 for both and only the non-zero case would show it.
-  Ran zero = runEmittedOne(cli, "/t/m.wac", "export i32 main() { return 0; }", dir, "ran0.wasm");
+  Ran zero = runEmittedOne(env, fs, procs, "/t/m.wac", "export i32 main() { return 0; }", dir, "ran0.wasm");
   t.isTrue(zero.ok, "the zero one ran too — " + zero.error);
   t.eqI32(zero.status, 0, "and returning 0 exits 0");
 
   // Arithmetic the compiler had to actually emit, rather than a constant it could have folded.
-  Ran sum = runEmittedOne(cli, "/t/m.wac",
-                          "export i32 main() { i32 n = 0; for (i32 i = 1; i <= 4; i++) { n = n + i; } return n; }",
-                          dir, "ransum.wasm");
+  Ran sum = runEmittedOne(env, fs, procs, "/t/m.wac", "export i32 main() { i32 n = 0; for (i32 i = 1; i <= 4; i++) { n = n + i; } return n; }", dir, "ransum.wasm");
   t.eqI32(sum.status, 10, "1+2+3+4 came back through the exit status");
   return t.report();
 }
 
-export string test_a_trap_is_a_non_zero_status_rather_than_a_missing_answer(Core core, Cli cli) {
+export string test_a_trap_is_a_non_zero_status_rather_than_a_missing_answer(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
 
-  Ran trapped = runEmittedOne(cli, "/t/t.wac",
-                              "export i32 main() { i31ref r = 2147483647 as! i31ref; return r as i32; }",
-                              dir, "rantrap.wasm");
+  Ran trapped = runEmittedOne(env, fs, procs, "/t/t.wac", "export i32 main() { i31ref r = 2147483647 as! i31ref; return r as i32; }", dir, "rantrap.wasm");
   t.isTrue(trapped.ok, "the binary started it — " + trapped.error);
   t.isTrue(trapped.trapped, "it refused: " + trapped.stderr);
 
   // **The status cannot say it**, which is what `issues/system/0184` is about and why `trapped` is
   // read off stderr. A program returning 1 and a program trapping exit the same way, so a test
   // asserting a refusal on the status alone would pass for a program that merely answered 1.
-  Ran one = runEmittedOne(cli, "/t/o.wac", "export i32 main() { return 1; }", dir, "ranone.wasm");
+  Ran one = runEmittedOne(env, fs, procs, "/t/o.wac", "export i32 main() { return 1; }", dir, "ranone.wasm");
   t.eqI32(one.status, 1, "returning 1 exits 1");
   t.eqI32(trapped.status, one.status,
           "and so does a trap — both are " + itoa(trapped.status) + ", which is the collision");
@@ -69,14 +71,16 @@ export string test_a_trap_is_a_non_zero_status_rather_than_a_missing_answer(Core
   return t.report();
 }
 
-export string test_a_program_that_does_not_compile_is_reported_rather_than_run(Core core, Cli cli) {
+export string test_a_program_that_does_not_compile_is_reported_rather_than_run(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The failure this rules out: `ok` true and `status` 0 for a program that was never built, which
   // would make every assertion below it pass for the wrong reason.
   T t = T.create();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
 
-  Ran bad = runEmittedOne(cli, "/t/bad.wac", "export i32 main() { i32 x = \"a string\"; return x; }",
-                          dir, "ranbad.wasm");
+  Ran bad = runEmittedOne(env, fs, procs, "/t/bad.wac", "export i32 main() { i32 x = \"a string\"; return x; }", dir, "ranbad.wasm");
   t.isFalse(bad.ok, "it did not run");
   t.isTrue(contains(bad.error, "did not compile"), "and said why: " + bad.error);
   t.eqI32(bad.status, -1, "with no status to mistake for an answer");

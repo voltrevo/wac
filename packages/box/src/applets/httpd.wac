@@ -12,27 +12,27 @@
 // rather than resolved: resolving is where directory-traversal bugs live, and this program
 // has no need to be clever about it.
 
-import { Cli, Core, FileResult, Stat, HostSocket } from "std";
+import { Stat, Net, Output, Listener, Socket, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { concat } from "../lib/bytes.wac";
 import { Parsed, Request, parseRequest } from "../../../http/src/request.wac";
 import { Response, write as writeResponse } from "../../../http/src/response.wac";
-import { Read } from "core";
+import { Read, flatten } from "core";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 httpd(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 httpd(Output err, Net net, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   i32 port = a.num == 0 ? 8080 : a.num;
   string root = a.rest.len() > 0 ? a.rest[0] : ".";
 
   // Every interface, which is what a web server people point a browser at is for. Issue 0025.
-  HostSocket l = cli.listen("", port).wait();
-  if (l.handle < 0) { core.warn("\{a.name}: \{port}: \{l.error}"); return 1; }
+  auto lBind = flatten(net.listen("", port).wait());
+  Listener? l = lBind.ok();
+  if (l is null) { err.line("\{a.name}: \{port}: \{lBind.isErr() ? "\{lBind.err()!}" : ""}"); return 1; }
   // The same phrase `serve` prints, deliberately: it is what a caller waits for to know
   // the port is up, and two spellings for it meant a test hung instead of failing.
-  core.warn("\{a.name}: listening on port \{port}, serving \{root}");
+  err.line("\{a.name}: listening on port \{port}, serving \{root}");
 
   bool once = has(a, 'o');
   // `-x` adds the two headers a page needs before `SharedArrayBuffer` exists. A wac
@@ -40,65 +40,71 @@ export async i32 httpd(Core core, Cli cli, Fs fs, Args a) {
   // would be serving it — see `packages/platform`'s browser target.
   bool isolate = has(a, 'x');
   while (true) {
-    HostSocket c = cli.accept(l.handle).wait();
-    if (c.handle < 0) { core.warn("\{a.name}: accept: \{c.error}"); break; }
-    await connection(core, cli, fs, c.handle, root, isolate);
-    cli.closeSocket(c.handle);
+    auto took = await l!.accept();
+    Socket? c = took.ok();
+    if (c is null) { err.line("\{a.name}: accept: \{took.isErr() ? "\{took.err()!}" : ""}"); break; }
+    await connection(err, fs, c!, root, isolate);
+    c!.close();
     if (once) { break; }
   }
-  cli.closeSocket(l.handle);
+  l!.close();
   return 0;
 }
 
 /** One connection: read a request, answer it, close. No keep-alive — one at a time anyway. */
-async void connection(Core core, Cli cli, Fs fs, i32 sock, string root, bool isolate) {
+async void connection(Output err, Files fs, Socket sock, string root, bool isolate) {
   u8[] buffered = u8[]();
   while (true) {
     match (parseRequest(buffered, 1 << 20)) {
       Incomplete: {
         // A client that vanished mid-request and a socket that failed are both "this connection is
         // over", but only the second is worth a line in the log.
-        match (cli.recv(sock).wait()) {
-          Data(bytes): { buffered = concat(buffered, bytes); }
-          End: { return; }
-          Failed(why): { core.warn("httpd: \{why}"); return; }
+        match (await sock.recv()) {
+          Ok(r): {
+            match (r) {
+              Data(bytes): { buffered = concat(buffered, bytes); }
+              End: { return; }
+              Failed(why): { err.line("httpd: \{why}"); return; }
+            }
+          }
+          Err(e): { err.line("httpd: \{e}"); return; }
         }
       }
       Bad(code): {
-        cli.send(sock, writeResponse(Response.create(400), "GET".toBytes(), false)).wait();
+        await sock.send(writeResponse(Response.create(400), "GET".toBytes(), false));
         return;
       }
       Ok(req): {
-        await answer(core, cli, fs, sock, root, req, isolate);
+        await answer(err, fs, sock, root, req, isolate);
         return;
       }
     }
   }
 }
 
-async void answer(Core core, Cli cli, Fs fs, i32 sock, string root, Request req, bool isolate) {
+async void answer(Output err, Files fs, Socket sock, string root, Request req, bool isolate) {
   bool isGet = eq(req.method, "GET") || eq(req.method, "HEAD");
   if (!isGet) {
-    cli.send(sock, writeResponse(Response.create(405), req.method, false)).wait();
+    await sock.send(writeResponse(Response.create(405), req.method, false));
     return;
   }
 
   u8[] target = upTo(req.target, '?');           // the query is not part of the path
   if (!safe(target)) {
-    cli.send(sock, writeResponse(Response.create(403), req.method, false)).wait();
+    await sock.send(writeResponse(Response.create(403), req.method, false));
     return;
   }
   string path = root + string.fromBytes(target);
-  Stat st = await fs.stat(path);
-  if (st.exists && st.isDir) { path = path + (endsWithSlash(target) ? "index.html" : "/index.html"); }
+  Stat? st = (await fs.stat(path)).ok();
+  if ((st is not null) && st!.isDir) { path = path + (endsWithSlash(target) ? "index.html" : "/index.html"); }
 
-  FileResult f = await fs.readFile(path);
-  if (!f.ok) {
+  u8[]? f = (await fs.readFile(path)).ok();
+  if (f is null) {
     Response nf = Response.create(404);
     nf.set("Content-Type", "text/plain; charset=utf-8");
     nf.body = "not found: \{string.fromBytes(target)}\n".toBytes();
-    cli.send(sock, writeResponse(nf, req.method, false)).wait();
-    core.warn("404 \{string.fromBytes(target)}");
+    await sock.send(writeResponse(nf, req.method, false));
+    err.line("404 \{string.fromBytes(target)}");
     return;
   }
 
@@ -110,9 +116,9 @@ async void answer(Core core, Cli cli, Fs fs, i32 sock, string root, Request req,
     res.set("Cross-Origin-Opener-Policy", "same-origin");
     res.set("Cross-Origin-Embedder-Policy", "require-corp");
   }
-  res.body = f.bytes;
-  cli.send(sock, writeResponse(res, req.method, false)).wait();
-  core.warn("200 \{string.fromBytes(target)} \{f.bytes.len()}");
+  res.body = f!;
+  await sock.send(writeResponse(res, req.method, false));
+  err.line("200 \{string.fromBytes(target)} \{f!.len()}");
 }
 
 /**

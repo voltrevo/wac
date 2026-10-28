@@ -16,11 +16,11 @@
 // a screen that only grows. `feedLine` is the whole of the contract: hand it what the user typed and
 // the screen afterwards is `screen`.
 
-import { Cli, Core } from "std";
+import { Files, Sys } from "std";
 import { Shell, runScript } from "../../../sh/src/exec.wac";
 import { Vec } from "core";
-import { Fs, mountSystem } from "../../../fs/src/fs.wac";
-import { boxNames, boxRun } from "../shrun.wac";
+import { ProcTable } from "../../../fs/src/proc.wac";
+import { systemShell, wireBox } from "../shrun.wac";
 
 /** How many commands the ring remembers. */
 export i32 HISTORY() { return 64; }
@@ -73,62 +73,44 @@ export struct Session {
    * program's own name rather than a label: a table that said "term" in a desktop would be
    * describing something that is not running.
    */
-  Session start(Core core, Cli cli, string name) {
-    Shell sh = Shell.create(core, cli);
+  Session start(Sys sys, string name) {
     Vec<string> argv = Vec.create();
     argv.push(name);
-    mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
-    return Session.startOn(core, cli, sh.fs, name);
+    return Session.around(systemShell(sys, sys.files(), argv), name);
   }
+
 
   /**
    * A second session over a filesystem that already exists — **one system, two shells.**
    *
-   * What `example/desk.wac`'s launcher opens. Two terminals each building their own `Fs` would be two
+   * What `example/desk.wac`'s launcher opens. Two terminals each building their own files would be two
    * machines that happen to look alike: `echo hi > /x` in one and `cat /x` in the other would fail,
    * and a desktop where the windows do not share a disk is a set of pictures rather than a system.
    *
-   * Everything else a session is — the applets, spawning, capture — belongs to the *shell* and is set
-   * up per session. Only the filesystem is shared, which is exactly the line design/0001 draws: a
-   * system is a filesystem, a process table and a set of programs, and two sessions on one machine
-   * differ in none of them.
-   *
-   * ## What "shared" turns out to mean, measured
-   *
-   * Deliberately shared and correct: the **nodes** (a file written in one session is readable in the
-   * other), the **process table** (`ps` in either shows both shells), **`/bin`**, and the **user**.
-   *
-   * Shared by accident, because `Fs` holds one of each and was written when a filesystem had one
-   * shell: **`cwd`** and the **output cursor** (`outPath`/`outMount`). Neither bites today, and the
-   * reason is worth stating because it is not a property of `Fs`:
-   *
-   *   - `packages/sh` resolves paths against `Shell.cwd` and hands `Fs` absolute ones, so `Fs.cwd` is
-   *     read only by `boxRun`'s in-process route. Checked rather than assumed — `cd /home/wac` in one
-   *     terminal leaves the other at `/`, and a relative `cat five` in it still fails.
-   *   - the cursor is opened and closed inside a single `feedLine`, and **these shells do not run
-   *     concurrently**: a page services one event at a time, so a second shell's redirection cannot
-   *     begin while the first's is open. Two terminals each redirecting, including through the
-   *     streaming pipeline route that holds the cursor longest, write the files they meant to.
-   *
-   * That second reason is a fact about the event loop rather than about the filesystem, so anything
-   * that made two sessions genuinely concurrent would need `Fs` to grow a cursor per caller first.
+   * Everything else a session is — the applets, spawning, capture, the directory it is in — belongs to the
+   * *shell* and is set up per session. The files and the process table are shared, which is exactly the line
+   * design/0001 draws: a system is a filesystem, a process table and a set of programs, and two sessions on
+   * one machine differ in none of them. `cd /home/wac` in one terminal leaves the other at `/`: a directory
+   * is the shell's, and an applet is handed the shell's files relative to it for one call.
    */
-  Session startOn(Core core, Cli cli, Fs fs, string name) {
-    Shell sh = Shell.onFs(core, cli, fs);
+  Session startOn(Sys sys, Files fs, ProcTable table, string name) {
+    Shell sh = Shell.onFs(sys, fs, table);
+    wireBox(sh, sys.random());
+    sh.externalSpawnable = true;
+    return Session.around(sh, name);
+  }
+
+  /** `sh` as a terminal's session: captured, with its own row in the process table and `^C` answered. */
+  Session around(Shell sh, string name) {
     // Captured, because "written" in a page means the host's log rather than anything a reader sees.
     sh.capture = true;
-    sh.cwd = "/";
     // Its own row in the shared process table, so `ps` in either window shows both shells.
     sh.enterSelf(name);
-    sh.external = boxRun;
-    sh.externalNames = boxNames;
-    // Spawned rather than called, which is what makes an applet a real program here — see
-    // `shrun.wac`, and wac-mono 0116 for what it can see.
-    sh.externalSpawnable = true;
     Session s = Session(sh, "", Vec.fromArray(string[].filled(HISTORY(), "")), 0, 0, false);
     sh.askInterrupt = s.arrived;
     return s;
   }
+
 
   string prompt(const this) { return "\{this.sh.cwd} $"; }
 

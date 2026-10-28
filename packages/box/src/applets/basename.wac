@@ -1,19 +1,18 @@
 // The last path component.
 
-import { Cli, Core } from "std";
+import { Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { baseName } from "../lib/path.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { extraOperand, missingOperand } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 basename(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+export i32 basename(Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(err, a.name, ""); }
   // `basename NAME [SUFFIX]` — a third operand was being *ignored*, which answered a mistyped command
   // with a plausible answer.
-  if (extraOperand(core, a, 2)) { return 1; }
+  if (extraOperand(err, a, 2)) { return 1; }
   // The rules live in `lib/path.wac`, with `dirname`'s, because trailing slashes are the whole of
   // both and they have to agree. This used to scan for the last `/` here, so `a/b/` answered with
   // what follows the final slash: nothing.
@@ -22,7 +21,7 @@ export i32 basename(Core core, Cli cli, Fs fs, Args a) {
   // answered `c.txt`, which is a plausible answer to a different question. Not stripped when it is the
   // whole name: GNU leaves `basename .txt .txt` as `.txt` rather than answering nothing.
   if (a.rest.len() == 2) { base = withoutSuffix(base, a.rest[1].toBytes()); }
-  core.log(string.fromBytes(base));
+  out.line(string.fromBytes(base));
   return 0;
 }
 

@@ -7,80 +7,69 @@
 //
 // This is why the mutation tier exists at all, and `cp` uses it.
 
-import { Change, Cli, Core, FAULT_OTHER } from "std";
-import { Fs } from "../../../fs/src/fs.wac";
+import { Files, Other, Output, Random } from "std";
 import { Feed } from "../../../platform/src/stream.wac";
+import { FilesFault } from "../../../fs/src/words.wac";
+import { Result, flatten } from "core";
 
 // There was a `writeAtomic(core, cli, path, bytes)` here — the whole-buffer form of the same
 // dance — and nothing ever called it. `cp` and `sponge` both stream, which is the point of the
-// mutation tier: a copy that has to fit in memory first is the thing `openOutput` exists to avoid.
+// mutation tier: a copy that has to fit in memory first is the thing `openWrite` exists to avoid.
 // Deleted rather than kept for a caller that has not appeared in the life of the package (issue 0009).
 // The temporary name is random for the reason `streamAtomic` gives below: two copies of this program
 // running at once must not pick the same one.
 
 /**
- * Everything left of the current input, to `path`, atomically and a chunk at a time.
+ * Everything left of `fed`, to `path`, atomically and a chunk at a time.
  *
- * The streaming form, for a copy that must not be bounded by memory. `openOutput` is what
- * makes it possible: the bytes go straight to the temporary file rather than being
- * gathered first, and the rename still happens only once all of them are there.
+ * The streaming form, for a copy that must not be bounded by memory: the bytes go straight to a temporary
+ * file opened beside the target, and the rename happens only once all of them are there and it is closed.
+ * Every backing streams the same way, so a memory image gets the same write-beside-and-rename as a disk.
  */
-export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
-  // **The host streams; anything else is written whole.** `openOutput` redirects this process's standard
-  // output to a file — the state is in the capability — and a memory image has no such thing. Writing
-  // the bytes in one call is not a compromise there: an image is already in memory, and the
-  // write-beside-and-rename that makes this atomic on a disk is not what makes it atomic in a value.
-  if (!(await fs.isHostPath(path))) {
-    u8[] all = await fed.rest();
-    if (fed.why != "") { return Change.of(FAULT_OTHER(), fed.why); }
-    return await fs.writeFile(path, all);
+export async Result<void, FilesFault> streamAtomic(Random rnd, Files fs, Feed fed, string path) {
+  string tmp = tempName(rnd, path);
+  // The fault is returned as it came, so a caller can tell "no such directory" from "not permitted".
+  Output to;
+  match (await fs.openWrite(tmp)) {
+    Ok(o): { to = o; }
+    Err(e): { return Result.Err(e); }
   }
-  string tmp = tempName(core, path);
-  // The `Change` is returned as it came: it used to be flattened to `FAULT_OTHER` because `openOutput`
-  // answered a bare string, so a caller could not tell "no such directory" from "not permitted".
-  Change opened = await cli.openOutput(tmp).ticket();
-  if (!opened.ok()) { return opened; }
-  bool copying = true;
-  string broke = "";
-  while (copying) {
-    match (await cli.readChunk().ticket()) {
-      Data(bytes): {
-        if (!cli.write(bytes)) {
-          copying = false;
-          broke = await cli.outputError().ticket();
-          if (broke == "") { broke = "could not write \{tmp}"; }
-        }
-      }
-      End: { copying = false; }
-      // Half a file renamed over the original is the worst outcome available here, so a failed read
-      // abandons the temporary and leaves the target alone.
-      Failed(why): { copying = false; broke = why; }
-    }
+  while (true) {
+    u8[] bytes = await fed.next();
+    if (bytes.len() == 0) { break; }
+    auto wrote = await to.write(bytes);
+    if (wrote.isErr()) { return await abandon(fs, to, tmp, wrote.err()!); }
   }
-  if (broke != "") {
-    await cli.openOutput("").ticket();
-    await fs.remove(tmp, false);
-    return Change.of(FAULT_OTHER(), broke);
-  }
-  // Back to standard output, which closes the temporary file — a rename over a file still
-  // open would move it half-written.
-  await cli.openOutput("").ticket();
-  return await finish(cli, fs, tmp, path);
+  // Half a file renamed over the original is the worst outcome available here, so a failed read
+  // abandons the temporary and leaves the target alone.
+  if (fed.why != "") { return await abandon(fs, to, tmp, Other(fed.why)); }
+  // Closed before the rename, which is what puts the last bytes in the file: a rename of a file still
+  // open could move it half-written.
+  auto closed = await to.close();
+  if (closed.isErr()) { return await abandon(fs, to, tmp, closed.err()!); }
+  return await finish(fs, tmp, path);
+}
+
+/** The temporary closed and removed, and `why` answered: the target is left as it was. */
+async Result<void, FilesFault> abandon(Files fs, Output to, string tmp, FilesFault why) {
+  await to.close();
+  await fs.remove(tmp, false);
+  return Result.Err(why);
 }
 
 /** The rename, and the cleanup if it fails. */
-async Change finish(Cli cli, Fs fs, string tmp, string path) {
-  Change moved = await fs.rename(tmp, path);
-  if (moved.ok()) { return moved; }
+async Result<void, FilesFault> finish(Files fs, string tmp, string path) {
+  auto moved = await fs.rename(tmp, path);
+  if (moved.isOk()) { return Result.Ok(); }
   // The rename is the only step that can leave litter, so clean up after it and not
   // before: until it succeeds, the temporary file is the only copy of the new contents.
   await fs.remove(tmp, false);
-  return moved;
+  return Result.Err(moved.err()!);
 }
 
 /** A sibling of `path` that no concurrent copy of this program will also pick. */
-string tempName(Core core, string path) {
-  u8[] r = core.randomBytes(6).wait();
+string tempName(Random rnd, string path) {
+  u8[] r = flatten(rnd.bytes(6).wait()).unwrap();
   u8[] out = u8[].filled(12, '0');
   u8[] digits = "0123456789abcdef".toBytes();
   for (i32 i = 0; i < 6; i++) {

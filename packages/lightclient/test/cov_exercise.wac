@@ -5,7 +5,7 @@
 //
 // One of the packages `issues/system/0205` records as unmeasured.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Files, Output, Procs } from "std";
 
 import {
   test_the_fork_digest_the_vectors_state_is_the_one_this_computes as dom__the_fork_digest_the_vectors_state_is_the_one_this_computes,
@@ -25,57 +25,58 @@ import {
 } from "./wac/sync_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   i32 bad = 0;
-  if (dom__the_fork_digest_the_vectors_state_is_the_one_this_computes(core, cli).len() > 0) {
-    core.warn("error: FAILED domain_test test_the_fork_digest_the_vectors_state_is_the_one_this_computes");
+  if (dom__the_fork_digest_the_vectors_state_is_the_one_this_computes(sys).len() > 0) {
+    err.line("error: FAILED domain_test test_the_fork_digest_the_vectors_state_is_the_one_this_computes");
     bad = bad + 1;
   }
-  if (dom__the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root(core, cli).len() > 0) {
-    core.warn("error: FAILED domain_test test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root");
+  if (dom__the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root(sys).len() > 0) {
+    err.line("error: FAILED domain_test test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root");
     bad = bad + 1;
   }
-  if (dom__every_real_sync_committee_signature_verifies(core, cli).len() > 0) {
-    core.warn("error: FAILED domain_test test_every_real_sync_committee_signature_verifies");
+  if (dom__every_real_sync_committee_signature_verifies(sys).len() > 0) {
+    err.line("error: FAILED domain_test test_every_real_sync_committee_signature_verifies");
     bad = bad + 1;
   }
-  if (dom__the_signing_root_is_what_makes_the_signature_context_specific(core, cli).len() > 0) {
-    core.warn("error: FAILED domain_test test_the_signing_root_is_what_makes_the_signature_context_specific");
+  if (dom__the_signing_root_is_what_makes_the_signature_context_specific(sys).len() > 0) {
+    err.line("error: FAILED domain_test test_the_signing_root_is_what_makes_the_signature_context_specific");
     bad = bad + 1;
   }
-  if (syn__every_light_client_sync_vector_step_agrees_header_for_header(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_every_light_client_sync_vector_step_agrees_header_for_header");
+  if (syn__every_light_client_sync_vector_step_agrees_header_for_header(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_every_light_client_sync_vector_step_agrees_header_for_header");
     bad = bad + 1;
   }
-  if (syn__the_store_rejects_an_update_whose_signature_is_not_by_its_committee(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_the_store_rejects_an_update_whose_signature_is_not_by_its_committee");
+  if (syn__the_store_rejects_an_update_whose_signature_is_not_by_its_committee(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_the_store_rejects_an_update_whose_signature_is_not_by_its_committee");
     bad = bad + 1;
   }
-  if (syn__the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need");
+  if (syn__the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need");
     bad = bad + 1;
   }
-  if (syn__is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates");
+  if (syn__is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates");
     bad = bad + 1;
   }
-  if (syn__the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims");
+  if (syn__the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims");
     bad = bad + 1;
   }
-  if (syn__a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store");
+  if (syn__a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store");
     bad = bad + 1;
   }
-  if (syn__the_slot_ordering_is_strict_where_the_spec_is_strict(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_the_slot_ordering_is_strict_where_the_spec_is_strict");
+  if (syn__the_slot_ordering_is_strict_where_the_spec_is_strict(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_the_slot_ordering_is_strict_where_the_spec_is_strict");
     bad = bad + 1;
   }
-  if (syn__an_update_nobody_signed_is_refused(core, cli).len() > 0) {
-    core.warn("error: FAILED sync_test test_an_update_nobody_signed_is_refused");
+  if (syn__an_update_nobody_signed_is_refused(sys).len() > 0) {
+    err.line("error: FAILED sync_test test_an_update_nobody_signed_is_refused");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("lightclient: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("lightclient: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

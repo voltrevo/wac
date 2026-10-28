@@ -13,29 +13,31 @@
 // *account* rather than what it points at.
 
 import { Result } from "core";
-import { Cli, Core, Sys } from "std";
+import { Sys, Net, Output } from "std";
 import { proofOf, Proof } from "../src/getproof.wac";
 import { accountAt, AccountProof } from "../../mpt/src/account.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 
 export Result<i32, string> main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
+  i32 n = argv.len();
   if (n < 1) {
-    core.warn("usage: ethbalance <address> [host] [port] [expected-block-hash]");
+    err.line("usage: ethbalance <address> [host] [port] [expected-block-hash]");
     return Result.Ok(2);
   }
-  u8[] address = hexOf(string.fromBytes(cli.arg(0).wait()));
-  if (address.len() != 20) { core.warn("ethbalance: an address is 20 bytes"); return Result.Ok(2); }
-  string host = n > 1 ? string.fromBytes(cli.arg(1).wait()) : "127.0.0.1";
-  i32 port = n > 2 ? atoiOr(string.fromBytes(cli.arg(2).wait()), 8545) : 8545;
-  u8[] expected = n > 3 ? hexOf(string.fromBytes(cli.arg(3).wait())) : u8[]();
+  u8[] address = hexOf(argv[0]);
+  if (address.len() != 20) { err.line("ethbalance: an address is 20 bytes"); return Result.Ok(2); }
+  string host = n > 1 ? argv[1] : "127.0.0.1";
+  i32 port = n > 2 ? atoiOr(argv[2], 8545) : 8545;
+  u8[] expected = n > 3 ? hexOf(argv[3]) : u8[]();
 
   // Slot zero, because `eth_getProof` wants a slot list and the account proof is what is actually wanted.
   // Asking about a slot nothing wrote is not wasted: an absence proof is as small as it gets.
   string zero = "0x0000000000000000000000000000000000000000000000000000000000000000";
-  Proof p = match (proofOf(cli, host, port, "0x\{string.fromBytes(hexEncode(address))}", zero, expected)) {
+  Proof p = match (proofOf(net, host, port, "0x\{string.fromBytes(hexEncode(address))}", zero, expected)) {
     Ok(v): v,
     Err(e): return Result.Err("ethbalance: \{e}"),
   };
@@ -45,15 +47,15 @@ export Result<i32, string> main(Sys sys) {
   if (!a.present) {
     // An address nothing has ever touched is absent from the state trie, which is a proof that it holds
     // nothing — not a failure, and not the same as a balance of zero that was written.
-    core.log("0 wei (this address is not in the state trie)");
-    core.warn(note(expected));
+    out.line("0 wei (this address is not in the state trie)");
+    err.line(note(expected));
     return Result.Ok(0);
   }
 
   // Big-endian and minimal, as the trie stores it: a balance of zero is the empty string, not a zero byte.
-  core.log("\{decimal(a.account.balance)} wei");
-  core.log("nonce \{decimal(a.account.nonce)}");
-  core.warn(note(expected));
+  out.line("\{decimal(a.account.balance)} wei");
+  out.line("nonce \{decimal(a.account.nonce)}");
+  err.line(note(expected));
   return Result.Ok(0);
 }
 

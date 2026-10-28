@@ -31,53 +31,49 @@
 // (wac-mono 0116). So the pipeline streams, the stages are real children, and `/data/up` is still in the
 // image and still not on the host — which `test/imaged.test.ts` asks rather than assumes.
 
-import { Core, Cli, Sys } from "std";
-import { Fs } from "../../../fs/src/fs.wac";
-import { Booted, boot, save } from "../../../fs/src/image.wac";
+import { Sys, Files, MemoryStore, Output } from "std";
 import { Vec } from "core";
-import { Shell } from "../../../sh/src/exec.wac";
+import { bootStore, saveStore } from "../../../fs/src/image.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
-import { boxApplet, boxNames, boxRun } from "../shrun.wac";
+import { boxApplet, systemShell } from "../shrun.wac";
 import { UNKNOWN } from "../box.wac";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  // **This program is also its own applets**, as `bin/sh.wac` and `bin/sealedsh.wac` are: the shell runs a
-  // stage by re-entering `main` with the applet's name first, and that stage asks this program for every
-  // file it touches.
-  i32 asApplet = await boxApplet(core, cli);
+  i32 asApplet = await boxApplet(sys);
   if (asApplet != UNKNOWN) { return asApplet; }
 
-  if (cli.argCount().wait() < 1) {
-    core.warn("usage: imaged <image.wacimg> [-c script | script]");
+  string[] args = sys.args();
+  Output err = sys.stderr();
+  if (args.len() < 1) {
+    err.line("usage: imaged <image.wacimg> [-c script | script]");
     return 2;
   }
-  string path = string.fromBytes(cli.arg(0).wait());
+  string path = args[0];
+  Files host = sys.files();
 
-  Vec<string> argv = Vec.create();
-  argv.push("imaged");
-  for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
-  Booted booted = boot(core, cli, path, argv, Vec.fromArray(boxNames()));
-  if (!booted.ok) {
-    core.warn("imaged: \{path}: \{booted.error}");
-    return 1;
+  // A path that is not there is an empty store, so a first run needs no separate step; an image that
+  // cannot be read stops the program, because starting empty would mean the next save writes over it.
+  MemoryStore store;
+  match (await bootStore(host, sys.clock(), path)) {
+    Ok(s): { store = s; }
+    Err(e): {
+      err.line("imaged: \{path}: \{e}");
+      return 1;
+    }
   }
-  Fs fs = booted.fs;
 
-  Shell sh = Shell.onFs(core, cli, fs);
-  sh.cwd = "/";
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  // Spawnable, because a stage of this session reads the image rather than the disk this binary was
-  // granted — see the note above and wac-mono 0116. Without it the pipeline ran one stage at a time.
-  sh.externalSpawnable = true;
-  i32 code = await shellMain(core, cli, sh, 1);
+  Vec<string> cmdline = Vec.create();
+  cmdline.push("imaged");
+  for (i32 i = 0; i < args.len(); i++) { cmdline.push(args[i]); }
+  i32 code = await shellMain(args, systemShell(sys, store.asUser("root"), cmdline), 1);
 
-  // After the script, whatever happened to it. `save` warns about anything it could not write, which is
-  // the whole reason it is a shared function rather than a `writeFile` call: losing a session in silence
-  // looks exactly like keeping it.
-  if (!save(core, cli, "imaged", path, sh.fs)) { return 1; }
-
+  // Saved even after a failing script: what it did write is the session's, and losing it is worse.
+  match (await saveStore(host, store, path)) {
+    Ok(v): { }
+    Err(e): {
+      err.line("imaged: \{path}: the session could not be saved: \{e}");
+      return 1;
+    }
+  }
   return code;
 }

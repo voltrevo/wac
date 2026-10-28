@@ -11,46 +11,49 @@
 // It does not fetch. `design/lang/0009` D11 puts that on `packages/git`; this says what fetching
 // *would* do, which is the part a person wants before it happens and a CI mode wants instead of it.
 
-import { Cli, Core, FileResult, Sys } from "std";
+import { Sys, Files, Output } from "std";
 import { Manifest, Mapping, readManifest, M_OK, unsupportedTransport } from "../src/manifest.wac";
 import { Lock, Step, readLock, plan, orphansOf, USE, CREATE, REFRESH } from "../src/lock.wac";
 import { MANIFEST_NAME } from "../src/root.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
-  string dir = n > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  i32 n = argv.len();
+  string dir = n > 0 ? argv[0] : ".";
   string manifestPath = join(dir, MANIFEST_NAME());
   string lockPath = join(dir, "wac.lock");
 
-  FileResult mf = cli.readFile(manifestPath).wait();
-  if (!mf.ok) {
+  u8[]? mf = flatten(fs.readFile(manifestPath).wait()).ok();
+  if ((mf is null)) {
     // **Not "no manifest, nothing to do".** A directory with no `wac.json5` is not a project, and
     // saying so is different from saying a project has no dependencies — the second is what an
     // empty manifest means. Conflating them is how a build in the wrong directory succeeds.
-    core.warn("wacplan: \{manifestPath} could not be read, so \{dir} is not a project");
+    err.line("wacplan: \{manifestPath} could not be read, so \{dir} is not a project");
     return 1;
   }
 
-  Manifest m = readManifest(mf.bytes);
+  Manifest m = readManifest(mf!);
   if (!m.ok) {
-    core.warn("wacplan: \{manifestPath} is not a valid manifest: "
+    err.line("wacplan: \{manifestPath} is not a valid manifest: "
               + describeManifest(m.code, m.detail));
     return 1;
   }
 
   // An absent lock is an empty one — the first build of a checked-out project has none, and that
   // is the ordinary case rather than an error.
-  FileResult lf = cli.readFile(lockPath).wait();
-  Lock l = lf.ok ? readLock(lf.bytes) : Lock.empty();
+  u8[]? lf = flatten(fs.readFile(lockPath).wait()).ok();
+  Lock l = (lf is not null) ? readLock(lf!) : Lock.empty();
   if (!l.ok) {
-    core.warn("wacplan: \{lockPath} is not a valid lockfile: \{describeLock(l.code, l.detail)}");
+    err.line("wacplan: \{lockPath} is not a valid lockfile: \{describeLock(l.code, l.detail)}");
     return 1;
   }
 
   if (m.imports.len() == 0) {
-    core.log("\{dir}: a project with no dependencies");
+    out.line("\{dir}: a project with no dependencies");
     return 0;
   }
 
@@ -63,7 +66,7 @@ export i32 main(Sys sys) {
     string why = unsupportedTransport(m.imports[i].git);
     if (why == "") { continue; }
     unfetchable = unfetchable + 1;
-    core.warn("wacplan: \{m.imports[i].name}: \{why}");
+    err.line("wacplan: \{m.imports[i].name}: \{why}");
   }
   if (unfetchable > 0) { return 1; }
 
@@ -74,23 +77,23 @@ export i32 main(Sys sys) {
     Mapping map = m.imports[i];
     string where = map.git + " @ " + map.ref + (map.subdir == "" ? "" : " / \{map.subdir}");
     if (s.action == USE()) {
-      core.log("  locked   \{s.name}  \{where}  \{s.commit.slice(0, 12)}");
+      out.line("  locked   \{s.name}  \{where}  \{s.commit.slice(0, 12)}");
       continue;
     }
     pending = pending + 1;
     if (s.action == CREATE()) {
-      core.log("  new      \{s.name}  \{where}  (no entry yet)");
+      out.line("  new      \{s.name}  \{where}  (no entry yet)");
     } else {
-      core.log("  changed  \{s.name}  \{where}  (\{s.why})");
+      out.line("  changed  \{s.name}  \{where}  (\{s.why})");
     }
   }
 
   string[] orphans = orphansOf(m, l);
   for (i32 i = 0; i < orphans.len(); i++) {
-    core.log("  stale    \{orphans[i]}  (in the lock, not in the manifest)");
+    out.line("  stale    \{orphans[i]}  (in the lock, not in the manifest)");
   }
 
-  core.log("\{steps.len()} mapping(s), \{pending} needing the network"
+  out.line("\{steps.len()} mapping(s), \{pending} needing the network"
            + (orphans.len() > 0 ? ", \{orphans.len()} stale lock entr(ies)" : ""));
   // A locked or CI mode is this exit code: nothing to fetch is the only state it accepts.
   return pending > 0 ? 2 : 0;

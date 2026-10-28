@@ -20,7 +20,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import {
   BUILD_BAD_ENC_KEY, BUILD_BAD_IDENTITY, BUILD_BAD_INTRO, BUILD_BAD_SIGNING, BUILD_FAILED,
   BUILD_NO_INTROS, BUILD_OK, Built, IntroPointSecrets, buildDescriptor,
@@ -32,6 +32,7 @@ import { blindedSecretKey } from "../../src/hsblind.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { Checked, PUB_OK, checkForPublication } from "../../src/hsstore.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { flatten } from "core";
 
 
 
@@ -56,10 +57,10 @@ static i64 PERIOD = 3720629;
  * they are assertions about whether the cases mean anything, not scaffolding.
  * `issues/system/0161` step 4.
  */
-JsonObject jsonObject(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes).ok();
+JsonObject jsonObject(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) { trap; }
+  JsonValue? v = parse(r!).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }
@@ -83,12 +84,12 @@ JsonObject objectAt(JsonArray a, i32 i) {
   }
 }
 
-JsonArray publishVariants(Cli cli) {
-  return arrayField(jsonObject(cli, "packages/tor/test/data/hspublish.json"), "variants");
+JsonArray publishVariants(Files fs) {
+  return arrayField(jsonObject(fs, "packages/tor/test/data/hspublish.json"), "variants");
 }
 
-JsonArray generatedVariants(Cli cli) {
-  return arrayField(jsonObject(cli, "packages/tor/test/data/hsdesc_generated.json"), "variants");
+JsonArray generatedVariants(Files fs) {
+  return arrayField(jsonObject(fs, "packages/tor/test/data/hsdesc_generated.json"), "variants");
 }
 
 i32 numberField(JsonObject o, string key) {
@@ -118,15 +119,15 @@ bool boolField(JsonObject o, string key) {
   }
 }
 
-i32 variantCount(Cli cli) { return publishVariants(cli).len(); }
-i32 introPoints(Cli cli, i32 i) { return numberField(objectAt(publishVariants(cli), i), "introPoints"); }
-i32 decodedIntroPoints(Cli cli, i32 i) {
-  return numberField(objectAt(publishVariants(cli), i), "decodedIntroPoints");
+i32 variantCount(Files fs) { return publishVariants(fs).len(); }
+i32 introPoints(Files fs, i32 i) { return numberField(objectAt(publishVariants(fs), i), "introPoints"); }
+i32 decodedIntroPoints(Files fs, i32 i) {
+  return numberField(objectAt(publishVariants(fs), i), "decodedIntroPoints");
 }
 
 /** `innerPlainLen` then `middleLen`, big-endian, the shape `readI32` above reads. */
-u8[] lensBytes(Cli cli, i32 i) {
-  JsonObject g = objectAt(generatedVariants(cli), i);
+u8[] lensBytes(Files fs, i32 i) {
+  JsonObject g = objectAt(generatedVariants(fs), i);
   u8[] out = u8[].filled(8, 0);
   putI32(out, 0, numberField(g, "innerPlainLen"));
   putI32(out, 4, numberField(g, "middleLen"));
@@ -148,15 +149,16 @@ void putI32(u8[] out, i32 at, i32 v) {
  * order, every variant actually filed and decoded, one with more than a single introduction point,
  * and at least two distinct blinded keys — without which the time period is not reaching the name.
  */
-export string test_the_two_vector_files_agree(Core core, Cli cli) {
+export string test_the_two_vector_files_agree(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject top = jsonObject(cli, "packages/tor/test/data/hspublish.json");
+  JsonObject top = jsonObject(fs, "packages/tor/test/data/hspublish.json");
   string source = stringField(top, "source");
   t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0,
            "the verdicts must be tor's — source is \{source}");
 
-  JsonArray pub = publishVariants(cli);
-  JsonArray gen = generatedVariants(cli);
+  JsonArray pub = publishVariants(fs);
+  JsonArray gen = generatedVariants(fs);
   t.isTrue(pub.len() >= 3, "too few variants to show the build generalises");
   t.eqI32(gen.len(), pub.len(), "the vector and the verdicts disagree about how many variants there are");
 
@@ -179,7 +181,7 @@ export string test_the_two_vector_files_agree(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_intro_count_shows_inside_and_not_outside(Core core, Cli cli) {
+export string test_the_intro_count_shows_inside_and_not_outside() {
   T t = T.create();
   Built one = build(1, PERIOD);
   Built two = build(2, PERIOD);
@@ -210,7 +212,7 @@ export string test_the_intro_count_shows_inside_and_not_outside(Core core, Cli c
  * this period*. So the same service is a different name tomorrow — which is what stops a directory
  * from being asked for a service by a name that never expires, and what a service must republish for.
  */
-export string test_the_name_follows_the_period(Core core, Cli cli) {
+export string test_the_name_follows_the_period() {
   T t = T.create();
   Built now = build(1, PERIOD);
   Built next = build(1, PERIOD + 1);
@@ -232,18 +234,19 @@ export string test_the_name_follows_the_period(Core core, Cli cli) {
 }
 
 /** Every variant tor was given is one it decoded, with the introduction points it was built with. */
-export string test_tor_found_what_was_built(Core core, Cli cli) {
+export string test_tor_found_what_was_built(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = variantCount(cli);
+  i32 n = variantCount(fs);
   t.isTrue(n >= 3, "there are several variants");
   bool sawMany = false;
   for (i32 i = 0; i < n; i++) {
-    i32 built = introPoints(cli, i);
-    t.eqI32(decodedIntroPoints(cli, i), built,
+    i32 built = introPoints(fs, i);
+    t.eqI32(decodedIntroPoints(fs, i), built,
             "tor found the introduction points the variant was built with");
     if (built > 1) { sawMany = true; }
     // And the lengths tor's acceptance says nothing about: the inner layer grew, the outer did not.
-    u8[] lens = lensBytes(cli, i);
+    u8[] lens = lensBytes(fs, i);
     t.eqI32(readI32(lens, 4), 10000, "every variant's outer layer is one padded block");
     t.isTrue(readI32(lens, 0) < 10000, "and its inner layer is smaller than the padding hides it in");
   }
@@ -263,7 +266,7 @@ export string test_tor_found_what_was_built(Core core, Cli cli) {
  * And the name a directory would file it under has to be the name the builder reports, or a service
  * would publish somewhere it does not expect and never notice.
  */
-export string test_a_directory_would_accept_what_was_built(Core core, Cli cli) {
+export string test_a_directory_would_accept_what_was_built() {
   T t = T.create();
   // **Checked once and asserted twice.** `checkForPublication` verifies the certificate signature,
   // which is the expensive half of this test; asking it the same question twice per descriptor
@@ -283,7 +286,7 @@ export string test_a_directory_would_accept_what_was_built(Core core, Cli cli) {
 }
 
 /** Bad inputs are refused, each for its own reason, rather than built around. */
-export string test_what_cannot_be_built(Core core, Cli cli) {
+export string test_what_cannot_be_built() {
   T t = T.create();
   IntroPointSecrets[] ok = intros(1);
   u8[][] clients = u8[][]();

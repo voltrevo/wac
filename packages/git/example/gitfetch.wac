@@ -17,7 +17,7 @@
 // The `shallow <sha>` line a deepened request comes back with is already handled: `findPack` treats it as
 // a negotiation line, alongside `NAK` and `ACK`.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Clock, Env, Files, Net, Output, Random } from "std";
 import { encode } from "../../codec/src/hex.wac";
 import { Vec } from "core";
 import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement,
@@ -28,23 +28,29 @@ import { Store } from "../../tls/src/roots.wac";
 import { Answer, Remote, parseRemote, request, systemStore } from "../src/transport.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  i32 n = argv.len();
   if (n < 1) {
-    core.warn("usage: gitfetch <https-url> [depth]");
+    err.line("usage: gitfetch <https-url> [depth]");
     return 2;
   }
-  string url = string.fromBytes(cli.arg(0).wait());
+  string url = argv[0];
   i32 depth = 1;
   if (n >= 2) {
-    string d = string.fromBytes(cli.arg(1).wait());
+    string d = argv[1];
     depth = 0;
     u8[] digits = d.toBytes();
     for (u8 digit in digits) {
       i32 c = digit as i32;
       if (c < '0' || c > '9') {
-        core.warn("gitfetch: \{d} is not a depth");
+        err.line("gitfetch: \{d} is not a depth");
         return 2;
       }
       depth = depth * 10 + (c - '0');
@@ -53,31 +59,30 @@ export i32 main(Sys sys) {
 
   Remote r = parseRemote(url);
   if (!r.ok) {
-    core.warn("gitfetch: \{url} is not an https URL with a path");
+    err.line("gitfetch: \{url} is not an https URL with a path");
     return 2;
   }
-  Store store = systemStore(cli);
+  Store store = systemStore(fs);
   if (store.offsets.len() == 0) {
-    core.warn("gitfetch: no trust store, so nothing can be verified");
+    err.line("gitfetch: no trust store, so nothing can be verified");
     return 1;
   }
 
   // What the server has.
-  Answer refs = request(core, cli, store, r.host,
-    "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
+  Answer refs = request(clock, rnd, env, net, store, r.host, "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
   if (!refs.ok) {
-    core.warn("gitfetch: \{refs.error}");
+    err.line("gitfetch: \{refs.error}");
     return 1;
   }
   if (refs.status != 200) {
-    core.warn("gitfetch: \{r.host} answered \{refs.status} for the advertisement");
+    err.line("gitfetch: \{r.host} answered \{refs.status} for the advertisement");
     return 1;
   }
   u8[] head = u8[]();
   string caps = "";
   match (parseAdvertisement(refs.body)) {
     Garbled(why): {
-      core.warn("gitfetch: the advertisement did not parse: \{why}");
+      err.line("gitfetch: the advertisement did not parse: \{why}");
       return 1;
     }
     Said(ad): {
@@ -87,7 +92,7 @@ export i32 main(Sys sys) {
         if (one.name == "HEAD") { head = one.target; }
       }
       if (head.len() != 20) {
-        core.warn("gitfetch: the advertisement names no HEAD");
+        err.line("gitfetch: the advertisement names no HEAD");
         return 1;
       }
       // Asked for only if offered. `ofs-delta` lets the server use the smaller kind of delta, and
@@ -101,21 +106,20 @@ export i32 main(Sys sys) {
   Vec<u8[]> wants = Vec.create();
   wants.push(head);
   Vec<u8[]> haves = Vec.create();
-  Answer packed = request(core, cli, store, r.host, "\{r.path}/git-upload-pack",
-    wantRequest(wants, haves, caps, depth), "application/x-git-upload-pack-request");
+  Answer packed = request(clock, rnd, env, net, store, r.host, "\{r.path}/git-upload-pack", wantRequest(wants, haves, caps, depth), "application/x-git-upload-pack-request");
   if (!packed.ok) {
-    core.warn("gitfetch: \{packed.error}");
+    err.line("gitfetch: \{packed.error}");
     return 1;
   }
   if (packed.status != 200) {
-    core.warn("gitfetch: \{r.host} answered \{packed.status} for the pack");
+    err.line("gitfetch: \{r.host} answered \{packed.status} for the pack");
     return 1;
   }
 
   u8[] pack = u8[]();
   match (findPack(packed.body)) {
     NoPack(why): {
-      core.warn("gitfetch: \{why}");
+      err.line("gitfetch: \{why}");
       return 1;
     }
     Packfile(bytes): { pack = bytes; }
@@ -123,7 +127,7 @@ export i32 main(Sys sys) {
 
   match (indexPack(pack)) {
     Unindexable(why): {
-      core.warn("gitfetch: the pack could not be indexed: \{why}");
+      err.line("gitfetch: the pack could not be indexed: \{why}");
       return 1;
     }
     // **Not reachable from here, and answered rather than left to fall through.** This asks with no
@@ -131,7 +135,7 @@ export i32 main(Sys sys) {
     // it deltified against an object we never claimed. `completePack` is what repairs one, and the caller
     // that will need it is an incremental fetch, which is not this program.
     Thin(bases): {
-      core.warn("gitfetch: the server sent a thin pack, wanting \{bases.len()}"
+      err.line("gitfetch: the server sent a thin pack, wanting \{bases.len()}"
         + " object(s) we did not ask about");
       return 1;
     }
@@ -141,15 +145,15 @@ export i32 main(Sys sys) {
       Pack p = openIndexed(pack, idx);
       match (objectNamed(p, head)) {
         Absent(why): {
-          core.warn("gitfetch: the pack does not contain the commit we asked for: \{why}");
+          err.line("gitfetch: the pack does not contain the commit we asked for: \{why}");
           return 1;
         }
         Found(kind, data): {
           if (kind != 1) {
-            core.warn("gitfetch: HEAD came back as kind \{kind} rather than a commit");
+            err.line("gitfetch: HEAD came back as kind \{kind} rather than a commit");
             return 1;
           }
-          core.log("\{pack.len()} bytes, \{idx.count} objects, HEAD "
+          out.line("\{pack.len()} bytes, \{idx.count} objects, HEAD "
             + "\{string.fromBytes(encode(head))} is a commit of \{data.len()} bytes");
           return 0;
         }

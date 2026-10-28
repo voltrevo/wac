@@ -20,10 +20,11 @@
 // byte array, so empty means end of input, and "open but silent" has no spelling. `fuzz.test.ts` spawns
 // for that one — `issues/system/0195`.
 
-import { Cli, Core, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Answer, Rand, askOurs, combined, fixtures, normalise, perSeed, script, seeds, show,
          vectorsPath } from "../../../../tools/wac/shfuzz.wac";
+import { flatten } from "core";
 
 /** One captured answer: the script, and what bash said about it. */
 struct Vector {
@@ -32,11 +33,13 @@ struct Vector {
   string text;
 }
 
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-fuzzreplay"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-fuzzreplay"; }
 
-export async string test_the_generated_scripts_still_answer_what_bash_answered(Core core, Cli cli) {
+export async string test_the_generated_scripts_still_answer_what_bash_answered(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli);
+  Loaded v = load(fs);
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -44,7 +47,7 @@ export async string test_the_generated_scripts_still_answer_what_bash_answered(C
   // there. That is what keeps the generator and the vectors from drifting apart in silence: an edit to
   // `stmt` that changes what a seed produces makes every script mismatch its answer, and the message says
   // "the generator no longer produces the captured scripts" rather than reporting 120 shell bugs.
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 ran = 0;
   i32 differ = 0;
   i32 wrongScript = 0;
@@ -60,12 +63,12 @@ export async string test_the_generated_scripts_still_answer_what_bash_answered(C
         ran = ran + 1;
         continue;
       }
-      cli.remove(dir, true).wait();
-      if (!fixtures(cli, dir)) {
+      fs.remove(dir, true).wait();
+      if (!fixtures(fs, dir)) {
         t.isTrue(false, "cannot make the fixtures in \{dir}");
         return t.report();
       }
-      Answer got = await askOurs(core, cli, dir, sc);
+      Answer got = await askOurs(sys, dir, sc);
       ran = ran + 1;
       if (got.text != vec.text || got.status != vec.status) {
         differ = differ + 1;
@@ -77,7 +80,7 @@ export async string test_the_generated_scripts_still_answer_what_bash_answered(C
       }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
   t.eqI32(ran, seeds().len() * perSeed(), "not every seeded script was replayed");
   t.eqI32(wrongScript, 0, "\{wrongScript} of \{ran}" +
@@ -96,43 +99,45 @@ export async string test_the_generated_scripts_still_answer_what_bash_answered(C
  * of them. These are the generated scripts themselves — the first two of each seed — so what is compared
  * is the thing the vectors are about rather than a hand-written stand-in.
  */
-export async string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
+export async string test_the_live_oracle_still_agrees_on_a_handful(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 checked = 0;
   for (i32 s = 0; s < seeds().len(); s++) {
     Rand r = Rand.of(seeds()[s]);
     for (i32 i = 0; i < 2; i++) {
       string sc = script(r);
-      cli.remove(dir, true).wait();
-      if (!fixtures(cli, dir)) {
+      fs.remove(dir, true).wait();
+      if (!fixtures(fs, dir)) {
         t.isTrue(false, "cannot make the fixtures in \{dir}");
         return t.report();
       }
-      Exec want = cli.exec("env",
-                           [
+      auto wantRan = flatten(procs.exec("env", [
                                     "-i",
                                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                                     "LC_ALL=C", "HOME=\{dir}",
                                     "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                                     "bash", dir, sc
-                           ],
-                           u8[]()).wait();
-      if (!want.ran()) {
+                           ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+      Exec? want = wantRan.ok();
+      if ((want is null)) {
         // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
-        t.isTrue(checked > 0, "bash would not start: \{want.error}");
+        t.isTrue(checked > 0, "bash would not start: \{wantRan.isErr() ? "\{wantRan.err()!}" : ""}");
         return t.report();
       }
-      string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
-      cli.remove(dir, true).wait();
-      fixtures(cli, dir);
-      Answer got = await askOurs(core, cli, dir, sc);
+      string wanted = normalise(combined(string.fromBytes(want!.stdout), string.fromBytes(want!.stderr)));
+      fs.remove(dir, true).wait();
+      fixtures(fs, dir);
+      Answer got = await askOurs(sys, dir, sc);
       checked = checked + 1;
       t.eqStr(got.text, wanted, "the live oracle disagrees: \{show(sc)}");
-      t.eqI32(got.status, want.status, "the live oracle's status disagrees: \{show(sc)}");
+      t.eqI32(got.status, want!.status, "the live oracle's status disagrees: \{show(sc)}");
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   t.eqI32(checked, seeds().len() * 2, "not every canary ran");
   return t.report();
 }
@@ -186,14 +191,14 @@ i32 numberIn(string line, string tag) {
  * A missing file is an error rather than an empty list: a replay over zero vectors passes, which is the
  * shape this repository keeps finding — a check that stopped checking and said nothing.
  */
-Loaded load(Cli cli) {
-  FileResult r = cli.readFile(vectorsPath()).wait();
-  if (!r.ok) {
+Loaded load(Files fs) {
+  u8[]? r = flatten(fs.readFile(vectorsPath()).wait()).ok();
+  if ((r is null)) {
     return Loaded(Vector[](), 0, "",
                   "cannot read \{vectorsPath()} — run `wac run --allow-read --allow-write " +
                   "--allow-run tools/wac/shfuzz.wac --capture` to write it");
   }
-  u8[] b = r.bytes;
+  u8[] b = r!;
   Line l = lineAt(b, 0);
   if (l.text != "wac-sh-fuzz 1") { return Loaded(Vector[](), 0, "", "not a fuzz vectors file: \{l.text}"); }
   string oracle = "";

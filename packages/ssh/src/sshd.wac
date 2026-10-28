@@ -32,8 +32,8 @@
 // discipline behind it, and the modes in the request are not read — canonical with echo is the one
 // arrangement this serves.
 
-import { Buf } from "core";
-import { Cli, Core, FileResult, HostSocket, Sys } from "std";
+import { Buf, flatten } from "core";
+import { Sys, Clock, Env, Files, MemoryStore, Output, Random, Listener, Socket } from "std";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { clientVersion, clientVersionLine, Found, scanVersion, speaksV2, Version } from "./version.wac";
 import { keyLength } from "./cipher.wac";
@@ -45,8 +45,10 @@ import { Incoming, msgChannelClose, msgChannelData, msgChannelEof, msgChannelOpe
          msgChannelRequest, msgChannelWindowAdjust, parse } from "./channel.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
 import { Line, Typed } from "../../tty/src/line.wac";
-import { Fs } from "../../fs/src/fs.wac";
-import { Booted, boot, save } from "../../fs/src/image.wac";
+import { bootStore, saveStore } from "../../fs/src/image.wac";
+import { ProcTable } from "../../fs/src/proc.wac";
+import { systemFiles } from "../../fs/src/trees.wac";
+import { reason } from "../../fs/src/words.wac";
 import { Vec } from "core";
 import { AuthRequest, authFailure, authSuccess, channelClose, channelData, channelEof,
          pkOk,
@@ -58,7 +60,7 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          byApplication, disconnect } from "./server.wac";
 import { equal } from "../../bytes/src/slice.wac";
 import { User, authorizedKeysOf, parsePasswd, userNamed } from "../../fs/src/passwd.wac";
-import { boxApplet, boxNames, boxRun } from "../../box/src/shrun.wac";
+import { boxApplet, boxNames, wireBox } from "../../box/src/shrun.wac";
 import { UNKNOWN } from "../../box/src/box.wac";
 
 i32 defaultPort() { return 2222; }
@@ -82,33 +84,49 @@ u8[] serverVersionLine() {
   return b.take();
 }
 
+/**
+ * What every connection is served from: this program's world, the host's files (where the host key, the
+ * authorized keys and the image live), the image's store when there is one, and the session's process table.
+ */
+struct Server {
+  Sys sys;
+  Output err;
+  Files host;
+  MemoryStore? store;
+  ProcTable table;
+  Options o;
+}
+
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
   // **This program is also `packages/box`'s applets**, so that a session can spawn its pipeline
   // stages: a stage re-enters `main` with the applet's name first. Without it a spawned `sort` would
   // start a second sshd and hand it a script called `sort`. See `sessionShell` for what the stage
   // then reads, which is the session's filesystem rather than this machine's.
-  i32 asApplet = await boxApplet(core, cli);
+  i32 asApplet = await boxApplet(sys);
   if (asApplet != UNKNOWN) { return asApplet; }
 
-  Options o = parseArgs(core, cli);
+  Output err = sys.stderr();
+  Files host = sys.files();
+  Options o = parseArgs(sys.args(), err, sys.env());
   if (o.exitCode >= 0) { return o.exitCode; }
 
-  FileResult hostFile = cli.readFile(o.hostKey).wait();
-  if (!hostFile.ok) {
-    core.warn("sshd: \{o.hostKey}: \{hostFile.error}");
-    return 1;
+  u8[] hostFile;
+  match (await host.readFile(o.hostKey)) {
+    Ok(b): { hostFile = b; }
+    Err(e): {
+      err.line("sshd: \{o.hostKey}: \{reason(e)}");
+      return 1;
+    }
   }
-  PrivateKey host = readEd25519(hostFile.bytes, u8[]());
-  match (host.error) {
+  PrivateKey hostKey = readEd25519(hostFile, u8[]());
+  match (hostKey.error) {
     Ok: {}
     BadPassphrase: {
-      core.warn("sshd: \{o.hostKey}: host keys must not be encrypted");
+      err.line("sshd: \{o.hostKey}: host keys must not be encrypted");
       return 1;
     }
     default: {
-      core.warn("sshd: \{o.hostKey}: not an Ed25519 private key");
+      err.line("sshd: \{o.hostKey}: not an Ed25519 private key");
       return 1;
     }
   }
@@ -120,53 +138,71 @@ export async i32 main(Sys sys) {
   // one at a time by the loop below, so "one writer" is true by construction rather than by a lock; the
   // concurrency question design/0001 leaves open is not open *here*, and stops being closed the day this
   // serves two at once.
-  Fs fs = Fs.inMemory(core.nowMillis().wait());
+  MemoryStore? store = null;
   if (o.image != "") {
-    Vec<string> argv = Vec.create();
-    argv.push("sshd");
-    // **The same list the session's shell is wired with**, four lines from the import that provides
-    // it. The first version passed an empty one with a comment saying this server has no applets —
-    // and `sessionShell` sets `sh.externalNames = boxNames` from `../../box/src/shrun.wac`. So a
-    // session had sixty-three programs, `help` listed all of them, and the machine said it had no
-    // `/bin`: the one place a person looks to find out what a system can run.
-    Booted booted = boot(core, cli, o.image, argv, Vec.fromArray(boxNames()));
-    if (!booted.ok) {
-      // Before the socket: a server that cannot read its image is not a server, and binding first meant
-      // it announced "listening on port 2222" and *then* refused — a moment in which it looked like it
-      // was working.
-      core.warn("sshd: \{o.image}: \{booted.error}");
-      return 1;
+    match (await bootStore(host, sys.clock(), o.image)) {
+      Ok(s): { store = s; }
+      Err(e): {
+        err.line("sshd: \{o.image}: \{e}");
+        return 1;
+      }
     }
-    fs = booted.fs;
   }
+  ProcTable table = ProcTable.create();
+  Vec<string> cmdline = Vec.create();
+  cmdline.push("sshd");
+  table.current = table.start(0, cmdline, flatten(sys.clock().nowMillis().wait()).orElse(0 as i64));
+  Server server = Server(sys, err, host, store, table, o);
 
   // Every interface, as a real sshd does: a daemon nobody can reach is not a daemon. Said rather than
   // assumed — `listen` took a port alone until issue 0025.
-  HostSocket listener = cli.listen("", o.port).wait();
-  if (listener.handle < 0) {
-    core.warn("sshd: listen: \{listener.error}");
-    return 1;
+  Listener listener;
+  match (await sys.net().listen("", o.port)) {
+    Ok(l): { listener = l; }
+    Err(e): {
+      err.line("sshd: listen: \{e}");
+      return 1;
+    }
   }
-  core.warn("sshd: listening on port \{o.port}");
+  err.line("sshd: listening on port \{o.port}");
 
   while (true) {
-    HostSocket c = cli.accept(listener.handle).wait();
-    if (c.handle < 0) {
-      core.warn("sshd: accept: \{c.error}");
+    auto took = await listener.accept();
+    Socket? c = took.ok();
+    if (c is null) {
+      err.line("sshd: accept: \{took.err()!}");
       break;
     }
-    bool saved = await serve(core, cli, c.handle, host, o, fs);
-    cli.closeSocket(c.handle);
+    bool saved = await serve(server, c!, hostKey);
+    c!.close();
     // **Only when the session did not save for itself.** A session writes the image before it tells
     // the client the command finished (0108), which is what makes "the client has exited" mean the
     // image is on disk. This is for the paths that end before that: a handshake that failed has
     // changed nothing, but a client that hung up *mid-command* has still created what it created,
     // and that case is the reason this line was written.
-    if (o.image != "" && !saved) { save(core, cli, "sshd", o.image, fs); }
+    if (!saved) { await save(server); }
     if (o.once) { break; }
   }
-  cli.closeSocket(listener.handle);
+  listener.close();
   return 0;
+}
+
+/** The image written back, beside it and renamed over it; true when there was nothing to save or it saved. */
+async bool save(Server server) {
+  if (server.store is null) { return true; }
+  match (await saveStore(server.host, server.store!, server.o.image)) {
+    Ok(v): { return true; }
+    Err(e): {
+      server.err.line("sshd: \{server.o.image}: the session could not be saved: \{e}");
+      return false;
+    }
+  }
+}
+
+/** The files a session acting as `who` is given: the image as that user, with `/dev`, `/proc` and `/bin`; else the host's. */
+Files sessionFiles(Server server, string who) {
+  if (server.store is null) { return server.host; }
+  return systemFiles(server.store!.asUser(who), server.sys.random(), server.table, boxNames());
 }
 
 /**
@@ -176,22 +212,20 @@ export async i32 main(Sys sys) {
  * disagree about which filesystem a client is talking to. That is the kind of difference nobody notices
  * until a `ssh host 'ls'` and an interactive `ls` answer differently.
  */
-async Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
-  Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
+async Shell sessionShell(Server server, Files fs, string who, Terminal terminal) {
+  Shell sh = server.store is null ? Shell.capturing(server.sys) : Shell.onFs(server.sys, fs, server.table);
   // A session's shell is a process in the session's own table, which is what `$$` answers and what
   // `kill` reaches. `shellMain` does this for every other entry point; a session does not go through
   // it, so it says so here rather than inheriting pid 0.
   sh.enterSelf("sh");
   sh.capture = true;
-  if (o.image != "") { sh.cwd = "/"; }
   // **The commands are `packages/box`'s applets, over this session's filesystem.** Sixty of them
   // rather than the handful `packages/sh` still carries, and they read the image because an applet
   // takes an `Fs` now (wac-mono 0109). The edge itself waited on wac 0076 — adding this import made an
   // untouched function fail to compile, because two packages declare a `Writer` and the emitter picked
   // whichever registered first.
   //
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
+  wireBox(sh, server.sys.random());
   // **Spawnable when this session has a filesystem of its own** — wac-mono 0116, and design/0001
   // step 3's criterion, "`ps` shows the pipeline you are running".
   //
@@ -201,14 +235,13 @@ async Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal
   //     echo inimage > /f; cat /f        ->  cat: /f: No such file or directory
   //     cat /etc/hostname                ->  13f160bf57e5
   //
-  // because a spawned stage was a fresh instance and a fresh instance built `Fs.onHost`. It asks its
+  // because a spawned stage was a fresh instance and a fresh instance took the host's files. It asks its
   // parent now, so a stage of a session booted on an image sees that image and nothing else, and the
   // criterion is met over ssh: `seq 1 200000 | ps` lists the session, `seq` and `ps`.
   //
-  // Only with an image. A session with none is `Shell.capturing` over the host's own filesystem,
-  // where `serveFsFor` correctly declines to serve — a stage of one builds the same `Fs.onHost` its
-  // parent has, which is the same disk with the same grants.
-  if (o.image != "") { sh.externalSpawnable = true; }
+  // Only with an image. A session with none is `Shell.capturing` over the host's own files, which a
+  // stage is handed as grants rather than served — the same disk with the same grants.
+  if (server.store is not null) { sh.externalSpawnable = true; }
   // **What terminal the client says it has** — design/0001 step 5's "a `TERM` worth setting".
   //
   // Set only when the client asked for a pty and said so: `ssh -T host` sends no `pty-req`, and a
@@ -224,14 +257,14 @@ async Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal
     sh.setVar("LINES", "\{terminal.rows}");
   }
 
-  // **A session starts in its own home, as its own user.** `fs.user` was set when the key was matched;
+  // **A session starts in its own home, as its own user.** `who` is whom the key was matched to;
   // the rest — `$HOME`, `$USER`, and where `cd` with no argument goes — is read from the same
   // `/etc/passwd` the key was found through, so there is one table rather than a second idea of it.
-  if (fs.user != "" && fs.user != "root") {
-    sh.setVar("USER", fs.user);
-    FileResult passwd = await fs.readFile("/etc/passwd");
-    if (passwd.ok) {
-      User u = userNamed(parsePasswd(passwd.bytes), fs.user);
+  if (who != "" && who != "root") {
+    sh.setVar("USER", who);
+    u8[]? passwd = (await fs.readFile("/etc/passwd")).ok();
+    if (passwd is not null) {
+      User u = userNamed(parsePasswd(passwd!), who);
       if (u.home != "") {
         sh.setVar("HOME", u.home);
         sh.cwd = u.home;
@@ -251,43 +284,40 @@ async Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal
  * the handshake has changed nothing, but one that hung up *mid-command* has changed whatever it
  * changed, and that is the case this used to be written for.
  */
-async bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
+async bool serve(Server server, Socket sock, PrivateKey host) {
+  Output err = server.err;
   // Whether this connection has already written the image — see the note above.
   bool saved = false;
-  Conn conn = Conn.create(core, cli, sock);
+  Conn conn = Conn.create(server.sys.clock(), server.sys.random(), sock);
   u8[] sessionId = handshake(conn, host);
   if (conn.failed()) {
-    core.warn("sshd: \{conn.error}");
+    err.line("sshd: \{conn.error}");
     // Only worth sending once the transport works; before that the client cannot read it.
     if (conn.encrypted) { conn.sendPacket(disconnect(byApplication(), conn.error.toBytes())); }
     return saved;
   }
 
-  // **The system reads the policy, not the last user.** `Fs.user` is whatever the previous connection
-  // was served as — this filesystem outlives the session — and `authenticate` has to read `/etc/passwd`
-  // and every user's `~/.ssh/authorized_keys` before it knows who is asking. Left as the previous user,
-  // a login worked or failed depending on *who happened to connect before*: grace with a 0700 `.ssh`
-  // could not log in after ada, and could before her.
-  fs.setUser("root");
-  string who = await authenticate(conn, cli, core, sessionId, o, fs);
+  // **The system reads the policy, not the last user**: `authenticate` reads `/etc/passwd` and every user's
+  // `~/.ssh/authorized_keys` as root, before it knows who is asking. Read as the previous connection's user,
+  // a login worked or failed depending on *who happened to connect before*: grace with a 0700 `.ssh` could
+  // not log in after ada, and could before her.
+  string who = await authenticate(conn, server, sessionId);
   if (who == "") {
-    if (conn.failed()) { core.warn("sshd: \{conn.error}"); }
+    if (conn.failed()) { err.line("sshd: \{conn.error}"); }
     conn.sendPacket(disconnect(byApplication(), "no supported authentication methods".toBytes()));
     return saved;
   }
-  // **The session acts as them from here.** Every file it touches is checked against this name, and
-  // anything it creates is owned by it — design/0001 step 4, and the reason `mode` and `owner` stopped
-  // being decoration.
-  fs.setUser(who);
-
-  bool saved = await session(conn, cli, core, o, fs);
-  if (conn.failed()) { core.warn("sshd: \{conn.error}"); }
+  // **The session acts as them from here**: its files are the store as `who`, so every file it touches is
+  // checked against this name and anything it creates is owned by it — design/0001 step 4, and the reason
+  // `mode` and `owner` stopped being decoration.
+  saved = await session(conn, server, who);
+  if (conn.failed()) { err.line("sshd: \{conn.error}"); }
   return saved;
 }
 
 /** Version exchange, key exchange and NEWKEYS. Returns the session id, which is H. */
 u8[] handshake(Conn conn, PrivateKey host) {
-  if (!conn.cli.send(conn.sock, serverVersionLine()).wait()) {
+  if (flatten(conn.sock.send(serverVersionLine()).wait()).isErr()) {
     conn.fail("cannot send the version line");
     return u8[]();
   }
@@ -319,7 +349,7 @@ u8[] handshake(Conn conn, PrivateKey host) {
     return u8[]();
   }
 
-  u8[] ourKexInit = encode(serverProposal(), conn.core.randomBytes(16).wait());
+  u8[] ourKexInit = encode(serverProposal(), flatten(conn.rnd.bytes(16).wait()).unwrap());
   if (!conn.sendPacket(ourKexInit)) { conn.fail("cannot send KEXINIT"); return u8[](); }
 
   u8[] theirKexInit = conn.readPacket();
@@ -348,7 +378,7 @@ u8[] handshake(Conn conn, PrivateKey host) {
   u8[] qc = parseEcdhInit(initPayload);
   if (qc.len() == 0) { conn.fail("expected the key exchange init"); return u8[](); }
 
-  u8[] secret = conn.core.randomBytes(32).wait();
+  u8[] secret = flatten(conn.rnd.bytes(32).wait()).unwrap();
   u8[] qs = ephemeralPublic(secret);
   u8[]? shared = sharedSecret(secret, qc);
   if (shared is null) {
@@ -393,7 +423,11 @@ u8[] hostPublicPoint(PrivateKey host) {
  * A name rather than a boolean because a session belongs to somebody — design/0001 step 4 — and the
  * server cannot ask again later: the key that proved it is gone by then.
  */
-async string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs fs) {
+async string authenticate(Conn conn, Server server, u8[] sessionId) {
+  Output err = server.err;
+  Options o = server.o;
+  // The users and their keys are the system's — the image as root, or the host's own files.
+  Files fs = sessionFiles(server, "root");
   u8[] request = conn.readPacket();
   if (conn.failed()) { return ""; }
   if (request[0] != 5) { conn.fail("expected a service request"); return ""; }
@@ -407,10 +441,10 @@ async string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options
   // so two keys land in two homes without the server being told anything on its command line. Without an
   // image there is no table, and the single `-a` file is the whole policy — as it was.
   Vec<User> users = Vec.create();
-  FileResult passwd = await fs.readFile("/etc/passwd");
-  if (passwd.ok) { users = parsePasswd(passwd.bytes); }
-  FileResult keys = cli.readFile(o.authorizedKeys).wait();
-  u8[] allowed = keys.ok ? keys.bytes : u8[]();
+  u8[]? passwd = (await fs.readFile("/etc/passwd")).ok();
+  if (passwd is not null) { users = parsePasswd(passwd!); }
+  u8[]? keys = (await server.host.readFile(o.authorizedKeys)).ok();
+  u8[] allowed = (keys is not null) ? keys! : u8[]();
 
   // A client may try several keys, and the first attempt is usually a probe with no signature.
   for (i32 attempt = 0; attempt < 16; attempt++) {
@@ -440,9 +474,9 @@ async string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options
     for (i32 u = 0; u < users.len() && !named; u++) {
       string path = authorizedKeysOf(users.get(u));
       if (path == "") { continue; }
-      FileResult theirs = await fs.readFile(path);
-      if (!theirs.ok) { continue; }
-      match (lookUp(theirs.bytes, "ssh-ed25519".toBytes(), a.publicBlob)) {
+      u8[]? theirs = (await fs.readFile(path)).ok();
+      if (theirs is null) { continue; }
+      match (lookUp(theirs!, "ssh-ed25519".toBytes(), a.publicBlob)) {
         Ok: { named = true; who = users.get(u).name; }
         default: {}
       }
@@ -457,7 +491,7 @@ async string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options
       // the same as a wrong key and an operator would otherwise have no way to tell.
       match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
         Ok: {
-          core.warn("sshd: a key from \{o.authorizedKeys} names no user in this image — refused; "
+          err.line("sshd: a key from \{o.authorizedKeys} names no user in this image — refused; "
                   + "put it in that user's ~/.ssh/authorized_keys instead (wac-mono 0126)");
         }
         default: {}
@@ -496,7 +530,7 @@ async string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options
  * `ssh` returns could stop it before the save had started, and the next boot found the world as it
  * was before the session. Two tests carried a second connection to hide it, saying so in comments.
  */
-async bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
+async bool session(Conn conn, Server server, string who) {
   // False until the save below actually runs: every path that returns before the command has run has
   // changed nothing this function is responsible for writing, and `serve`'s caller saves for those.
   bool saved = false;
@@ -594,9 +628,10 @@ async bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   }
   if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return saved; }
 
-  Result result = interactive
-    ? await interactiveSession(conn, cli, core, clientChannel, o, fs, pty, terminal)
-    : await run(cli, core, command, o, fs, terminal);
+  Files fs = sessionFiles(server, who);
+  Answered result = interactive
+    ? await interactiveSession(conn, server, fs, who, clientChannel, pty, terminal)
+    : await run(server, fs, who, command, terminal);
   if (conn.failed()) { return saved; }
 
   // **The image is written here, before the client is told anything.** A client exits on the exit
@@ -607,10 +642,7 @@ async bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   // Before the *output* too, and deliberately: the bytes are already in `result`, so nothing is lost
   // by sending them a few milliseconds later, and a save that failed should not follow output that
   // claimed the work was done.
-  if (o.image != "") {
-    save(core, cli, "sshd", o.image, fs);
-    saved = true;
-  }
+  if (server.store is not null) { saved = await save(server); }
 
   if (result.out.len() > 0) { conn.sendPacket(channelData(clientChannel, result.out)); }
   if (result.err.len() > 0) { conn.sendPacket(channelStderr(clientChannel, result.err)); }
@@ -775,9 +807,8 @@ export struct Keystrokes {
 }
 
 
-async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
-                          Terminal terminal) {
-  Shell sh = await sessionShell(core, cli, o, fs, terminal);
+async Answered interactiveSession(Conn conn, Server server, Files fs, string who, i32 channel, bool pty, Terminal terminal) {
+  Shell sh = await sessionShell(server, fs, who, terminal);
   Buf pending = Buf.create();
   Line tty = Line.create();
   // **The seam, installed only where there is a terminal.** Without a pty the client sends whole
@@ -808,20 +839,20 @@ async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Opti
       u8[] err = sh.errOut.take();
       if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
       if (err.len() > 0) { conn.sendPacket(channelStderr(channel, forTerminal(err))); }
-      if (sh.exiting) { return Result(u8[](), u8[](), sh.exitCode); }
+      if (sh.exiting) { return Answered(u8[](), u8[](), sh.exitCode); }
     }
     // …and then a `^D` that arrived behind them, which ends the session exactly as it does when it
     // is read at the prompt.
-    if (keys.eof) { return Result(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status); }
+    if (keys.eof) { return Answered(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status); }
 
     u8[] p = conn.readPacket();
     if (conn.failed()) {
       // The client hanging up ends the session; it is not an error to report.
       conn.error = "";
-      return Result(u8[](), u8[](), sh.status);
+      return Answered(u8[](), u8[](), sh.status);
     }
     Incoming m = parse(p);
-    if (!m.ok) { conn.fail("a channel message did not parse"); return Result(u8[](), u8[](), 1); }
+    if (!m.ok) { conn.fail("a channel message did not parse"); return Answered(u8[](), u8[](), 1); }
 
     if (m.kind == msgChannelEof() || m.kind == msgChannelClose()) { break; }
     if (m.kind != msgChannelData()) { continue; }
@@ -835,7 +866,7 @@ async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Opti
         if (t.interrupted()) { conn.sendPacket(channelData(channel, crlf())); continue; }
         // A line the *poll* completed while a command was running is held in the same `Line`, so it
         // arrives here on the next keystroke rather than being lost — see `Keystrokes.arrived`.
-        if (t.eof) { return Result(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status); }
+        if (t.eof) { return Answered(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status); }
         if (!t.hasLine) { continue; }
         // The newline the discipline put on the end is for a program reading a stream; a command is a
         // string, so it comes off again.
@@ -847,7 +878,7 @@ async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Opti
         u8[] err = sh.errOut.take();
         if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
         if (err.len() > 0) { conn.sendPacket(channelStderr(channel, forTerminal(err))); }
-        if (sh.exiting) { return Result(u8[](), u8[](), sh.exitCode); }
+        if (sh.exiting) { return Answered(u8[](), u8[](), sh.exitCode); }
       }
       continue;
     }
@@ -874,7 +905,7 @@ async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Opti
       u8[] err = sh.errOut.take();
       if (out.len() > 0) { conn.sendPacket(channelData(channel, out)); }
       if (err.len() > 0) { conn.sendPacket(channelStderr(channel, err)); }
-      if (sh.exiting) { return Result(u8[](), u8[](), sh.exitCode); }
+      if (sh.exiting) { return Answered(u8[](), u8[](), sh.exitCode); }
     }
   }
 
@@ -886,7 +917,7 @@ async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Opti
     if (out.len() > 0) { conn.sendPacket(channelData(channel, out)); }
     if (err.len() > 0) { conn.sendPacket(channelStderr(channel, err)); }
   }
-  return Result(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status);
+  return Answered(u8[](), u8[](), sh.exiting ? sh.exitCode : sh.status);
 }
 
 /** Everything but the first element. `Vec` has no `shift`, and a queue of typed lines needs one. */
@@ -920,7 +951,7 @@ u8[] forTerminal(u8[] bytes) {
 }
 
 /** The client's channel number out of a CHANNEL_OPEN for a session, or -1. */
-struct Result {
+struct Answered {
   u8[] out;
   u8[] err;
   i32 status;
@@ -945,10 +976,10 @@ struct Result {
  * what the server can read and write nothing. That is a real exposure and the operator chooses its
  * size, which is the capability world working as intended rather than a gap.
  */
-async Result run(Cli cli, Core core, u8[] command, Options o, Fs fs, Terminal terminal) {
-  Shell sh = await sessionShell(core, cli, o, fs, terminal);
+async Answered run(Server server, Files fs, string who, u8[] command, Terminal terminal) {
+  Shell sh = await sessionShell(server, fs, who, terminal);
   i32 status = await runScript(sh, string.fromBytes(command));
-  return Result(sh.outBuf.take(), sh.errOut.take(), status);
+  return Answered(sh.outBuf.take(), sh.errOut.take(), status);
 }
 
 struct Options {
@@ -972,8 +1003,8 @@ struct Options {
   i32 exitCode;
 }
 
-Options parseArgs(Core core, Cli cli) {
-  u8[]? homeRaw = cli.env("HOME").wait();
+Options parseArgs(string[] argv, Output err, Env env) {
+  u8[]? homeRaw = flatten(env.get("HOME").wait()).orElse(null);
   string? home = homeRaw is null ? null : string.fromBytes(homeRaw!);
   string homeDir = (home is null) ? "" : home!;
 
@@ -984,29 +1015,29 @@ Options parseArgs(Core core, Cli cli) {
   bool once = false;
 
   i32 i = 0;
-  i32 n = cli.argCount().wait();
+  i32 n = argv.len();
   while (i < n) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "-p" && i + 1 < n) {
       i++;
-      port = atoi(string.fromBytes(cli.arg(i).wait()));
+      port = atoi(argv[i]);
       if (port <= 0 || port > 65535) {
-        core.warn("sshd: bad port: \{string.fromBytes(cli.arg(i).wait())}");
+        err.line("sshd: bad port: \{argv[i]}");
         return Options(0, "", "", "", false, 2);
       }
     } else if (a == "-h" && i + 1 < n) {
       i++;
-      hostKey = string.fromBytes(cli.arg(i).wait());
+      hostKey = argv[i];
     } else if (a == "-a" && i + 1 < n) {
       i++;
-      authorizedKeys = string.fromBytes(cli.arg(i).wait());
+      authorizedKeys = argv[i];
     } else if (a == "-i" && i + 1 < n) {
       i++;
-      image = string.fromBytes(cli.arg(i).wait());
+      image = argv[i];
     } else if (a == "-1") {
       once = true;
     } else {
-      core.warn("usage: sshd [-p port] [-h hostkey] [-a authorized_keys] [-i image] [-1]");
+      err.line("usage: sshd [-p port] [-h hostkey] [-a authorized_keys] [-i image] [-1]");
       return Options(0, "", "", "", false, 2);
     }
     i++;
@@ -1014,14 +1045,14 @@ Options parseArgs(Core core, Cli cli) {
 
   if (hostKey == "") {
     if (homeDir == "") {
-      core.warn("sshd: HOME is unset, so there is no default host key — use -h");
+      err.line("sshd: HOME is unset, so there is no default host key — use -h");
       return Options(0, "", "", "", false, 2);
     }
     hostKey = "\{homeDir}/.ssh/ssh_host_ed25519_key";
   }
   if (authorizedKeys == "") {
     if (homeDir == "") {
-      core.warn("sshd: HOME is unset, so there is no default authorized_keys — use -a");
+      err.line("sshd: HOME is unset, so there is no default authorized_keys — use -a");
       return Options(0, "", "", "", false, 2);
     }
     authorizedKeys = "\{homeDir}/.ssh/authorized_keys";

@@ -15,15 +15,16 @@
 
 // `3qm7wv2` in the names is `[§wac-cli-grants-3qm7wv2]`, the spec claim these check —
 // spec/cli/wac.md. A wac export cannot hold the bracketed spelling, so the suffix carries it.
-import { Change, Cli, Core, Exec, FileResult } from "std";
+import { Change, Cli, Core, Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
+import { flatten } from "core";
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Env env) { return flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac"; }
 
 /** Its own directory per agent, so two checkouts running at once cannot overwrite each other. */
-string probeDir(Cli cli) {
-  string cwd = cli.cwd().wait();
+string probeDir(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   i32 at = -1;
   for (i32 i = 0; i < cwd.len(); i++) { if (cwd.slice(i, i + 1) == "/") { at = i; } }
   return ".cache/wac-grants" + (at < 0 ? "" : "-" + cwd.slice(at + 1, cwd.len()));
@@ -34,12 +35,12 @@ string probeDir(Cli cli) {
  * `--allow-read`, which is what tells a flag that was *passed through* from one that was *granted*.
  */
 string probeSource() {
-  return "import { Cli, Core, Sys } from \"std\";\n" +
+  return "import { Sys } from \"std\";\n" +
          "\n" +
-         "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
-         "  i32 n = cli.argCount().wait();\n" +
-         "  string first = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
-         "  core.log(\"first=\" + first);\n" +
+         "export i32 main(Sys sys) {\n" +
+         "  string[] argv = sys.args();\n" +
+         "  string first = argv.len() > 0 ? argv[0] : \"\";\n" +
+         "  sys.stdout().line(\"first=\" + first);\n" +
          "  return first == \"--allow-read\" ? 7 : 0;\n" +
          "}\n";
 }
@@ -50,55 +51,59 @@ struct Ran {
   bool started;
 }
 
-Ran run(Cli cli, string[] args) {
-  Exec r = cli.exec(binary(cli), args, u8[]()).wait();
-  if (!r.ran()) { return Ran(-1, r.error, false); }
-  return Ran(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr), true);
+Ran run(Env env, Procs procs, string[] args) {
+  auto rRan = flatten(procs.exec(binary(env), args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Ran(-1, "\{rRan.isErr() ? "\{rRan.err()!}" : ""}", false); }
+  return Ran(r!.status, string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr), true);
 }
 
 bool holds(string haystack, string needle) { return haystack.indexOf(needle) >= 0; }
 
 /** Writes the probe and answers its path, or "" when the directory could not be made. */
-string writeProbe(Cli cli) {
-  string dir = probeDir(cli);
-  Change made = cli.mkdir(dir, true).wait();   // `mkdir -p`
-  if (!made.ok()) { return ""; }
+string writeProbe(Env env, Files fs) {
+  string dir = probeDir(env);
+  auto made = flatten(fs.mkdir(dir, true).wait());   // `mkdir -p`
+  if (made.isErr()) { return ""; }
   string path = dir + "/p.wac";
-  Change wrote = cli.writeFile(path, probeSource().toBytes()).wait();
-  return wrote.ok() ? path : "";
+  auto wrote = flatten(fs.writeFile(path, probeSource().toBytes()).wait());
+  return wrote.isOk() ? path : "";
 }
 
-void cleanUp(Cli cli, string path) {
+void cleanUp(Env env, Files fs, string path) {
   // Not recursive: each file by name, because the recursive form is the one that can destroy something
   // it was not pointed at — the platform's own words for why it is an argument rather than a default.
-  cli.remove(path, false).wait();
-  cli.remove(probeDir(cli) + "/p.wasm", false).wait();
+  fs.remove(path, false).wait();
+  fs.remove(probeDir(env) + "/p.wasm", false).wait();
 }
 
-export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Core core, Cli cli) {
+export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string path = writeProbe(cli);
-  t.isTrue(path != "", "could not write the probe under " + probeDir(cli));
+  string path = writeProbe(env, fs);
+  t.isTrue(path != "", "could not write the probe under " + probeDir(env));
   if (path == "") { return t.report(); }
-  string stem = probeDir(cli) + "/p";
-  Ran r = run(cli, ["build", "--allow-read", path, "-o", stem, "--quiet"]);
+  string stem = probeDir(env) + "/p";
+  Ran r = run(env, procs, ["build", "--allow-read", path, "-o", stem, "--quiet"]);
   t.eqI32(r.status, 0, "build with the grant first: " + r.out);
   // The old failure was about the flag as a *file*: "wacc: cannot read --allow-read".
   t.isTrue(!holds(r.out, "cannot read --allow-read"), "the flag was read as the entry: " + r.out);
   // And the grant reaches the artefact, which is the half a position-only fix would miss: the scans for
   // grants started at argument 2 because argument 1 was the entry by position.
-  FileResult m = cli.readFile(stem + ".wasm").wait();
-  t.isTrue(m.ok, "the build wrote no module");
-  if (m.ok) {
+  u8[]? m = flatten(fs.readFile(stem + ".wasm").wait()).ok();
+  t.isTrue((m is not null), "the build wrote no module");
+  if ((m is not null)) {
     // **Scanned in the module's own bytes**, where the manifest lives as a `wac.manifest` section —
     // it was a `.json` beside the module until 2026-08-20. Searched rather than parsed, for the reason
     // it always was: this file's subject is the command line, and pulling in a section walker and a
     // JSON parser to confirm one boolean would make the test about something else. Scanned as bytes
     // rather than decoded, because a module is not UTF-8.
-    t.isTrue(bytesHold(m.bytes, "\"read\":true") || bytesHold(m.bytes, "\"read\": true"),
+    t.isTrue(bytesHold(m!, "\"read\":true") || bytesHold(m!, "\"read\": true"),
              "the manifest in the module does not carry the read grant");
   }
-  cleanUp(cli, path);
+  cleanUp(env, fs, path);
   return t.report();
 }
 
@@ -114,32 +119,38 @@ bool bytesHold(u8[] b, string needle) {
   return false;
 }
 
-export string test_grants_3qm7wv2_run_refuses_a_grant_after_the_entry(Core core, Cli cli) {
+export string test_grants_3qm7wv2_run_refuses_a_grant_after_the_entry(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string path = writeProbe(cli);
+  string path = writeProbe(env, fs);
   t.isTrue(path != "", "could not write the probe");
   if (path == "") { return t.report(); }
-  Ran r = run(cli, ["run", path, "--allow-read", "X"]);
+  Ran r = run(env, procs, ["run", path, "--allow-read", "X"]);
   // The silent case: the program ran, without the grant, and answered 7 because its first argument was
   // the flag it had asked to be built with.
   t.eqI32(r.status, 2, "expected a usage refusal: " + r.out);
   t.isTrue(!holds(r.out, "first="), "the program ran anyway: " + r.out);
   t.isTrue(holds(r.out, "--allow-read"), "the refusal does not name the flag: " + r.out);
   t.isTrue(holds(r.out, "--"), "the refusal does not name the way out: " + r.out);
-  cleanUp(cli, path);
+  cleanUp(env, fs, path);
   return t.report();
 }
 
-export string test_grants_3qm7wv2_after_a_double_dash_the_argument_is_the_programs(Core core, Cli cli) {
+export string test_grants_3qm7wv2_after_a_double_dash_the_argument_is_the_programs(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string path = writeProbe(cli);
+  string path = writeProbe(env, fs);
   t.isTrue(path != "", "could not write the probe");
   if (path == "") { return t.report(); }
-  Ran r = run(cli, ["run", path, "--", "--allow-read"]);
+  Ran r = run(env, procs, ["run", path, "--", "--allow-read"]);
   // 7 is the probe saying its first argument is the string — so `--` was consumed and the flag was
   // passed through rather than granted.
   t.eqI32(r.status, 7, "expected the program's own answer, got " + itoa(r.status) + ": " + r.out);
   t.isTrue(holds(r.out, "first=--allow-read"), "the program did not receive the string: " + r.out);
-  cleanUp(cli, path);
+  cleanUp(env, fs, path);
   return t.report();
 }

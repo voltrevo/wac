@@ -11,10 +11,10 @@
 // because it predates that capability.
 
 import { Buf } from "core";
-import { Cli, Core, Pending } from "std";
+import { Clock, Random, Socket, SocketFault } from "std";
 import { Framed, Status, frame, maxPacket, minBlock, paddingFor, unframe } from "./packet.wac";
 import { Opened, Plain, aeadPaddingFor, open, seal } from "./cipher.wac";
-import { Read } from "core";
+import { Read, Result, Stuck, Ticket, flatten } from "core";
 
 /** Transport messages a peer may send at any point and neither end should mistake for a reply. */
 export i32 msgDisconnect() { return 1; }
@@ -25,9 +25,10 @@ export i32 msgExtInfo() { return 7; }
 export i32 msgNewKeys() { return 21; }
 
 export struct Conn {
-  Core core;
-  Cli cli;
-  i32 sock;
+  /** What a poll races the read against, and what pads a packet. */
+  Clock clock;
+  Random rnd;
+  Socket sock;
 
   /** Received and not yet consumed. */
   Buf buf;
@@ -45,10 +46,10 @@ export struct Conn {
    * The read that is always outstanding on this socket, so that this connection can be *asked*
    * rather than only waited on.
    *
-   * **One, and owned here.** `waitAny` needs a ticket to look at, and if a caller issued that ticket
+   * **One, and owned here.** A poll needs a ticket to look at, and if a caller issued that ticket
    * itself there would be a second `recv` in flight whenever `fill` also wanted one — two reads on
    * one socket, which is a bug that only shows up under load. So the ticket lives with the
-   * connection and `ready` lends its id; `armed` says whether the one in `pending` is still
+   * connection and `ready` looks at it; `armed` says whether the one in `pending` is still
    * uncollected.
    *
    * This is what design/0001 step 5 was missing. A session runs a command by *blocking* in
@@ -57,18 +58,17 @@ export struct Conn {
    * can ask "has anything arrived" between two pieces of work is the whole of the fix, and this is
    * the half of it that belongs to the transport.
    */
-  Pending<Read> pending;
+  Ticket<Result<Read, SocketFault>> pending;
   bool armed;
 
-  Conn create(Core core, Cli cli, i32 sock) {
-    return Conn(core, cli, sock, Buf.create(), u8[](), u8[](), 0, 0, false, "",
-                cli.recv(sock), true);
+  Conn create(Clock clock, Random rnd, Socket sock) {
+    return Conn(clock, rnd, sock, Buf.create(), u8[](), u8[](), 0, 0, false, "", sock.recv(), true);
   }
 
   /** Put a read back in flight if the last one has been collected. */
   void rearm(this) {
     if (!this.armed && !this.failed()) {
-      this.pending = this.cli.recv(this.sock);
+      this.pending = this.sock.recv();
       this.armed = true;
     }
   }
@@ -80,8 +80,9 @@ export struct Conn {
    * wants to know whether to look, and every other outcome — nothing yet, the peer gone, a broken
    * connection — means "not now" and is recorded in `error` for whoever asks next.
    *
-   * `waitAny(ids, 0)` is the deadline that has already expired, which `platform.wac` documents as
-   * "which of these is ready right now". It costs no opcode and no slot.
+   * `settledNow` is "is it here right now": one question to the host, and a read that has not arrived
+   * stays in flight for the next look. It was a race against a zero timer, which asked three times a look
+   * and made a long command under a polling session take minutes.
    */
   bool ready(this) {
     if (this.failed()) { return false; }
@@ -89,12 +90,16 @@ export struct Conn {
     if (this.hasPacket()) { return true; }
     while (true) {
       this.rearm();
-      if (this.core.waitAny([this.pending.id], 0) < 0) { return false; }
+      if (!this.pending.settledNow()) { return false; }
       this.armed = false;
-      match (this.pending.wait()) {
-        Data(bytes): { this.buf.pushAll(bytes); }
-        End: { this.fail("the connection closed while waiting for a packet"); return false; }
-        Failed(why): { this.fail(why); return false; }
+      match (this.pending.value()) {
+        Ok(r): {
+          match (r) {
+            Data(bytes): { this.buf.pushAll(bytes); }
+            default: { this.fail("the connection closed while waiting for a packet"); return false; }
+          }
+        }
+        Err(e): { this.fail("\{e}"); return false; }
       }
       if (this.hasPacket()) { return true; }
       // A short read that did not complete a packet: go round, and stop as soon as the socket has
@@ -142,10 +147,14 @@ export struct Conn {
     // The connection's own ticket, so a blocking read and a poll can never both be in flight.
     this.rearm();
     this.armed = false;
-    match (this.pending.wait()) {
-      Data(bytes): { this.buf.pushAll(bytes); more = true; }
-      End: { }
-      Failed(why): { this.fail(why); }
+    match (flatten(this.pending.wait())) {
+      Ok(r): {
+        match (r) {
+          Data(bytes): { this.buf.pushAll(bytes); more = true; }
+          default: { }
+        }
+      }
+      Err(e): { this.fail("\{e}"); }
     }
     return more;
   }
@@ -154,15 +163,15 @@ export struct Conn {
   bool sendPacket(this, u8[] payload) {
     i32 block = minBlock();
     if (this.encrypted) {
-      u8[] pad = this.core.randomBytes(aeadPaddingFor(payload.len(), block)).wait();
+      u8[] pad = flatten(this.rnd.bytes(aeadPaddingFor(payload.len(), block)).wait()).unwrap();
       u8[] packet = seal(this.keyOut, this.seqOut, payload, pad, block);
       this.seqOut++;
-      return this.cli.send(this.sock, packet).wait();
+      return flatten(this.sock.send(packet).wait()).isOk();
     }
-    u8[] pad = this.core.randomBytes(paddingFor(payload.len(), block)).wait();
+    u8[] pad = flatten(this.rnd.bytes(paddingFor(payload.len(), block)).wait()).unwrap();
     u8[] packet = frame(payload, pad, block);
     this.seqOut++;
-    return this.cli.send(this.sock, packet).wait();
+    return flatten(this.sock.send(packet).wait()).isOk();
   }
 
   /**

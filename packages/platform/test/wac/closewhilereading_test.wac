@@ -1,7 +1,7 @@
 // Does closing a socket with a read outstanding on it still tell the peer?
 //
 // **The probe `issues/system/0304b` asks for.** `packages/tor/src/socks.wac` ends a client the way
-// every path in that file ends one — `c.read.cancel()` and then `cli.closeSocket(c.sock)` — and the
+// every path in that file ends one — cancelling its outstanding read and then closing the socket — and the
 // peer never sees the close: it reads the whole response and then waits for an end-of-stream that
 // does not arrive. `dird.wac` closes the same way and its peers *do* see `End`, and the one thing
 // that differs is the cancelled `recv` outstanding on the socket.
@@ -24,8 +24,8 @@
 // smallest set that separates "cancel breaks it" from "any outstanding read breaks it".
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, HostSocket, Pending } from "std";
-import { Read } from "core";
+import { Clock, Net, Sys, Socket, Listener, TimedOut } from "std";
+import { Read, flatten } from "core";
 
 /**
  * Long enough that a loopback close cannot lose a race, short enough that pinning a bug is cheap.
@@ -55,13 +55,13 @@ struct Saw {
  * into a hang with no output — `wac test` buffers a file's output until it finishes, which is how
  * `socksnet_test.wac` produced six minutes of nothing.
  */
-Saw sawClose(Core core, Cli cli, i32 h) {
-  Pending<Read> p = cli.recv(h);
-  if (core.waitAny([p.id], WAIT_MS) < 0) {
-    p.cancel();
-    return Saw(false, true, "nothing arrived within \{WAIT_MS}ms");
+Saw sawClose(Clock clock, Socket sock) {
+  auto got = flatten(clock.within(sock.recv(), WAIT_MS).wait());
+  if (got.isErr()) {
+    if (got.err()! is TimedOut) { return Saw(false, true, "nothing arrived within \{WAIT_MS}ms"); }
+    return Saw(true, false, "failed: \{got.err()!}");
   }
-  match (p.wait()) {
+  match (got.unwrap()) {
     Data(got): { return Saw(false, false, "got \{got.len()} byte(s), not a close"); }
     End: { return Saw(true, false, "End"); }
     Failed(why): { return Saw(true, false, "Failed: \{why}"); }
@@ -75,28 +75,31 @@ Saw sawClose(Core core, Cli cli, i32 h) {
  * The server half issues its `recv` *before* deciding, so the two arms differ in exactly one call
  * rather than in the shape of what ran.
  */
-Saw exchange(Core core, Cli cli, T t, i32 mode, string arm) {
-  HostSocket listener = cli.listen("127.0.0.1", 0).wait();
-  if (listener.handle < 0) {
-    t.fail("\{arm}: could not listen — \{listener.error}");
+Saw exchange(Net net, Clock clock, T t, i32 mode, string arm) {
+  auto listenerBind = flatten(net.listen("127.0.0.1", 0).wait());
+  Listener? listener = listenerBind.ok();
+  if (listener is null) {
+    t.fail("\{arm}: could not listen — \{listenerBind.isErr() ? "\{listenerBind.err()!}" : ""}");
     return Saw(false, false, "no listener");
   }
 
-  Pending<HostSocket> accepting = cli.accept(listener.handle);
-  i32 client = cli.connect("127.0.0.1", listener.port).wait().handle;
-  if (client < 0) {
-    t.fail("\{arm}: could not connect to 127.0.0.1:\{listener.port}");
-    cli.closeSocket(listener.handle);
+  auto accepting = listener!.accept();
+  auto dialled = flatten(net.connect("127.0.0.1", listener!.port).wait());
+  if (dialled.isErr()) {
+    t.fail("\{arm}: could not connect to 127.0.0.1:\{listener!.port} — \{dialled.err()!}");
+    listener!.close();
     return Saw(false, false, "no client");
   }
+  Socket client = dialled.unwrap();
 
-  HostSocket served = accepting.wait();
-  if (served.handle < 0) {
-    t.fail("\{arm}: accept failed — \{served.error}");
-    cli.closeSocket(client);
-    cli.closeSocket(listener.handle);
+  auto took = flatten(accepting.wait());
+  if (took.isErr()) {
+    t.fail("\{arm}: accept failed — \{took.err()!}");
+    client.close();
+    listener!.close();
     return Saw(false, false, "no accept");
   }
+  Socket served = took.unwrap();
 
   // `mode` decides what is outstanding when the close happens, and the first draft got this wrong:
   // it issued the `recv` in *both* arms and called the uncancelled one "the control", so the control
@@ -106,29 +109,31 @@ Saw exchange(Core core, Cli cli, T t, i32 mode, string arm) {
   if (mode == MODE_NO_READ) {
     // Nothing outstanding at all.
   } else {
-    Pending<Read> pending = cli.recv(served.handle);
+    auto pending = served.recv();
     if (mode == MODE_CANCELLED) { pending.cancel(); }
   }
-  cli.closeSocket(served.handle);
+  served.close();
 
-  Saw saw = sawClose(core, cli, client);
-  cli.closeSocket(client);
-  cli.closeSocket(listener.handle);
+  Saw saw = sawClose(clock, client);
+  client.close();
+  listener!.close();
   return saw;
 }
 
-export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, Cli cli) {
+export string test_a_close_reaches_the_peer_whatever_is_outstanding(Sys sys) {
+  Net net = sys.net();
+  Clock clock = sys.clock();
   T t = T.create();
 
   // The control first, so a failure in the case cannot be read as "this harness never sees a close".
-  Saw plain = exchange(core, cli, t, MODE_NO_READ, "no read outstanding");
+  Saw plain = exchange(net, clock, t, MODE_NO_READ, "no read outstanding");
   t.isTrue(plain.ended, "the control: a close with nothing outstanding reaches the peer — " +
                         plain.detail);
 
-  Saw live = exchange(core, cli, t, MODE_LIVE_READ, "a live read outstanding");
+  Saw live = exchange(net, clock, t, MODE_LIVE_READ, "a live read outstanding");
   t.isTrue(live.ended, "a close behind a *live* read reaches the peer — \{live.detail}");
 
-  Saw cancelled = exchange(core, cli, t, MODE_CANCELLED, "after a cancel");
+  Saw cancelled = exchange(net, clock, t, MODE_CANCELLED, "after a cancel");
   t.isTrue(cancelled.ended, "and so does one behind a cancelled read — \{cancelled.detail}" +
                             ". The two arms agreeing is the finding: cancelling never mattered");
 
@@ -155,24 +160,28 @@ export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, C
  * afterwards proves only that the dial never worked — which is the shape
  * `packages/tor/test/wac/` calls a probe that cannot fail.
  */
-export string test_closing_a_listener_stops_it_accepting(Core core, Cli cli) {
+export string test_closing_a_listener_stops_it_accepting(Sys sys) {
+  Net net = sys.net();
   T t = T.create();
-  HostSocket l = cli.listen("127.0.0.1", 0).wait();
-  t.isTrue(l.handle >= 0, "a listener was opened — \{l.error}");
-  if (l.handle < 0) { return t.report(); }
+  auto lBind = flatten(net.listen("127.0.0.1", 0).wait());
+  Listener? l = lBind.ok();
+  t.isTrue(l is not null, "a listener was opened — \{lBind.isErr() ? "\{lBind.err()!}" : ""}");
+  if (l is null) { return t.report(); }
 
-  HostSocket up = cli.connect("127.0.0.1", l.port).wait();
-  t.isTrue(up.handle >= 0,
+  auto upDial = flatten(net.connect("127.0.0.1", l!.port).wait());
+  Socket? up = upDial.ok();
+  t.isTrue(up is not null,
            "the control arm: dialling it while it is open succeeds, so a refusal below is the close\n"
-           + "  rather than a dial that never worked — \{up.error}");
-  if (up.handle >= 0) { cli.closeSocket(up.handle); }
+           + "  rather than a dial that never worked — \{upDial.isErr() ? "\{upDial.err()!}" : ""}");
+  if (up is not null) { up!.close(); }
 
-  cli.closeSocket(l.handle);
+  l!.close();
 
-  HostSocket down = cli.connect("127.0.0.1", l.port).wait();
-  if (down.handle >= 0) { cli.closeSocket(down.handle); }
-  t.isTrue(down.handle < 0,
-           "dialling port \{l.port} after closing its listener was accepted — the listener\n"
+  auto downDial = flatten(net.connect("127.0.0.1", l!.port).wait());
+  Socket? down = downDial.ok();
+  if (down is not null) { down!.close(); }
+  t.isTrue(down is null,
+           "dialling port \{l!.port} after closing its listener was accepted — the listener\n"
            + "  is still there. A readiness probe built on this reads a closed port as a live server.");
   return t.report();
 }

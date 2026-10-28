@@ -25,7 +25,8 @@
 // second of wall clock and makes one failure attributable to one case.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, HostSocket } from "std";
+import { Env, Files, Net, Procs, Sys, Datagrams, Clock } from "std";
+import { flatten } from "core";
 import { decoded } from "../../../codec/src/hex.wac";
 import { applicationKeyPhase, clientFinishedPacket, firstNewCidShape, flight, frameCountIn,
          frameKinds, openApplication, receiveInto } from "./hello_probe.wac";
@@ -42,38 +43,43 @@ struct Completed {
   u8[] after;
 }
 
-Completed completed(Cli cli, Core core, string name) {
-  Server s = startServer(cli, name, false);
+Completed completed(Clock clock, Env env, Files fs, Net net, Procs procs, string name) {
+  Server s = startServer(env, fs, procs, name, false);
   if (!s.ok) { return Completed(false, s.error, u8[](), u8[]()); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) {
-    stopServer(cli, s);
-    return Completed(false, "our socket did not bind — \{sock.error}", u8[](), u8[]());
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) {
+    stopServer(fs, procs, s);
+    return Completed(false, "our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}", u8[](), u8[]());
   }
 
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
-  u8[] reply = receiveWithin(core, cli, sock, 5000);
+  sock!.sendTo("127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
+  u8[] reply = receiveWithin(clock, sock!, 5000);
   if (reply.len() == 0) {
-    cli.closeSocket(sock.handle);
-    stopServer(cli, s);
+    sock!.close();
+    stopServer(fs, procs, s);
     return Completed(false, "the server did not answer our first flight", u8[](), u8[]());
   }
 
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+  sock!.sendTo("127.0.0.1", s.port,
              clientFinishedPacket(reply, dcid(), scid(), "localhost")).wait();
-  u8[] after = receiveWithin(core, cli, sock, 2500);
-  cli.closeSocket(sock.handle);
-  stopServer(cli, s);
+  u8[] after = receiveWithin(clock, sock!, 2500);
+  sock!.close();
+  stopServer(fs, procs, s);
   if (after.len() == 0) {
     return Completed(false, "the server sent nothing after the handshake", reply, u8[]());
   }
   return Completed(true, "", reply, after);
 }
 
-export string test_the_servers_first_application_packet_opens_under_keys_we_derived(
-    Core core, Cli cli) {
+export string test_the_servers_first_application_packet_opens_under_keys_we_derived(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Completed h = completed(cli, core, "app-open");
+  Completed h = completed(clock, env, fs, net, procs, "app-open");
   t.isTrue(h.ok, h.error);
   if (!h.ok) { return t.report(); }
 
@@ -89,12 +95,17 @@ export string test_the_servers_first_application_packet_opens_under_keys_we_deri
   return t.report();
 }
 
-export string test_the_key_phase_is_zero(Core core, Cli cli) {
+export string test_the_key_phase_is_zero(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // Not decoration: this bit is *inside* header protection, so reading it as 0 rather than as
   // garbage is the evidence that five bits were unmasked rather than four. A long header's four-bit
   // mask leaves this bit exactly where it was, and it would then be whatever the mask made it.
   T t = T.create();
-  Completed h = completed(cli, core, "app-phase");
+  Completed h = completed(clock, env, fs, net, procs, "app-phase");
   t.isTrue(h.ok, h.error);
   if (!h.ok) { return t.report(); }
   t.eqI32(applicationKeyPhase(h.reply, h.after, dcid(), scid(), "localhost"), 0,
@@ -102,9 +113,14 @@ export string test_the_key_phase_is_zero(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_frames_inside_are_ones_we_can_walk(Core core, Cli cli) {
+export string test_the_frames_inside_are_ones_we_can_walk(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Completed h = completed(cli, core, "app-frames");
+  Completed h = completed(clock, env, fs, net, procs, "app-frames");
   t.isTrue(h.ok, h.error);
   if (!h.ok) { return t.report(); }
 
@@ -156,7 +172,12 @@ export string test_the_frames_inside_are_ones_we_can_walk(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_wrong_connection_id_length_does_not_open_the_packet(Core core, Cli cli) {
+export string test_a_wrong_connection_id_length_does_not_open_the_packet(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The canary for difference (2) in the header, and the reason it is worth a test of its own: this
   // is the one field a short header does not carry, so getting it wrong is not detectable from the
   // packet. A client that guessed would see exactly this — nothing — and have no way to know why.
@@ -164,7 +185,7 @@ export string test_a_wrong_connection_id_length_does_not_open_the_packet(Core co
   // Driven by lying about our own id: a `Client` whose scid is 8 bytes reads the id as 8 bytes, and
   // the packet number and sample both move by four.
   T t = T.create();
-  Completed h = completed(cli, core, "app-wrongid");
+  Completed h = completed(clock, env, fs, net, procs, "app-wrongid");
   t.isTrue(h.ok, h.error);
   if (!h.ok) { return t.report(); }
 
@@ -174,13 +195,18 @@ export string test_a_wrong_connection_id_length_does_not_open_the_packet(Core co
   return t.report();
 }
 
-export string test_a_packet_that_does_not_open_leaves_the_window_where_it_was(Core core, Cli cli) {
+export string test_a_packet_that_does_not_open_leaves_the_window_where_it_was(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // RFC 9000 §A.3 decodes a truncated packet number against the largest **processed**, and the
   // distinction is the point: anybody who can reach the four-tuple can send a packet, so a window
   // that moved on *receipt* would be a window a stranger moves with noise — and a window moved far
   // enough makes the peer's real packets decode to the wrong numbers.
   T t = T.create();
-  Completed h = completed(cli, core, "app-window");
+  Completed h = completed(clock, env, fs, net, procs, "app-window");
   t.isTrue(h.ok, h.error);
   if (!h.ok) { return t.report(); }
 

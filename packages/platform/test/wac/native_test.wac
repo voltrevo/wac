@@ -30,18 +30,19 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { customSection } from "./section.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string ENTRY = "packages/platform/example/wacland.wac";
 /** The `Cli.execWith` transcript, for the comparison `conformance_test.wac` asks for. */
 static string EXEC_PROBE = "packages/platform/test/wac/exec_probe.wac";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
 struct Ran {
   i32 code;
@@ -60,8 +61,8 @@ struct Ran {
  * world (`issues/system/0182`). One process instead of two, no quoting to get wrong, and a path
  * containing a space is no longer a thing this has to be careful about.
  */
-Ran runIt(Cli cli, string cmd, string[] args) {
-  Exec r = cli.execWith(cmd, args, u8[](), ["WACLAND_PROBE=seen"], false, false).wait();
+Ran runIt(Procs procs, string cmd, string[] args) {
+  Exec r = flatten(procs.exec(cmd, args, u8[](), ChildEnv(false, ["WACLAND_PROBE=seen"]), Launch("", false, false, false)).wait()).unwrap();
   if (!r.ran()) { return Ran(-1, "", "\{cmd} did not run — \{r.error}"); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
@@ -73,9 +74,9 @@ Ran runIt(Cli cli, string cmd, string[] args) {
  * `-a`, so `-print` lived only in the `Cargo.toml` branch and the `*.rs` branch carried no action.
  * `wac task seed` owns the build; `wac task seed:native` does this crate alone.
  */
-string nativeBinary(Cli cli, T t) { return requireNativeHost(cli, t); }
+string nativeBinary(Env env, Files fs, T t) { return requireNativeHost(env, fs, t); }
 
-string buildOne(Cli cli, string entry, bool native, string out, string[] grants) {
+string buildOne(Env env, Procs procs, string entry, bool native, string out, string[] grants) {
   if (native) {
     string[] args = string[].filled(4 + grants.len(), "");
     args[0] = "build";
@@ -83,9 +84,10 @@ string buildOne(Cli cli, string entry, bool native, string out, string[] grants)
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac", args, u8[]()).wait();
-    if (!r.ran() || r.status != 0) {
-      return "wac build: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
+    auto rRan = flatten(procs.exec("\{root(env)}/native/v8/target/release/wac", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? r = rRan.ok();
+    if ((r is null) || r!.status != 0) {
+      return "wac build: \{string.fromBytes(r!.stderr)}\{string.fromBytes(r!.stdout)}";
     }
     return "";
   }
@@ -95,14 +97,15 @@ string buildOne(Cli cli, string entry, bool native, string out, string[] grants)
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts: \{string.fromBytes(r.stderr)}"; }
+  auto rRan = flatten(procs.exec("deno", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "build.ts: \{string.fromBytes(r!.stderr)}"; }
   return "";
 }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/native-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/native-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -224,27 +227,30 @@ void assertConformant(T t, Ran r, string host) {
   t.eqStr(lines[lines.len() - 1], "wacland: reached the end of what is implemented", host);
 }
 
-export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not(
-    Core core, Cli cli) {
+export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "wacland");
+  string dir = freshScratch(t, env, fs, "wacland");
   string denoProgram = "\{dir}/wacland-deno";
   // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and a
   // parent that could not read either way would prove nothing about the ceiling.
-  string why = buildOne(cli, ENTRY, false, denoProgram, ["--allow-read", "--allow-env"]);
+  string why = buildOne(env, procs, ENTRY, false, denoProgram, ["--allow-read", "--allow-env"]);
   t.eqStr(why, "", "the Deno half built");
   if (why != "") { return t.report(); }
-  Ran js = runIt(cli, denoProgram, ["one", "two"]);
+  Ran js = runIt(procs, denoProgram, ["one", "two"]);
 
   // The Deno half on its own, so a failure says which half broke.
   assertConformant(t, js, "deno");
 
-  string native = nativeBinary(cli, t);
-  if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
-  why = buildOne(cli, ENTRY, true, "\{dir}/wacland", ["--allow-read", "--allow-env"]);
+  string native = nativeBinary(env, fs, t);
+  if (native == "") { fs.remove(dir, true).wait(); return t.report(); }
+  why = buildOne(env, procs, ENTRY, true, "\{dir}/wacland", ["--allow-read", "--allow-env"]);
   t.eqStr(why, "", "the native half built");
-  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran rs = runIt(cli, native, ["\{dir}/wacland.wasm", "one", "two"]);
+  if (why != "") { fs.remove(dir, true).wait(); return t.report(); }
+  Ran rs = runIt(procs, native, ["\{dir}/wacland.wasm", "one", "two"]);
   assertConformant(t, rs, "native");
 
   // And the transcripts are the same, once the two measurements are masked.
@@ -253,7 +259,7 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
   // The canary for the masking itself: it must not have eaten the whole line.
   t.isTrue(contains(masked(rs.out), "stage 3 quick <nanos>"), masked(rs.out));
   t.isFalse(contains(masked(rs.out), "<nanos><nanos>"), "the mask is too greedy");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -312,30 +318,33 @@ string stringIn(JsonObject o, string key) {
   }
 }
 
-export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(
-    Core core, Cli cli) {
+export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The failure this guards is silent and expensive: insert a capability in the middle of `Core` in
   // `platform.wac`, and a runtime with its own idea of the order builds a `Core` whose `log` is the
   // previous field's function. Every call would go somewhere plausible.
   T t = T.create();
-  string dir = freshScratch(t, cli, "order");
-  string why = buildOne(cli, ENTRY, true, "\{dir}/order", string[].filled(0, ""));
+  string dir = freshScratch(t, env, fs, "order");
+  string why = buildOne(env, procs, ENTRY, true, "\{dir}/order", string[].filled(0, ""));
   t.eqStr(why, "", "the manifest built");
   if (why != "") { return t.report(); }
 
   // Out of the module's `wac.manifest` section — it was a `.json` beside it until 2026-08-20.
-  FileResult mod = cli.readFile("\{dir}/order.wasm").wait();
-  t.isTrue(mod.ok, "the build wrote no module — \{mod.error}");
-  if (!mod.ok) { cli.remove(dir, true).wait(); return t.report(); }
-  string text = customSection(mod.bytes, "wac.manifest");
+  auto modRead = flatten(fs.readFile("\{dir}/order.wasm").wait());
+  u8[]? mod = modRead.ok();
+  t.isTrue((mod is not null), "the build wrote no module — \{modRead.isErr() ? "\{modRead.err()!}" : ""}");
+  if ((mod is null)) { fs.remove(dir, true).wait(); return t.report(); }
+  string text = customSection(mod!, "wac.manifest");
   t.isTrue(text.len() > 0, "the module carries no `wac.manifest` section");
-  if (text.len() == 0) { cli.remove(dir, true).wait(); return t.report(); }
-  cli.writeFile("\{dir}/order.manifest.json", text.toBytes()).wait();
-  JsonObject m = jsonFile(cli, "\{dir}/order.manifest.json");
+  if (text.len() == 0) { fs.remove(dir, true).wait(); return t.report(); }
+  fs.writeFile("\{dir}/order.manifest.json", text.toBytes()).wait();
+  JsonObject m = jsonFile(fs, "\{dir}/order.manifest.json");
   JsonArray structs = arrayIn(m, "structs");
   JsonObject? core0 = structNamed(structs, "Core");
   t.isTrue(core0 is not null, "no Core in the manifest");
-  if (core0 is null) { cli.remove(dir, true).wait(); return t.report(); }
+  if (core0 is null) { fs.remove(dir, true).wait(); return t.report(); }
 
   JsonArray fields = arrayIn(core0!, "fields");
   t.eqStrArray(namesOf(fields), [
@@ -394,7 +403,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
       default: { }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -412,28 +421,32 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
  * every verdict is a thing the probe could only reach by running something, which is what keeps this
  * from being two hosts agreeing about having lost the capability.
  */
-export string test_running_a_host_program_agrees_between_the_two_native_hosts(Core core, Cli cli) {
+export string test_running_a_host_program_agrees_between_the_two_native_hosts(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "exec");
+  string dir = freshScratch(t, env, fs, "exec");
   string out = "\{dir}/probe";
-  string why = buildOne(cli, EXEC_PROBE, true, out, ["--allow-run"]);
+  string why = buildOne(env, procs, EXEC_PROBE, true, out, ["--allow-run"]);
   t.eqStr(why, "", "the probe built");
-  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+  if (why != "") { fs.remove(dir, true).wait(); return t.report(); }
 
   // The V8 host first, and asserted on its own, so a failure says which host broke.
-  Ran v8 = runIt(cli, "\{root(cli)}/native/v8/target/release/wac", ["\{out}.wasm"]);
+  Ran v8 = runIt(procs, "\{root(env)}/native/v8/target/release/wac", ["\{out}.wasm"]);
   t.eqI32(v8.code, 0, "the probe exited zero on the V8 host: \{v8.out}\{v8.err}");
   t.isTrue(contains(v8.err, "inherit: ran=yes status=0 buffered=0/0"), v8.err);
   t.isTrue(contains(v8.err, "env: ran=yes handed=yes kept-others=yes"), v8.err);
   t.isTrue(contains(v8.err, "cleared: ran=yes only-what-was-passed=yes"), v8.err);
   t.isTrue(contains(v8.out, "from the grandchild"), "the inherited stream: \{v8.out}");
 
-  string native = nativeBinary(cli, t);
-  if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran rs = runIt(cli, native, ["\{out}.wasm"]);
+  string native = nativeBinary(env, fs, t);
+  if (native == "") { fs.remove(dir, true).wait(); return t.report(); }
+  Ran rs = runIt(procs, native, ["\{out}.wasm"]);
   t.eqI32(rs.code, 0, "and on the wasmtime host: \{rs.out}\{rs.err}");
   t.eqStr(rs.err, v8.err, "the two hosts disagree about `execWith`");
   t.eqStr(rs.out, v8.out, "the two hosts disagree about the inherited stream");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

@@ -21,8 +21,7 @@
 // step 5 of `design/system/0005`.
 
 import { Buf } from "core";
-import { Change, FAULT_EXISTS, FileResult, Stat } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { Exists, Stat, Files } from "std";
 import { decode } from "../../codec/src/hex.wac";
 // **`Opened` is deliberately not imported**, although the `match` below names its variants. This file
 // declares `RepoAt.Opened`, and importing the enum too is a duplicate name the compiler refuses. It was
@@ -42,7 +41,7 @@ import { Vec } from "core";
 
 /** An open repository. */
 export struct Repo {
-  Fs fs;
+  Files fs;
   /** The `.git` directory, without a trailing slash. */
   string gitDir;
   /** The directory the working tree lives in, without a trailing slash. */
@@ -61,18 +60,18 @@ export enum Written {
   /**
    * How many files were written, and how many of those wanted a mode this filesystem could not set.
    *
-   * The second number is not decoration. `packages/fs` cannot `chmod` a host mount — the capability
-   * does not exist on `Cli` — so an executable file checks out with the wrong mode and `git status`
+   * The second number is not decoration. A backing that cannot set the executable bit — a browser's
+   * files have no mode bits — checks an executable file out with the wrong mode, and `git status`
    * reports it as modified. A caller that only saw the file count would find that out from git.
    * issues/system/0132.
    *
-   * The third is the same shape for a **symlink**: mode `120000`, which `packages/fs` cannot create at
+   * The third is the same shape for a **symlink**: mode `120000`, which `Files` cannot create at
    * all, so it lands as an ordinary file holding the target path. That was documented on `checkout`
    * below and reported to nobody, which made it the one limitation here a caller could only discover
    * from `git status` — measured as ` T` against the worktree, a typechange. Counted now for the same
    * reason the mode is: a limitation that does not announce itself is indistinguishable from a bug.
    */
-  Files(i32 count, i32 modesUnset, i32 linksAsFiles),
+  CheckedOut(i32 count, i32 modesUnset, i32 linksAsFiles),
   Stopped(string why)
 }
 
@@ -83,12 +82,12 @@ export enum Written {
  * megabyte file per object lookup. A repository with many packs pays for all of them at open time,
  * which is the trade `git` makes too.
  */
-export async RepoAt openRepo(Fs fs, string gitDir, string workTree) {
-  Stat head = await fs.stat("\{gitDir}/HEAD");
-  if (!head.exists) { return RepoAt.NoRepo("no HEAD in \{gitDir}"); }
+export async RepoAt openRepo(Files fs, string gitDir, string workTree) {
+  Stat? head = (await fs.stat("\{gitDir}/HEAD")).ok();
+  if (head is null) { return RepoAt.NoRepo("no HEAD in \{gitDir}"); }
 
   Vec<Pack> packs = Vec.create();
-  string[]? names = await fs.readDir("\{gitDir}/objects/pack");
+  string[]? names = (await fs.readDir("\{gitDir}/objects/pack")).ok();
   if (!(names is null)) {
     string[] list = names!;
     for (i32 i = 0; i < list.len(); i++) {
@@ -96,10 +95,10 @@ export async RepoAt openRepo(Fs fs, string gitDir, string workTree) {
       // Pair them by stem rather than by listing order, which is not guaranteed to be sorted.
       if (n.len() > 4 && n.slice(n.len() - 4, n.len()) == ".idx") {
         string stem = n.slice(0, n.len() - 4);
-        FileResult idxFile = await fs.readFile("\{gitDir}/objects/pack/\{stem}.idx");
-        FileResult packFile = await fs.readFile("\{gitDir}/objects/pack/\{stem}.pack");
-        if (idxFile.ok && packFile.ok) {
-          match (openPack(packFile.bytes, idxFile.bytes)) {
+        u8[]? idxFile = (await fs.readFile("\{gitDir}/objects/pack/\{stem}.idx")).ok();
+        u8[]? packFile = (await fs.readFile("\{gitDir}/objects/pack/\{stem}.pack")).ok();
+        if ((idxFile is not null) && (packFile is not null)) {
+          match (openPack(packFile!, idxFile!)) {
             Ready(p): { packs.push(p); }
             Refused(why): {
               // A pack we cannot read is not a repository we cannot open: git carries on with the
@@ -132,9 +131,9 @@ string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 export async Got readObject(Repo r, u8[] name) {
   string hex = hexOf(name);
   string loosePath = "\{r.gitDir}/objects/\{hex.slice(0, 2)}/\{hex.slice(2, hex.len())}";
-  FileResult f = await r.fs.readFile(loosePath);
-  if (f.ok) {
-    match (readLoose(f.bytes)) {
+  u8[]? f = (await r.fs.readFile(loosePath)).ok();
+  if (f is not null) {
+    match (readLoose(f!)) {
       Loaded(kind, data): { return Got.Found(kindNumber(kind), data); }
       Unreadable(why): { return Got.Absent("loose object \{hex}: \{why}"); }
     }
@@ -168,17 +167,17 @@ i32 kindNumber(Kind k) {
 export async u8[]? resolveRef(Repo r, string refName) {
   string name = refName;
   for (i32 hop = 0; hop < 8; hop++) {
-    FileResult loose = await r.fs.readFile("\{r.gitDir}/\{name}");
-    if (loose.ok) {
-      match (parseRef(loose.bytes)) {
+    u8[]? loose = (await r.fs.readFile("\{r.gitDir}/\{name}")).ok();
+    if (loose is not null) {
+      match (parseRef(loose!)) {
         Direct(target): { return target; }
         Symbolic(next): { name = next; continue; }
         Unparsed(why): { return null; }
       }
     }
-    FileResult packed = await r.fs.readFile("\{r.gitDir}/packed-refs");
-    if (packed.ok) {
-      u8[]? found = packedTarget(parsePackedRefs(packed.bytes), name);
+    u8[]? packed = (await r.fs.readFile("\{r.gitDir}/packed-refs")).ok();
+    if (packed is not null) {
+      u8[]? found = packedTarget(parsePackedRefs(packed!), name);
       if (!(found is null)) { return found; }
     }
     return null;
@@ -235,9 +234,9 @@ export async Written checkout(Repo r, u8[] treeName, string into) {
   i32 n = await walk(r, treeName, into, "", entries, 32, unset);
   if (n < 0) { return Written.Stopped("a tree could not be read, or nesting went past 32 deep"); }
   u8[] idx = writeIndex(GitIndex(entries, u8[]()));
-  Change wrote = await r.fs.writeFile("\{r.gitDir}/index", idx);
-  if (!wrote.ok()) { return Written.Stopped("could not write the index: \{wrote.message}"); }
-  return Written.Files(n, unset[0], unset[1]);
+  auto wrote = await r.fs.writeFile("\{r.gitDir}/index", idx);
+  if (wrote.isErr()) { return Written.Stopped("could not write the index: \{"\{wrote.isErr() ? "\{wrote.err()!}" : ""}"}"); }
+  return Written.CheckedOut(n, unset[0], unset[1]);
 }
 
 /** Files written, or -1. `prefix` is the path within the repository, for the index. */
@@ -257,8 +256,8 @@ async i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry>
             string path = "\{dir}/\{e.name}";
             string rel = prefix == "" ? e.name : "\{prefix}/\{e.name}";
             if (e.isTree()) {
-              Change made = await r.fs.mkdir(path, true);
-              if (!made.ok()) { return -1; }
+              auto made = await r.fs.mkdir(path, true);
+              if (made.isErr()) { return -1; }
               i32 sub = await walk(r, e.hash, path, rel, entries, depth - 1, unset);
               if (sub < 0) { return -1; }
               count = count + sub;
@@ -273,8 +272,8 @@ async i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry>
               // gitlink in the index, so this does that: `git status` is then clean, because both sides
               // agree the submodule is present and unpopulated. Nothing is fetched — cloning a submodule
               // needs its URL from `.gitmodules` and a second clone, and neither is here.
-              Change made = await r.fs.mkdir(path, true);
-              if (!made.ok()) { return -1; }
+              auto made = await r.fs.mkdir(path, true);
+              if (made.isErr()) { return -1; }
               // Size zero: a gitlink has no content in this repository, and the stat cache is a cache —
               // `git status` re-reads on a miss, which the index tests measured.
               entries.push(IndexEntry(rel, e.hash, modeNumber(e.mode), 0, 0));
@@ -282,16 +281,16 @@ async i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry>
               match ((await readObject(r, e.hash))) {
                 Absent(why): { return -1; }
                 Found(k, bytes): {
-                  Change w = await r.fs.writeFile(path, bytes);
-                  if (!w.ok()) { return -1; }
+                  auto w = await r.fs.writeFile(path, bytes);
+                  if (w.isErr()) { return -1; }
                   // The mode git records is one of four, and only the executable bit is a real
                   // difference on disk. **A host mount cannot be `chmod`ed at all** — the capability
                   // does not exist on `Cli` — so this is counted rather than assumed: the file is
                   // written with whatever mode the backing gives it and the caller is told.
                   // issues/system/0132.
                   if (e.mode == "100755") {
-                    Change mode = await r.fs.setExecutable(path, true);
-                    if (!mode.ok()) { unset[0] = unset[0] + 1; }
+                    auto mode = await r.fs.setExecutable(path, true);
+                    if (mode.isErr()) { unset[0] = unset[0] + 1; }
                   }
                   // Written above like any other blob, because its content *is* the target path. What
                   // is missing is the link itself, and there is no capability to make one.
@@ -339,14 +338,14 @@ export async Stored writeObject(Repo r, Kind kind, u8[] content) {
   string hex = hexOf(name);
   string dir = "\{r.gitDir}/objects/\{hex.slice(0, 2)}";
   string path = "\{dir}/\{hex.slice(2, hex.len())}";
-  Stat there = await r.fs.stat(path);
-  if (there.exists) { return Stored.Named(name); }
-  Change made = await r.fs.mkdir(dir, true);
-  if (!made.ok() && made.fault != FAULT_EXISTS()) {
-    return Stored.NotStored("could not create \{dir}: \{made.message}");
+  Stat? there = (await r.fs.stat(path)).ok();
+  if (there is not null) { return Stored.Named(name); }
+  auto made = await r.fs.mkdir(dir, true);
+  if (made.isErr() && !(made.err()! is Exists)) {
+    return Stored.NotStored("could not create \{dir}: \{made.err()!}");
   }
-  Change wrote = await r.fs.writeFile(path, looseFile(kind, content));
-  if (!wrote.ok()) { return Stored.NotStored("could not write \{path}: \{wrote.message}"); }
+  auto wrote = await r.fs.writeFile(path, looseFile(kind, content));
+  if (wrote.isErr()) { return Stored.NotStored("could not write \{path}: \{"\{wrote.isErr() ? "\{wrote.err()!}" : ""}"}"); }
   return Stored.Named(name);
 }
 
@@ -393,16 +392,16 @@ export async Stored writeObject(Repo r, Kind kind, u8[] content) {
  */
 export async Vec<string> worktreeStatus(Repo r) {
   Vec<string> out = Vec.create();
-  FileResult f = await r.fs.readFile("\{r.gitDir}/index");
-  if (!f.ok) { return out; }
-  match (parseIndex(f.bytes)) {
+  u8[]? f = (await r.fs.readFile("\{r.gitDir}/index")).ok();
+  if (f is null) { return out; }
+  match (parseIndex(f!)) {
     Unreadable(why): { return out; }
     Present(idx): {
       for (i32 i = 0; i < idx.entries.len(); i++) {
         IndexEntry e = idx.entries.get(i);
         if (e.stage != 0) { continue; }
-        FileResult got = await r.fs.readFile("\{r.workTree}/\{e.path}");
-        if (!got.ok) {
+        u8[]? got = (await r.fs.readFile("\{r.workTree}/\{e.path}")).ok();
+        if (got is null) {
           out.push(" D \{e.path}");
           continue;
         }
@@ -410,7 +409,7 @@ export async Vec<string> worktreeStatus(Repo r) {
         // directory would report every submodule as modified. git compares the checked-out commit instead,
         // which needs the submodule cloned; skipped, and named in the README.
         if (e.mode == 57344) { continue; }
-        u8[] name = sha1(framed(Kind.Blob, got.bytes));
+        u8[] name = sha1(framed(Kind.Blob, got!));
         bool same = true;
         for (i32 k = 0; k < 20; k++) {
           if (name[k] != e.name[k]) { same = false; break; }
@@ -419,7 +418,7 @@ export async Vec<string> worktreeStatus(Repo r) {
         // gained or lost its executable bit as ` M` with no content change, and this could not see it
         // until `Stat` carried the bit — issues/system/0132. `33261` is `100755`; anything else recorded
         // for a regular file is `100644`, so one comparison covers both directions.
-        if (same && ((await r.fs.stat("\{r.workTree}/\{e.path}")).isExecutable != (e.mode == 33261))) {
+        if (same && ((await executableAt(r.fs, "\{r.workTree}/\{e.path}")) != (e.mode == 33261))) {
           same = false;
         }
         if (!same) { out.push(" M \{e.path}"); }
@@ -512,12 +511,12 @@ async void untrackedUnder(Repo r, Vec<Rule> rules, const Vec<IndexEntry> entries
   // level rather than shared, because a sibling directory must not inherit its neighbour's rules.
   Vec<Rule> here = Vec.create();
   for (i32 i = 0; i < rules.len(); i++) { here.push(rules.get(i)); }
-  FileResult own = await r.fs.readFile("\{dir}/.gitignore");
-  if (own.ok) {
-    Vec<Rule> mine = parseIgnore(own.bytes, prefix);
+  u8[]? own = (await r.fs.readFile("\{dir}/.gitignore")).ok();
+  if (own is not null) {
+    Vec<Rule> mine = parseIgnore(own!, prefix);
     for (i32 i = 0; i < mine.len(); i++) { here.push(mine.get(i)); }
   }
-  string[]? names = await r.fs.readDir(dir);
+  string[]? names = (await r.fs.readDir(dir)).ok();
   if (names is null) { return; }
   string[] list = names!;
   // git orders its output by path, and the host's directory order is not promised to be anything.
@@ -534,9 +533,9 @@ async void untrackedUnder(Repo r, Vec<Rule> rules, const Vec<IndexEntry> entries
     string name = list[i];
     if (name == ".git") { continue; }
     string rel = prefix == "" ? name : "\{prefix}/\{name}";
-    Stat st = await r.fs.stat("\{dir}/\{name}");
-    if (ignored(here, rel, st.isDir)) { continue; }
-    if (st.isDir) {
+    Stat? st = (await r.fs.stat("\{dir}/\{name}")).ok();
+    if (ignored(here, rel, ((st is not null) && st!.isDir))) { continue; }
+    if (((st is not null) && st!.isDir)) {
       if (anyTrackedUnder(entries, rel)) {
         await untrackedUnder(r, here, entries, "\{dir}/\{name}", rel, out, depth - 1);
       } else {
@@ -607,8 +606,8 @@ export async Vec<string> statusOf(Repo r, u8[] excludes) {
   // untracked ones after, each sorted by path — so `?? .gitignore` follows `M  a.txt` even though `.`
   // sorts before `a`. One global sort put them the other way round, which is how this was found.
   Vec<string> untracked = Vec.create();
-  FileResult f = await r.fs.readFile("\{r.gitDir}/index");
-  if (!f.ok) { return out; }
+  u8[]? f = (await r.fs.readFile("\{r.gitDir}/index")).ok();
+  if (f is null) { return out; }
   Vec<TreeAt> tree = Vec.create();
   u8[]? at = await head(r);
   if (!(at is null)) {
@@ -620,7 +619,7 @@ export async Vec<string> statusOf(Repo r, u8[] excludes) {
     }
   }
 
-  match (parseIndex(f.bytes)) {
+  match (parseIndex(f!)) {
     Unreadable(why): { return out; }
     Present(idx): {
       for (i32 i = 0; i < idx.entries.len(); i++) {
@@ -641,13 +640,13 @@ export async Vec<string> statusOf(Repo r, u8[] excludes) {
 
         // Column two: the working tree against the index.
         string y = " ";
-        FileResult got = await r.fs.readFile("\{r.workTree}/\{e.path}");
-        if (!got.ok) {
+        u8[]? got = (await r.fs.readFile("\{r.workTree}/\{e.path}")).ok();
+        if (got is null) {
           y = "D";
         } else if (e.mode != 57344) {
-          if (!sameName(sha1(framed(Kind.Blob, got.bytes)), e.name)) {
+          if (!sameName(sha1(framed(Kind.Blob, got!)), e.name)) {
             y = "M";
-          } else if ((await r.fs.stat("\{r.workTree}/\{e.path}")).isExecutable != (e.mode == 33261)) {
+          } else if ((await executableAt(r.fs, "\{r.workTree}/\{e.path}")) != (e.mode == 33261)) {
             // **A mode change with no content change**, which git reports as ` M` and this could not see
             // until `Stat` carried the bit — issues/system/0132. `33261` is `100755`; a regular file
             // recorded as anything else is `100644`, so one comparison covers gaining and losing it.
@@ -678,8 +677,8 @@ export async Vec<string> statusOf(Repo r, u8[] excludes) {
       // differs on exactly the paths where they do not, which is the class of mistake a tidy fixture
       // passes straight through.
       Vec<Rule> rules = parseIgnore(excludes, "");
-      FileResult exclude = await r.fs.readFile("\{r.gitDir}/info/exclude");
-      if (exclude.ok) { rules.extend(parseIgnore(exclude.bytes, "")); }
+      u8[]? exclude = (await r.fs.readFile("\{r.gitDir}/info/exclude")).ok();
+      if (exclude is not null) { rules.extend(parseIgnore(exclude!, "")); }
       await untrackedUnder(r, rules, idx.entries, r.workTree, "", untracked, 64);
 
       // In HEAD and not in the index: staged for deletion.
@@ -881,7 +880,7 @@ export async Completion completeThin(Repo r, u8[] pack) {
 }
 
 export async Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> index) {
-  string[]? listing = await r.fs.readDir(dir);
+  string[]? listing = (await r.fs.readDir(dir)).ok();
   if (listing is null) { return Stored.NotStored("cannot read \{dir}"); }
   string[] names = listing!;
 
@@ -893,10 +892,10 @@ export async Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEn
   Vec<bool> dirs = Vec.create();
   for (string n in names) {
     if (n == ".git" || n == "." || n == "..") { continue; }
-    Stat st = await r.fs.stat("\{dir}/\{n}");
-    if (!st.isDir && !st.isFile) { continue; }
+    Stat? st = (await r.fs.stat("\{dir}/\{n}")).ok();
+    if (!((st is not null) && st!.isDir) && !((st is not null) && st!.isFile)) { continue; }
     kept.push(n);
-    dirs.push(st.isDir);
+    dirs.push(((st is not null) && st!.isDir));
   }
   sortListing(kept, dirs);
 
@@ -914,18 +913,18 @@ export async Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEn
         }
       }
     } else {
-      FileResult f = await r.fs.readFile(path);
-      if (!f.ok) { return Stored.NotStored("cannot read \{path}"); }
+      u8[]? f = (await r.fs.readFile(path)).ok();
+      if (f is null) { return Stored.NotStored("cannot read \{path}"); }
       // **The mode is read, not assumed.** `Stat.isExecutable` is one bit and it is the only bit that
       // separates git's two regular-file modes, so a tree built from a working tree now records what is
       // on disk. Before this it recorded `100644` for everything and a commit of an executable carried a
       // mode change nobody asked for. issues/system/0132.
-      bool exec = (await r.fs.stat(path)).isExecutable;
-      match ((await writeObject(r, Kind.Blob, f.bytes))) {
+      bool exec = await executableAt(r.fs, path);
+      match ((await writeObject(r, Kind.Blob, f!))) {
         NotStored(why): { return Stored.NotStored(why); }
         Named(blob): {
           entries.push(Entry(exec ? "100755" : "100644", n, blob));
-          index.push(IndexEntry(rel, blob, exec ? 33261 : 33188, f.bytes.len(), 0));
+          index.push(IndexEntry(rel, blob, exec ? 33261 : 33188, f!.len(), 0));
         }
       }
     }
@@ -995,12 +994,12 @@ export async Stored commitTree(Repo r, u8[] tree, string refName, Who author, st
     Named(commit): {
       // A ref file is forty hex characters and a newline. Written whole rather than appended: git
       // rewrites it too, and an interrupted append would leave a ref nothing can read.
-      Change moved = await r.fs.writeFile("\{r.gitDir}/\{refName}", "\{hexOf(commit)}\n".toBytes());
-      if (!moved.ok()) { return Stored.NotStored("could not update \{refName}: \{moved.message}"); }
+      auto moved = await r.fs.writeFile("\{r.gitDir}/\{refName}", "\{hexOf(commit)}\n".toBytes());
+      if (moved.isErr()) { return Stored.NotStored("could not update \{refName}: \{"\{moved.isErr() ? "\{moved.err()!}" : ""}"}"); }
       // The index too, or `git status` compares the new commit against the old index and reports every
       // path as both deleted and untracked.
-      Change staged = await r.fs.writeFile("\{r.gitDir}/index", writeIndex(GitIndex(index, u8[]())));
-      if (!staged.ok()) { return Stored.NotStored("could not write the index: \{staged.message}"); }
+      auto staged = await r.fs.writeFile("\{r.gitDir}/index", writeIndex(GitIndex(index, u8[]())));
+      if (staged.isErr()) { return Stored.NotStored("could not write the index: \{"\{staged.isErr() ? "\{staged.err()!}" : ""}"}"); }
       return Stored.Named(commit);
     }
   }
@@ -1008,11 +1007,17 @@ export async Stored commitTree(Repo r, u8[] tree, string refName, Who author, st
 
 /** What `HEAD` points at, as a ref name — or empty if it is detached. */
 export async string headRef(Repo r) {
-  FileResult f = await r.fs.readFile("\{r.gitDir}/HEAD");
-  if (!f.ok) { return ""; }
-  match (parseRef(f.bytes)) {
+  u8[]? f = (await r.fs.readFile("\{r.gitDir}/HEAD")).ok();
+  if (f is null) { return ""; }
+  match (parseRef(f!)) {
     Symbolic(target): { return target; }
     Direct(name): { return ""; }
     Unparsed(why): { return ""; }
   }
+}
+
+/** Whether `p` is there and its owner may execute it — false for a path that cannot be looked at. */
+async bool executableAt(Files fs, string p) {
+  Stat? s = (await fs.stat(p)).ok();
+  return (s is not null) && s!.isExecutable;
 }

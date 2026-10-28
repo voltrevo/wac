@@ -26,16 +26,17 @@
 // next increment and is the same in both: `then` on the ticket the machine is suspended at.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult, Pending } from "std";
+import { Files, ReadFault, Sys } from "std";
+import { Result, Ticket, flatten } from "core";
 
 // ── One await, no loop — A2's shape ───────────────────────────────────────────
 
 /** The locals that outlive an await, the state, and one slot per await point. */
 struct Frame {
   i32 state;
-  Cli cli;
+  Files fs;
   string path;
-  Pending<FileResult>? up0;
+  Ticket<Result<u8[], ReadFault>>? up0;
   i32 result;
   bool done;
 }
@@ -45,13 +46,13 @@ bool step(Frame fr) {
   while (true) {
     switch (fr.state) {
       case 0: {
-        fr.up0 = fr.cli.readFile(fr.path);
+        fr.up0 = fr.fs.readFile(fr.path);
         fr.state = 1;
         return false;
       }
       case 1: {
-        FileResult f = fr.up0!.wait();
-        fr.result = f.ok ? f.bytes.len() : 0 - 1;
+        u8[]? f = flatten(fr.up0!.wait()).ok();
+        fr.result = (f is not null) ? f!.len() : 0 - 1;
         fr.done = true;
         return true;
       }
@@ -60,29 +61,28 @@ bool step(Frame fr) {
   }
 }
 
-Pending<i32> fileSize(Cli cli, string path) {
-  Frame fr = Frame(0, cli, path, null, 0, false);
+Ticket<i32> fileSize(Files fs, string path) {
+  Frame fr = Frame(0, fs, path, null, 0, false);
   // Eager — D1. The call runs the body as far as the first await and no further.
   step(fr);
-  fn<i32(i32)> res = (i32 id) => {
-    while (!fr.done) { step(fr); }
-    return fr.result;
+  // `drive` — this steps the machine, so waiting on the ticket advances it.
+  Ticket<i32> out;
+  out.drive = () => {
+    if (step(fr)) { out.resolve(fr.result); }
+    return true;
   };
-  fn<bool(i32)> set = (i32 id) => fr.done;
-  fn<void(i32)> drp = (i32 id) => { };
-  // `waitable` — this resolver drives the machine, so waiting on it advances it.
-  return Pending<i32>(0 - 1, res, set, drp, null, true);
+  return out;
 }
 
 // ── An await inside a loop — A1's shape, and the discriminator ────────────────
 
 struct LFrame {
   i32 state;
-  Cli cli;
+  Files fs;
   string[] paths;
   i32 i;
   i32 total;
-  Pending<FileResult>? up0;
+  Ticket<Result<u8[], ReadFault>>? up0;
   i32 result;
   bool done;
 }
@@ -90,12 +90,12 @@ struct LFrame {
 /**
  * The lowering of:
  *
- *     async i32 sumOf(Cli cli, string[] paths) {
+ *     async i32 sumOf(Files fs, string[] paths) {
  *       i32 total = 0;
  *       for (i32 i = 0; i < paths.len(); i++) {
- *         FileResult f = await cli.readFile(paths[i]);
- *         if (!f.ok) { return -1; }
- *         total = total + f.bytes.len();
+ *         u8[]? f = (await fs.readFile(paths[i])).ok();
+ *         if (f is null) { return -1; }
+ *         total = total + f!.len();
  *       }
  *       return total;
  *     }
@@ -109,14 +109,14 @@ bool lstep(LFrame fr) {
     switch (fr.state) {
       case 0: {
         if (fr.i >= fr.paths.len()) { fr.result = fr.total; fr.done = true; return true; }
-        fr.up0 = fr.cli.readFile(fr.paths[fr.i]);
+        fr.up0 = fr.fs.readFile(fr.paths[fr.i]);
         fr.state = 1;
         return false;
       }
       case 1: {
-        FileResult f = fr.up0!.wait();
-        if (!f.ok) { fr.result = 0 - 1; fr.done = true; return true; }
-        fr.total = fr.total + f.bytes.len();
+        u8[]? f = flatten(fr.up0!.wait()).ok();
+        if (f is null) { fr.result = 0 - 1; fr.done = true; return true; }
+        fr.total = fr.total + f!.len();
         fr.i = fr.i + 1;
         fr.state = 0;
         break;
@@ -126,54 +126,59 @@ bool lstep(LFrame fr) {
   }
 }
 
-Pending<i32> sumOf(Cli cli, string[] paths) {
-  LFrame fr = LFrame(0, cli, paths, 0, 0, null, 0, false);
+Ticket<i32> sumOf(Files fs, string[] paths) {
+  LFrame fr = LFrame(0, fs, paths, 0, 0, null, 0, false);
   lstep(fr);
-  fn<i32(i32)> res = (i32 id) => { while (!fr.done) { lstep(fr); } return fr.result; };
-  fn<bool(i32)> set = (i32 id) => fr.done;
-  fn<void(i32)> drp = (i32 id) => { };
-  // `waitable` — this resolver drives the machine, so waiting on it advances it.
-  return Pending<i32>(0 - 1, res, set, drp, null, true);
+  // `drive` — this steps the machine, so waiting on the ticket advances it.
+  Ticket<i32> out;
+  out.drive = () => {
+    if (lstep(fr)) { out.resolve(fr.result); }
+    return true;
+  };
+  return out;
 }
 
 /** The oracle: the same answers by blocking, with no machinery at all. */
-i32 sizeOf(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? f.bytes.len() : 0 - 1;
+i32 sizeOf(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? f!.len() : 0 - 1;
 }
 
-export string test_one_await_flattened_answers_the_real_size(Core core, Cli cli) {
+export string test_one_await_flattened_answers_the_real_size(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 want = sizeOf(cli, "README.md");
+  i32 want = sizeOf(fs, "README.md");
   t.isTrue(want > 0, "the oracle read the file");
 
-  Pending<i32> p = fileSize(cli, "README.md");
-  t.isFalse(p.isDone(), "eager ran to the first await and stopped there");
-  t.eqI32(p.wait(), want, "and waiting drove it to the answer");
-  t.isTrue(p.isDone(), "which it remembers");
+  Ticket<i32> p = fileSize(fs, "README.md");
+  t.isFalse(p.settled(), "eager ran to the first await and stopped there");
+  t.eqI32(p.wait()!, want, "and waiting drove it to the answer");
+  t.isTrue(p.settled(), "which it remembers");
   return t.report();
 }
 
-export string test_an_await_inside_a_loop_suspends_and_resumes(Core core, Cli cli) {
+export string test_an_await_inside_a_loop_suspends_and_resumes(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   string[] ps = ["README.md", "MERGE.md", "CLAUDE.md"];
   i32 want = 0;
   for (i32 i = 0; i < ps.len(); i++) {
-    i32 one = sizeOf(cli, ps[i]);
+    i32 one = sizeOf(fs, ps[i]);
     t.isTrue(one > 0, "the oracle read \{ps[i]}");
     want = want + one;
   }
   // **The case CPS cannot express without hoisting.** Three suspensions and three resumptions, all
   // re-entering the same loop, and the frame carries `i` and `total` across every one.
-  t.eqI32(sumOf(cli, ps).wait(), want, "the machine summed all three");
+  t.eqI32(sumOf(fs, ps).wait()!, want, "the machine summed all three");
   return t.report();
 }
 
-export string test_the_loop_machine_stops_early_when_a_read_fails(Core core, Cli cli) {
+export string test_the_loop_machine_stops_early_when_a_read_fails(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The `return` from inside the loop, which is a state that sets `done` rather than a back edge —
   // and the reason the arms answer `bool` instead of falling off the end.
   string[] ps = ["README.md", "no-such-file-here.md", "CLAUDE.md"];
-  t.eqI32(sumOf(cli, ps).wait(), 0 - 1, "it left the loop at the failure");
+  t.eqI32(sumOf(fs, ps).wait()!, 0 - 1, "it left the loop at the failure");
   return t.report();
 }

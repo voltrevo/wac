@@ -37,15 +37,16 @@
 // cannot outlive the run because the thing that gave up on it is its own parent.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Random, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /** How long a network gets before the bound is called a wedge, in seconds. */
 static i32 BOUND_SECONDS = 330;
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
 /**
  * What the machine was doing, for the one fact that decides whether a red gate means "re-run" or
@@ -54,22 +55,22 @@ string root(Cli cli) { return cli.cwd().wait(); }
  * Issue 0106's third suggestion. Read here rather than in `packages/tor`: a protocol library reaching
  * into `/proc` to describe its own environment is the wrong layer, and a test already knows it is one.
  */
-string loadNow(Cli cli) {
-  FileResult f = cli.readFile("/proc/loadavg").wait();
-  if (!f.ok) { return "load unknown"; }
-  string text = string.fromBytes(f.bytes);
+string loadNow(Files fs) {
+  u8[]? f = flatten(fs.readFile("/proc/loadavg").wait()).ok();
+  if ((f is null)) { return "load unknown"; }
+  string text = string.fromBytes(f!);
   i32 nl = text.indexOf("\n");
   return "load \{(nl < 0 ? text : text.slice(0, nl))}";
 }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/tornet-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/tornet-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
 
-string build(Cli cli, string entry, string out, string[] grants, bool worker) {
+string build(Procs procs, string entry, string out, string[] grants, bool worker) {
   string[] head = ["run", "-A", "packages/platform/build.ts", entry];
   string[] tail = worker ? ["--worker", "-o", out] : ["-o", out];
   string[] args = string[].filled(head.len() + grants.len() + tail.len(), "");
@@ -77,9 +78,10 @@ string build(Cli cli, string entry, string out, string[] grants, bool worker) {
   for (i32 i = 0; i < head.len(); i++) { args[at] = head[i]; at = at + 1; }
   for (string grant in grants) { args[at] = grant; at = at + 1; }
   for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
-  Exec r = cli.exec("deno", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    return "\{entry} did not build: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
+  auto rRan = flatten(procs.exec("deno", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    return "\{entry} did not build: \{string.fromBytes(r!.stderr)}\{string.fromBytes(r!.stdout)}";
   }
   return "";
 }
@@ -87,11 +89,10 @@ string build(Cli cli, string entry, string out, string[] grants, bool worker) {
 string[] none() { return string[].filled(0, ""); }
 
 /** The launcher, the three relays and whatever else a case names — built into one directory. */
-string common(Cli cli, string dir) {
-  return build(cli, "packages/tor/src/network.wac", "\{dir}/network",
-               ["--allow-read", "--allow-write", "--allow-net"], false) +
-         build(cli, "packages/tor/src/relayd.wac", "\{dir}/relayd.worker.js", none(), true) +
-         build(cli, "packages/tor/src/gendesc.wac", "\{dir}/gendesc.worker.js", none(), true);
+string common(Procs procs, string dir) {
+  return build(procs, "packages/tor/src/network.wac", "\{dir}/network", ["--allow-read", "--allow-write", "--allow-net"], false) +
+         build(procs, "packages/tor/src/relayd.wac", "\{dir}/relayd.worker.js", none(), true) +
+         build(procs, "packages/tor/src/gendesc.wac", "\{dir}/gendesc.worker.js", none(), true);
 }
 
 /**
@@ -100,9 +101,9 @@ string common(Cli cli, string dir) {
  * Random rather than fixed because a fixed one would make two concurrent runs of this suite share
  * keys — and this file is in the exclusive lane against *itself*, not against the other agent.
  */
-void seeds(Core core, Cli cli, string dir, string[] names) {
+void seeds(Random rnd, Files fs, string dir, string[] names) {
   for (i32 i = 0; i < names.len(); i++) {
-    cli.writeFile("\{dir}/\{names[i]}", core.randomBytes(32).wait()).wait();
+    fs.writeFile("\{dir}/\{names[i]}", flatten(rnd.bytes(32).wait()).unwrap()).wait();
   }
 }
 
@@ -120,12 +121,11 @@ struct Ran {
  * `timeout` is inside the line rather than outside the call, which is what keeps the output: a bound
  * that kills the child closes its pipes, and `exec` answers with everything written up to then.
  */
-Ran runNetwork(Cli cli, string dir) {
-  Exec r = cli.exec("/bin/sh",
-    ["-c", "cd \{quoted(dir)} && exec timeout \{BOUND_SECONDS} ./network net.txt"],
-    u8[]()).wait();
-  if (!r.ran()) { return Ran(-1, "", "the shell did not run — \{r.error}", false); }
-  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
+Ran runNetwork(Procs procs, string dir) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cd \{quoted(dir)} && exec timeout \{BOUND_SECONDS} ./network net.txt"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Ran(-1, "", "the shell did not run — \{rRan.isErr() ? "\{rRan.err()!}" : ""}", false); }
+  return Ran(r!.status, string.fromBytes(r!.stdout), string.fromBytes(r!.stderr), r!.status == 124);
 }
 
 /** The last `n` lines, for a message that has to fit in a log. */
@@ -142,10 +142,10 @@ string tail(string text, i32 n) {
 }
 
 /** What a wedged or failed network had reached, which is the whole diagnosis. */
-string report(Cli cli, Ran r) {
+string report(Files fs, Ran r) {
   return (r.wedged ? "the network did not finish within \{BOUND_SECONDS}s" :
                      "the network exited \{r.code}") +
-         " (" + loadNow(cli) + "). What it had said:\n--- stderr ---\n" + tail(r.err, 25) +
+         " (" + loadNow(fs) + "). What it had said:\n--- stderr ---\n" + tail(r.err, 25) +
          "\n--- stdout ---\n" + tail(r.out, 25);
 }
 
@@ -164,22 +164,26 @@ string relay(i32 n, string net, string extra) {
          " -p 0 -n \{net}\{n} --descriptor r\{n}.desc \{extra}\{DOCS}";
 }
 
-void describe(Cli cli, string dir, string[] lines) {
+void describe(Files fs, string dir, string[] lines) {
   string text = "";
   for (i32 i = 0; i < lines.len(); i++) { text = text + "\{lines[i]}\n"; }
-  cli.writeFile("\{dir}/net.txt", text.toBytes()).wait();
+  fs.writeFile("\{dir}/net.txt", text.toBytes()).wait();
 }
 
-export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core core, Cli cli) {
+export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Sys sys) {
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "network");
-  string why = common(cli, dir) +
-               build(cli, "packages/tor/src/app.wac", "\{dir}/torapp.worker.js", none(), true);
+  string dir = freshScratch(t, env, fs, "network");
+  string why = common(procs, dir) +
+               build(procs, "packages/tor/src/app.wac", "\{dir}/torapp.worker.js", none(), true);
   t.eqStr(why, "", "the network's programs built");
   if (why != "") { return t.report(); }
-  seeds(core, cli, dir, ["s1", "s2", "s3"]);
+  seeds(rnd, fs, dir, ["s1", "s2", "s3"]);
 
-  describe(cli, dir, [
+  describe(fs, dir, [
     // Generous: three RSA-1024 prime searches happen at once here, and a busy machine makes that
     // slow. A default tuned for a quiet one would turn load into a failure.
     "timeout 300000",
@@ -193,12 +197,12 @@ export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core 
     "run  fetch  |                       | torapp.worker.js seed.txt cert.fingerprint /tor/status-vote/current/consensus"
   ]);
 
-  Ran r = runNetwork(cli, dir);
-  t.eqI32(r.code, 0, "the network did not come up or the fetch failed — \{report(cli, r)}");
-  if (r.code != 0) { cli.remove(dir, true).wait(); return t.report(); }
+  Ran r = runNetwork(procs, dir);
+  t.eqI32(r.code, 0, "the network did not come up or the fetch failed — \{report(fs, r)}");
+  if (r.code != 0) { fs.remove(dir, true).wait(); return t.report(); }
 
   // Each stage was seen, by name. The launcher's whole claim is that none of these was assumed.
-  t.isTrue(contains(r.err, "all 3 nodes are up"), report(cli, r));
+  t.isTrue(contains(r.err, "all 3 nodes are up"), report(fs, r));
   t.isTrue(contains(r.err, "relay1 says serving the consensus"), "relay1 reached the serving state");
   t.isTrue(contains(r.err, "relay3 says serving the consensus"), "and so did the last one");
   t.isTrue(contains(r.err, "circuit built"), "the client built a circuit through them");
@@ -209,12 +213,15 @@ export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core 
            "stdout is a consensus, fetched over the circuit");
   t.isTrue(contains(r.out, "directory-signature "),
            "signed, and complete to the end of the document");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_an_onion_service_published_on_that_network_and_a_page_fetched_from_it(
-    Core core, Cli cli) {
+export string test_an_onion_service_published_on_that_network_and_a_page_fetched_from_it(Sys sys) {
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The rest of design 0002's done condition: *publishes an onion service on it, fetches a page from
   // that service through a three-hop circuit, and tears it down.*
   //
@@ -226,17 +233,15 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
   // The service logs it as the first thing it says, so a `wait` on `hsserviced: ` captures it — a
   // marker it has long since printed by the time the wait runs.
   T t = T.create();
-  string dir = freshScratch(t, cli, "onion");
-  string why = common(cli, dir) +
-               build(cli, "packages/tor/src/hsserviced.wac", "\{dir}/hsserviced.worker.js",
-                     none(), true) +
-               build(cli, "packages/tor/src/hsconnect.wac", "\{dir}/hsconnect.worker.js",
-                     none(), true);
+  string dir = freshScratch(t, env, fs, "onion");
+  string why = common(procs, dir) +
+               build(procs, "packages/tor/src/hsserviced.wac", "\{dir}/hsserviced.worker.js", none(), true) +
+               build(procs, "packages/tor/src/hsconnect.wac", "\{dir}/hsconnect.worker.js", none(), true);
   t.eqStr(why, "", "the onion service's programs built");
   if (why != "") { return t.report(); }
-  seeds(core, cli, dir, ["s1", "s2", "s3", "hs.seed"]);
+  seeds(rnd, fs, dir, ["s1", "s2", "s3", "hs.seed"]);
 
-  describe(cli, dir, [
+  describe(fs, dir, [
     "timeout 300000",
     relay(1, "wacon", "--seedline seed.txt "),
     relay(2, "wacon", ""),
@@ -256,9 +261,9 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
     "run  visit   |                       | hsconnect.worker.js seed.txt cert.fingerprint {service} 80 --testnet"
   ]);
 
-  Ran r = runNetwork(cli, dir);
-  t.eqI32(r.code, 0, "the onion service run failed — \{report(cli, r)}");
-  if (r.code != 0) { cli.remove(dir, true).wait(); return t.report(); }
+  Ran r = runNetwork(procs, dir);
+  t.eqI32(r.code, 0, "the onion service run failed — \{report(fs, r)}");
+  if (r.code != 0) { fs.remove(dir, true).wait(); return t.report(); }
 
   t.isTrue(contains(r.err, "service had already said \"introduction point established\""),
            "the service claimed an introduction point");
@@ -266,6 +271,6 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
            "and published its descriptor to the directories");
   t.isTrue(contains(r.out, "hello from behind an onion"),
            "and the page came back through the rendezvous");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

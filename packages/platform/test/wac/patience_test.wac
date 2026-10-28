@@ -17,8 +17,8 @@
 //
 // This was two of the five tests in `test/timeout.test.ts`, where the peer was a `Deno.listen` that
 // accepted and held the connection. Nothing about that needed a JavaScript host: a listener that
-// accepts and does not answer is `cli.listen` and `cli.accept`, and one that answers late is the same
-// plus `core.sleepMillis`. What made it possible to write here is `issues/system/0211` — `Cli.exec`
+// accepts and does not answer is `Net.listen` and `Listener.accept`, and one that answers late is the same
+// plus `Clock.sleepMillis`. What made it possible to write here is `issues/system/0211` — `exec`
 // used to run the child to completion inside the capability call, so a test could not hold a peer open
 // *while* a child talked to it.
 //
@@ -31,7 +31,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, HostSocket, Pending } from "std";
+import { ChildEnv, Exec, Launch, Socket, SpawnFault, Clock, Env, Net, Procs, Sys, Listener } from "std";
+import { Result, Ticket, flatten } from "core";
 
 static string PATIENCE = "packages/platform/example/patience.wac";
 
@@ -45,35 +46,42 @@ i32 count(string s, string needle) {
 }
 
 /** `patience <host> <port> <millis>`, compiled and run in one step. */
-Pending<Exec> patience(Cli cli, i32 port, i32 millis) {
-  return cli.exec(binaryPath(cli),
+Ticket<Result<Exec, SpawnFault>> patience(Env env, Procs procs, i32 port, i32 millis) {
+  return procs.exec(binaryPath(env),
     ["run", "--allow-net", PATIENCE, "--", "127.0.0.1", "\{port}", "\{millis}"],
-    u8[]());
+    u8[](), ChildEnv.inherited(), Launch.plain());
 }
 
-export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Core core, Cli cli) {
+export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  HostSocket l = cli.listen("127.0.0.1", 0).wait();
-  t.isTrue(l.error == "", "could not listen — \{l.error}");
-  if (l.error != "") { return t.report(); }
+  auto lBind = flatten(net.listen("127.0.0.1", 0).wait());
+  Listener? l = lBind.ok();
+  t.isTrue("\{lBind.isErr() ? "\{lBind.err()!}" : ""}" == "", "could not listen — \{lBind.isErr() ? "\{lBind.err()!}" : ""}");
+  if ("\{lBind.isErr() ? "\{lBind.err()!}" : ""}" != "") { return t.report(); }
 
   // **The child starts before the accept is waited on.** Both tickets are in flight together, which
   // is the whole shape `issues/system/0211` made possible: waiting the accept first would park this
   // test until a peer that has not been started yet connects.
-  i64 began = core.monotonicNanos().wait();
-  Pending<Exec> running = patience(cli, l.port, 100);
-  Pending<HostSocket> accepting = cli.accept(l.handle);
+  i64 began = flatten(clock.monotonicNanos().wait()).unwrap();
+  auto running = patience(env, procs, l!.port, 100);
+  auto accepting = l!.accept();
 
-  HostSocket peer = accepting.wait();
-  t.isTrue(peer.error == "", "the child never connected — \{peer.error}");
+  auto peer = flatten(accepting.wait());
+  t.isTrue(peer.isOk(), "the child never connected — \{peer.isErr() ? "\{peer.err()!}" : ""}");
 
   // And now nothing is sent. Six rounds of 100ms, and the program gives up.
-  Exec r = running.wait();
-  i64 tookMs = (core.monotonicNanos().wait() - began) / (1000000 as i64);
+  auto ran = flatten(running.wait());
+  i64 tookMs = (flatten(clock.monotonicNanos().wait()).unwrap() - began) / (1000000 as i64);
+  t.isTrue(ran.isOk(), "the child did not run — \{ran.isErr() ? "\{ran.err()!}" : ""}");
+  if (ran.isErr()) { l!.close(); return t.report(); }
+  Exec r = ran.unwrap();
 
   string out = string.fromBytes(r.stdout);
   string err = string.fromBytes(r.stderr);
-  t.isTrue(r.ran(), "the child did not run — \{r.error}");
   t.eqI32(r.status, 1, "a peer that never speaks should give up: \{out}\{err}");
   t.isTrue(contains(out, "giving up after 600ms"), "it should say how long it waited: \{out}");
 
@@ -86,35 +94,43 @@ export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Cor
   // count short rather than the run obviously broken, which is the failure that is hard to see.
   t.eqI32(count(out, "nothing yet"), 5, "one line per round short of the verdict: \{out}");
 
-  if (peer.error == "") { cli.closeSocket(peer.handle); }
-  cli.closeSocket(l.handle);
+  if (peer.isOk()) { peer.unwrap().close(); }
+  l!.close();
   return t.report();
 }
 
-export string test_a_peer_that_speaks_late_is_still_heard(Core core, Cli cli) {
+export string test_a_peer_that_speaks_late_is_still_heard(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  HostSocket l = cli.listen("127.0.0.1", 0).wait();
-  t.isTrue(l.error == "", "could not listen — \{l.error}");
-  if (l.error != "") { return t.report(); }
+  auto lBind = flatten(net.listen("127.0.0.1", 0).wait());
+  Listener? l = lBind.ok();
+  t.isTrue("\{lBind.isErr() ? "\{lBind.err()!}" : ""}" == "", "could not listen — \{lBind.isErr() ? "\{lBind.err()!}" : ""}");
+  if ("\{lBind.isErr() ? "\{lBind.err()!}" : ""}" != "") { return t.report(); }
 
   // 100ms of patience per round against a peer that takes 250ms: the read wins on a later round,
   // which is the case that proves re-waiting one ticket works.
-  Pending<Exec> running = patience(cli, l.port, 100);
-  Pending<HostSocket> accepting = cli.accept(l.handle);
-  HostSocket peer = accepting.wait();
-  t.isTrue(peer.error == "", "the child never connected — \{peer.error}");
-  if (peer.error != "") { cli.closeSocket(l.handle); return t.report(); }
+  auto running = patience(env, procs, l!.port, 100);
+  auto accepted = flatten(l!.accept().wait());
+  t.isTrue(accepted.isOk(), "the child never connected — \{accepted.isErr() ? "\{accepted.err()!}" : ""}");
+  if (accepted.isErr()) { l!.close(); return t.report(); }
+  Socket peer = accepted.unwrap();
 
-  core.sleepMillis(250).wait();
-  cli.send(peer.handle, "finally\n".toBytes()).wait();
+  clock.sleepMillis(250).wait();
+  peer.send("finally\n".toBytes()).wait();
 
-  Exec r = running.wait();
+  auto ran = flatten(running.wait());
+  t.isTrue(ran.isOk(), "the child did not run — \{ran.isErr() ? "\{ran.err()!}" : ""}");
+  if (ran.isErr()) { peer.close(); l!.close(); return t.report(); }
+  Exec r = ran.unwrap();
   string out = string.fromBytes(r.stdout);
   t.eqI32(r.status, 0, "a peer that speaks late should be heard: \{out}" +
                        string.fromBytes(r.stderr));
   t.isTrue(contains(out, "peer sent 8 bytes"), "it should report what arrived: \{out}");
 
-  cli.closeSocket(peer.handle);
-  cli.closeSocket(l.handle);
+  peer.close();
+  l!.close();
   return t.report();
 }

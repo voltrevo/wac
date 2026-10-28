@@ -36,9 +36,8 @@
 // as unarrangeable here, which was true of the case that had been tried — a *deepen* against GitHub,
 // which returns whole objects — and not true of an incremental fetch, which is a different conversation.
 
-import { Cli, Change, Core, FileResult, Sys } from "std";
-import { Fs } from "../../fs/src/fs.wac";
-import { Buf } from "core";
+import { Sys, Env, Output, Files } from "std";
+import { Buf, flatten } from "core";
 import { Vec } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { PackIndex, writeIdx } from "../src/idx.wac";
@@ -63,44 +62,46 @@ u8[] advertisedTarget(u8[] advertisement, string ref) {
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  i32 n = argv.len();
   if (n < 4) {
-    core.warn("usage: gitpull request <repo-dir> <ref> <advertisement-file>");
-    core.warn("       gitpull apply   <repo-dir> <ref> <advertisement-file> <reply-file>");
+    err.line("usage: gitpull request <repo-dir> <ref> <advertisement-file>");
+    err.line("       gitpull apply   <repo-dir> <ref> <advertisement-file> <reply-file>");
     return 2;
   }
-  string verb = string.fromBytes(cli.arg(0).wait());
-  string root = string.fromBytes(cli.arg(1).wait());
-  string ref = string.fromBytes(cli.arg(2).wait());
-  string path = string.fromBytes(cli.arg(3).wait());
+  string verb = argv[0];
+  string root = argv[1];
+  string ref = argv[2];
+  string path = argv[3];
 
-  Fs fs = Fs.onHost(cli, 0);
+  Files fs = sys.files();
   string gitDir = "\{root}/.git";
-  FileResult input = await fs.readFile(path);
-  if (!input.ok) {
-    core.warn("gitpull: cannot read \{path}");
+  u8[]? input = (await fs.readFile(path)).ok();
+  if (input is null) {
+    err.line("gitpull: cannot read \{path}");
     return 1;
   }
 
   match ((await openRepo(fs, gitDir, root))) {
     NoRepo(why): {
-      core.warn("gitpull: \{why}");
+      err.line("gitpull: \{why}");
       return 1;
     }
     Opened(repo): {
       if (verb == "request") {
-        u8[] want = advertisedTarget(input.bytes, ref);
+        u8[] want = advertisedTarget(input!, ref);
         if (want.len() == 0) {
-          core.warn("gitpull: the advertisement does not name \{ref}");
+          err.line("gitpull: the advertisement does not name \{ref}");
           return 1;
         }
         bool wantsOfs = false;
         bool wantsThin = false;
-        match (parseAdvertisement(input.bytes)) {
+        match (parseAdvertisement(input!)) {
           Garbled(why): {
-            core.warn("gitpull: the advertisement is not one: \{why}");
+            err.line("gitpull: the advertisement is not one: \{why}");
             return 1;
           }
           Said(ad): {
@@ -113,7 +114,7 @@ export async i32 main(Sys sys) {
         // answer with an empty pack, which `indexPack` would then have to treat as a failure.
         u8[]? mine = await headOf(repo);
         if (!(mine is null) && hexOf(mine!) == hexOf(want)) {
-          core.warn("gitpull: already up to date");
+          err.line("gitpull: already up to date");
           return 3;
         }
 
@@ -131,7 +132,7 @@ export async i32 main(Sys sys) {
           }
         }
         if (haves.len() == 0) {
-          core.warn("gitpull: this repository has no commit to offer, so a fetch here is a clone");
+          err.line("gitpull: this repository has no commit to offer, so a fetch here is a clone");
           return 1;
         }
 
@@ -140,37 +141,37 @@ export async i32 main(Sys sys) {
         // `thin-pack` is asked for **deliberately**: it is what permits the server to deltify against
         // the `have` above, and repairing the result is this program's reason to exist.
         if (wantsThin) { caps = "thin-pack \{caps}"; }
-        if (!cli.write(wantRequest(wants, haves, caps, 0))) {
-          core.warn("gitpull: cannot write the request");
+        if (!flatten(out.write(wantRequest(wants, haves, caps, 0)).wait()).isOk()) {
+          err.line("gitpull: cannot write the request");
           return 1;
         }
         return 0;
       }
 
       if (verb != "apply") {
-        core.warn("gitpull: expected `request` or `apply`, got \{verb}");
+        err.line("gitpull: expected `request` or `apply`, got \{verb}");
         return 2;
       }
       if (n < 5) {
-        core.warn("usage: gitpull apply <repo-dir> <ref> <advertisement-file> <reply-file>");
+        err.line("usage: gitpull apply <repo-dir> <ref> <advertisement-file> <reply-file>");
         return 2;
       }
       // `input` is the advertisement for both verbs; the reply is the fifth argument.
-      u8[] tip = advertisedTarget(input.bytes, ref);
+      u8[] tip = advertisedTarget(input!, ref);
       if (tip.len() == 0) {
-        core.warn("gitpull: the advertisement does not name \{ref}");
+        err.line("gitpull: the advertisement does not name \{ref}");
         return 1;
       }
-      FileResult answer = await fs.readFile(string.fromBytes(cli.arg(4).wait()));
-      if (!answer.ok) {
-        core.warn("gitpull: cannot read the reply");
+      u8[]? answer = (await fs.readFile(argv[4])).ok();
+      if (answer is null) {
+        err.line("gitpull: cannot read the reply");
         return 1;
       }
 
       u8[] pack = u8[]();
-      match (findPack(answer.bytes)) {
+      match (findPack(answer!)) {
         NoPack(why): {
-          core.warn("gitpull: \{why}");
+          err.line("gitpull: \{why}");
           return 1;
         }
         Packfile(bytes): { pack = bytes; }
@@ -184,7 +185,7 @@ export async i32 main(Sys sys) {
       i32 appended = 0;
       match (indexPack(pack)) {
         Unindexable(why): {
-          core.warn("gitpull: the pack could not be indexed: \{why}");
+          err.line("gitpull: the pack could not be indexed: \{why}");
           return 1;
         }
         Built(idx): { }
@@ -192,13 +193,13 @@ export async i32 main(Sys sys) {
           appended = bases.len();
           match ((await completeThin(repo, pack))) {
             Missing(why): {
-              core.warn("gitpull: the thin pack wants an object this repository does not have: \{why}");
+              err.line("gitpull: the thin pack wants an object this repository does not have: \{why}");
               return 1;
             }
             // Damaged rather than thin — a different failure, and worth a different sentence: the
             // first says the conversation went wrong, this says the bytes did.
             Unusable(why): {
-              core.warn("gitpull: the pack is damaged: \{why}");
+              err.line("gitpull: the pack is damaged: \{why}");
               return 1;
             }
             Complete(fixed): { whole = fixed; }
@@ -213,25 +214,25 @@ export async i32 main(Sys sys) {
       string stem = "\{gitDir}/objects/pack/pack-\{hexOf(checksum)}";
       match (indexPack(whole)) {
         Unindexable(why): {
-          core.warn("gitpull: the completed pack could not be indexed: \{why}");
+          err.line("gitpull: the completed pack could not be indexed: \{why}");
           return 1;
         }
         Thin(bases): {
-          core.warn("gitpull: the pack is still thin after completion, wanting \{bases.len()}");
+          err.line("gitpull: the pack is still thin after completion, wanting \{bases.len()}");
           return 1;
         }
         Built(idx): {
-          Change wrotePack = await fs.writeFile("\{stem}.pack", whole);
-          if (!wrotePack.ok()) {
-            core.warn("gitpull: cannot write the pack: \{wrotePack.message}");
+          auto wrotePack = await fs.writeFile("\{stem}.pack", whole);
+          if (wrotePack.isErr()) {
+            err.line("gitpull: cannot write the pack: \{"\{wrotePack.isErr() ? "\{wrotePack.err()!}" : ""}"}");
             return 1;
           }
-          Change wroteIdx = await fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
-          if (!wroteIdx.ok()) {
-            core.warn("gitpull: cannot write the index: \{wroteIdx.message}");
+          auto wroteIdx = await fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
+          if (wroteIdx.isErr()) {
+            err.line("gitpull: cannot write the index: \{"\{wroteIdx.isErr() ? "\{wroteIdx.err()!}" : ""}"}");
             return 1;
           }
-          core.log("\{idx.count} objects in \{whole.len()} bytes, "
+          out.line("\{idx.count} objects in \{whole.len()} bytes, "
             + "\{appended} base(s) appended from the local store");
 
           // **`FETCH_HEAD`, which is what makes this a fetch rather than an object import.** git writes
@@ -246,9 +247,9 @@ export async i32 main(Sys sys) {
           Buf line = Buf.create();
           line.pushAll(encode(tip));
           line.pushAll("\t\t\{ref}\n".toBytes());
-          Change wroteFetchHead = await fs.writeFile("\{gitDir}/FETCH_HEAD", line.bytes());
-          if (!wroteFetchHead.ok()) {
-            core.warn("gitpull: cannot write FETCH_HEAD: \{wroteFetchHead.message}");
+          auto wroteFetchHead = await fs.writeFile("\{gitDir}/FETCH_HEAD", line.bytes());
+          if (wroteFetchHead.isErr()) {
+            err.line("gitpull: cannot write FETCH_HEAD: \{"\{wroteFetchHead.isErr() ? "\{wroteFetchHead.err()!}" : ""}"}");
             return 1;
           }
         }

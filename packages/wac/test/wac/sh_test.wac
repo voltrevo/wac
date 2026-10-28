@@ -23,7 +23,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, Exec, Stat } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 // ## It skipped itself until 2026-08-20 — `issues/system/0216a`
 //
@@ -36,16 +37,18 @@ import { Core, Cli, Exec, Stat } from "std";
 // shell is not a `wac` the supported route can produce. If `sh` disappears again this should go red,
 // which is what the skip was preventing.
 
-Exec sh(Cli cli, string[] argv) {
+Exec sh(Env env, Procs procs, string[] argv) {
   string[] out = string[].filled(argv.len() + 1, "");
   out[0] = "sh";
   for (i32 i = 0; i < argv.len(); i++) { out[1 + i] = argv[i]; }
-  return cli.exec(binaryPath(cli), out, u8[]()).wait();
+  return flatten(procs.exec(binaryPath(env), out, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
-export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
+export string test_wac_sh_runs_a_pipeline_of_applets(Sys sys) {
+  Env env = sys.env();
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec piped = sh(cli, ["-c", "seq 1 20 | grep 7 | wc -l"]);
+  Exec piped = sh(env, procs, ["-c", "seq 1 20 | grep 7 | wc -l"]);
   t.isTrue(piped.ran(), "the shell ran — \{piped.error}");
   if (piped.ran()) {
     t.eqStr(trimmed(string.fromBytes(piped.stdout)), "2",
@@ -54,7 +57,7 @@ export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
 
   // A second pipeline whose answer is a digest, so a shell that ran the applets in the wrong order,
   // or dropped one, cannot produce it by accident.
-  Exec hashed = sh(cli, ["-c", "echo hello | sha256sum"]);
+  Exec hashed = sh(env, procs, ["-c", "echo hello | sha256sum"]);
   t.isTrue(hashed.ran(), "the shell ran — \{hashed.error}");
   if (hashed.ran()) {
     string first = "";
@@ -69,27 +72,30 @@ export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
+export string test_wac_sh_is_sealed_unless_it_is_granted(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "shsealed");
-  string whyDir = freshDir(cli, dir);
+  string dir = scratch(env, "shsealed");
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   string probe = "\{dir}/written";
 
   // **Refused, and nothing written.** Checking only the message would pass for a shell that reported a
   // refusal and did the write anyway, which is the failure that matters.
-  Exec denied = sh(cli, ["-c", "echo x > \{probe}"]);
+  Exec denied = sh(env, procs, ["-c", "echo x > \{probe}"]);
   t.isTrue(denied.ran(), "the shell ran — \{denied.error}");
   if (denied.ran()) {
     string said = string.fromBytes(denied.stdout) + string.fromBytes(denied.stderr);
     t.isTrue(contains(said, "Not granted"), "an ungranted write should say so: \{said}");
   }
-  Stat wrote = cli.stat(probe).wait();
-  t.isTrue(!wrote.exists, "the file was written despite the refusal");
+  Stat? wrote = flatten(fs.stat(probe).wait()).ok();
+  t.isTrue((wrote is null), "the file was written despite the refusal");
 
   // The same shell, granted, reaches the machine. `--allow-read` only, so the write above stays
   // refused: the two grants are independent rather than one switch with a long name.
-  Exec read = sh(cli, ["--allow-read", "-c", "wc -l < spec/tour.wac"]);
+  Exec read = sh(env, procs, ["--allow-read", "-c", "wc -l < spec/tour.wac"]);
   t.isTrue(read.ran(), "the shell ran — \{read.error}");
   if (read.ran()) {
     t.isTrue(atoi(trimmed(string.fromBytes(read.stdout))) > 100,
@@ -99,13 +105,13 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
 
   // A flag that is not a grant is refused by name rather than ignored, because a typo that silently
   // dropped a grant would leave a program failing for a reason nobody would look for.
-  Exec bogus = sh(cli, ["--allow-everything", "-c", "echo x"]);
+  Exec bogus = sh(env, procs, ["--allow-everything", "-c", "echo x"]);
   t.isTrue(bogus.ran(), "the shell ran — \{bogus.error}");
   if (bogus.ran()) {
     t.eqI32(bogus.status, 2, "an unknown grant should exit 2: \{string.fromBytes(bogus.stderr)}");
     t.isTrue(contains(string.fromBytes(bogus.stderr), "is not a grant"),
              string.fromBytes(bogus.stderr));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

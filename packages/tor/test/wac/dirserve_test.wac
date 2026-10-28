@@ -16,34 +16,36 @@ import { DirDocuments, dirRoute, dirResponse, dirSourceFingerprint, stripDotZ }
 import { encodeUpper, decoded } from "../../../codec/src/hex.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
 import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Procs, Sys } from "std";
 import { JsonValue } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
+import { flatten } from "core";
 
 static string ORACLE = "packages/tor/test/oracle.mjs";
 
 /** A named field of one of the generated-document JSON files, or `""` if anything went wrong. */
-string field(T t, Cli cli, string file, string key) {
-  FileResult f = cli.readFile("packages/tor/test/data/\{file}").wait();
-  t.isTrue(f.ok, "\{file} could not be read: \{f.error}");
-  if (!f.ok) { return ""; }
-  JsonValue? doc = parse(f.bytes).ok();
+string field(T t, Files fs, string file, string key) {
+  auto fRead = flatten(fs.readFile("packages/tor/test/data/\{file}").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{file} could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return ""; }
+  JsonValue? doc = parse(f!).ok();
   t.isTrue(!(doc is null), "\{file} did not parse");
   if (doc is null) { return ""; }
   return doc!.member(key)?.text() ?? "";
 }
 
-DirDocuments docsFrom(T t, Cli cli) {
+DirDocuments docsFrom(T t, Files fs, Procs procs) {
   Lines lines = Lines.create();
   lines.add("descdigest");
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "the descriptor digest");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "the descriptor digest");
   u8[] digest = a.ok ? decoded(word(a.lines[0], 1)) : u8[]();
   DirDocuments docs = DirDocuments(
-    field(t, cli, "consensus_generated.json", "consensus").toBytes(), u8[](),
-    field(t, cli, "authcert_generated.json", "certificate").toBytes(),
-    field(t, cli, "routerdesc_generated.json", "descriptor").toBytes(),
+    field(t, fs, "consensus_generated.json", "consensus").toBytes(), u8[](),
+    field(t, fs, "authcert_generated.json", "certificate").toBytes(),
+    field(t, fs, "routerdesc_generated.json", "descriptor").toBytes(),
     oneDigest(digest),
-    decoded(field(t, cli, "consensus_generated.json", "identityDigest")),
+    decoded(field(t, fs, "consensus_generated.json", "identityDigest")),
     u8[](), u8[][](), u8[][](), u8[][]());
 
   // Every routing assertion below compares a response body against one of these, and two empty
@@ -64,9 +66,11 @@ u8[][] oneDigest(u8[] d) {
   return out;
 }
 
-export string test_the_targets_a_bootstrapping_tor_builds(Core core, Cli cli) {
+export string test_the_targets_a_bootstrapping_tor_builds(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  DirDocuments docs = docsFrom(t, cli);
+  DirDocuments docs = docsFrom(t, fs, procs);
   string fp = hexOf(docs.fingerprint);
 
   // The real shape: flavourless consensus, the trusted authorities' fingerprints, and `.z`.
@@ -117,7 +121,7 @@ export string test_the_targets_a_bootstrapping_tor_builds(Core core, Cli cli) {
  * so splitting the list on `+` cuts digests in half, and a cache that did so would answer 404 for
  * every batch containing one. That is a failure a client reports only as having no usable relays.
  */
-export string test_microdescriptors_are_batched_with_a_hyphen(Core core, Cli cli) {
+export string test_microdescriptors_are_batched_with_a_hyphen() {
   T t = T.create();
 
   // Two digests, one of them deliberately containing a `+` — which real ones do, roughly half the
@@ -186,9 +190,11 @@ bool hasPlus(string s) {
   return false;
 }
 
-export string test_the_compression_suffix_is_a_request_not_a_name(Core core, Cli cli) {
+export string test_the_compression_suffix_is_a_request_not_a_name(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  DirDocuments docs = docsFrom(t, cli);
+  DirDocuments docs = docsFrom(t, fs, procs);
 
   // `.z` asks for zlib. Strip it before matching or every real request 404s — which is the whole
   // failure mode: a server that works when tested by hand and never when tested by tor.
@@ -205,9 +211,11 @@ export string test_the_compression_suffix_is_a_request_not_a_name(Core core, Cli
   return t.report();
 }
 
-export string test_the_response_is_framed_for_a_client(Core core, Cli cli) {
+export string test_the_response_is_framed_for_a_client(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  DirDocuments docs = docsFrom(t, cli);
+  DirDocuments docs = docsFrom(t, fs, procs);
   u8[] res = dirResponse("/tor/keys/all.z".toBytes(), docs);
 
   t.isTrue(startsWith(res, "HTTP/1.1 200"), "a status line a client can read");

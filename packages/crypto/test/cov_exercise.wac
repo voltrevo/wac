@@ -47,7 +47,7 @@
 // `aead_test.wac`'s `test_traps_on_a_flipped_tag_bit` and its fifteen siblings, run by `wac test`, where
 // a case that does not trap is a red test rather than a silent one. It was a second copy here.
 
-import { Core, Cli, Sys } from "std";
+import { Core, Cli, Sys, Env, Files, Output, Procs } from "std";
 import { decoded } from "../../codec/src/hex.wac";
 
 import { test_rfc_8439_poly1305 as aead__rfc_8439_poly1305, test_poly1305_forced_carries as aead__poly1305_forced_carries, test_rfc_8439_aead as aead__rfc_8439_aead, test_the_length_fields_stop_a_block_moving as aead__the_length_fields_stop_a_block_moving, test_the_tag_covers_everything as aead__the_tag_covers_everything, test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks as aead__poly1305_agrees_with_the_reference_at_every_length_to_three_blocks, test_poly1305_agrees_with_the_reference_under_fuzzing as aead__poly1305_agrees_with_the_reference_under_fuzzing, test_traps_on_a_flipped_first_ciphertext_bit as aead__traps_on_a_flipped_first_ciphertext_bit, test_traps_on_a_flipped_last_ciphertext_bit as aead__traps_on_a_flipped_last_ciphertext_bit, test_traps_on_modified_associated_data as aead__traps_on_modified_associated_data, test_traps_on_a_flipped_tag_bit as aead__traps_on_a_flipped_tag_bit, test_traps_on_the_wrong_key as aead__traps_on_the_wrong_key, test_traps_on_the_wrong_nonce as aead__traps_on_the_wrong_nonce, test_traps_on_a_short_tag as aead__traps_on_a_short_tag, test_traps_on_a_seventeen_byte_tag as aead__traps_on_a_seventeen_byte_tag, test_traps_on_an_eighteen_byte_tag as aead__traps_on_an_eighteen_byte_tag, test_traps_on_a_double_length_tag as aead__traps_on_a_double_length_tag, test_traps_on_a_truncated_ciphertext as aead__traps_on_a_truncated_ciphertext }
@@ -122,183 +122,185 @@ i32[] sha256Lens() { return [0, 1, 55, 56, 63, 64, 65, 119, 120, 200] as i32[]; 
 i32[] sha512Lens() { return [0, 1, 111, 112, 127, 128, 129, 239, 240, 400] as i32[]; }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   i32 bad = 0;
   if (curve25519__a_small_order_point_has_no_shared_secret().len() > 0) {
-    core.warn("error: FAILED curve25519_test test_a_small_order_point_has_no_shared_secret");
+    err.line("error: FAILED curve25519_test test_a_small_order_point_has_no_shared_secret");
     bad = bad + 1;
   }
 
   // ── Every returning test, which is 152 of the 283 ──────────────────────────
-  if (aead__rfc_8439_poly1305().len() > 0) { core.warn("error: FAILED aead_test test_rfc_8439_poly1305"); bad = bad + 1; }
-  if (aead__poly1305_forced_carries().len() > 0) { core.warn("error: FAILED aead_test test_poly1305_forced_carries"); bad = bad + 1; }
-  if (aead__rfc_8439_aead(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_rfc_8439_aead"); bad = bad + 1; }
-  if (aead__the_length_fields_stop_a_block_moving(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_the_length_fields_stop_a_block_moving"); bad = bad + 1; }
-  if (aead__the_tag_covers_everything(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_the_tag_covers_everything"); bad = bad + 1; }
-  if (aead__poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks"); bad = bad + 1; }
-  if (aead__poly1305_agrees_with_the_reference_under_fuzzing(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_poly1305_agrees_with_the_reference_under_fuzzing"); bad = bad + 1; }
-  if (aes__fips_197_worked_examples().len() > 0) { core.warn("error: FAILED aes_test test_fips_197_worked_examples"); bad = bad + 1; }
-  if (aes__the_block_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED aes_test test_the_block_agrees_with_the_host"); bad = bad + 1; }
-  if (aes__ctr_agrees_and_the_counter_carries(core, cli).len() > 0) { core.warn("error: FAILED aes_test test_ctr_agrees_and_the_counter_carries"); bad = bad + 1; }
-  if (aes__gcm_agrees_including_the_short_nonce_path(core, cli).len() > 0) { core.warn("error: FAILED aes_test test_gcm_agrees_including_the_short_nonce_path"); bad = bad + 1; }
-  if (aes__the_gcm_counter_wraps_at_32_bits().len() > 0) { core.warn("error: FAILED aes_test test_the_gcm_counter_wraps_at_32_bits"); bad = bad + 1; }
-  if (aes__a_ctr_stream_in_pieces_matches_the_one_shot().len() > 0) { core.warn("error: FAILED aes_test test_a_ctr_stream_in_pieces_matches_the_one_shot"); bad = bad + 1; }
-  if (aes__a_ctr_stream_never_repeats_its_keystream().len() > 0) { core.warn("error: FAILED aes_test test_a_ctr_stream_never_repeats_its_keystream"); bad = bad + 1; }
-  if (aes__a_genuine_gcm_message_decrypts_to_the_plaintext().len() > 0) { core.warn("error: FAILED aes_test test_a_genuine_gcm_message_decrypts_to_the_plaintext"); bad = bad + 1; }
-  if (aes__the_aad_ciphertext_boundary_is_authenticated().len() > 0) { core.warn("error: FAILED aes_test test_the_aad_ciphertext_boundary_is_authenticated"); bad = bad + 1; }
-  if (bcryptpbkdf__an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf(core, cli).len() > 0) { core.warn("error: FAILED bcryptpbkdf_test test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf"); bad = bad + 1; }
-  if (bcryptpbkdf__bcrypt_pbkdf_is_pinned_to_a_fixed_answer().len() > 0) { core.warn("error: FAILED bcryptpbkdf_test test_bcrypt_pbkdf_is_pinned_to_a_fixed_answer"); bad = bad + 1; }
-  if (bcryptpbkdf__the_second_block_interleaves_with_the_first_rather_than_following_it().len() > 0) { core.warn("error: FAILED bcryptpbkdf_test test_the_second_block_interleaves_with_the_first_rather_than_following_it"); bad = bad + 1; }
-  if (chacha20__rfc_8439_block_function().len() > 0) { core.warn("error: FAILED chacha20_test test_rfc_8439_block_function"); bad = bad + 1; }
-  if (chacha20__rfc_8439_encryption().len() > 0) { core.warn("error: FAILED chacha20_test test_rfc_8439_encryption"); bad = bad + 1; }
-  if (chacha20__rfc_8439_a2_counter_zero().len() > 0) { core.warn("error: FAILED chacha20_test test_rfc_8439_a2_counter_zero"); bad = bad + 1; }
-  if (chacha20__decryption_is_encryption_and_blocks_chain().len() > 0) { core.warn("error: FAILED chacha20_test test_decryption_is_encryption_and_blocks_chain"); bad = bad + 1; }
-  if (chacha20__the_counter_actually_counts().len() > 0) { core.warn("error: FAILED chacha20_test test_the_counter_actually_counts"); bad = bad + 1; }
-  if (constanttime__sha256_does_not_vary_with_its_inputs_content(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_sha256_does_not_vary_with_its_inputs_content"); bad = bad + 1; }
-  if (constanttime__chacha20s_block_function_does_not_vary_with_the_key(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_chacha20s_block_function_does_not_vary_with_the_key"); bad = bad + 1; }
-  if (constanttime__poly1305_does_not_vary_with_the_key(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_poly1305_does_not_vary_with_the_key"); bad = bad + 1; }
-  if (constanttime__x25519s_ladder_does_not_vary_with_the_scalar(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_x25519s_ladder_does_not_vary_with_the_scalar"); bad = bad + 1; }
-  if (constanttime__ghash_does_not_vary_with_the_authentication_key(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_ghash_does_not_vary_with_the_authentication_key"); bad = bad + 1; }
-  if (constanttime__p256_public_key_does_not_vary_with_the_private_key(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_p256_public_key_does_not_vary_with_the_private_key"); bad = bad + 1; }
-  if (constanttime__aes_indexes_its_s_box_with_key_dependent_values_known_leak(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_aes_indexes_its_s_box_with_key_dependent_values_known_leak"); bad = bad + 1; }
-  if (crypto__sha256_streaming_matches_oneshot().len() > 0) { core.warn("error: FAILED crypto_test test_sha256_streaming_matches_oneshot"); bad = bad + 1; }
-  if (crypto__sha512_streaming_matches_oneshot().len() > 0) { core.warn("error: FAILED crypto_test test_sha512_streaming_matches_oneshot"); bad = bad + 1; }
-  if (crypto__sha256_avalanche().len() > 0) { core.warn("error: FAILED crypto_test test_sha256_avalanche"); bad = bad + 1; }
-  if (crypto__sha256_length_matters().len() > 0) { core.warn("error: FAILED crypto_test test_sha256_length_matters"); bad = bad + 1; }
-  if (crypto__hmac_depends_on_key().len() > 0) { core.warn("error: FAILED crypto_test test_hmac_depends_on_key"); bad = bad + 1; }
-  if (crypto__chacha_roundtrip_and_keystream().len() > 0) { core.warn("error: FAILED crypto_test test_chacha_roundtrip_and_keystream"); bad = bad + 1; }
-  if (crypto__hkdf_lengths_and_binding().len() > 0) { core.warn("error: FAILED crypto_test test_hkdf_lengths_and_binding"); bad = bad + 1; }
-  if (ct__it_compares_what_it_is_given().len() > 0) { core.warn("error: FAILED ct_test test_it_compares_what_it_is_given"); bad = bad + 1; }
-  if (ct__every_byte_is_compared().len() > 0) { core.warn("error: FAILED ct_test test_every_byte_is_compared"); bad = bad + 1; }
-  if (ct__the_counted_form().len() > 0) { core.warn("error: FAILED ct_test test_the_counted_form"); bad = bad + 1; }
-  if (curve25519__rfc_7748_x25519_vectors().len() > 0) { core.warn("error: FAILED curve25519_test test_rfc_7748_x25519_vectors"); bad = bad + 1; }
-  if (curve25519__x25519_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED curve25519_test test_x25519_agrees_with_the_host"); bad = bad + 1; }
-  if (curve25519__x25519_clamps_its_scalar().len() > 0) { core.warn("error: FAILED curve25519_test test_x25519_clamps_its_scalar"); bad = bad + 1; }
-  if (curve25519__ed25519_is_byte_identical_to_the_host(core, cli).len() > 0) { core.warn("error: FAILED curve25519_test test_ed25519_is_byte_identical_to_the_host"); bad = bad + 1; }
-  if (curve25519__ed25519_rejects_what_it_should(core, cli).len() > 0) { core.warn("error: FAILED curve25519_test test_ed25519_rejects_what_it_should"); bad = bad + 1; }
-  if (curve25519__low_order_points_give_an_all_zero_secret().len() > 0) { core.warn("error: FAILED curve25519_test test_low_order_points_give_an_all_zero_secret"); bad = bad + 1; }
-  if (curve25519__the_top_bit_of_a_u_coordinate_is_ignored().len() > 0) { core.warn("error: FAILED curve25519_test test_the_top_bit_of_a_u_coordinate_is_ignored"); bad = bad + 1; }
-  if (curve25519__rfc_8032_ed25519_vectors().len() > 0) { core.warn("error: FAILED curve25519_test test_rfc_8032_ed25519_vectors"); bad = bad + 1; }
-  if (curve25519__a_non_canonical_s_is_rejected().len() > 0) { core.warn("error: FAILED curve25519_test test_a_non_canonical_s_is_rejected"); bad = bad + 1; }
-  if (curve25519__x_equals_zero_with_the_sign_bit_is_not_a_point().len() > 0) { core.warn("error: FAILED curve25519_test test_x_equals_zero_with_the_sign_bit_is_not_a_point"); bad = bad + 1; }
-  if (curve25519__the_expanded_key_path_agrees_with_the_seed_one().len() > 0) { core.warn("error: FAILED curve25519_test test_the_expanded_key_path_agrees_with_the_seed_one"); bad = bad + 1; }
-  if (curve25519__the_curve25519_conversion_agrees_in_both_directions().len() > 0) { core.warn("error: FAILED curve25519_test test_the_curve25519_conversion_agrees_in_both_directions"); bad = bad + 1; }
-  if (curve25519__the_rfc_7748_iterated_vectors().len() > 0) { core.warn("error: FAILED curve25519_test test_the_rfc_7748_iterated_vectors"); bad = bad + 1; }
-  if (curve25519__a_malformed_key_or_signature_is_refused().len() > 0) { core.warn("error: FAILED curve25519_test test_a_malformed_key_or_signature_is_refused"); bad = bad + 1; }
-  if (ed25519const__the_written_out_d_is_the_derived_d().len() > 0) { core.warn("error: FAILED ed25519const_test test_the_written_out_d_is_the_derived_d"); bad = bad + 1; }
-  if (ed25519const__every_limb_matches().len() > 0) { core.warn("error: FAILED ed25519const_test test_every_limb_matches"); bad = bad + 1; }
-  if (ed25519const__sqrt_minus_one_and_the_base_point_match_their_derivations().len() > 0) { core.warn("error: FAILED ed25519const_test test_sqrt_minus_one_and_the_base_point_match_their_derivations"); bad = bad + 1; }
-  if (field25519__the_anchors_that_name_this_field().len() > 0) { core.warn("error: FAILED field25519_test test_the_anchors_that_name_this_field"); bad = bad + 1; }
-  if (field25519__the_ring_laws().len() > 0) { core.warn("error: FAILED field25519_test test_the_ring_laws"); bad = bad + 1; }
-  if (field25519__inversion_undoes_multiplication().len() > 0) { core.warn("error: FAILED field25519_test test_inversion_undoes_multiplication"); bad = bad + 1; }
-  if (field25519__the_small_multiply_matches_repeated_addition().len() > 0) { core.warn("error: FAILED field25519_test test_the_small_multiply_matches_repeated_addition"); bad = bad + 1; }
-  if (field25519__encoding_round_trips_and_canonicalises().len() > 0) { core.warn("error: FAILED field25519_test test_encoding_round_trips_and_canonicalises"); bad = bad + 1; }
-  if (field25519__conditional_swap_is_conditional().len() > 0) { core.warn("error: FAILED field25519_test test_conditional_swap_is_conditional"); bad = bad + 1; }
-  if (field25519__encoding_round_trips_and_reduces_a_non_canonical_input(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_encoding_round_trips_and_reduces_a_non_canonical_input"); bad = bad + 1; }
-  if (field25519__add_sub_mul_and_square_agree_with_bigint(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_add_sub_mul_and_square_agree_with_bigint"); bad = bad + 1; }
-  if (field25519__the_small_multiply_agrees_at_every_multiplier_the_curve_uses(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses"); bad = bad + 1; }
-  if (field25519__inversion_agrees_with_bigint_including_zero(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_inversion_agrees_with_bigint_including_zero"); bad = bad + 1; }
-  if (ghash__multiplication_is_bilinear().len() > 0) { core.warn("error: FAILED ghash_test test_multiplication_is_bilinear"); bad = bad + 1; }
-  if (ghash__multiplication_commutes().len() > 0) { core.warn("error: FAILED ghash_test test_multiplication_commutes"); bad = bad + 1; }
-  if (ghash__the_identity_and_zero_are_where_gcm_puts_them().len() > 0) { core.warn("error: FAILED ghash_test test_the_identity_and_zero_are_where_gcm_puts_them"); bad = bad + 1; }
-  if (ghash__it_is_associative_over_three_blocks().len() > 0) { core.warn("error: FAILED ghash_test test_it_is_associative_over_three_blocks"); bad = bad + 1; }
-  if (hash__sha256_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_sha256_agrees_with_the_host"); bad = bad + 1; }
-  if (hash__sha512_and_sha384_agree_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_sha512_and_sha384_agree_with_the_host"); bad = bad + 1; }
-  if (hash__the_three_are_different_functions().len() > 0) { core.warn("error: FAILED hash_test test_the_three_are_different_functions"); bad = bad + 1; }
-  if (hash__hashing_is_a_function().len() > 0) { core.warn("error: FAILED hash_test test_hashing_is_a_function"); bad = bad + 1; }
-  if (hash__the_published_nist_vectors().len() > 0) { core.warn("error: FAILED hash_test test_the_published_nist_vectors"); bad = bad + 1; }
-  if (hash__the_long_nist_vector().len() > 0) { core.warn("error: FAILED hash_test test_the_long_nist_vector"); bad = bad + 1; }
-  if (hash__every_length_through_two_blocks(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_every_length_through_two_blocks"); bad = bad + 1; }
-  if (hash__random_inputs(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_random_inputs"); bad = bad + 1; }
-  if (kdf__rfc_2202_hmac_sha1_vectors().len() > 0) { core.warn("error: FAILED kdf_test test_rfc_2202_hmac_sha1_vectors"); bad = bad + 1; }
-  if (kdf__rfc_4231_hmac_vectors().len() > 0) { core.warn("error: FAILED kdf_test test_rfc_4231_hmac_vectors"); bad = bad + 1; }
-  if (kdf__the_key_length_boundaries(core, cli).len() > 0) { core.warn("error: FAILED kdf_test test_the_key_length_boundaries"); bad = bad + 1; }
-  if (kdf__rfc_5869_hkdf_vectors().len() > 0) { core.warn("error: FAILED kdf_test test_rfc_5869_hkdf_vectors"); bad = bad + 1; }
-  if (kdf__expand_chains_across_blocks(core, cli).len() > 0) { core.warn("error: FAILED kdf_test test_expand_chains_across_blocks"); bad = bad + 1; }
-  if (kdf__every_input_changes_the_output().len() > 0) { core.warn("error: FAILED kdf_test test_every_input_changes_the_output"); bad = bad + 1; }
-  if (kdf__the_255_block_cap_matches_webcrypto(core, cli).len() > 0) { core.warn("error: FAILED kdf_test test_the_255_block_cap_matches_webcrypto"); bad = bad + 1; }
-  if (keccak__the_permutation_of_an_all_zero_state().len() > 0) { core.warn("error: FAILED keccak_test test_the_permutation_of_an_all_zero_state"); bad = bad + 1; }
-  if (keccak__sha3_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED keccak_test test_sha3_agrees_with_the_host"); bad = bad + 1; }
-  if (keccak__shake_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED keccak_test test_shake_agrees_with_the_host"); bad = bad + 1; }
-  if (keccak__a_longer_squeeze_extends_a_shorter_one().len() > 0) { core.warn("error: FAILED keccak_test test_a_longer_squeeze_extends_a_shorter_one"); bad = bad + 1; }
-  if (keccak__the_domain_separation_actually_separates().len() > 0) { core.warn("error: FAILED keccak_test test_the_domain_separation_actually_separates"); bad = bad + 1; }
-  if (keccak__keccak256_matches_the_published_vectors().len() > 0) { core.warn("error: FAILED keccak_test test_keccak256_matches_the_published_vectors"); bad = bad + 1; }
-  if (keccak__keccak256_is_not_sha3_256().len() > 0) { core.warn("error: FAILED keccak_test test_keccak256_is_not_sha3_256"); bad = bad + 1; }
-  if (keccak__the_running_sha3_agrees_with_the_one_shot().len() > 0) { core.warn("error: FAILED keccak_test test_the_running_sha3_agrees_with_the_one_shot"); bad = bad + 1; }
-  if (keccak__peeking_does_not_end_the_hash().len() > 0) { core.warn("error: FAILED keccak_test test_peeking_does_not_end_the_hash"); bad = bad + 1; }
-  if (keccak__a_clone_is_independent_of_the_hash_it_came_from().len() > 0) { core.warn("error: FAILED keccak_test test_a_clone_is_independent_of_the_hash_it_came_from"); bad = bad + 1; }
-  if (layout__the_two_orders_disagree_where_they_should().len() > 0) { core.warn("error: FAILED layout_test test_the_two_orders_disagree_where_they_should"); bad = bad + 1; }
-  if (layout__reads_and_stores_are_inverses_at_every_offset().len() > 0) { core.warn("error: FAILED layout_test test_reads_and_stores_are_inverses_at_every_offset"); bad = bad + 1; }
-  if (layout__the_top_bit_survives().len() > 0) { core.warn("error: FAILED layout_test test_the_top_bit_survives"); bad = bad + 1; }
-  if (layout__pad_to_16_is_the_distance_to_the_next_boundary().len() > 0) { core.warn("error: FAILED layout_test test_pad_to_16_is_the_distance_to_the_next_boundary"); bad = bad + 1; }
-  if (mlkem__key_generation_matches_webcrypto_byte_for_byte(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_key_generation_matches_webcrypto_byte_for_byte"); bad = bad + 1; }
-  if (mlkem__webcryptos_ciphertext_decapsulates_here(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_webcryptos_ciphertext_decapsulates_here"); bad = bad + 1; }
-  if (mlkem__encapsulation_is_deterministic_in_its_randomness(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_encapsulation_is_deterministic_in_its_randomness"); bad = bad + 1; }
-  if (mlkem__our_ciphertext_round_trips(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_our_ciphertext_round_trips"); bad = bad + 1; }
-  if (mlkem__a_corrupted_ciphertext_gives_a_different_secret_not_a_failure(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure"); bad = bad + 1; }
-  if (nistcurve__the_group_orders().len() > 0) { core.warn("error: FAILED nistcurve_test test_the_group_orders"); bad = bad + 1; }
-  if (nistcurve__a_point_is_recognised_as_on_the_curve_or_not().len() > 0) { core.warn("error: FAILED nistcurve_test test_a_point_is_recognised_as_on_the_curve_or_not"); bad = bad + 1; }
-  if (nistcurve__public_keys_match_the_host(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_public_keys_match_the_host"); bad = bad + 1; }
-  if (nistcurve__we_verify_the_hosts_signatures(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_we_verify_the_hosts_signatures"); bad = bad + 1; }
-  if (nistcurve__the_host_verifies_ours(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_the_host_verifies_ours"); bad = bad + 1; }
-  if (nistcurve__p384_verifies_the_hosts_signatures(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_p384_verifies_the_hosts_signatures"); bad = bad + 1; }
-  if (nistcurve__ecdh_agrees_from_both_ends().len() > 0) { core.warn("error: FAILED nistcurve_test test_ecdh_agrees_from_both_ends"); bad = bad + 1; }
-  if (nistcurve__signatures_outside_the_group_order_are_refused().len() > 0) { core.warn("error: FAILED nistcurve_test test_signatures_outside_the_group_order_are_refused"); bad = bad + 1; }
-  if (nistcurve__the_fields_agree_with_bigint(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_the_fields_agree_with_bigint"); bad = bad + 1; }
-  if (nistcurve__inversion_agrees_with_bigint_and_undoes_multiplication(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_inversion_agrees_with_bigint_and_undoes_multiplication"); bad = bad + 1; }
-  if (nistcurve__the_p256_base_point_is_the_one_fips_186_4_publishes().len() > 0) { core.warn("error: FAILED nistcurve_test test_the_p256_base_point_is_the_one_fips_186_4_publishes"); bad = bad + 1; }
-  if (nistcurve__the_exceptional_cases_in_the_p256_addition_law().len() > 0) { core.warn("error: FAILED nistcurve_test test_the_exceptional_cases_in_the_p256_addition_law"); bad = bad + 1; }
-  if (nistcurve__a_p384_signature_is_rejected_under_the_wrong_key(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_a_p384_signature_is_rejected_under_the_wrong_key"); bad = bad + 1; }
-  if (nistcurve__a_sha256_digest_under_a_p384_key_is_right_aligned(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_a_sha256_digest_under_a_p384_key_is_right_aligned"); bad = bad + 1; }
-  if (rsa__pkcs1_signatures_from_the_host(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pkcs1_signatures_from_the_host"); bad = bad + 1; }
-  if (rsa__pkcs1_refuses_a_block_that_is_not_exact(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pkcs1_refuses_a_block_that_is_not_exact"); bad = bad + 1; }
-  if (rsa__pss_at_every_salt_length(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pss_at_every_salt_length"); bad = bad + 1; }
-  if (rsa__pss_refuses_tampering(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pss_refuses_tampering"); bad = bad + 1; }
-  if (rsa__our_pkcs1_signature_is_byte_identical_to_the_hosts(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_our_pkcs1_signature_is_byte_identical_to_the_hosts"); bad = bad + 1; }
-  if (rsa__the_host_accepts_what_we_signed(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_the_host_accepts_what_we_signed"); bad = bad + 1; }
-  if (rsa__a_raw_signature_carries_exactly_the_payload(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_raw_signature_carries_exactly_the_payload"); bad = bad + 1; }
-  if (rsa__a_forged_block_that_is_wrong_in_one_place_is_refused(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_forged_block_that_is_wrong_in_one_place_is_refused"); bad = bad + 1; }
-  if (rsa__our_pss_signatures_verify_elsewhere(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_our_pss_signatures_verify_elsewhere"); bad = bad + 1; }
-  if (rsa__signing_refuses_moduli_it_cannot_use().len() > 0) { core.warn("error: FAILED rsa_test test_signing_refuses_moduli_it_cannot_use"); bad = bad + 1; }
-  if (rsa__recovering_refuses_malformed_blocks().len() > 0) { core.warn("error: FAILED rsa_test test_recovering_refuses_malformed_blocks"); bad = bad + 1; }
-  if (rsa__pss_refuses_a_signature_with_bits_above_embits().len() > 0) { core.warn("error: FAILED rsa_test test_pss_refuses_a_signature_with_bits_above_embits"); bad = bad + 1; }
-  if (rsa__modular_exponentiation_agrees_with_bigint(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_modular_exponentiation_agrees_with_bigint"); bad = bad + 1; }
-  if (rsa__pss_refuses_a_key_too_small_for_the_encoding().len() > 0) { core.warn("error: FAILED rsa_test test_pss_refuses_a_key_too_small_for_the_encoding"); bad = bad + 1; }
-  if (rsa__a_pss_signature_we_made_verifies_here().len() > 0) { core.warn("error: FAILED rsa_test test_a_pss_signature_we_made_verifies_here"); bad = bad + 1; }
-  if (rsa__a_pkcs1_signature_recovers_the_payload_it_carried().len() > 0) { core.warn("error: FAILED rsa_test test_a_pkcs1_signature_recovers_the_payload_it_carried"); bad = bad + 1; }
-  if (scalarn__the_montgomery_product_agrees_with_long_division(core, cli).len() > 0) { core.warn("error: FAILED scalarn_test test_the_montgomery_product_agrees_with_long_division"); bad = bad + 1; }
-  if (scalarn__the_product_is_right_at_zero_one_and_n_minus_one(core, cli).len() > 0) { core.warn("error: FAILED scalarn_test test_the_product_is_right_at_zero_one_and_n_minus_one"); bad = bad + 1; }
-  if (scalarn__a_value_survives_entering_and_leaving_the_form(core, cli).len() > 0) { core.warn("error: FAILED scalarn_test test_a_value_survives_entering_and_leaving_the_form"); bad = bad + 1; }
-  if (scalarn__an_inverse_multiplies_back_to_one(core, cli).len() > 0) { core.warn("error: FAILED scalarn_test test_an_inverse_multiplies_back_to_one"); bad = bad + 1; }
-  if (scalarn__addition_agrees_with_long_division(core, cli).len() > 0) { core.warn("error: FAILED scalarn_test test_addition_agrees_with_long_division"); bad = bad + 1; }
-  if (rsagen__openssl_agrees_the_generated_key_is_a_valid_rsa_key(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_openssl_agrees_the_generated_key_is_a_valid_rsa_key"); bad = bad + 1; }
-  if (rsagen__the_same_seed_gives_the_same_key(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_the_same_seed_gives_the_same_key"); bad = bad + 1; }
-  if (rsagen__miller_rabin_knows_primes_from_composites(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_miller_rabin_knows_primes_from_composites"); bad = bad + 1; }
-  if (rsagen__gcd_and_modular_inverse(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_gcd_and_modular_inverse"); bad = bad + 1; }
-  if (rsagen__a_prime_is_rejected_when_e_has_no_inverse(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_a_prime_is_rejected_when_e_has_no_inverse"); bad = bad + 1; }
-  if (sha1__the_published_vectors().len() > 0) { core.warn("error: FAILED sha1_test test_the_published_vectors"); bad = bad + 1; }
-  if (sha1__every_length_through_two_blocks(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_every_length_through_two_blocks"); bad = bad + 1; }
-  if (sha1__the_incremental_form_matches_the_one_shot(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_the_incremental_form_matches_the_one_shot"); bad = bad + 1; }
-  if (sha1__peek_does_not_end_the_stream(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_peek_does_not_end_the_stream"); bad = bad + 1; }
-  if (sha1__a_long_message_crosses_many_blocks(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_a_long_message_crosses_many_blocks"); bad = bad + 1; }
-  if (traps__the_legal_widths_do_not_trap().len() > 0) { core.warn("error: FAILED traps_test test_the_legal_widths_do_not_trap"); bad = bad + 1; }
-  if (traps__the_genuine_lengths_are_accepted().len() > 0) { core.warn("error: FAILED traps_test test_the_genuine_lengths_are_accepted"); bad = bad + 1; }
-  if (traps__the_genuine_p256_operations_still_work().len() > 0) { core.warn("error: FAILED traps_test test_the_genuine_p256_operations_still_work"); bad = bad + 1; }
-  if (traps__the_small_x_point_is_on_the_curve().len() > 0) { core.warn("error: FAILED traps_test test_the_small_x_point_is_on_the_curve"); bad = bad + 1; }
-  if (traps__the_p384_small_x_point_decodes().len() > 0) { core.warn("error: FAILED traps_test test_the_p384_small_x_point_decodes"); bad = bad + 1; }
-  if (traps__ctr_resume_accepts_a_used_of_16().len() > 0) { core.warn("error: FAILED traps_test test_ctr_resume_accepts_a_used_of_16"); bad = bad + 1; }
-  if (traps__p384_refuses_an_x_that_is_x_plus_p_as_an_answer().len() > 0) { core.warn("error: FAILED traps_test test_p384_refuses_an_x_that_is_x_plus_p_as_an_answer"); bad = bad + 1; }
-  if (traps__the_two_widths_that_are_curves_still_work().len() > 0) { core.warn("error: FAILED traps_test test_the_two_widths_that_are_curves_still_work"); bad = bad + 1; }
-  if (traps__values_at_or_above_p_are_not_in_range().len() > 0) { core.warn("error: FAILED traps_test test_values_at_or_above_p_are_not_in_range"); bad = bad + 1; }
-  if (rsa__a_one_byte_modulus_recovers_nothing(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_one_byte_modulus_recovers_nothing"); bad = bad + 1; }
-  if (rsa__a_negative_salt_length_is_rejected(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_negative_salt_length_is_rejected"); bad = bad + 1; }
-  if (nistcurve__a_malformed_public_key_is_false_not_a_trap(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_a_malformed_public_key_is_false_not_a_trap"); bad = bad + 1; }
+  if (aead__rfc_8439_poly1305().len() > 0) { err.line("error: FAILED aead_test test_rfc_8439_poly1305"); bad = bad + 1; }
+  if (aead__poly1305_forced_carries().len() > 0) { err.line("error: FAILED aead_test test_poly1305_forced_carries"); bad = bad + 1; }
+  if (aead__rfc_8439_aead(sys).len() > 0) { err.line("error: FAILED aead_test test_rfc_8439_aead"); bad = bad + 1; }
+  if (aead__the_length_fields_stop_a_block_moving(sys).len() > 0) { err.line("error: FAILED aead_test test_the_length_fields_stop_a_block_moving"); bad = bad + 1; }
+  if (aead__the_tag_covers_everything(sys).len() > 0) { err.line("error: FAILED aead_test test_the_tag_covers_everything"); bad = bad + 1; }
+  if (aead__poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(sys).len() > 0) { err.line("error: FAILED aead_test test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks"); bad = bad + 1; }
+  if (aead__poly1305_agrees_with_the_reference_under_fuzzing(sys).len() > 0) { err.line("error: FAILED aead_test test_poly1305_agrees_with_the_reference_under_fuzzing"); bad = bad + 1; }
+  if (aes__fips_197_worked_examples().len() > 0) { err.line("error: FAILED aes_test test_fips_197_worked_examples"); bad = bad + 1; }
+  if (aes__the_block_agrees_with_the_host(sys).len() > 0) { err.line("error: FAILED aes_test test_the_block_agrees_with_the_host"); bad = bad + 1; }
+  if (aes__ctr_agrees_and_the_counter_carries(sys).len() > 0) { err.line("error: FAILED aes_test test_ctr_agrees_and_the_counter_carries"); bad = bad + 1; }
+  if (aes__gcm_agrees_including_the_short_nonce_path(sys).len() > 0) { err.line("error: FAILED aes_test test_gcm_agrees_including_the_short_nonce_path"); bad = bad + 1; }
+  if (aes__the_gcm_counter_wraps_at_32_bits().len() > 0) { err.line("error: FAILED aes_test test_the_gcm_counter_wraps_at_32_bits"); bad = bad + 1; }
+  if (aes__a_ctr_stream_in_pieces_matches_the_one_shot().len() > 0) { err.line("error: FAILED aes_test test_a_ctr_stream_in_pieces_matches_the_one_shot"); bad = bad + 1; }
+  if (aes__a_ctr_stream_never_repeats_its_keystream().len() > 0) { err.line("error: FAILED aes_test test_a_ctr_stream_never_repeats_its_keystream"); bad = bad + 1; }
+  if (aes__a_genuine_gcm_message_decrypts_to_the_plaintext().len() > 0) { err.line("error: FAILED aes_test test_a_genuine_gcm_message_decrypts_to_the_plaintext"); bad = bad + 1; }
+  if (aes__the_aad_ciphertext_boundary_is_authenticated().len() > 0) { err.line("error: FAILED aes_test test_the_aad_ciphertext_boundary_is_authenticated"); bad = bad + 1; }
+  if (bcryptpbkdf__an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf(sys).len() > 0) { err.line("error: FAILED bcryptpbkdf_test test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf"); bad = bad + 1; }
+  if (bcryptpbkdf__bcrypt_pbkdf_is_pinned_to_a_fixed_answer().len() > 0) { err.line("error: FAILED bcryptpbkdf_test test_bcrypt_pbkdf_is_pinned_to_a_fixed_answer"); bad = bad + 1; }
+  if (bcryptpbkdf__the_second_block_interleaves_with_the_first_rather_than_following_it().len() > 0) { err.line("error: FAILED bcryptpbkdf_test test_the_second_block_interleaves_with_the_first_rather_than_following_it"); bad = bad + 1; }
+  if (chacha20__rfc_8439_block_function().len() > 0) { err.line("error: FAILED chacha20_test test_rfc_8439_block_function"); bad = bad + 1; }
+  if (chacha20__rfc_8439_encryption().len() > 0) { err.line("error: FAILED chacha20_test test_rfc_8439_encryption"); bad = bad + 1; }
+  if (chacha20__rfc_8439_a2_counter_zero().len() > 0) { err.line("error: FAILED chacha20_test test_rfc_8439_a2_counter_zero"); bad = bad + 1; }
+  if (chacha20__decryption_is_encryption_and_blocks_chain().len() > 0) { err.line("error: FAILED chacha20_test test_decryption_is_encryption_and_blocks_chain"); bad = bad + 1; }
+  if (chacha20__the_counter_actually_counts().len() > 0) { err.line("error: FAILED chacha20_test test_the_counter_actually_counts"); bad = bad + 1; }
+  if (constanttime__sha256_does_not_vary_with_its_inputs_content(sys).len() > 0) { err.line("error: FAILED constanttime_test test_sha256_does_not_vary_with_its_inputs_content"); bad = bad + 1; }
+  if (constanttime__chacha20s_block_function_does_not_vary_with_the_key(sys).len() > 0) { err.line("error: FAILED constanttime_test test_chacha20s_block_function_does_not_vary_with_the_key"); bad = bad + 1; }
+  if (constanttime__poly1305_does_not_vary_with_the_key(sys).len() > 0) { err.line("error: FAILED constanttime_test test_poly1305_does_not_vary_with_the_key"); bad = bad + 1; }
+  if (constanttime__x25519s_ladder_does_not_vary_with_the_scalar(sys).len() > 0) { err.line("error: FAILED constanttime_test test_x25519s_ladder_does_not_vary_with_the_scalar"); bad = bad + 1; }
+  if (constanttime__ghash_does_not_vary_with_the_authentication_key(sys).len() > 0) { err.line("error: FAILED constanttime_test test_ghash_does_not_vary_with_the_authentication_key"); bad = bad + 1; }
+  if (constanttime__p256_public_key_does_not_vary_with_the_private_key(sys).len() > 0) { err.line("error: FAILED constanttime_test test_p256_public_key_does_not_vary_with_the_private_key"); bad = bad + 1; }
+  if (constanttime__aes_indexes_its_s_box_with_key_dependent_values_known_leak(sys).len() > 0) { err.line("error: FAILED constanttime_test test_aes_indexes_its_s_box_with_key_dependent_values_known_leak"); bad = bad + 1; }
+  if (crypto__sha256_streaming_matches_oneshot().len() > 0) { err.line("error: FAILED crypto_test test_sha256_streaming_matches_oneshot"); bad = bad + 1; }
+  if (crypto__sha512_streaming_matches_oneshot().len() > 0) { err.line("error: FAILED crypto_test test_sha512_streaming_matches_oneshot"); bad = bad + 1; }
+  if (crypto__sha256_avalanche().len() > 0) { err.line("error: FAILED crypto_test test_sha256_avalanche"); bad = bad + 1; }
+  if (crypto__sha256_length_matters().len() > 0) { err.line("error: FAILED crypto_test test_sha256_length_matters"); bad = bad + 1; }
+  if (crypto__hmac_depends_on_key().len() > 0) { err.line("error: FAILED crypto_test test_hmac_depends_on_key"); bad = bad + 1; }
+  if (crypto__chacha_roundtrip_and_keystream().len() > 0) { err.line("error: FAILED crypto_test test_chacha_roundtrip_and_keystream"); bad = bad + 1; }
+  if (crypto__hkdf_lengths_and_binding().len() > 0) { err.line("error: FAILED crypto_test test_hkdf_lengths_and_binding"); bad = bad + 1; }
+  if (ct__it_compares_what_it_is_given().len() > 0) { err.line("error: FAILED ct_test test_it_compares_what_it_is_given"); bad = bad + 1; }
+  if (ct__every_byte_is_compared().len() > 0) { err.line("error: FAILED ct_test test_every_byte_is_compared"); bad = bad + 1; }
+  if (ct__the_counted_form().len() > 0) { err.line("error: FAILED ct_test test_the_counted_form"); bad = bad + 1; }
+  if (curve25519__rfc_7748_x25519_vectors().len() > 0) { err.line("error: FAILED curve25519_test test_rfc_7748_x25519_vectors"); bad = bad + 1; }
+  if (curve25519__x25519_agrees_with_the_host(sys).len() > 0) { err.line("error: FAILED curve25519_test test_x25519_agrees_with_the_host"); bad = bad + 1; }
+  if (curve25519__x25519_clamps_its_scalar().len() > 0) { err.line("error: FAILED curve25519_test test_x25519_clamps_its_scalar"); bad = bad + 1; }
+  if (curve25519__ed25519_is_byte_identical_to_the_host(sys).len() > 0) { err.line("error: FAILED curve25519_test test_ed25519_is_byte_identical_to_the_host"); bad = bad + 1; }
+  if (curve25519__ed25519_rejects_what_it_should(sys).len() > 0) { err.line("error: FAILED curve25519_test test_ed25519_rejects_what_it_should"); bad = bad + 1; }
+  if (curve25519__low_order_points_give_an_all_zero_secret().len() > 0) { err.line("error: FAILED curve25519_test test_low_order_points_give_an_all_zero_secret"); bad = bad + 1; }
+  if (curve25519__the_top_bit_of_a_u_coordinate_is_ignored().len() > 0) { err.line("error: FAILED curve25519_test test_the_top_bit_of_a_u_coordinate_is_ignored"); bad = bad + 1; }
+  if (curve25519__rfc_8032_ed25519_vectors().len() > 0) { err.line("error: FAILED curve25519_test test_rfc_8032_ed25519_vectors"); bad = bad + 1; }
+  if (curve25519__a_non_canonical_s_is_rejected().len() > 0) { err.line("error: FAILED curve25519_test test_a_non_canonical_s_is_rejected"); bad = bad + 1; }
+  if (curve25519__x_equals_zero_with_the_sign_bit_is_not_a_point().len() > 0) { err.line("error: FAILED curve25519_test test_x_equals_zero_with_the_sign_bit_is_not_a_point"); bad = bad + 1; }
+  if (curve25519__the_expanded_key_path_agrees_with_the_seed_one().len() > 0) { err.line("error: FAILED curve25519_test test_the_expanded_key_path_agrees_with_the_seed_one"); bad = bad + 1; }
+  if (curve25519__the_curve25519_conversion_agrees_in_both_directions().len() > 0) { err.line("error: FAILED curve25519_test test_the_curve25519_conversion_agrees_in_both_directions"); bad = bad + 1; }
+  if (curve25519__the_rfc_7748_iterated_vectors().len() > 0) { err.line("error: FAILED curve25519_test test_the_rfc_7748_iterated_vectors"); bad = bad + 1; }
+  if (curve25519__a_malformed_key_or_signature_is_refused().len() > 0) { err.line("error: FAILED curve25519_test test_a_malformed_key_or_signature_is_refused"); bad = bad + 1; }
+  if (ed25519const__the_written_out_d_is_the_derived_d().len() > 0) { err.line("error: FAILED ed25519const_test test_the_written_out_d_is_the_derived_d"); bad = bad + 1; }
+  if (ed25519const__every_limb_matches().len() > 0) { err.line("error: FAILED ed25519const_test test_every_limb_matches"); bad = bad + 1; }
+  if (ed25519const__sqrt_minus_one_and_the_base_point_match_their_derivations().len() > 0) { err.line("error: FAILED ed25519const_test test_sqrt_minus_one_and_the_base_point_match_their_derivations"); bad = bad + 1; }
+  if (field25519__the_anchors_that_name_this_field().len() > 0) { err.line("error: FAILED field25519_test test_the_anchors_that_name_this_field"); bad = bad + 1; }
+  if (field25519__the_ring_laws().len() > 0) { err.line("error: FAILED field25519_test test_the_ring_laws"); bad = bad + 1; }
+  if (field25519__inversion_undoes_multiplication().len() > 0) { err.line("error: FAILED field25519_test test_inversion_undoes_multiplication"); bad = bad + 1; }
+  if (field25519__the_small_multiply_matches_repeated_addition().len() > 0) { err.line("error: FAILED field25519_test test_the_small_multiply_matches_repeated_addition"); bad = bad + 1; }
+  if (field25519__encoding_round_trips_and_canonicalises().len() > 0) { err.line("error: FAILED field25519_test test_encoding_round_trips_and_canonicalises"); bad = bad + 1; }
+  if (field25519__conditional_swap_is_conditional().len() > 0) { err.line("error: FAILED field25519_test test_conditional_swap_is_conditional"); bad = bad + 1; }
+  if (field25519__encoding_round_trips_and_reduces_a_non_canonical_input(sys).len() > 0) { err.line("error: FAILED field25519_test test_encoding_round_trips_and_reduces_a_non_canonical_input"); bad = bad + 1; }
+  if (field25519__add_sub_mul_and_square_agree_with_bigint(sys).len() > 0) { err.line("error: FAILED field25519_test test_add_sub_mul_and_square_agree_with_bigint"); bad = bad + 1; }
+  if (field25519__the_small_multiply_agrees_at_every_multiplier_the_curve_uses(sys).len() > 0) { err.line("error: FAILED field25519_test test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses"); bad = bad + 1; }
+  if (field25519__inversion_agrees_with_bigint_including_zero(sys).len() > 0) { err.line("error: FAILED field25519_test test_inversion_agrees_with_bigint_including_zero"); bad = bad + 1; }
+  if (ghash__multiplication_is_bilinear().len() > 0) { err.line("error: FAILED ghash_test test_multiplication_is_bilinear"); bad = bad + 1; }
+  if (ghash__multiplication_commutes().len() > 0) { err.line("error: FAILED ghash_test test_multiplication_commutes"); bad = bad + 1; }
+  if (ghash__the_identity_and_zero_are_where_gcm_puts_them().len() > 0) { err.line("error: FAILED ghash_test test_the_identity_and_zero_are_where_gcm_puts_them"); bad = bad + 1; }
+  if (ghash__it_is_associative_over_three_blocks().len() > 0) { err.line("error: FAILED ghash_test test_it_is_associative_over_three_blocks"); bad = bad + 1; }
+  if (hash__sha256_agrees_with_the_host(sys).len() > 0) { err.line("error: FAILED hash_test test_sha256_agrees_with_the_host"); bad = bad + 1; }
+  if (hash__sha512_and_sha384_agree_with_the_host(sys).len() > 0) { err.line("error: FAILED hash_test test_sha512_and_sha384_agree_with_the_host"); bad = bad + 1; }
+  if (hash__the_three_are_different_functions().len() > 0) { err.line("error: FAILED hash_test test_the_three_are_different_functions"); bad = bad + 1; }
+  if (hash__hashing_is_a_function().len() > 0) { err.line("error: FAILED hash_test test_hashing_is_a_function"); bad = bad + 1; }
+  if (hash__the_published_nist_vectors().len() > 0) { err.line("error: FAILED hash_test test_the_published_nist_vectors"); bad = bad + 1; }
+  if (hash__the_long_nist_vector().len() > 0) { err.line("error: FAILED hash_test test_the_long_nist_vector"); bad = bad + 1; }
+  if (hash__every_length_through_two_blocks(sys).len() > 0) { err.line("error: FAILED hash_test test_every_length_through_two_blocks"); bad = bad + 1; }
+  if (hash__random_inputs(sys).len() > 0) { err.line("error: FAILED hash_test test_random_inputs"); bad = bad + 1; }
+  if (kdf__rfc_2202_hmac_sha1_vectors().len() > 0) { err.line("error: FAILED kdf_test test_rfc_2202_hmac_sha1_vectors"); bad = bad + 1; }
+  if (kdf__rfc_4231_hmac_vectors().len() > 0) { err.line("error: FAILED kdf_test test_rfc_4231_hmac_vectors"); bad = bad + 1; }
+  if (kdf__the_key_length_boundaries(sys).len() > 0) { err.line("error: FAILED kdf_test test_the_key_length_boundaries"); bad = bad + 1; }
+  if (kdf__rfc_5869_hkdf_vectors().len() > 0) { err.line("error: FAILED kdf_test test_rfc_5869_hkdf_vectors"); bad = bad + 1; }
+  if (kdf__expand_chains_across_blocks(sys).len() > 0) { err.line("error: FAILED kdf_test test_expand_chains_across_blocks"); bad = bad + 1; }
+  if (kdf__every_input_changes_the_output().len() > 0) { err.line("error: FAILED kdf_test test_every_input_changes_the_output"); bad = bad + 1; }
+  if (kdf__the_255_block_cap_matches_webcrypto(sys).len() > 0) { err.line("error: FAILED kdf_test test_the_255_block_cap_matches_webcrypto"); bad = bad + 1; }
+  if (keccak__the_permutation_of_an_all_zero_state().len() > 0) { err.line("error: FAILED keccak_test test_the_permutation_of_an_all_zero_state"); bad = bad + 1; }
+  if (keccak__sha3_agrees_with_the_host(sys).len() > 0) { err.line("error: FAILED keccak_test test_sha3_agrees_with_the_host"); bad = bad + 1; }
+  if (keccak__shake_agrees_with_the_host(sys).len() > 0) { err.line("error: FAILED keccak_test test_shake_agrees_with_the_host"); bad = bad + 1; }
+  if (keccak__a_longer_squeeze_extends_a_shorter_one().len() > 0) { err.line("error: FAILED keccak_test test_a_longer_squeeze_extends_a_shorter_one"); bad = bad + 1; }
+  if (keccak__the_domain_separation_actually_separates().len() > 0) { err.line("error: FAILED keccak_test test_the_domain_separation_actually_separates"); bad = bad + 1; }
+  if (keccak__keccak256_matches_the_published_vectors().len() > 0) { err.line("error: FAILED keccak_test test_keccak256_matches_the_published_vectors"); bad = bad + 1; }
+  if (keccak__keccak256_is_not_sha3_256().len() > 0) { err.line("error: FAILED keccak_test test_keccak256_is_not_sha3_256"); bad = bad + 1; }
+  if (keccak__the_running_sha3_agrees_with_the_one_shot().len() > 0) { err.line("error: FAILED keccak_test test_the_running_sha3_agrees_with_the_one_shot"); bad = bad + 1; }
+  if (keccak__peeking_does_not_end_the_hash().len() > 0) { err.line("error: FAILED keccak_test test_peeking_does_not_end_the_hash"); bad = bad + 1; }
+  if (keccak__a_clone_is_independent_of_the_hash_it_came_from().len() > 0) { err.line("error: FAILED keccak_test test_a_clone_is_independent_of_the_hash_it_came_from"); bad = bad + 1; }
+  if (layout__the_two_orders_disagree_where_they_should().len() > 0) { err.line("error: FAILED layout_test test_the_two_orders_disagree_where_they_should"); bad = bad + 1; }
+  if (layout__reads_and_stores_are_inverses_at_every_offset().len() > 0) { err.line("error: FAILED layout_test test_reads_and_stores_are_inverses_at_every_offset"); bad = bad + 1; }
+  if (layout__the_top_bit_survives().len() > 0) { err.line("error: FAILED layout_test test_the_top_bit_survives"); bad = bad + 1; }
+  if (layout__pad_to_16_is_the_distance_to_the_next_boundary().len() > 0) { err.line("error: FAILED layout_test test_pad_to_16_is_the_distance_to_the_next_boundary"); bad = bad + 1; }
+  if (mlkem__key_generation_matches_webcrypto_byte_for_byte(sys).len() > 0) { err.line("error: FAILED mlkem_test test_key_generation_matches_webcrypto_byte_for_byte"); bad = bad + 1; }
+  if (mlkem__webcryptos_ciphertext_decapsulates_here(sys).len() > 0) { err.line("error: FAILED mlkem_test test_webcryptos_ciphertext_decapsulates_here"); bad = bad + 1; }
+  if (mlkem__encapsulation_is_deterministic_in_its_randomness(sys).len() > 0) { err.line("error: FAILED mlkem_test test_encapsulation_is_deterministic_in_its_randomness"); bad = bad + 1; }
+  if (mlkem__our_ciphertext_round_trips(sys).len() > 0) { err.line("error: FAILED mlkem_test test_our_ciphertext_round_trips"); bad = bad + 1; }
+  if (mlkem__a_corrupted_ciphertext_gives_a_different_secret_not_a_failure(sys).len() > 0) { err.line("error: FAILED mlkem_test test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure"); bad = bad + 1; }
+  if (nistcurve__the_group_orders().len() > 0) { err.line("error: FAILED nistcurve_test test_the_group_orders"); bad = bad + 1; }
+  if (nistcurve__a_point_is_recognised_as_on_the_curve_or_not().len() > 0) { err.line("error: FAILED nistcurve_test test_a_point_is_recognised_as_on_the_curve_or_not"); bad = bad + 1; }
+  if (nistcurve__public_keys_match_the_host(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_public_keys_match_the_host"); bad = bad + 1; }
+  if (nistcurve__we_verify_the_hosts_signatures(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_we_verify_the_hosts_signatures"); bad = bad + 1; }
+  if (nistcurve__the_host_verifies_ours(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_the_host_verifies_ours"); bad = bad + 1; }
+  if (nistcurve__p384_verifies_the_hosts_signatures(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_p384_verifies_the_hosts_signatures"); bad = bad + 1; }
+  if (nistcurve__ecdh_agrees_from_both_ends().len() > 0) { err.line("error: FAILED nistcurve_test test_ecdh_agrees_from_both_ends"); bad = bad + 1; }
+  if (nistcurve__signatures_outside_the_group_order_are_refused().len() > 0) { err.line("error: FAILED nistcurve_test test_signatures_outside_the_group_order_are_refused"); bad = bad + 1; }
+  if (nistcurve__the_fields_agree_with_bigint(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_the_fields_agree_with_bigint"); bad = bad + 1; }
+  if (nistcurve__inversion_agrees_with_bigint_and_undoes_multiplication(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_inversion_agrees_with_bigint_and_undoes_multiplication"); bad = bad + 1; }
+  if (nistcurve__the_p256_base_point_is_the_one_fips_186_4_publishes().len() > 0) { err.line("error: FAILED nistcurve_test test_the_p256_base_point_is_the_one_fips_186_4_publishes"); bad = bad + 1; }
+  if (nistcurve__the_exceptional_cases_in_the_p256_addition_law().len() > 0) { err.line("error: FAILED nistcurve_test test_the_exceptional_cases_in_the_p256_addition_law"); bad = bad + 1; }
+  if (nistcurve__a_p384_signature_is_rejected_under_the_wrong_key(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_a_p384_signature_is_rejected_under_the_wrong_key"); bad = bad + 1; }
+  if (nistcurve__a_sha256_digest_under_a_p384_key_is_right_aligned(sys).len() > 0) { err.line("error: FAILED nistcurve_test test_a_sha256_digest_under_a_p384_key_is_right_aligned"); bad = bad + 1; }
+  if (rsa__pkcs1_signatures_from_the_host(sys).len() > 0) { err.line("error: FAILED rsa_test test_pkcs1_signatures_from_the_host"); bad = bad + 1; }
+  if (rsa__pkcs1_refuses_a_block_that_is_not_exact(sys).len() > 0) { err.line("error: FAILED rsa_test test_pkcs1_refuses_a_block_that_is_not_exact"); bad = bad + 1; }
+  if (rsa__pss_at_every_salt_length(sys).len() > 0) { err.line("error: FAILED rsa_test test_pss_at_every_salt_length"); bad = bad + 1; }
+  if (rsa__pss_refuses_tampering(sys).len() > 0) { err.line("error: FAILED rsa_test test_pss_refuses_tampering"); bad = bad + 1; }
+  if (rsa__our_pkcs1_signature_is_byte_identical_to_the_hosts(sys).len() > 0) { err.line("error: FAILED rsa_test test_our_pkcs1_signature_is_byte_identical_to_the_hosts"); bad = bad + 1; }
+  if (rsa__the_host_accepts_what_we_signed(sys).len() > 0) { err.line("error: FAILED rsa_test test_the_host_accepts_what_we_signed"); bad = bad + 1; }
+  if (rsa__a_raw_signature_carries_exactly_the_payload(sys).len() > 0) { err.line("error: FAILED rsa_test test_a_raw_signature_carries_exactly_the_payload"); bad = bad + 1; }
+  if (rsa__a_forged_block_that_is_wrong_in_one_place_is_refused(sys).len() > 0) { err.line("error: FAILED rsa_test test_a_forged_block_that_is_wrong_in_one_place_is_refused"); bad = bad + 1; }
+  if (rsa__our_pss_signatures_verify_elsewhere(sys).len() > 0) { err.line("error: FAILED rsa_test test_our_pss_signatures_verify_elsewhere"); bad = bad + 1; }
+  if (rsa__signing_refuses_moduli_it_cannot_use().len() > 0) { err.line("error: FAILED rsa_test test_signing_refuses_moduli_it_cannot_use"); bad = bad + 1; }
+  if (rsa__recovering_refuses_malformed_blocks().len() > 0) { err.line("error: FAILED rsa_test test_recovering_refuses_malformed_blocks"); bad = bad + 1; }
+  if (rsa__pss_refuses_a_signature_with_bits_above_embits().len() > 0) { err.line("error: FAILED rsa_test test_pss_refuses_a_signature_with_bits_above_embits"); bad = bad + 1; }
+  if (rsa__modular_exponentiation_agrees_with_bigint(sys).len() > 0) { err.line("error: FAILED rsa_test test_modular_exponentiation_agrees_with_bigint"); bad = bad + 1; }
+  if (rsa__pss_refuses_a_key_too_small_for_the_encoding().len() > 0) { err.line("error: FAILED rsa_test test_pss_refuses_a_key_too_small_for_the_encoding"); bad = bad + 1; }
+  if (rsa__a_pss_signature_we_made_verifies_here().len() > 0) { err.line("error: FAILED rsa_test test_a_pss_signature_we_made_verifies_here"); bad = bad + 1; }
+  if (rsa__a_pkcs1_signature_recovers_the_payload_it_carried().len() > 0) { err.line("error: FAILED rsa_test test_a_pkcs1_signature_recovers_the_payload_it_carried"); bad = bad + 1; }
+  if (scalarn__the_montgomery_product_agrees_with_long_division().len() > 0) { err.line("error: FAILED scalarn_test test_the_montgomery_product_agrees_with_long_division"); bad = bad + 1; }
+  if (scalarn__the_product_is_right_at_zero_one_and_n_minus_one().len() > 0) { err.line("error: FAILED scalarn_test test_the_product_is_right_at_zero_one_and_n_minus_one"); bad = bad + 1; }
+  if (scalarn__a_value_survives_entering_and_leaving_the_form().len() > 0) { err.line("error: FAILED scalarn_test test_a_value_survives_entering_and_leaving_the_form"); bad = bad + 1; }
+  if (scalarn__an_inverse_multiplies_back_to_one().len() > 0) { err.line("error: FAILED scalarn_test test_an_inverse_multiplies_back_to_one"); bad = bad + 1; }
+  if (scalarn__addition_agrees_with_long_division().len() > 0) { err.line("error: FAILED scalarn_test test_addition_agrees_with_long_division"); bad = bad + 1; }
+  if (rsagen__openssl_agrees_the_generated_key_is_a_valid_rsa_key(sys).len() > 0) { err.line("error: FAILED rsagen_test test_openssl_agrees_the_generated_key_is_a_valid_rsa_key"); bad = bad + 1; }
+  if (rsagen__the_same_seed_gives_the_same_key().len() > 0) { err.line("error: FAILED rsagen_test test_the_same_seed_gives_the_same_key"); bad = bad + 1; }
+  if (rsagen__miller_rabin_knows_primes_from_composites().len() > 0) { err.line("error: FAILED rsagen_test test_miller_rabin_knows_primes_from_composites"); bad = bad + 1; }
+  if (rsagen__gcd_and_modular_inverse().len() > 0) { err.line("error: FAILED rsagen_test test_gcd_and_modular_inverse"); bad = bad + 1; }
+  if (rsagen__a_prime_is_rejected_when_e_has_no_inverse().len() > 0) { err.line("error: FAILED rsagen_test test_a_prime_is_rejected_when_e_has_no_inverse"); bad = bad + 1; }
+  if (sha1__the_published_vectors().len() > 0) { err.line("error: FAILED sha1_test test_the_published_vectors"); bad = bad + 1; }
+  if (sha1__every_length_through_two_blocks(sys).len() > 0) { err.line("error: FAILED sha1_test test_every_length_through_two_blocks"); bad = bad + 1; }
+  if (sha1__the_incremental_form_matches_the_one_shot(sys).len() > 0) { err.line("error: FAILED sha1_test test_the_incremental_form_matches_the_one_shot"); bad = bad + 1; }
+  if (sha1__peek_does_not_end_the_stream(sys).len() > 0) { err.line("error: FAILED sha1_test test_peek_does_not_end_the_stream"); bad = bad + 1; }
+  if (sha1__a_long_message_crosses_many_blocks(sys).len() > 0) { err.line("error: FAILED sha1_test test_a_long_message_crosses_many_blocks"); bad = bad + 1; }
+  if (traps__the_legal_widths_do_not_trap().len() > 0) { err.line("error: FAILED traps_test test_the_legal_widths_do_not_trap"); bad = bad + 1; }
+  if (traps__the_genuine_lengths_are_accepted().len() > 0) { err.line("error: FAILED traps_test test_the_genuine_lengths_are_accepted"); bad = bad + 1; }
+  if (traps__the_genuine_p256_operations_still_work().len() > 0) { err.line("error: FAILED traps_test test_the_genuine_p256_operations_still_work"); bad = bad + 1; }
+  if (traps__the_small_x_point_is_on_the_curve().len() > 0) { err.line("error: FAILED traps_test test_the_small_x_point_is_on_the_curve"); bad = bad + 1; }
+  if (traps__the_p384_small_x_point_decodes().len() > 0) { err.line("error: FAILED traps_test test_the_p384_small_x_point_decodes"); bad = bad + 1; }
+  if (traps__ctr_resume_accepts_a_used_of_16().len() > 0) { err.line("error: FAILED traps_test test_ctr_resume_accepts_a_used_of_16"); bad = bad + 1; }
+  if (traps__p384_refuses_an_x_that_is_x_plus_p_as_an_answer().len() > 0) { err.line("error: FAILED traps_test test_p384_refuses_an_x_that_is_x_plus_p_as_an_answer"); bad = bad + 1; }
+  if (traps__the_two_widths_that_are_curves_still_work().len() > 0) { err.line("error: FAILED traps_test test_the_two_widths_that_are_curves_still_work"); bad = bad + 1; }
+  if (traps__values_at_or_above_p_are_not_in_range().len() > 0) { err.line("error: FAILED traps_test test_values_at_or_above_p_are_not_in_range"); bad = bad + 1; }
+  if (rsa__a_one_byte_modulus_recovers_nothing().len() > 0) { err.line("error: FAILED rsa_test test_a_one_byte_modulus_recovers_nothing"); bad = bad + 1; }
+  if (rsa__a_negative_salt_length_is_rejected(sys).len() > 0) { err.line("error: FAILED rsa_test test_a_negative_salt_length_is_rejected"); bad = bad + 1; }
+  if (nistcurve__a_malformed_public_key_is_false_not_a_trap().len() > 0) { err.line("error: FAILED nistcurve_test test_a_malformed_public_key_is_false_not_a_trap"); bad = bad + 1; }
   if (bad > 0) {
-    core.warn("error: \{bad} test(s) failed, so this measured a broken package");
+    err.line("error: \{bad} test(s) failed, so this measured a broken package");
     return 1;
   }
-  return probes(core, cli);
+  return probes(err);
 }
 
 export void trapCase(i32 i) {
@@ -458,7 +460,7 @@ export void trapCase(i32 i) {
 // where a padding tail, a carry, or a streaming remainder changes which branch runs, aimed at the
 // files the tests leave short.
 
-i32 probes(Core core, Cli cli) {
+i32 probes(Output err) {
   // **SHA-1, 15 points short from the tests alone.** Its padding boundaries are SHA-256's, being the
   // same 64-byte block and 9-byte tail. `sha1Restored` is the save/load of a mid-stream state, which
   // `packages/tor` needs and no one-shot reaches.
@@ -610,7 +612,7 @@ i32 probes(Core core, Cli cli) {
   for (u64 long in longs) { storeBE64(long); }
   for (i32 n = 0; n <= 32; n++) { padTo16(n); }
 
-  return curves(core, cli);
+  return curves(err);
 }
 
 // ── Curve25519 and Ed25519, at the field boundaries a ladder never reaches ────
@@ -653,7 +655,7 @@ u8[] feFive() {
   return decoded("0500000000000000000000000000000000000000000000000000000000000000");
 }
 
-i32 curves(Core core, Cli cli) {
+i32 curves(Output err) {
   u8[][] vs = feValues();
   for (i32 i = 0; i < vs.len(); i++) {
     fRoundTrip(vs[i]);
@@ -744,7 +746,7 @@ i32 curves(Core core, Cli cli) {
 
   x25519Base(bytes(32, 40));
   x25519(bytes(32, 41), x25519Base(bytes(32, 42)));
-  return nist(core, cli);
+  return nist(err);
 }
 
 /** 32-byte big-endian field elements around the P-256 prime. */
@@ -810,7 +812,7 @@ import { sha1LoadBad, ctrBadIv } from "./wac/probe.wac";
 import { bcryptPbkdf } from "../src/bcryptpbkdf.wac";
 import { small, gcd, modInverse, randomPrime } from "../src/rsagen.wac";
 
-i32 nist(Core core, Cli cli) {
+i32 nist(Output err) {
   u8[][] vs = p256Values();
   for (i32 i = 0; i < vs.len(); i++) {
     pAdd(vs[i], p256PMinus1());
@@ -877,11 +879,11 @@ i32 nist(Core core, Cli cli) {
   // a leading byte with the order is the case that accepts a key at or above it when the carry-the-
   // lower-verdict mask is inverted.
   if (compareSharingAPrefix() != 0 - 1) {
-    core.warn("error: cmpBE did not compare past the shared leading byte");
+    err.line("error: cmpBE did not compare past the shared leading byte");
     return 1;
   }
-  if (compareGreater() != 1) { core.warn("error: cmpBE did not answer greater"); return 1; }
-  if (compareEqual() != 0) { core.warn("error: cmpBE did not answer equal"); return 1; }
+  if (compareGreater() != 1) { err.line("error: cmpBE did not answer greater"); return 1; }
+  if (compareEqual() != 0) { err.line("error: cmpBE did not answer equal"); return 1; }
 
   // `modExp` on its own, at the two shapes the verifier never produces: a tiny modulus, and a base of
   // zero, which short-circuits before the ladder.

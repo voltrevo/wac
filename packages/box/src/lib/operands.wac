@@ -19,7 +19,7 @@
 // usage summary and exits **2** rather than 1. Deriving any of that from the majority would have been
 // wrong for half of them — the same lesson `cannotOpen` in `input.wac` records one file over.
 
-import { Core } from "std";
+import { Output } from "std";
 import { Args } from "./args.wac";
 
 /**
@@ -28,8 +28,8 @@ import { Args } from "./args.wac";
  * Except `diff`, which prefixes it with its own name — `diff: Try 'diff --help' …` — because it is not
  * coreutils. `usageOf` handles that one; nothing else needs to.
  */
-export void tryHelp(Core core, string name) {
-  core.warn("Try '\{name} --help' for more information.");
+export void tryHelp(Output err, string name) {
+  err.line("Try '\{name} --help' for more information.");
 }
 
 /**
@@ -39,16 +39,16 @@ export void tryHelp(Core core, string name) {
  * "missing file operand". A caller passing the wrong one gets a sentence that is close and wrong, which
  * is why they are measured per tool rather than guessed.
  */
-export i32 missingOperand(Core core, string name, string what) {
-  core.warn(name + ": missing " + (what == "" ? "" : "\{what} ") + "operand");
-  tryHelp(core, name);
+export i32 missingOperand(Output err, string name, string what) {
+  err.line(name + ": missing " + (what == "" ? "" : "\{what} ") + "operand");
+  tryHelp(err, name);
   return 1;
 }
 
 /** `name: missing destination file operand after 'src'` — `cp` and `mv`, given only one. */
-export i32 missingAfter(Core core, string name, string what, string after) {
-  core.warn("\{name}: missing \{what} after '\{after}'");
-  tryHelp(core, name);
+export i32 missingAfter(Output err, string name, string what, string after) {
+  err.line("\{name}: missing \{what} after '\{after}'");
+  tryHelp(err, name);
   return 1;
 }
 
@@ -58,16 +58,16 @@ export i32 missingAfter(Core core, string name, string what, string after) {
  * Was `tooManyOperands`, which said the same first line and stopped there. The second line is not
  * decoration: it is how the caller finds out what the tool *does* take.
  */
-export bool extraOperand(Core core, Args a, i32 most) {
+export bool extraOperand(Output err, Args a, i32 most) {
   if (a.rest.len() <= most) { return false; }
-  core.warn("\{a.name}: extra operand '\{a.rest[most]}'");
-  tryHelp(core, a.name);
+  err.line("\{a.name}: extra operand '\{a.rest[most]}'");
+  tryHelp(err, a.name);
   return true;
 }
 
 /** `name: option requires an argument -- 'c'` — a flag that takes a value and was given none. */
-export i32 needsValue(Core core, string name, string letter) {
-  core.warn("\{name}: option requires an argument -- '\{letter}'");
-  tryHelp(core, name);
+export i32 needsValue(Output err, string name, string letter) {
+  err.line("\{name}: option requires an argument -- '\{letter}'");
+  tryHelp(err, name);
   return 1;
 }

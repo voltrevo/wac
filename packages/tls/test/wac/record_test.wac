@@ -37,7 +37,7 @@ import {
 } from "../../src/record.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 
 static string ORACLE = "packages/tls/test/oracle.mjs";
@@ -150,7 +150,8 @@ export string test_padding_is_invisible_to_the_reader() {
   return t.report();
 }
 
-export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
+export string test_sealing_agrees_with_the_host_aead(Sys sys) {
+  Procs procs = sys.procs();
   // `aeadopen <suite> <key> <nonce> <aad> <ciphertext>` decrypts, and answers empty if the tag does
   // not verify. Everything the record layer builds — the nonce from the sequence number, the header
   // as additional data, the type byte appended to the plaintext — has to be right for anything to
@@ -171,7 +172,7 @@ export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
                 hex(slice(rec, 5, rec.len())));
     }
   }
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "ten sealed records");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "ten sealed records");
   if (!a.ok) { return t.report(); }
 
   for (i32 s = 0; s < suites.len(); s++) {
@@ -193,7 +194,8 @@ export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_header_is_authenticated(Core core, Cli cli) {
+export string test_the_header_is_authenticated(Sys sys) {
+  Procs procs = sys.procs();
   // The header is not encrypted, so nothing stops an attacker editing it — the AAD is
   // what makes the edit detectable. Rewriting the length must break the tag, which the
   // host oracle can confirm independently of our own opener.
@@ -213,7 +215,7 @@ export string test_the_header_is_authenticated(Core core, Cli cli) {
   string prefix = "aeadopen \{aes as i64} \{hex(key)} \{hex(iv)} ";
   lines.add("\{prefix}\{hex(goodAad)} \{hex(ct)}");
   lines.add("\{prefix}\{hex(badAad)} \{hex(ct)}");
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "a good header and a rewritten one");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "a good header and a rewritten one");
   if (!a.ok) { return t.report(); }
 
   t.isTrue(decoded(word(a.lines[0], 1)).len() > 0, "the genuine header verifies");

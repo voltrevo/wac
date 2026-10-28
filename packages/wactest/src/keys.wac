@@ -8,29 +8,31 @@
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
 import { T } from "./assert.wac";
-import { Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Procs } from "std";
 import { quoted } from "./childenv.wac";
+import { flatten } from "core";
 
 /** `chmod 600` — what `ssh` requires of a private key before it will use one. */
-export bool restrict(Cli cli, string path) {
-  Exec r = cli.exec("/bin/sh", ["-c", "chmod 600 \{quoted(path)}"], u8[]()).wait();
-  return r.ran() && r.status == 0;
+export bool restrict(Procs procs, string path) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "chmod 600 \{quoted(path)}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return (r is not null) && r!.status == 0;
 }
 
 /** `cp -p`, preserving the mode — an `ssh-keygen` key copied any other way loses its 0600. */
-export bool copyPreserving(Cli cli, string from, string to) {
-  Exec r = cli.exec("/bin/sh", ["-c", "cp -p \{quoted(from)} \{quoted(to)}"],
-                    u8[]()).wait();
-  return r.ran() && r.status == 0;
+export bool copyPreserving(Procs procs, string from, string to) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cp -p \{quoted(from)} \{quoted(to)}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return (r is not null) && r!.status == 0;
 }
 
 /** Generate an Ed25519 key pair at `path`, failing `t` if `ssh-keygen` will not. */
-export bool keygen(T t, Cli cli, string path) {
-  Exec r = cli.exec("ssh-keygen", ["-t", "ed25519", "-f", path, "-N", "", "-q"],
-                    u8[]()).wait();
-  t.isTrue(r.ran(), "ssh-keygen ran — \{r.error}");
-  t.eqI32(r.status, 0, "ssh-keygen for \{path}: \{string.fromBytes(r.stderr)}");
-  return r.ran() && r.status == 0;
+export bool keygen(T t, Procs procs, string path) {
+  auto rRan = flatten(procs.exec("ssh-keygen", ["-t", "ed25519", "-f", path, "-N", "", "-q"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "ssh-keygen ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  t.eqI32(r!.status, 0, "ssh-keygen for \{path}: \{string.fromBytes(r!.stderr)}");
+  return (r is not null) && r!.status == 0;
 }
 
 /**
@@ -39,10 +41,10 @@ export bool keygen(T t, Cli cli, string path) {
  * Empty when the file cannot be read or has no second field, which every caller checks: an empty
  * expected blob would make a `known_hosts` comparison pass against anything.
  */
-export string publicBlobText(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return ""; }
-  string text = string.fromBytes(f.bytes);
+export string publicBlobText(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  if ((f is null)) { return ""; }
+  string text = string.fromBytes(f!);
   i32 first = text.indexOf(" ");
   if (first < 0) { return ""; }
   string rest = text.slice(first + 1, text.len());
@@ -51,9 +53,9 @@ export string publicBlobText(Cli cli, string path) {
 }
 
 /** The whole of a `.pub` file with its trailing newline off — an `authorized_keys` line. */
-export string publicLine(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? trimmedEnd(string.fromBytes(f.bytes)) : "";
+export string publicLine(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? trimmedEnd(string.fromBytes(f!)) : "";
 }
 
 string trimmedEnd(string s) {

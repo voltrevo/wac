@@ -22,8 +22,8 @@
 // other than the one on `PATH`, and `--page <spec>` the module the wrapper imports `Page` from when the
 // project does not map this package as `web`.
 
-import { Core, Cli, Exec, FileResult, Sys } from "std";
-import { Vec } from "core";
+import { Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Vec, flatten } from "core";
 
 /** What a build was asked for. */
 struct Asked {
@@ -46,11 +46,11 @@ struct Asked {
 }
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
-Asked askedOf(Cli cli) {
+Asked askedOf(string[] argv) {
   Asked a = Asked("", "", "wac", "web", "wac", false, 0, "", false);
-  i32 argc = cli.argCount().wait();
+  i32 argc = argv.len();
   string[] args = string[].filled(argc, "");
-  for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
+  for (i32 k = 0; k < argc; k++) { args[k] = argv[k]; }
   i32 i = 0;
   i32 positional = 0;
   while (i < argc) {
@@ -840,44 +840,46 @@ string head(string title) {
        + "<title>" + title + "</title>\n</head>\n<body>\n<div id=\"app\"></div>\n";
 }
 
-export i32 buildPage(Core core, Cli cli) {
-  Asked a = askedOf(cli);
+export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs procs) {
+  Asked a = askedOf(argv);
   if (a.entry == "" || a.out == "") {
-    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    err.write("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
   // imports would cross a project boundary, and the build would fail naming an import rather than this.
   if (leavesHere(a.out)) {
-    cli.writeErr("build.wac: \{a.out}: the output directory must be inside this directory, since the page's wrapper is written there and imports the program\n".toBytes());
+    err.write("build.wac: \{a.out}: the output directory must be inside this directory, since the page's wrapper is written there and imports the program\n".toBytes());
     return 2;
   }
-  cli.mkdir(a.out, true).wait();
+  fs.mkdir(a.out, true).wait();
   string wrapper = a.out + "/page.wac";
   // A path names the file from here, and the wrapper sits in `out`; anything else is a mapped name.
   bool pagePath = a.pageSpec.len() > 0 && (a.pageSpec.slice(0, 1) == "." || a.pageSpec.slice(0, 1) == "/");
   string pageSpec = pagePath ? relativeTo(a.out, a.pageSpec) : a.pageSpec;
   string entrySpec = relativeTo(a.out, a.entry);
-  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants, a.spawn, a.dev).toBytes()).wait();
+  fs.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants, a.spawn, a.dev).toBytes()).wait();
   string js = a.out + "/page.js";
-  Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[]()).wait();
-  if (!made.ok()) {
-    cli.writeErr(made.stderr);
-    cli.writeErr(made.stdout);
-    if (made.error != "") { cli.writeErr("build.wac: \{a.wac}: \{made.error}\n".toBytes()); }
+  auto madeRan = flatten(procs.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? made = madeRan.ok();
+  if (!made!.ok()) {
+    err.write(made!.stderr);
+    err.write(made!.stdout);
+    if ("\{madeRan.isErr() ? "\{madeRan.err()!}" : ""}" != "") { flatten(err.write("build.wac: \{a.wac}: \{madeRan.isErr() ? "\{madeRan.err()!}" : ""}\n".toBytes()).wait()).isOk(); }
     return 1;
   }
-  FileResult module = cli.readFile(js).wait();
-  if (!module.ok) {
-    cli.writeErr("build.wac: \{js}: \{module.error}\n".toBytes());
+  auto moduleRead = flatten(fs.readFile(js).wait());
+  u8[]? module = moduleRead.ok();
+  if ((module is null)) {
+    err.write("build.wac: \{js}: \{moduleRead.isErr() ? "\{moduleRead.err()!}" : ""}\n".toBytes());
     return 1;
   }
   string index = a.out + "/index.html";
-  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes))
-                          : workerIndexFor(a.title, string.fromBytes(module.bytes), a.spawn != "");
-  cli.writeFile(index, page.toBytes()).wait();
-  core.log("\{index}: \{module.bytes.len()} bytes of module");
+  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module!))
+                          : workerIndexFor(a.title, string.fromBytes(module!), a.spawn != "");
+  fs.writeFile(index, page.toBytes()).wait();
+  out.line("\{index}: \{module!.len()} bytes of module");
   return 0;
 }
 
-export i32 main(Sys sys) { return buildPage(sys.core, sys.cli); }
+export i32 main(Sys sys) { return buildPage(sys.args(), sys.stderr(), sys.stdout(), sys.files(), sys.procs()); }

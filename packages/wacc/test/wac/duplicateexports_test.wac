@@ -27,11 +27,12 @@
 // it emitted, and a duplicate the emitter did not know it wrote would not be in it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { allExportNames } from "./wasm_probe.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /** Two files, one name, both with a `u32` method — and both crossing the bind boundary. */
 string[] fixturePaths() {
@@ -78,8 +79,10 @@ string joinedWith(string[] all, string sep) {
   return out;
 }
 
-export string test_two_files_declaring_one_struct_name_export_their_helpers_once_each(
-    Core core, Cli cli) {
+export string test_two_files_declaring_one_struct_name_export_their_helpers_once_each(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] wasm = emitFiles(fixturePaths(), fixtureSources(), "/t/main.wac");
   // An empty module is eight bytes — the magic and the version — and is what a decline looks like
@@ -89,18 +92,19 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
 
   // **The engine is the assertion.** Written out and compiled by V8 through `wac validate`, because
   // a duplicate export name is a module that will not load rather than one that answers wrongly.
-  string dir = cli.cwd().wait() + "/.cache/dupexports";
-  string whyDir1 = madeDir(cli, dir);
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/dupexports";
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
   string path = dir + "/mod.wasm";
-  Change wrote = cli.writeFile(path, wasm).wait();
-  t.eqI32(wrote.fault, 0, "wrote the module");
-  if (wrote.fault != 0) { return t.report(); }
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  Exec v = cli.exec(wac, ["validate", path], u8[]()).wait();
-  t.isTrue(v.ran(), "wac validate ran — " + v.error);
-  t.eqI32(v.status, 0, "the module was rejected: " + string.fromBytes(v.stdout) +
-                       string.fromBytes(v.stderr));
+  auto wrote = flatten(fs.writeFile(path, wasm).wait());
+  t.isTrue(wrote.isOk(), "wrote the module");
+  if (wrote.isErr()) { return t.report(); }
+  string wac = flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac";
+  auto vRan = flatten(procs.exec(wac, ["validate", path], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? v = vRan.ok();
+  t.isTrue((v is not null), "wac validate ran — " + "\{vRan.isErr() ? "\{vRan.err()!}" : ""}");
+  t.eqI32(v!.status, 0, "the module was rejected: " + string.fromBytes(v!.stdout) +
+                       string.fromBytes(v!.stderr));
 
   string[] names = allExportNames(wasm);
   t.isTrue(names.len() > 0, "the module exports nothing at all");
@@ -122,7 +126,7 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
   for (i32 i = 0; i < readers; i++) { exact[i] = found[i]; }
   t.eqI32(readers, 2, "expected a u32 helper for each Reader, got " + joinedWith(exact, ", "));
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -134,21 +138,25 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
  * fallthru, found 1*, and V8 refused the whole module. `main(Sys)` never showed it, because the entry
  * is not bound the way another export is.
  */
-export string test_an_exported_function_taking_sys_is_a_module_the_engine_takes(Core core, Cli cli) {
+export string test_an_exported_function_taking_sys_is_a_module_the_engine_takes(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] wasm = emitFiles(["/t/main.wac"],
                         ["import { Sys } from \"std\";\nexport i32 f(Sys sys) { return 1; }\n"], "/t/main.wac");
   t.isTrue(wasm.len() > 8, "the module was declined (" + itoa(wasm.len()) + " bytes)");
   if (wasm.len() <= 8) { return t.report(); }
-  string dir = cli.cwd().wait() + "/.cache/sysexport";
-  string whyDir = madeDir(cli, dir);
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/sysexport";
+  string whyDir = madeDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   string path = dir + "/mod.wasm";
-  Change wrote = cli.writeFile(path, wasm).wait();
-  t.eqI32(wrote.fault, 0, "wrote the module");
-  if (wrote.fault != 0) { return t.report(); }
-  Exec v = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", ["validate", path], u8[]()).wait();
-  t.isTrue(v.ran(), "wac validate ran — " + v.error);
-  t.eqI32(v.status, 0, "the module was rejected: " + string.fromBytes(v.stdout) + string.fromBytes(v.stderr));
+  auto wrote = flatten(fs.writeFile(path, wasm).wait());
+  t.isTrue(wrote.isOk(), "wrote the module");
+  if (wrote.isErr()) { return t.report(); }
+  auto vRan = flatten(procs.exec(flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac", ["validate", path], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? v = vRan.ok();
+  t.isTrue((v is not null), "wac validate ran — " + "\{vRan.isErr() ? "\{vRan.err()!}" : ""}");
+  t.eqI32(v!.status, 0, "the module was rejected: " + string.fromBytes(v!.stdout) + string.fromBytes(v!.stderr));
   return t.report();
 }

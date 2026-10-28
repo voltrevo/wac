@@ -38,8 +38,8 @@
 // empty and everything ran in parallel exactly as before. It looked like it worked." One entry point
 // cannot disagree with itself, which is what that comment wanted.
 
-import { Core, Cli, Exec, Sys } from "std";
-import { Map, hashString, stringEq, Vec } from "core";
+import { Exec, Sys, ChildEnv, Env, Launch, Output, Procs } from "std";
+import { Map, hashString, stringEq, Vec, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
 import { refuseIfNested } from "./suitegate.wac";
@@ -61,10 +61,11 @@ string[] sharedPaths() {
 }
 
 /** One `git` invocation's lines, or none. A git that fails is a repository this cannot narrow. */
-string[] gitLines(Cli cli, string[] args) {
-  Exec r = cli.exec("git", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return string[].filled(0, ""); }
-  return splitLines(string.fromBytes(r.stdout));
+string[] gitLines(Procs procs, string[] args) {
+  auto rRan = flatten(procs.exec("git", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return string[].filled(0, ""); }
+  return splitLines(string.fromBytes(r!.stdout));
 }
 
 /** Add `lines` to `out`, skipping any already in `seen`. */
@@ -143,24 +144,26 @@ export Plan planFor(string[] changed) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 nested = refuseIfNested(core, cli, "wac task test:changed");
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Procs procs = sys.procs();
+  i32 nested = refuseIfNested(err, env, "wac task test:changed");
   if (nested != 0) { return nested; }
 
   Map<string, i32> seen = Map.create(hashString, stringEq);
   Vec<string> changedV = Vec<string>.create();
-  absorb(changedV, seen, gitLines(cli, ["diff", "--name-only", "origin/master...HEAD"]));
-  absorb(changedV, seen, gitLines(cli, ["diff", "--name-only"]));
-  absorb(changedV, seen, gitLines(cli, ["diff", "--name-only", "--cached"]));
-  absorb(changedV, seen, gitLines(cli, ["ls-files", "--others", "--exclude-standard"]));
+  absorb(changedV, seen, gitLines(procs, ["diff", "--name-only", "origin/master...HEAD"]));
+  absorb(changedV, seen, gitLines(procs, ["diff", "--name-only"]));
+  absorb(changedV, seen, gitLines(procs, ["diff", "--name-only", "--cached"]));
+  absorb(changedV, seen, gitLines(procs, ["ls-files", "--others", "--exclude-standard"]));
 
   string[] changed = string[].filled(changedV.len(), "");
   for (i32 i = 0; i < changedV.len(); i++) { changed[i] = changedV.get(i); }
 
   Plan plan = planFor(changed);
   if (plan.mode == NOTHING()) {
-    core.log(changed.len() == 0
+    out.line(changed.len() == 0
              ? "nothing changed against origin/master; nothing to run."
              : itoa(changed.len())
                + " changed file(s), none of them under packages/ or shared — nothing to run.\n"
@@ -168,10 +171,10 @@ export i32 main(Sys sys) {
     return 0;
   }
   if (plan.mode == EVERYTHING()) {
-    core.log("shared files changed (" + plan.said + ") — running the whole suite.");
+    out.line("shared files changed (" + plan.said + ") — running the whole suite.");
   } else {
-    core.log("changed packages: " + plan.said);
-    core.log("this is not the gate — tools/push.sh still runs everything.\n");
+    out.line("changed packages: " + plan.said);
+    out.line("this is not the gate — tools/push.sh still runs everything.\n");
   }
   string[] targets = plan.targets;
 
@@ -185,6 +188,6 @@ export i32 main(Sys sys) {
 
   // Inherited rather than captured: this is the loop you watch, and a runner that says nothing for
   // five minutes and then everything is the thing `issues/system/0231c` is about.
-  Exec r = cli.execWith(wacBinary(cli), args, u8[](), string[](), false, true).wait();
+  Exec r = flatten(procs.exec(wacBinary(env), args, u8[](), ChildEnv(false, string[]()), Launch("", false, true, false)).wait()).unwrap();
   return r.ran() ? r.status : 1;
 }

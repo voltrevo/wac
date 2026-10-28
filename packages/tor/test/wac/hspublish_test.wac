@@ -13,7 +13,7 @@ import {
   DirDocuments, dirRoute, hsPublishResponse, hsPublishVersion,
 } from "../../src/dirserve.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 import { boolOf, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import {
@@ -30,23 +30,24 @@ import {
  * looked up under the wrong name. Without it every control could be failing at the parse and the
  * name would be untested.
  */
-export string test_the_vector_is_about_this_descriptor(Core core, Cli cli) {
+export string test_the_vector_is_about_this_descriptor(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject top = publishTop(cli);
+  JsonObject top = publishTop(fs);
   string source = strOf(top, "source");
   t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0,
            "the values must come from tor's HSDir cache — source is \{source}");
   t.isTrue(boolOf(top, "stored") && boolOf(top, "servedIdentical"),
            "the vector records a descriptor an HSDir would not have served back");
-  t.eqStr(strOf(top, "blindedKey"), strOf(generatedTop(cli), "blindPublic"),
+  t.eqStr(strOf(top, "blindedKey"), strOf(generatedTop(fs), "blindPublic"),
           "the vector was captured from a different descriptor than the one under test");
-  t.eqI32(numOf(top, "descriptorLength"), descriptorText(cli).len(),
+  t.eqI32(numOf(top, "descriptorLength"), descriptorText(fs).len(),
           "the generated descriptor has changed since the vector was captured");
-  t.isTrue(controlCount(cli) >= 4, "too few controls to show the probe can fail");
+  t.isTrue(controlCount(fs) >= 4, "too few controls to show the probe can fail");
 
   bool discriminating = false;
-  for (i32 i = 0; i < controlCount(cli); i++) {
-    JsonObject c = controls(cli).get(i).object()!;
+  for (i32 i = 0; i < controlCount(fs); i++) {
+    JsonObject c = controls(fs).get(i).object()!;
     JsonValue? r = c.getStr("result");
     if (r is null) { trap; }
     JsonObject res = r!.object()!;
@@ -58,15 +59,16 @@ export string test_the_vector_is_about_this_descriptor(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_fetch_name_is_the_one_the_directory_chose(Core core, Cli cli) {
+export string test_the_fetch_name_is_the_one_the_directory_chose(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string query = queryName(cli);
-  t.eqStr(descriptorPath(blindedKeyBytes(cli)), "/tor/hs/3/\{query}",
+  string query = queryName(fs);
+  t.eqStr(descriptorPath(blindedKeyBytes(fs)), "/tor/hs/3/\{query}",
           "our fetch path ends at the name tor filed the descriptor under");
 
   // And it is derived, not copied: another key gives another name.
   u8[] other = u8[].filled(32, 7);
-  t.isTrue(descriptorPath(other) != descriptorPath(blindedKeyBytes(cli)),
+  t.isTrue(descriptorPath(other) != descriptorPath(blindedKeyBytes(fs)),
            "a different blinded key is a different name");
   t.eqStr(descriptorPath(u8[].filled(31, 0)), "", "a key that is not 32 bytes names nothing");
   t.eqStr(publishPath(), "/tor/hs/3/publish", "and publication has no key in it at all");
@@ -74,9 +76,10 @@ export string test_the_fetch_name_is_the_one_the_directory_chose(Core core, Cli 
 }
 
 /** The upload's bytes, in tor's order: request line, Host, Content-Length, blank line, descriptor. */
-export string test_the_upload_is_shaped_like_tors(Core core, Cli cli) {
+export string test_the_upload_is_shaped_like_tors(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] desc = descriptorBytes(cli);
+  u8[] desc = descriptorBytes(fs);
   u8[] req = hsPublishRequest(desc, "127.0.0.1:9001");
   string head = string.fromBytes(req);
 
@@ -110,7 +113,7 @@ export string test_the_upload_is_shaped_like_tors(Core core, Cli cli) {
  * after `/tor/hs/` and then requires `/publish`; matching the literal string would agree on every
  * request tor sends today and disagree on the first one it does not.
  */
-export string test_a_publish_target_is_recognised(Core core, Cli cli) {
+export string test_a_publish_target_is_recognised() {
   T t = T.create();
   t.eqI32(hsPublishVersion("/tor/hs/3/publish".toBytes()), 3, "the version tor uploads");
   t.eqI32(hsPublishVersion("/tor/hs/003/publish".toBytes()), 3, "leading zeros are still three");
@@ -139,17 +142,18 @@ export string test_a_publish_target_is_recognised(Core core, Cli cli) {
  * client verifies the signature over exactly those bytes. Serving a re-encoded document would be a
  * subtle way of breaking every service published here.
  */
-export string test_what_was_stored_is_what_is_served(Core core, Cli cli) {
+export string test_what_was_stored_is_what_is_served(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] desc = descriptorBytes(cli);
+  u8[] desc = descriptorBytes(fs);
   u8[][] descs = u8[][].defaulted(1);
   descs[0] = desc;
   u8[][] keys = u8[][].defaulted(1);
-  keys[0] = blindedKeyBytes(cli);
+  keys[0] = blindedKeyBytes(fs);
   DirDocuments docs = DirDocuments(u8[](), u8[](), u8[](), u8[](), u8[][](), u8[](), u8[](),
                                    u8[][](), descs, keys);
 
-  string path = descriptorPath(blindedKeyBytes(cli));
+  string path = descriptorPath(blindedKeyBytes(fs));
   t.eqI32(dirRoute(path.toBytes(), docs).status, 200, "the descriptor is there under its own name");
   t.eqBytes(dirRoute(path.toBytes(), docs).body, desc, "and it comes back byte for byte");
 
@@ -165,7 +169,7 @@ export string test_what_was_stored_is_what_is_served(Core core, Cli cli) {
 }
 
 /** tor's two answers, and the codes a service reads. */
-export string test_the_publish_answers_are_tors(Core core, Cli cli) {
+export string test_the_publish_answers_are_tors() {
   T t = T.create();
   t.eqI32(hsPublishResponse(true).status, 200, "stored");
   // 400 rather than 404: the request reached the right directory and said something wrong, and a

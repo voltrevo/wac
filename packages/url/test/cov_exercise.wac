@@ -24,7 +24,7 @@ import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECI
          SET_PATH, SET_USERINFO, SET_COMPONENT } from "../src/percent.wac";
 import { Buf } from "core";
 import { Rng } from "../../wactest/src/rng.wac";
-import { Core, Cli, Sys } from "std";
+import { Sys, Output, Procs } from "std";
 import {
   test_fuzz_assembled_urls_agree_with_node as fuzz__fuzz_assembled_urls_agree_with_node,
   test_fuzz_a_second_seed_in_case_the_first_is_lucky as fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky,
@@ -125,8 +125,8 @@ string[] hand() {
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   i32 seen = 0;
 
   string[] hs = hand();
@@ -249,115 +249,115 @@ export async i32 main(Sys sys) {
   // where that is not true and the twelve trapping ones needed a `trapCase` sweep instead.
   i32 bad = 0;
   if ((await fuzz__fuzz_assembled_urls_agree_with_node(sys)).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_fuzz_assembled_urls_agree_with_node");
+    err.line("error: FAILED fuzz_test test_fuzz_assembled_urls_agree_with_node");
     bad = bad + 1;
   }
   if ((await fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky(sys)).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_fuzz_a_second_seed_in_case_the_first_is_lucky");
+    err.line("error: FAILED fuzz_test test_fuzz_a_second_seed_in_case_the_first_is_lucky");
     bad = bad + 1;
   }
   if ((await fuzz__fuzz_bare_references_against_every_base(sys)).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_fuzz_bare_references_against_every_base");
+    err.line("error: FAILED fuzz_test test_fuzz_bare_references_against_every_base");
     bad = bad + 1;
   }
   if ((await parse__absolute_urls_with_every_component(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_absolute_urls_with_every_component");
+    err.line("error: FAILED parse_test test_absolute_urls_with_every_component");
     bad = bad + 1;
   }
   if ((await parse__scheme_handling(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_scheme_handling");
+    err.line("error: FAILED parse_test test_scheme_handling");
     bad = bad + 1;
   }
   if ((await parse__ports_that_are_not_ports(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_ports_that_are_not_ports");
+    err.line("error: FAILED parse_test test_ports_that_are_not_ports");
     bad = bad + 1;
   }
   if ((await parse__path_normalisation(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_path_normalisation");
+    err.line("error: FAILED parse_test test_path_normalisation");
     bad = bad + 1;
   }
   if ((await parse__percent_encoding_by_component(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_percent_encoding_by_component");
+    err.line("error: FAILED parse_test test_percent_encoding_by_component");
     bad = bad + 1;
   }
   if ((await parse__hosts_ipv4_in_all_its_spellings(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_hosts_ipv4_in_all_its_spellings");
+    err.line("error: FAILED parse_test test_hosts_ipv4_in_all_its_spellings");
     bad = bad + 1;
   }
   if ((await parse__hosts_ipv6(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_hosts_ipv6");
+    err.line("error: FAILED parse_test test_hosts_ipv6");
     bad = bad + 1;
   }
   if ((await parse__hosts_names_empty_and_forbidden_bytes(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_hosts_names_empty_and_forbidden_bytes");
+    err.line("error: FAILED parse_test test_hosts_names_empty_and_forbidden_bytes");
     bad = bad + 1;
   }
   if ((await parse__file_urls(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_file_urls");
+    err.line("error: FAILED parse_test test_file_urls");
     bad = bad + 1;
   }
   if ((await parse__relative_resolution_against_a_base(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_relative_resolution_against_a_base");
+    err.line("error: FAILED parse_test test_relative_resolution_against_a_base");
     bad = bad + 1;
   }
   if ((await parse__edges_the_main_groups_miss(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_edges_the_main_groups_miss");
+    err.line("error: FAILED parse_test test_edges_the_main_groups_miss");
     bad = bad + 1;
   }
   if ((await parse__whitespace_and_control_bytes_are_stripped(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_whitespace_and_control_bytes_are_stripped");
+    err.line("error: FAILED parse_test test_whitespace_and_control_bytes_are_stripped");
     bad = bad + 1;
   }
   if ((await parse__inputs_that_must_be_rejected(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_inputs_that_must_be_rejected");
+    err.line("error: FAILED parse_test test_inputs_that_must_be_rejected");
     bad = bad + 1;
   }
   if ((await parse__a_non_ascii_domain_is_rejected_rather_than_mapped(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_a_non_ascii_domain_is_rejected_rather_than_mapped");
+    err.line("error: FAILED parse_test test_a_non_ascii_domain_is_rejected_rather_than_mapped");
     bad = bad + 1;
   }
   if (parse__a_reference_resolves_against_an_opaque_path_only_with_a_hash().len() > 0) {
-    core.warn("error: FAILED parse_test test_a_reference_resolves_against_an_opaque_path_only_with_a_hash");
+    err.line("error: FAILED parse_test test_a_reference_resolves_against_an_opaque_path_only_with_a_hash");
     bad = bad + 1;
   }
   if ((await parse__runtime_divergences_judged_against_the_standard(sys)).len() > 0) {
-    core.warn("error: FAILED parse_test test_runtime_divergences_judged_against_the_standard");
+    err.line("error: FAILED parse_test test_runtime_divergences_judged_against_the_standard");
     bad = bad + 1;
   }
   if (url__encode_sets_nest().len() > 0) {
-    core.warn("error: FAILED url_test test_encode_sets_nest");
+    err.line("error: FAILED url_test test_encode_sets_nest");
     bad = bad + 1;
   }
   if (url__fragment_and_query_are_incomparable().len() > 0) {
-    core.warn("error: FAILED url_test test_fragment_and_query_are_incomparable");
+    err.line("error: FAILED url_test test_fragment_and_query_are_incomparable");
     bad = bad + 1;
   }
   if (url__the_component_set_escapes_percent().len() > 0) {
-    core.warn("error: FAILED url_test test_the_component_set_escapes_percent");
+    err.line("error: FAILED url_test test_the_component_set_escapes_percent");
     bad = bad + 1;
   }
   if (url__special_query_adds_the_apostrophe().len() > 0) {
-    core.warn("error: FAILED url_test test_special_query_adds_the_apostrophe");
+    err.line("error: FAILED url_test test_special_query_adds_the_apostrophe");
     bad = bad + 1;
   }
   if (url__percent_decode_leaves_malformed_escapes().len() > 0) {
-    core.warn("error: FAILED url_test test_percent_decode_leaves_malformed_escapes");
+    err.line("error: FAILED url_test test_percent_decode_leaves_malformed_escapes");
     bad = bad + 1;
   }
   if (url__ipv6_serializes_compressed().len() > 0) {
-    core.warn("error: FAILED url_test test_ipv6_serializes_compressed");
+    err.line("error: FAILED url_test test_ipv6_serializes_compressed");
     bad = bad + 1;
   }
   if (url__ipv4_canonicalises().len() > 0) {
-    core.warn("error: FAILED url_test test_ipv4_canonicalises");
+    err.line("error: FAILED url_test test_ipv4_canonicalises");
     bad = bad + 1;
   }
   if (url__an_opaque_host_still_reads_brackets_as_an_address().len() > 0) {
-    core.warn("error: FAILED url_test test_an_opaque_host_still_reads_brackets_as_an_address");
+    err.line("error: FAILED url_test test_an_opaque_host_still_reads_brackets_as_an_address");
     bad = bad + 1;
   }
   if (url__ends_in_number_selects_ipv4().len() > 0) {
-    core.warn("error: FAILED url_test test_ends_in_number_selects_ipv4");
+    err.line("error: FAILED url_test test_ends_in_number_selects_ipv4");
     bad = bad + 1;
   }
   seen = seen + bad;

@@ -21,7 +21,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /**
  * Two ordinary passes and one that passes *by trapping*, which prints a different line.
@@ -41,12 +42,12 @@ struct Dir {
   string what;
 }
 
-Dir workspace(Cli cli) {
-  string dir = scratch(cli, "test-verbose");
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return Dir(false, "", "a working directory: \{made.message}"); }
-  Change w = cli.writeFile("\{dir}/three_test.wac", SOURCE().toBytes()).wait();
-  if (!w.ok()) { return Dir(false, "", "three_test.wac: \{w.message}"); }
+Dir workspace(Env env, Files fs) {
+  string dir = scratch(env, "test-verbose");
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) { return Dir(false, "", "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}"); }
+  auto w = flatten(fs.writeFile("\{dir}/three_test.wac", SOURCE().toBytes()).wait());
+  if (w.isErr()) { return Dir(false, "", "three_test.wac: \{w.isErr() ? "\{w.err()!}" : ""}"); }
   return Dir(true, dir, "");
 }
 
@@ -56,13 +57,14 @@ struct Ran {
   string out;
 }
 
-Ran wacTest(Cli cli, string[] args) {
+Ran wacTest(Env env, Procs procs, string[] args) {
   string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = "test";
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
-  Exec r = cli.exec(binaryPath(cli), argv, u8[]()).wait();
-  if (!r.ran()) { return Ran(false, -1, r.error); }
-  return Ran(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+  auto rRan = flatten(procs.exec(binaryPath(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Ran(false, -1, "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  return Ran(true, r!.status, string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr));
 }
 
 /** How many times `needle` appears in `hay`. Overlaps are not a concern for what this counts. */
@@ -76,13 +78,16 @@ i32 countOf(string hay, string needle) {
   return n;
 }
 
-export string test_quiet_prints_the_summary_alone_5vq3mk8(Core core, Cli cli) {
+export string test_quiet_prints_the_summary_alone_5vq3mk8(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Dir d = workspace(cli);
+  Dir d = workspace(env, fs);
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
-  Ran quiet = wacTest(cli, ["--quiet", "\{d.path}/three_test.wac"]);
+  Ran quiet = wacTest(env, procs, ["--quiet", "\{d.path}/three_test.wac"]);
   t.isTrue(quiet.started, "the binary started");
   if (!quiet.started) { return t.report(); }
   t.eqI32(quiet.status, 0, "all three pass — \{quiet.out}");
@@ -91,13 +96,16 @@ export string test_quiet_prints_the_summary_alone_5vq3mk8(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_run_names_every_pass_and_times_it_5vq3mk8(Core core, Cli cli) {
+export string test_a_run_names_every_pass_and_times_it_5vq3mk8(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Dir d = workspace(cli);
+  Dir d = workspace(env, fs);
   t.isTrue(d.ok, d.what);
   if (!d.ok) { return t.report(); }
 
-  Ran loud = wacTest(cli, ["\{d.path}/three_test.wac"]);
+  Ran loud = wacTest(env, procs, ["\{d.path}/three_test.wac"]);
   t.isTrue(loud.started, "the binary started");
   if (!loud.started) { return t.report(); }
   t.eqI32(loud.status, 0, "all three still pass — \{loud.out}");

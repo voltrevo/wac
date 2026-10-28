@@ -57,7 +57,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { dumpTypeErrors, diagnoseGraphIn } from "../../src/api.wac";
 import { Corpus, loadCorpus, nestedProjects } from "./corpus_probe.wac";
 
@@ -103,9 +103,10 @@ string fileOf(string row) {
  */
 static string CANARY = "/packages/fmt/src/zzz_corpuscheck_canary.wac";
 
-export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core core, Cli cli) {
+export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "corpuscheck_test");
+  Corpus c = loadCorpus(fs, "corpuscheck_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
   t.isTrue(c.paths.len() >= 300, "only " + itoa(c.paths.len()) + " corpus files");
@@ -131,7 +132,7 @@ export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core c
   // sweep — every file checked as an entry against its own closure, which is what makes this a
   // per-file oracle — with the parse taken once for the graph and handed to each check.
   // `issues/lang/0133` is that economy one level down, inside a single call.
-  string[] rows = errorRows(diagnoseGraphIn(keys, sources, nestedProjects(cli, keys, sources), keys[0]));
+  string[] rows = errorRows(diagnoseGraphIn(keys, sources, nestedProjects(fs, keys, sources), keys[0]));
 
   bool sawCanary = false;
   string[] reported = string[].filled(64, "");

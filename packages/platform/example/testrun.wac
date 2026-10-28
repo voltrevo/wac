@@ -5,41 +5,49 @@
 // The module is built with `wac build`; the names come out of its own manifest; a test that traps
 // passes when it is called `test_traps_*`, which is the convention the host used to own.
 
-import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule, Sys } from "std";
+import { Authority, CallResult, Module, Sys, Files, Modules, Output } from "std";
+import { flatten } from "core";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  FileResult f = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!f.ok) { core.warn("cannot read: \{f.error}"); return 1; }
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Modules mods = sys.modules();
+  auto fRead = flatten(fs.readFile(argv[0]).wait());
+  if (fRead.isErr()) { err.line("cannot read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}"); return 1; }
 
-  LoadedModule m = cli.load(f.bytes, GRANT_ALL());
-  if (m.handle < 0) { core.warn("load: \{m.error}"); return 1; }
+  // Everything this program holds, which is what `wac test` hands a test file.
+  auto loaded = mods.load(fRead.unwrap(), Authority(fs, sys.net(), sys.env(), sys.procs()));
+  if (loaded.isErr()) { err.line("load: \{loaded.err()!}"); return 1; }
+  Module m = loaded.unwrap();
 
   i32 passed = 0;
   i32 failed = 0;
-  string[] names = testExports(f.bytes);
+  string[] names = testExports(fRead.unwrap());
   for (i32 i = 0; i < names.len(); i++) {
     string name = names[i];
-    CallResult c = cli.call(m.handle, name, 0);
+    auto called = m.call(name, 0);
+    if (called.isErr()) { failed = failed + 1; out.line("FAIL \{name} — \{called.err()!}"); continue; }
+    CallResult c = called.unwrap();
     bool wantsTrap = name.len() > 11 && name.slice(0, 11) == "test_traps_";
     if (c.trapped()) {
       // A trap is a value, so the runner decides what it means instead of dying with it.
-      if (wantsTrap) { passed = passed + 1; core.log("ok   \{name} (trapped)"); }
-      else { failed = failed + 1; core.log("FAIL \{name} — trapped: \{c.text}"); }
+      if (wantsTrap) { passed = passed + 1; out.line("ok   \{name} (trapped)"); }
+      else { failed = failed + 1; out.line("FAIL \{name} — trapped: \{c.text}"); }
     } else if (c.text == "") {
       passed = passed + 1;
-      core.log("ok   \{name}");
+      out.line("ok   \{name}");
     } else {
       failed = failed + 1;
-      core.log("FAIL \{name} — \{c.text}");
+      out.line("FAIL \{name} — \{c.text}");
     }
   }
-  cli.unload(m.handle);
-  core.log("\{passed} passed, \{failed} failed");
+  m.unload();
+  out.line("\{passed} passed, \{failed} failed");
   return failed == 0 ? 0 : 3;
 }
 

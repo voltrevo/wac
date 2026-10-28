@@ -45,9 +45,9 @@
 // nothing. Taking the editing over would make `^U` and `^W` work here exactly as over ssh, and would
 // make those three our problem. A decision rather than an oversight, written down here.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Unsupported } from "std";
 import { Element, ElementEvent, Listen, MOD_CTRL, Node, Page, Ref, Ui, html.a, html.div, html.input, html.label, html.pre, html.span, html.style } from "../../web";
-import { Ticket, TicketBase, Vec } from "core";
+import { Result, Ticket, TicketBase, Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
 
@@ -133,7 +133,7 @@ static string STYLE =
  * What a copy of this page started by `spawnSelf` runs — `--spawn applet`. Its first argument names the
  * `box` applet, as on a command line.
  */
-export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
+export async i32 applet(Sys sys) { return await boxApplet(sys); }
 
 /** Whether `e` is `^C`. */
 bool isIntr(ElementEvent e) { return (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C"); }
@@ -164,8 +164,6 @@ Node Layout(Ui ui, Parts p) {
 
 export async i32 main(Page page) {
   Sys sys = page.sys;
-  Core core = sys.core;
-  Cli cli = sys.cli;
   page.title("wac sh");
   Parts p = Parts(Ref {}, Ref {}, Ref {});
   page.mount((Ui ui) => Layout(ui, p));
@@ -177,7 +175,7 @@ export async i32 main(Page page) {
   // One shell for the whole session, so variables and functions persist between commands exactly as
   // they would in a terminal — `Session`, which is the shell, the scrollback and the history with no
   // page in it, shared with `desk.wac`.
-  Session s = Session.start(core, cli, "term");
+  Session s = Session.start(sys, "term");
   s.say(BANNER);
 
   // Open on a session rather than on a prompt with nothing above it, run through the same `runScript`
@@ -205,7 +203,7 @@ export async i32 main(Page page) {
     if (running is not null) {
       // **A command in flight, and the keyboard still read.** Whichever comes first — the command
       // ending, a key, or the redraw timer — and the other two are still there next time round.
-      Ticket<i64> tick = core.sleepMillis(REDRAW_MS).ticket();
+      Ticket<Result<void, union<Unsupported>>> tick = sys.clock().sleepMillis(REDRAW_MS);
       TicketBase[] parts = [running!, next, tick] as TicketBase[];
       i32 k = await Ticket.first(parts);
       if (k == 0) {

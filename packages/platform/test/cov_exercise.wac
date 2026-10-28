@@ -5,7 +5,7 @@
 //
 // One of the last packages `issues/system/0205` records as unmeasured.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Clock, Env, Files, Modules, Net, Output, Procs } from "std";
 
 import {
   test_an_image_written_on_one_host_is_the_same_system_on_the_other as arri__an_image_written_on_one_host_is_the_same_system_on_the_other,
@@ -50,17 +50,6 @@ import {
   test_a_cleared_environment_is_only_what_was_passed as exec__a_cleared_environment_is_only_what_was_passed,
   test_an_inherited_stream_reaches_our_own_output as exec__an_inherited_stream_reaches_our_own_output,
 } from "./wac/exec_test.wac";
-import {
-  test_a_substitute_capability_answers_exactly_as_the_host_frame_does as fram__a_substitute_capability_answers_exactly_as_the_host_frame_does,
-  test_a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input as fram__a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input,
-  test_the_two_frames_agree_on_the_binary_as_well as fram__the_two_frames_agree_on_the_binary_as_well,
-  test_a_withheld_capability_answers_as_a_host_does as fram__a_withheld_capability_answers_as_a_host_does,
-} from "./wac/frame_test.wac";
-import {
-  test_a_child_that_redirects_its_output_writes_the_file as fram2__a_child_that_redirects_its_output_writes_the_file,
-  test_output_either_side_of_a_redirect_is_still_captured as fram2__output_either_side_of_a_redirect_is_still_captured,
-  test_a_frames_cwd_is_absolute_however_it_was_given as fram2__a_frames_cwd_is_absolute_however_it_was_given,
-} from "./wac/frameoutput_test.wac";
 import {
   test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host as hand__the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host,
   test_every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number as hand__every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number,
@@ -201,489 +190,467 @@ import {
 } from "./wac/world_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
+  Modules mods = sys.modules();
   i32 bad = 0;
-  if (arri__an_image_written_on_one_host_is_the_same_system_on_the_other(core, cli).len() > 0) {
-    core.warn("error: FAILED arrival_test test_an_image_written_on_one_host_is_the_same_system_on_the_other");
+  if (arri__an_image_written_on_one_host_is_the_same_system_on_the_other(sys).len() > 0) {
+    err.line("error: FAILED arrival_test test_an_image_written_on_one_host_is_the_same_system_on_the_other");
     bad = bad + 1;
   }
-  if (arri__a_session_that_changes_nothing_writes_the_same_bytes_on_either_host(core, cli).len() > 0) {
-    core.warn("error: FAILED arrival_test test_a_session_that_changes_nothing_writes_the_same_bytes_on_either_host");
+  if (arri__a_session_that_changes_nothing_writes_the_same_bytes_on_either_host(sys).len() > 0) {
+    err.line("error: FAILED arrival_test test_a_session_that_changes_nothing_writes_the_same_bytes_on_either_host");
     bad = bad + 1;
   }
-  if (arri__neither_host_reaches_the_disk_except_through_the_grants_the_image_needs(core, cli).len() > 0) {
-    core.warn("error: FAILED arrival_test test_neither_host_reaches_the_disk_except_through_the_grants_the_image_needs");
+  if (arri__neither_host_reaches_the_disk_except_through_the_grants_the_image_needs(sys).len() > 0) {
+    err.line("error: FAILED arrival_test test_neither_host_reaches_the_disk_except_through_the_grants_the_image_needs");
     bad = bad + 1;
   }
-  if (arri2__two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_image(core, cli).len() > 0) {
-    core.warn("error: FAILED arrival_users_test test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_image");
+  if (arri2__two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_image(sys).len() > 0) {
+    err.line("error: FAILED arrival_users_test test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_image");
     bad = bad + 1;
   }
-  if (buil__a_program_the_checker_refuses_does_not_build(core, cli).len() > 0) {
-    core.warn("error: FAILED buildchecks_test test_a_program_the_checker_refuses_does_not_build");
+  if (buil__a_program_the_checker_refuses_does_not_build(sys).len() > 0) {
+    err.line("error: FAILED buildchecks_test test_a_program_the_checker_refuses_does_not_build");
     bad = bad + 1;
   }
-  if (chun__the_bridge_chunks_in_both_directions(core, cli).len() > 0) {
-    core.warn("error: FAILED chunking_test test_the_bridge_chunks_in_both_directions");
+  if (chun__the_bridge_chunks_in_both_directions(sys).len() > 0) {
+    err.line("error: FAILED chunking_test test_the_bridge_chunks_in_both_directions");
     bad = bad + 1;
   }
-  if (conf__the_readmes_capability_table_lists_every_capability_there_is(core, cli).len() > 0) {
-    core.warn("error: FAILED conformance_test test_the_readmes_capability_table_lists_every_capability_there_is");
+  if (conf__the_readmes_capability_table_lists_every_capability_there_is(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_the_readmes_capability_table_lists_every_capability_there_is");
     bad = bad + 1;
   }
-  if (conf__every_capability_the_language_declares_the_host_with_no_js_supplies(core, cli).len() > 0) {
-    core.warn("error: FAILED conformance_test test_every_capability_the_language_declares_the_host_with_no_js_supplies");
+  if (conf__every_capability_the_language_declares_the_host_with_no_js_supplies(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_every_capability_the_language_declares_the_host_with_no_js_supplies");
     bad = bad + 1;
   }
-  if (conf__every_opcode_on_the_two_host_surface_is_accounted_for(core, cli).len() > 0) {
-    core.warn("error: FAILED conformance_test test_every_opcode_on_the_two_host_surface_is_accounted_for");
+  if (conf__every_opcode_on_the_two_host_surface_is_accounted_for(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_every_opcode_on_the_two_host_surface_is_accounted_for");
     bad = bad + 1;
   }
-  if (conf__the_ledger_says_how_much_of_the_surface_is_actually_compared(core, cli).len() > 0) {
-    core.warn("error: FAILED conformance_test test_the_ledger_says_how_much_of_the_surface_is_actually_compared");
+  if (conf__the_ledger_says_how_much_of_the_surface_is_actually_compared(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_the_ledger_says_how_much_of_the_surface_is_actually_compared");
     bad = bad + 1;
   }
-  if (decl__a_program_handed_sys_is_described_by_the_world(core, cli).len() > 0) {
-    core.warn("error: FAILED declared_test test_a_program_handed_sys_is_described_by_the_world");
+  if (decl__a_program_handed_sys_is_described_by_the_world(sys).len() > 0) {
+    err.line("error: FAILED declared_test test_a_program_handed_sys_is_described_by_the_world");
     bad = bad + 1;
   }
-  if (decl__and_one_that_asks_for_two_is_described_by_two(core, cli).len() > 0) {
-    core.warn("error: FAILED declared_test test_and_one_that_asks_for_two_is_described_by_two");
+  if (decl__and_one_that_asks_for_two_is_described_by_two(sys).len() > 0) {
+    err.line("error: FAILED declared_test test_and_one_that_asks_for_two_is_described_by_two");
     bad = bad + 1;
   }
-  if (echo__a_wac_program_echoes_datagrams_on_the_deno_host(core, cli).len() > 0) {
-    core.warn("error: FAILED echod_test test_a_wac_program_echoes_datagrams_on_the_deno_host");
+  if (echo__a_wac_program_echoes_datagrams_on_the_deno_host(sys).len() > 0) {
+    err.line("error: FAILED echod_test test_a_wac_program_echoes_datagrams_on_the_deno_host");
     bad = bad + 1;
   }
-  if (echo__and_the_same_program_on_node_answers_the_same_way(core, cli).len() > 0) {
-    core.warn("error: FAILED echod_test test_and_the_same_program_on_node_answers_the_same_way");
+  if (echo__and_the_same_program_on_node_answers_the_same_way(sys).len() > 0) {
+    err.line("error: FAILED echod_test test_and_the_same_program_on_node_answers_the_same_way");
     bad = bad + 1;
   }
-  if (echo__and_on_the_host_with_no_javascript(core, cli).len() > 0) {
-    core.warn("error: FAILED echod_test test_and_on_the_host_with_no_javascript");
+  if (echo__and_on_the_host_with_no_javascript(sys).len() > 0) {
+    err.line("error: FAILED echod_test test_and_on_the_host_with_no_javascript");
     bad = bad + 1;
   }
-  if (echo__an_ungranted_program_cannot_bind_a_datagram_socket(core, cli).len() > 0) {
-    core.warn("error: FAILED echod_test test_an_ungranted_program_cannot_bind_a_datagram_socket");
+  if (echo__an_ungranted_program_cannot_bind_a_datagram_socket(sys).len() > 0) {
+    err.line("error: FAILED echod_test test_an_ungranted_program_cannot_bind_a_datagram_socket");
     bad = bad + 1;
   }
-  if (exec__a_program_runs_and_its_output_comes_back(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_a_program_runs_and_its_output_comes_back");
+  if (exec__a_program_runs_and_its_output_comes_back(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_a_program_runs_and_its_output_comes_back");
     bad = bad + 1;
   }
-  if (exec__stdin_reaches_the_program(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_stdin_reaches_the_program");
+  if (exec__stdin_reaches_the_program(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_stdin_reaches_the_program");
     bad = bad + 1;
   }
-  if (exec__a_failing_program_is_still_a_program_that_ran(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_a_failing_program_is_still_a_program_that_ran");
+  if (exec__a_failing_program_is_still_a_program_that_ran(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_a_failing_program_is_still_a_program_that_ran");
     bad = bad + 1;
   }
-  if (exec__a_program_that_is_not_there_says_so(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_a_program_that_is_not_there_says_so");
+  if (exec__a_program_that_is_not_there_says_so(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_a_program_that_is_not_there_says_so");
     bad = bad + 1;
   }
-  if (exec__arguments_are_not_a_shell_string(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_arguments_are_not_a_shell_string");
+  if (exec__arguments_are_not_a_shell_string(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_arguments_are_not_a_shell_string");
     bad = bad + 1;
   }
-  if (exec__output_is_bytes_and_not_text(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_output_is_bytes_and_not_text");
+  if (exec__output_is_bytes_and_not_text(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_output_is_bytes_and_not_text");
     bad = bad + 1;
   }
-  if (exec__a_child_that_answers_while_it_is_still_being_fed(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_a_child_that_answers_while_it_is_still_being_fed");
+  if (exec__a_child_that_answers_while_it_is_still_being_fed(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_a_child_that_answers_while_it_is_still_being_fed");
     bad = bad + 1;
   }
-  if (exec__three_children_run_at_once(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_three_children_run_at_once");
+  if (exec__three_children_run_at_once(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_three_children_run_at_once");
     bad = bad + 1;
   }
-  if (exec__the_child_is_handed_an_environment(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_the_child_is_handed_an_environment");
+  if (exec__the_child_is_handed_an_environment(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_the_child_is_handed_an_environment");
     bad = bad + 1;
   }
-  if (exec__a_cleared_environment_is_only_what_was_passed(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_a_cleared_environment_is_only_what_was_passed");
+  if (exec__a_cleared_environment_is_only_what_was_passed(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_a_cleared_environment_is_only_what_was_passed");
     bad = bad + 1;
   }
-  if (exec__an_inherited_stream_reaches_our_own_output(core, cli).len() > 0) {
-    core.warn("error: FAILED exec_test test_an_inherited_stream_reaches_our_own_output");
+  if (exec__an_inherited_stream_reaches_our_own_output(sys).len() > 0) {
+    err.line("error: FAILED exec_test test_an_inherited_stream_reaches_our_own_output");
     bad = bad + 1;
   }
-  if (fram__a_substitute_capability_answers_exactly_as_the_host_frame_does(core, cli).len() > 0) {
-    core.warn("error: FAILED frame_test test_a_substitute_capability_answers_exactly_as_the_host_frame_does");
+  if (hand__the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host(sys).len() > 0) {
+    err.line("error: FAILED handles_test test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host");
     bad = bad + 1;
   }
-  if (fram__a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input(core, cli).len() > 0) {
-    core.warn("error: FAILED frame_test test_a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input");
+  if (hand__every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number(sys).len() > 0) {
+    err.line("error: FAILED handles_test test_every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number");
     bad = bad + 1;
   }
-  if (fram__the_two_frames_agree_on_the_binary_as_well(core, cli).len() > 0) {
-    core.warn("error: FAILED frame_test test_the_two_frames_agree_on_the_binary_as_well");
+  if (host__the_two_rust_hosts_classify_an_error_the_same_way(sys).len() > 0) {
+    err.line("error: FAILED hostfaults_test test_the_two_rust_hosts_classify_an_error_the_same_way");
     bad = bad + 1;
   }
-  if (fram__a_withheld_capability_answers_as_a_host_does(core, cli).len() > 0) {
-    core.warn("error: FAILED frame_test test_a_withheld_capability_answers_as_a_host_does");
+  if (host__the_two_rust_hosts_number_the_faults_the_same_way(sys).len() > 0) {
+    err.line("error: FAILED hostfaults_test test_the_two_rust_hosts_number_the_faults_the_same_way");
     bad = bad + 1;
   }
-  if (fram2__a_child_that_redirects_its_output_writes_the_file(core, cli).len() > 0) {
-    core.warn("error: FAILED frameoutput_test test_a_child_that_redirects_its_output_writes_the_file");
+  if (insi__a_childs_output_comes_back_to_its_caller_and_goes_nowhere_else(sys).len() > 0) {
+    err.line("error: FAILED inside_test test_a_childs_output_comes_back_to_its_caller_and_goes_nowhere_else");
     bad = bad + 1;
   }
-  if (fram2__output_either_side_of_a_redirect_is_still_captured(core, cli).len() > 0) {
-    core.warn("error: FAILED frameoutput_test test_output_either_side_of_a_redirect_is_still_captured");
+  if (insi__a_child_reads_what_it_was_fed_not_the_terminals_standard_input(sys).len() > 0) {
+    err.line("error: FAILED inside_test test_a_child_reads_what_it_was_fed_not_the_terminals_standard_input");
     bad = bad + 1;
   }
-  if (fram2__a_frames_cwd_is_absolute_however_it_was_given(core, cli).len() > 0) {
-    core.warn("error: FAILED frameoutput_test test_a_frames_cwd_is_absolute_however_it_was_given");
+  if (load__this_host_loads_a_module_and_calls_every_shape(sys).len() > 0) {
+    err.line("error: FAILED load_test test_this_host_loads_a_module_and_calls_every_shape");
     bad = bad + 1;
   }
-  if (hand__the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host(core, cli).len() > 0) {
-    core.warn("error: FAILED handles_test test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host");
+  if (load__all_four_hosts_load_one_module_and_answer_the_same(sys).len() > 0) {
+    err.line("error: FAILED load_test test_all_four_hosts_load_one_module_and_answer_the_same");
     bad = bad + 1;
   }
-  if (hand__every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number(core, cli).len() > 0) {
-    core.warn("error: FAILED handles_test test_every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number");
+  if (nati__the_capability_examples_answer_the_same_on_both_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_examples_test test_the_capability_examples_answer_the_same_on_both_hosts");
     bad = bad + 1;
   }
-  if (host__the_two_rust_hosts_classify_an_error_the_same_way(core, cli).len() > 0) {
-    core.warn("error: FAILED hostfaults_test test_the_two_rust_hosts_classify_an_error_the_same_way");
+  if (nati2__wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts");
     bad = bad + 1;
   }
-  if (host__the_two_rust_hosts_number_the_faults_the_same_way(core, cli).len() > 0) {
-    core.warn("error: FAILED hostfaults_test test_the_two_rust_hosts_number_the_faults_the_same_way");
+  if (nati2__the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ");
     bad = bad + 1;
   }
-  if (insi__a_childs_output_comes_back_to_its_caller_and_goes_nowhere_else(core, cli).len() > 0) {
-    core.warn("error: FAILED inside_test test_a_childs_output_comes_back_to_its_caller_and_goes_nowhere_else");
+  if (nati2__the_two_hosts_agree_where_the_real_tool_prints_more_than_this_system_has(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this_system_has");
     bad = bad + 1;
   }
-  if (insi__a_child_reads_what_it_was_fed_not_the_terminals_standard_input(core, cli).len() > 0) {
-    core.warn("error: FAILED inside_test test_a_child_reads_what_it_was_fed_not_the_terminals_standard_input");
+  if (nati2__every_capability_that_needs_a_grant_is_refused_the_same_way_on_both_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_every_capability_that_needs_a_grant_is_refused_the_same_way_on_both_hosts");
     bad = bad + 1;
   }
-  if (load__this_host_loads_a_module_and_calls_every_shape(core, cli).len() > 0) {
-    core.warn("error: FAILED load_test test_this_host_loads_a_module_and_calls_every_shape");
+  if (nati2__the_four_grants_are_independent_write_without_read_on_both_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_the_four_grants_are_independent_write_without_read_on_both_hosts");
     bad = bad + 1;
   }
-  if (load__all_four_hosts_load_one_module_and_answer_the_same(core, cli).len() > 0) {
-    core.warn("error: FAILED load_test test_all_four_hosts_load_one_module_and_answer_the_same");
+  if (nati2__a_program_reading_its_standard_input_answers_the_same_on_both_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_a_program_reading_its_standard_input_answers_the_same_on_both_hosts");
     bad = bad + 1;
   }
-  if (nati__the_capability_examples_answer_the_same_on_both_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_examples_test test_the_capability_examples_answer_the_same_on_both_hosts");
+  if (nati2__kill_percent_one_ends_a_background_job_on_both_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_hostfs_test test_kill_percent_one_ends_a_background_job_on_both_hosts");
     bad = bad + 1;
   }
-  if (nati2__wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts");
+  if (nati3__the_manifest_resolves_its_own_funcref_fields_and_names_what_the_host_asks_for(sys).len() > 0) {
+    err.line("error: FAILED native_manifest_test test_the_manifest_resolves_its_own_funcref_fields_and_names_what_the_host_asks_for");
     bad = bad + 1;
   }
-  if (nati2__the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ");
+  if (nati3__a_program_declaring_a_name_platform_also_declares_still_runs(sys).len() > 0) {
+    err.line("error: FAILED native_manifest_test test_a_program_declaring_a_name_platform_also_declares_still_runs");
     bad = bad + 1;
   }
-  if (nati2__the_two_hosts_agree_where_the_real_tool_prints_more_than_this_system_has(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this_system_has");
+  if (nati4__the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not(sys).len() > 0) {
+    err.line("error: FAILED native_shell_test test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not");
     bad = bad + 1;
   }
-  if (nati2__every_capability_that_needs_a_grant_is_refused_the_same_way_on_both_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_every_capability_that_needs_a_grant_is_refused_the_same_way_on_both_hosts");
+  if (nati4__the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle(sys).len() > 0) {
+    err.line("error: FAILED native_shell_test test_the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle");
     bad = bad + 1;
   }
-  if (nati2__the_four_grants_are_independent_write_without_read_on_both_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_the_four_grants_are_independent_write_without_read_on_both_hosts");
+  if (nati4__the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on(sys).len() > 0) {
+    err.line("error: FAILED native_shell_test test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on");
     bad = bad + 1;
   }
-  if (nati2__a_program_reading_its_standard_input_answers_the_same_on_both_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_a_program_reading_its_standard_input_answers_the_same_on_both_hosts");
+  if (nati5__the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not(sys).len() > 0) {
+    err.line("error: FAILED native_test test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not");
     bad = bad + 1;
   }
-  if (nati2__kill_percent_one_ends_a_background_job_on_both_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_hostfs_test test_kill_percent_one_ends_a_background_job_on_both_hosts");
+  if (nati5__the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(sys).len() > 0) {
+    err.line("error: FAILED native_test test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy");
     bad = bad + 1;
   }
-  if (nati3__the_manifest_resolves_its_own_funcref_fields_and_names_what_the_host_asks_for(core, cli).len() > 0) {
-    core.warn("error: FAILED native_manifest_test test_the_manifest_resolves_its_own_funcref_fields_and_names_what_the_host_asks_for");
+  if (nati5__running_a_host_program_agrees_between_the_two_native_hosts(sys).len() > 0) {
+    err.line("error: FAILED native_test test_running_a_host_program_agrees_between_the_two_native_hosts");
     bad = bad + 1;
   }
-  if (nati3__a_program_declaring_a_name_platform_also_declares_still_runs(core, cli).len() > 0) {
-    core.warn("error: FAILED native_manifest_test test_a_program_declaring_a_name_platform_also_declares_still_runs");
+  if (nati6__the_deno_host_refuses_a_flag_it_does_not_know(sys).len() > 0) {
+    err.line("error: FAILED nativecli_test test_the_deno_host_refuses_a_flag_it_does_not_know");
     bad = bad + 1;
   }
-  if (nati4__the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not(core, cli).len() > 0) {
-    core.warn("error: FAILED native_shell_test test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_that_is_not");
+  if (node__a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client(sys).len() > 0) {
+    err.line("error: FAILED node_net_test test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client");
     bad = bad + 1;
   }
-  if (nati4__the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle(core, cli).len() > 0) {
-    core.warn("error: FAILED native_shell_test test_the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle");
+  if (node__and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface(sys).len() > 0) {
+    err.line("error: FAILED node_net_test test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface");
     bad = bad + 1;
   }
-  if (nati4__the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on(core, cli).len() > 0) {
-    core.warn("error: FAILED native_shell_test test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on");
+  if (opti__optimize_makes_a_smaller_artifact_that_answers_the_same(sys).len() > 0) {
+    err.line("error: FAILED optimize_test test_optimize_makes_a_smaller_artifact_that_answers_the_same");
     bad = bad + 1;
   }
-  if (nati5__the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not(core, cli).len() > 0) {
-    core.warn("error: FAILED native_test test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not");
+  if (opti__an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one(sys).len() > 0) {
+    err.line("error: FAILED optimize_test test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one");
     bad = bad + 1;
   }
-  if (nati5__the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(core, cli).len() > 0) {
-    core.warn("error: FAILED native_test test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy");
+  if (opti__a_coverage_build_refuses_to_be_optimised(sys).len() > 0) {
+    err.line("error: FAILED optimize_test test_a_coverage_build_refuses_to_be_optimised");
     bad = bad + 1;
   }
-  if (nati5__running_a_host_program_agrees_between_the_two_native_hosts(core, cli).len() > 0) {
-    core.warn("error: FAILED native_test test_running_a_host_program_agrees_between_the_two_native_hosts");
+  if (orde__clis_fields_and_the_providers_arguments_are_in_the_same_order(sys).len() > 0) {
+    err.line("error: FAILED order_test test_clis_fields_and_the_providers_arguments_are_in_the_same_order");
     bad = bad + 1;
   }
-  if (nati6__the_deno_host_refuses_a_flag_it_does_not_know(core, cli).len() > 0) {
-    core.warn("error: FAILED nativecli_test test_the_deno_host_refuses_a_flag_it_does_not_know");
+  if (pati__a_peer_that_says_nothing_no_longer_wedges_the_application(sys).len() > 0) {
+    err.line("error: FAILED patience_test test_a_peer_that_says_nothing_no_longer_wedges_the_application");
     bad = bad + 1;
   }
-  if (node__a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client(core, cli).len() > 0) {
-    core.warn("error: FAILED node_net_test test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client");
+  if (pati__a_peer_that_speaks_late_is_still_heard(sys).len() > 0) {
+    err.line("error: FAILED patience_test test_a_peer_that_speaks_late_is_still_heard");
     bad = bad + 1;
   }
-  if (node__and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface(core, cli).len() > 0) {
-    core.warn("error: FAILED node_net_test test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface");
+  if (pipe__stdin_through_two_children_and_out_again(sys).len() > 0) {
+    err.line("error: FAILED pipeline_test test_stdin_through_two_children_and_out_again");
     bad = bad + 1;
   }
-  if (opti__optimize_makes_a_smaller_artifact_that_answers_the_same(core, cli).len() > 0) {
-    core.warn("error: FAILED optimize_test test_optimize_makes_a_smaller_artifact_that_answers_the_same");
+  if (pipe__a_child_serves_a_socket_it_cannot_see(sys).len() > 0) {
+    err.line("error: FAILED pipeline_test test_a_child_serves_a_socket_it_cannot_see");
     bad = bad + 1;
   }
-  if (opti__an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one(core, cli).len() > 0) {
-    core.warn("error: FAILED optimize_test test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one");
-    bad = bad + 1;
-  }
-  if (opti__a_coverage_build_refuses_to_be_optimised(core, cli).len() > 0) {
-    core.warn("error: FAILED optimize_test test_a_coverage_build_refuses_to_be_optimised");
-    bad = bad + 1;
-  }
-  if (orde__clis_fields_and_the_providers_arguments_are_in_the_same_order(core, cli).len() > 0) {
-    core.warn("error: FAILED order_test test_clis_fields_and_the_providers_arguments_are_in_the_same_order");
-    bad = bad + 1;
-  }
-  if (pati__a_peer_that_says_nothing_no_longer_wedges_the_application(core, cli).len() > 0) {
-    core.warn("error: FAILED patience_test test_a_peer_that_says_nothing_no_longer_wedges_the_application");
-    bad = bad + 1;
-  }
-  if (pati__a_peer_that_speaks_late_is_still_heard(core, cli).len() > 0) {
-    core.warn("error: FAILED patience_test test_a_peer_that_speaks_late_is_still_heard");
-    bad = bad + 1;
-  }
-  if (pipe__stdin_through_two_children_and_out_again(core, cli).len() > 0) {
-    core.warn("error: FAILED pipeline_test test_stdin_through_two_children_and_out_again");
-    bad = bad + 1;
-  }
-  if (pipe__a_child_serves_a_socket_it_cannot_see(core, cli).len() > 0) {
-    core.warn("error: FAILED pipeline_test test_a_child_serves_a_socket_it_cannot_see");
-    bad = bad + 1;
-  }
-  if (prod__a_built_module_names_the_compiler_that_made_it(core, cli).len() > 0) {
-    core.warn("error: FAILED producer_test test_a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ");
+  if (prod__a_built_module_names_the_compiler_that_made_it(sys).len() > 0) {
+    err.line("error: FAILED producer_test test_a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ");
     bad = bad + 1;
   }
   if (ripp__the_wave_decays_rather_than_growing().len() > 0) {
-    core.warn("error: FAILED ripple_test test_the_wave_decays_rather_than_growing");
+    err.line("error: FAILED ripple_test test_the_wave_decays_rather_than_growing");
     bad = bad + 1;
   }
   if (ripp__the_wave_propagates_rather_than_fading_in_place().len() > 0) {
-    core.warn("error: FAILED ripple_test test_the_wave_propagates_rather_than_fading_in_place");
+    err.line("error: FAILED ripple_test test_the_wave_propagates_rather_than_fading_in_place");
     bad = bad + 1;
   }
-  if (runt__an_application_builds_to_one_executable_file_and_runs_repeatedly(core, cli).len() > 0) {
-    core.warn("error: FAILED runtimes_test test_an_application_builds_to_one_executable_file_and_runs_repeatedly");
+  if (runt__an_application_builds_to_one_executable_file_and_runs_repeatedly(sys).len() > 0) {
+    err.line("error: FAILED runtimes_test test_an_application_builds_to_one_executable_file_and_runs_repeatedly");
     bad = bad + 1;
   }
-  if (runt__the_same_application_builds_for_node_and_agrees_with_the_deno_build(core, cli).len() > 0) {
-    core.warn("error: FAILED runtimes_test test_the_same_application_builds_for_node_and_agrees_with_the_deno_build");
+  if (runt__the_same_application_builds_for_node_and_agrees_with_the_deno_build(sys).len() > 0) {
+    err.line("error: FAILED runtimes_test test_the_same_application_builds_for_node_and_agrees_with_the_deno_build");
     bad = bad + 1;
   }
-  if (runt__the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file(core, cli).len() > 0) {
-    core.warn("error: FAILED runtimes_test test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file");
+  if (runt__the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file(sys).len() > 0) {
+    err.line("error: FAILED runtimes_test test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file");
     bad = bad + 1;
   }
-  if (runt__and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take(core, cli).len() > 0) {
-    core.warn("error: FAILED runtimes_test test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take");
+  if (runt__and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take(sys).len() > 0) {
+    err.line("error: FAILED runtimes_test test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take");
     bad = bad + 1;
   }
-  if (runt__the_two_runtimes_agree_about_running_a_host_program(core, cli).len() > 0) {
-    core.warn("error: FAILED runtimes_test test_the_two_runtimes_agree_about_running_a_host_program");
+  if (runt__the_two_runtimes_agree_about_running_a_host_program(sys).len() > 0) {
+    err.line("error: FAILED runtimes_test test_the_two_runtimes_agree_about_running_a_host_program");
     bad = bad + 1;
   }
   if (sche__dispatch_in_the_order_answered().len() > 0) {
-    core.warn("error: FAILED sched_test test_dispatch_in_the_order_answered");
+    err.line("error: FAILED sched_test test_dispatch_in_the_order_answered");
     bad = bad + 1;
   }
   if (sche__a_handler_can_register_more().len() > 0) {
-    core.warn("error: FAILED sched_test test_a_handler_can_register_more");
+    err.line("error: FAILED sched_test test_a_handler_can_register_more");
     bad = bad + 1;
   }
   if (sche__a_deadline_returns_what_ran().len() > 0) {
-    core.warn("error: FAILED sched_test test_a_deadline_returns_what_ran");
+    err.line("error: FAILED sched_test test_a_deadline_returns_what_ran");
     bad = bad + 1;
   }
   if (sche__a_budget_shrinks_across_waits().len() > 0) {
-    core.warn("error: FAILED sched_test test_a_budget_shrinks_across_waits");
+    err.line("error: FAILED sched_test test_a_budget_shrinks_across_waits");
     bad = bad + 1;
   }
   if (sche__a_spent_budget_stops_the_loop().len() > 0) {
-    core.warn("error: FAILED sched_test test_a_spent_budget_stops_the_loop");
+    err.line("error: FAILED sched_test test_a_spent_budget_stops_the_loop");
     bad = bad + 1;
   }
   if (sche__drain_for_leaves_the_rest_outstanding().len() > 0) {
-    core.warn("error: FAILED sched_test test_drain_for_leaves_the_rest_outstanding");
+    err.line("error: FAILED sched_test test_drain_for_leaves_the_rest_outstanding");
     bad = bad + 1;
   }
   if (sche__drop_all_releases_each_ticket().len() > 0) {
-    core.warn("error: FAILED sched_test test_drop_all_releases_each_ticket");
+    err.line("error: FAILED sched_test test_drop_all_releases_each_ticket");
     bad = bad + 1;
   }
   if (sche__drop_all_clears_before_it_drops().len() > 0) {
-    core.warn("error: FAILED sched_test test_drop_all_clears_before_it_drops");
+    err.line("error: FAILED sched_test test_drop_all_clears_before_it_drops");
     bad = bad + 1;
   }
   if (sche__the_handler_carries_the_type().len() > 0) {
-    core.warn("error: FAILED sched_test test_the_handler_carries_the_type");
+    err.line("error: FAILED sched_test test_the_handler_carries_the_type");
     bad = bad + 1;
   }
-  if (sche2__then_returns_now_and_the_continuations_run_inside_drain(core, cli).len() > 0) {
-    core.warn("error: FAILED scheduled_test test_then_returns_now_and_the_continuations_run_inside_drain");
+  if (sche2__then_returns_now_and_the_continuations_run_inside_drain(sys).len() > 0) {
+    err.line("error: FAILED scheduled_test test_then_returns_now_and_the_continuations_run_inside_drain");
     bad = bad + 1;
   }
-  if (sche2__leaving_with_work_outstanding_is_an_error(core, cli).len() > 0) {
-    core.warn("error: FAILED scheduled_test test_leaving_with_work_outstanding_is_an_error");
+  if (sche2__leaving_with_work_outstanding_is_an_error(sys).len() > 0) {
+    err.line("error: FAILED scheduled_test test_leaving_with_work_outstanding_is_an_error");
     bad = bad + 1;
   }
-  if (sche2__a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest(core, cli).len() > 0) {
-    core.warn("error: FAILED scheduled_test test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest");
+  if (sche2__a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest(sys).len() > 0) {
+    err.line("error: FAILED scheduled_test test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest");
     bad = bad + 1;
   }
-  if (sche2__a_continuation_on_an_ordinary_capabilitys_ticket(core, cli).len() > 0) {
-    core.warn("error: FAILED scheduled_test test_a_continuation_on_an_ordinary_capabilitys_ticket");
+  if (sche2__a_continuation_on_an_ordinary_capabilitys_ticket(sys).len() > 0) {
+    err.line("error: FAILED scheduled_test test_a_continuation_on_an_ordinary_capabilitys_ticket");
     bad = bad + 1;
   }
-  if (sche2__dropall_makes_leaving_deliberate(core, cli).len() > 0) {
-    core.warn("error: FAILED scheduled_test test_dropall_makes_leaving_deliberate");
+  if (sche2__dropall_makes_leaving_deliberate(sys).len() > 0) {
+    err.line("error: FAILED scheduled_test test_dropall_makes_leaving_deliberate");
     bad = bad + 1;
   }
-  if (sche2__waitany_answers_the_first_ready_ticket_in_the_callers_list(core, cli).len() > 0) {
-    core.warn("error: FAILED scheduled_test test_waitany_answers_the_first_ready_ticket_in_the_callers_list");
+  if (sche2__waitany_answers_the_first_ready_ticket_in_the_callers_list(sys).len() > 0) {
+    err.line("error: FAILED scheduled_test test_waitany_answers_the_first_ready_ticket_in_the_callers_list");
     bad = bad + 1;
   }
-  if (slot__platform_wacs_call_slots_is_the_rings_real_size(core, cli).len() > 0) {
-    core.warn("error: FAILED slots_test test_platform_wacs_call_slots_is_the_rings_real_size");
+  if (slot__platform_wacs_call_slots_is_the_rings_real_size(sys).len() > 0) {
+    err.line("error: FAILED slots_test test_platform_wacs_call_slots_is_the_rings_real_size");
     bad = bad + 1;
   }
-  if (spaw__a_wac_program_runs_another_wac_program_as_a_worker(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_wac_program_runs_another_wac_program_as_a_worker");
+  if (spaw__a_wac_program_runs_another_wac_program_as_a_worker(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_wac_program_runs_another_wac_program_as_a_worker");
     bad = bad + 1;
   }
-  if (spaw__a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_parent(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_parent");
+  if (spaw__a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_parent(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_parent");
     bad = bad + 1;
   }
-  if (spaw__a_program_runs_itself_with_no_file_to_read_and_nothing_to_find(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_program_runs_itself_with_no_file_to_read_and_nothing_to_find");
+  if (spaw__a_program_runs_itself_with_no_file_to_read_and_nothing_to_find(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_program_runs_itself_with_no_file_to_read_and_nothing_to_find");
     bad = bad + 1;
   }
-  if (spaw__node_spawns_the_same_way_from_the_same_code(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_node_spawns_the_same_way_from_the_same_code");
+  if (spaw__node_spawns_the_same_way_from_the_same_code(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_node_spawns_the_same_way_from_the_same_code");
     bad = bad + 1;
   }
-  if (spaw__a_built_program_spawns_a_wasm_module_and_grants_it_the_same_way(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_way");
+  if (spaw__a_built_program_spawns_a_wasm_module_and_grants_it_the_same_way(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_way");
     bad = bad + 1;
   }
-  if (spaw__node_spawns_a_wasm_module_from_the_same_module(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_node_spawns_a_wasm_module_from_the_same_module");
+  if (spaw__node_spawns_a_wasm_module_from_the_same_module(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_node_spawns_a_wasm_module_from_the_same_module");
     bad = bad + 1;
   }
-  if (spaw__all_four_hosts_spawn_one_module_and_confine_it_the_same_way(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way");
+  if (spaw__all_four_hosts_spawn_one_module_and_confine_it_the_same_way(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way");
     bad = bad + 1;
   }
-  if (spaw__a_child_is_granted_nothing_even_by_a_parent_that_has_it(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_child_is_granted_nothing_even_by_a_parent_that_has_it");
+  if (spaw__a_child_is_granted_nothing_even_by_a_parent_that_has_it(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_child_is_granted_nothing_even_by_a_parent_that_has_it");
     bad = bad + 1;
   }
-  if (spaw__a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_exceed_them(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_exceed_them");
+  if (spaw__a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_exceed_them(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_exceed_them");
     bad = bad + 1;
   }
-  if (spaw__a_bundle_that_parses_and_never_speaks_the_protocol_is_a_failed_child(core, cli).len() > 0) {
-    core.warn("error: FAILED spawn_test test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_failed_child");
+  if (spaw__a_bundle_that_parses_and_never_speaks_the_protocol_is_a_failed_child(sys).len() > 0) {
+    err.line("error: FAILED spawn_test test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_failed_child");
     bad = bad + 1;
   }
-  if (trap__a_trap_with_a_message_says_it(core, cli).len() > 0) {
-    core.warn("error: FAILED trapmessage_test test_a_trap_with_a_message_says_it");
+  if (trap__a_trap_with_a_message_says_it(sys).len() > 0) {
+    err.line("error: FAILED trapmessage_test test_a_trap_with_a_message_says_it");
     bad = bad + 1;
   }
-  if (trap__a_message_the_program_computed_not_only_a_literal(core, cli).len() > 0) {
-    core.warn("error: FAILED trapmessage_test test_a_message_the_program_computed_not_only_a_literal");
+  if (trap__a_message_the_program_computed_not_only_a_literal(sys).len() > 0) {
+    err.line("error: FAILED trapmessage_test test_a_message_the_program_computed_not_only_a_literal");
     bad = bad + 1;
   }
-  if (trap__a_bare_trap_claims_no_message(core, cli).len() > 0) {
-    core.warn("error: FAILED trapmessage_test test_a_bare_trap_claims_no_message");
+  if (trap__a_bare_trap_claims_no_message(sys).len() > 0) {
+    err.line("error: FAILED trapmessage_test test_a_bare_trap_claims_no_message");
     bad = bad + 1;
   }
-  if (trap__a_built_app_reports_the_message_the_program_gave(core, cli).len() > 0) {
-    core.warn("error: FAILED trapmessage_test test_a_built_app_reports_the_message_the_program_gave");
+  if (trap__a_built_app_reports_the_message_the_program_gave(sys).len() > 0) {
+    err.line("error: FAILED trapmessage_test test_a_built_app_reports_the_message_the_program_gave");
     bad = bad + 1;
   }
-  if (v8ho__boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v8(core, cli).len() > 0) {
-    core.warn("error: FAILED v8host_test test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v8");
+  if (v8ho__boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v8(sys).len() > 0) {
+    err.line("error: FAILED v8host_test test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v8");
     bad = bad + 1;
   }
-  if (v8ho__the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_host(core, cli).len() > 0) {
-    core.warn("error: FAILED v8host_test test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_host");
+  if (v8ho__the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_host(sys).len() > 0) {
+    err.line("error: FAILED v8host_test test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_host");
     bad = bad + 1;
   }
-  if (v8ho__an_image_survives_a_process_and_is_readable_by_a_spawned_child(core, cli).len() > 0) {
-    core.warn("error: FAILED v8host_test test_an_image_survives_a_process_and_is_readable_by_a_spawned_child");
+  if (v8ho__an_image_survives_a_process_and_is_readable_by_a_spawned_child(sys).len() > 0) {
+    err.line("error: FAILED v8host_test test_an_image_survives_a_process_and_is_readable_by_a_spawned_child");
     bad = bad + 1;
   }
-  if (wait__waitany_parks_until_whichever_socket_speaks_first(core, cli).len() > 0) {
-    core.warn("error: FAILED waitany_test test_waitany_parks_until_whichever_socket_speaks_first");
+  if (wait__waitany_parks_until_whichever_socket_speaks_first(sys).len() > 0) {
+    err.line("error: FAILED waitany_test test_waitany_parks_until_whichever_socket_speaks_first");
     bad = bad + 1;
   }
-  if (worl__an_application_written_entirely_in_wac_runs_and_agrees_with_wc(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_an_application_written_entirely_in_wac_runs_and_agrees_with_wc");
+  if (worl__an_application_written_entirely_in_wac_runs_and_agrees_with_wc(sys).len() > 0) {
+    err.line("error: FAILED world_test test_an_application_written_entirely_in_wac_runs_and_agrees_with_wc");
     bad = bad + 1;
   }
-  if (worl__a_capability_the_build_withholds_is_a_failure_the_application_can_report(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_a_capability_the_build_withholds_is_a_failure_the_application_can_report");
+  if (worl__a_capability_the_build_withholds_is_a_failure_the_application_can_report(sys).len() > 0) {
+    err.line("error: FAILED world_test test_a_capability_the_build_withholds_is_a_failure_the_application_can_report");
     bad = bad + 1;
   }
-  if (worl__a_missing_file_reaches_the_application_as_its_hosts_message(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_a_missing_file_reaches_the_application_as_its_hosts_message");
+  if (worl__a_missing_file_reaches_the_application_as_its_hosts_message(sys).len() > 0) {
+    err.line("error: FAILED world_test test_a_missing_file_reaches_the_application_as_its_hosts_message");
     bad = bad + 1;
   }
-  if (worl__no_arguments_means_standard_input_as_wc_has_always_meant_it(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_no_arguments_means_standard_input_as_wc_has_always_meant_it");
+  if (worl__no_arguments_means_standard_input_as_wc_has_always_meant_it(sys).len() > 0) {
+    err.line("error: FAILED world_test test_no_arguments_means_standard_input_as_wc_has_always_meant_it");
     bad = bad + 1;
   }
-  if (worl__env_distinguishes_unset_from_empty(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_env_distinguishes_unset_from_empty");
+  if (worl__env_distinguishes_unset_from_empty(sys).len() > 0) {
+    err.line("error: FAILED world_test test_env_distinguishes_unset_from_empty");
     bad = bad + 1;
   }
-  if (worl__a_program_can_be_a_filter_stdin_in_exact_bytes_out(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_a_program_can_be_a_filter_stdin_in_exact_bytes_out");
+  if (worl__a_program_can_be_a_filter_stdin_in_exact_bytes_out(sys).len() > 0) {
+    err.line("error: FAILED world_test test_a_program_can_be_a_filter_stdin_in_exact_bytes_out");
     bad = bad + 1;
   }
-  if (worl__wc_reads_standard_input_when_given_no_file(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_wc_reads_standard_input_when_given_no_file");
+  if (worl__wc_reads_standard_input_when_given_no_file(sys).len() > 0) {
+    err.line("error: FAILED world_test test_wc_reads_standard_input_when_given_no_file");
     bad = bad + 1;
   }
-  if (worl__stat_and_readdir_reach_the_application_and_are_gated(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_stat_and_readdir_reach_the_application_and_are_gated");
+  if (worl__stat_and_readdir_reach_the_application_and_are_gated(sys).len() > 0) {
+    err.line("error: FAILED world_test test_stat_and_readdir_reach_the_application_and_are_gated");
     bad = bad + 1;
   }
-  if (worl__the_c_locale_accounts_for_its_own_two_words(core, cli).len() > 0) {
-    core.warn("error: FAILED world_test test_the_c_locale_accounts_for_its_own_two_words");
+  if (worl__the_c_locale_accounts_for_its_own_two_words(sys).len() > 0) {
+    err.line("error: FAILED world_test test_the_c_locale_accounts_for_its_own_two_words");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("platform: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("platform: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

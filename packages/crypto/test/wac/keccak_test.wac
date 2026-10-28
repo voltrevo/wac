@@ -22,7 +22,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -67,11 +67,12 @@ static string ORACLE = "packages/crypto/test/oracle.mjs";
  * as a pass. It is a subprocess again, but a batched one that is always there: `node:crypto` has
  * `shake128` and `shake256` built in. `issues/system/0161`.
  */
-void checkKeccak(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", [ORACLE], lines, what);
+void checkKeccak(T t, Procs procs, Lines lines, string what) {
+  check(t, procs, "node", [ORACLE], lines, what);
 }
 
-export string test_sha3_agrees_with_the_host(Core core, Cli cli) {
+export string test_sha3_agrees_with_the_host(Sys sys) {
+  Procs procs = sys.procs();
   // Every rate boundary from both sides, plus the empty input and a multi-block one.
   T t = T.create();
   Lines lines = Lines.create();
@@ -90,11 +91,12 @@ export string test_sha3_agrees_with_the_host(Core core, Cli cli) {
     }
   }
   t.eqI32(lines.n, 22, "eleven lengths at each of two rates");
-  checkKeccak(t, cli, lines, "sha3 at the rate boundaries");
+  checkKeccak(t, procs, lines, "sha3 at the rate boundaries");
   return t.report();
 }
 
-export string test_shake_agrees_with_the_host(Core core, Cli cli) {
+export string test_shake_agrees_with_the_host(Sys sys) {
+  Procs procs = sys.procs();
   // The functions ML-KEM leans on hardest — the matrix comes out of SHAKE128 and the noise
   // out of SHAKE256, both squeezed far past one block. This is the test that used to be
   // skipped whenever OpenSSL 3.5 was missing.
@@ -116,7 +118,7 @@ export string test_shake_agrees_with_the_host(Core core, Cli cli) {
     }
   }
   t.eqI32(lines.n, 96, "six input lengths by eight output lengths, twice");
-  checkKeccak(t, cli, lines, "shake at the rate boundaries");
+  checkKeccak(t, procs, lines, "shake at the rate boundaries");
   return t.report();
 }
 
