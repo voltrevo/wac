@@ -6,7 +6,7 @@
 import { Check } from "./check.wac";
 import { Buf, Ticket } from "core";
 import { Authority, FAULT_NOT_FOUND, Files, GRANT_READ, GRANT_WRITE, Launch, OP_CLOSE_FILE, OP_MONOTONIC_NANOS,
-         OP_OPEN_FILE, OP_READ_DIR, OP_READ_FILE, OP_RECV, OP_SEND, OP_SLEEP_MILLIS, OP_SPAWN, OP_STAT, OP_WRITE_FILE,
+         OP_LOAD, OP_OPEN_FILE, OP_READ_DIR, OP_READ_FILE, OP_RECV, OP_SEND, OP_SLEEP_MILLIS, OP_SPAWN, OP_STAT, OP_WRITE_FILE,
          Stat, Sys } from "std";
 import { Dom, Page, STAT_EXISTS, STAT_FILE, System, World, answered } from "../../src/page.wac";
 
@@ -30,6 +30,7 @@ string opName(i32 op) {
   if (op == OP_SEND()) { return "send"; }
   if (op == OP_CLOSE_FILE()) { return "close"; }
   if (op == OP_SPAWN()) { return "spawn"; }
+  if (op == OP_LOAD()) { return "load"; }
   return "op\{op}";
 }
 
@@ -367,5 +368,20 @@ export string test_a_page_hands_a_module_it_is_given_to_the_browser_to_start() {
   t.isFalse(started.settled(), "the page waits for the browser rather than refusing");
   // The bytes are the module and then the arguments, each length-prefixed: 4 + 8, then 4 + (4 + 3) + (4 + 3).
   t.eqStr(b.log, "spawn 2 /home \{GRANT_READ} +30\n", "the browser is asked to start it, granted only what the page holds");
+  return t.report();
+}
+
+/**
+ * **A page loads a module into its own worker** (design/system/0015 decision 2) — `load` goes to the browser, holding
+ * no more than the page does, where it was refused as something a page cannot do. The browser answers it at once; this
+ * one never answers, which a load reports as an answer that was going to come later.
+ */
+export string test_a_page_hands_a_module_to_load_to_the_browser() {
+  Check t = Check.create();
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ);
+  u8[] module = [0, 97, 115, 109, 1, 0, 0, 0];
+  t.isTrue(w.sys.modules().load(module, Authority(w.sys.files(), null, null, null)).isErr(), "nothing answered it");
+  t.eqStr(b.log, "load 2 \{GRANT_READ} +8\n", "the browser was asked to load it, granted only what the page holds");
   return t.report();
 }

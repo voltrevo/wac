@@ -1,6 +1,7 @@
 # 0015 — a page runs a module it is given, and spawns on `file://`
 
-- **Status:** agreed 2026-10-28 — each question was put to the operator in turn; the answers are under *Decisions*
+- **Status:** done 2026-10-28 (agent-b) — agreed earlier the same day, each question put to the operator in turn;
+  the answers are under *Decisions*, and what was built is under *Order of work*
 - **Superseded in part:** decisions 1 and 2 by `0013` step 6 (operator, 2026-10-28). A module that sees
   the flat host ABI, with `Sys` as the standard way to use it, needs no exported page capabilities and
   no `load`-specific wiring. Decisions 3 and 4 stand; 4 is on master.
@@ -106,9 +107,14 @@ answer that has not arrived is still a block, and in a page it aborts.
 3. `load` and `call` through the same wiring, with `wac test`'s shape as the live test: load a module, call
    an export by name. **Done 2026-10-28 (agent-b) for a module the page started**: `wacLoad` in the
    page builder, the native host's `call_loaded` rules, with the same live test loading one module from another.
-   The page's own program still answers `load` with `Unsupported`; nothing has needed it.
+   The page's own program gained it the same day: `wacServer` serves `load`, `call`, `unload` and `validate` for
+   whichever program it serves, and `system.wac` narrows what is loaded to what the page holds.
 4. The main-thread broker for every child, with a live test that opens the page from `file://` and stops a
-   looping child with `^C`.
+   looping child with `^C`. **Done 2026-10-28 (agent-b)**: `brokerSide` on the page's thread and `brokerClient`
+   in every worker. A worker asks the page's thread to start a child; it hands the asker one end of a
+   `MessageChannel` and the child the other; stopping a child goes back to the page's thread, which ends it and
+   whatever it started. The live test opens the page from `file://`, starts a copy of it that never ends, stops
+   it, and reads 143.
 
 ## Not in this design
 

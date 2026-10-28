@@ -116,8 +116,13 @@ shell on a page runs a program from its disk as it does anywhere else. The worke
 module holds what it was handed and no more, and can itself `load` a module and call it by name — so the `wac`
 command, run that way, can `check`, `build`, `run` and `test`.
 [`packages/platform/example/spawnpage.wac`](../platform/example/spawnpage.wac) runs
-[`spawnchild.wac`](../platform/example/spawnchild.wac), built, from its storage. Not yet: a page opened from
-`file://` cannot start workers from its worker at all, which decision 3 of that design is for.
+[`spawnchild.wac`](../platform/example/spawnchild.wac), built, from its storage. A page's own program can `load`
+a module too.
+
+**The page's own thread starts every program**, for whichever worker asks — the page's program, a copy, a module,
+or anything those start — and hands the two ends of a `MessageChannel` to parent and child, which then talk
+directly. That is because a page opened from `file://` may not start a worker from a worker, while its own thread
+may; so processes, and stopping one with `^C`, work from a file as they do over `http://`.
 
 Nothing waits for the browser: each call that reaches it returns a ticket at once, and the browser
 calls back when the work is done. So a host ticket is `await`ed — `await cli.readFile(p).ticket()` —

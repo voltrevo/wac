@@ -19,7 +19,59 @@ Node shows(Ui ui, Page page) {
   return <pre id="out">{shown.get()}</pre>;
 }
 
+/**
+ * What a copy of this page runs, started by `spawnSelf` (the page is built `--spawn spin`): a loop that never ends,
+ * so the only way it stops is being stopped — which a worker cannot do to itself, and a page from a file could not
+ * do at all while each worker started its own children.
+ */
+export async i32 spin(Sys sys) {
+  i32 n = 0;
+  while (true) { n = n + 1; }
+  return n;
+}
+
+/** `file` loaded into this page's worker, and its `main` called: what that answered. */
+async string loaded(Sys sys, string file) {
+  match (await sys.files().readFile(file)) {
+    Ok(bytes): {
+      match (sys.modules().load(bytes, Authority.none())) {
+        Ok(m): {
+          string said = "";
+          match (m.call("main", 0)) {
+            Ok(c): { said = "page called: status \{c.status}, value \{c.value}"; }
+            Err(e): { said = "page call: \{e}"; }
+          }
+          m.unload();
+          return said;
+        }
+        Err(e): { return "page load: \{e}"; }
+      }
+    }
+    Err(e): { return "page read: \{e}"; }
+  }
+}
+
+/** Start a copy of this page spinning, stop it, and say how it ended. */
+async string stopsACopy(Sys sys) {
+  match (await sys.procs().spawnSelf(string[](), Authority.none(), Launch.plain())) {
+    Ok(child): {
+      await sys.clock().sleepMillis(300);
+      child.stop();
+      match (await child.exit()) {
+        Ok(c): { return "stopped: \{c}"; }
+        Err(e): { return "stopped: \{e}"; }
+      }
+    }
+    Err(e): { return "did not start: \{e}"; }
+  }
+}
+
 async void run(Sys sys, State<string> shown) {
+  // From a file the page has no storage, so nothing to read modules from: it starts copies of itself instead.
+  if ((await sys.files().stat("child.wasm")).isErr()) {
+    shown.set("from a file\n" + (await stopsACopy(sys)));
+    return;
+  }
   string child = await ran(sys, "child.wasm", false, Authority(sys.files(), null, null, null));
   string plain = await ran(sys, "plain.wasm", false, Authority(sys.files(), null, null, null));
   // Writing this page's own streams instead — the page's console — as `wac run` has the program it starts do.
@@ -28,7 +80,9 @@ async void run(Sys sys, State<string> shown) {
   string bare = await ran(sys, "child.wasm", false, Authority.none());
   // A module that loads another and calls it.
   string loads = await ran(sys, "load.wasm", false, Authority(sys.files(), null, null, null));
-  shown.set("\{child}\n\{plain}\n\{inherited}\n\{bare}\n\{loads}");
+  // And the page itself loading one into its own worker, and calling it by name.
+  string itself = await loaded(sys, "plain.wasm");
+  shown.set("\{child}\n\{plain}\n\{inherited}\n\{bare}\n\{loads}\n\{itself}");
 }
 
 /**

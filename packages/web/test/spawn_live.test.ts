@@ -63,7 +63,7 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildPage("packages/platform/example/spawnpage.wac", dir, ["--grant", "read,write"]);
+      await buildPage("packages/platform/example/spawnpage.wac", dir, ["--grant", "read,write", "--spawn", "spin"]);
       // Three modules: one that uses its host, one whose `main` takes nothing and so has no host to be given, and one
       // that loads the second and calls it.
       for (const [entry, stem] of [["spawnchild", "child"], ["spawnplain", "plain"], ["spawnload", "load"]]) {
@@ -108,20 +108,37 @@ Deno.test({
 
       const out = async (): Promise<string> =>
         await page.evaluate("(() => { const e = document.getElementById('out'); return e ? e.textContent : ''; })()") as string;
-      await waitInPage(page, "(() => { const e = document.getElementById('out'); return e !== null && (e.textContent.match(/exit|start/g) ?? []).length >= 5; })()", null, { timeout: 30_000 })
+      await waitInPage(page, "(() => { const e = document.getElementById('out'); return e !== null && e.textContent.includes('page '); })()", null, { timeout: 30_000 })
         .catch(async (e: Error) => {
           throw new Error(`${e.message}\nthe page shows: ${JSON.stringify(await out())}\nerrors: ${failures.join(" | ")}`);
         });
       assertEquals(await out(), "args: one two\nnote: from the disk\nerr: to standard error\nexit: 7\nerr: exit: 3\nerr: exit: 7\n" +
                    "args: one two\nnote: Not granted to this application: the program that started it did not hand it `read`\n" +
                    "err: to standard error\nexit: 7\n" +
-                   "called: status 0, value 3\nabsent: status 2, no export named absent\nerr: exit: 0",
+                   "called: status 0, value 3\nabsent: status 2, no export named absent\nerr: exit: 0\n" +
+                   "page called: status 0, value 3",
                    "what each module did — the fourth handed no files, so refused its read; the fifth loading the second");
       // The third run inherited the page's streams: what it wrote is on the page's console, in the order it wrote it.
       assertEquals(logged.filter((l) => l.includes("one two") || l.includes("disk") || l.includes("standard error")),
                    ["log: args: one two", "log: note: from the disk", "warning: to standard error"],
                    "what the module wrote to the page's own streams");
       assertEquals(failures, [], "the page reported an error");
+
+      // **From a file**, where a worker may not start a worker: the page's own thread starts every child
+      // (design/system/0015 decision 3), so the program still starts a copy of itself — and still stops one that
+      // never ends, which only the thread that started it can.
+      const local = await browser.newPage();
+      const localFailures: string[] = [];
+      local.on("pageerror", (e: Error) => localFailures.push(String(e)));
+      await local.goto(`file://${dir}/index.html`, { waitUntil: "load" });
+      const shown = async (): Promise<string> =>
+        await local.evaluate("(() => { const e = document.getElementById('out'); return e ? e.textContent : ''; })()") as string;
+      await waitInPage(local, "(() => { const e = document.getElementById('out'); return e !== null && e.textContent.includes(':'); })()", null, { timeout: 30_000 })
+        .catch(async (e: Error) => {
+          throw new Error(`${e.message}\nthe page shows: ${JSON.stringify(await shown())}\nerrors: ${localFailures.join(" | ")}`);
+        });
+      assertEquals(await shown(), "from a file\nstopped: 143", "a copy started and stopped from a file");
+      assertEquals(localFailures, [], "the page from a file reported an error");
     } finally {
       await browser?.close();
       await http?.stop();
