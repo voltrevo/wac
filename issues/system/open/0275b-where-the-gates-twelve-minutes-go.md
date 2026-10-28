@@ -532,3 +532,29 @@ largest package in the repository â€” 15,913 lines, 313 tests across 47 files â€
 21 of its seconds are two tests that put the real C tor on the other end. So the ratchet phase's floor
 is that one driver, and it is expensive for a reason that is written down rather than for a reason
 anybody has looked into.
+
+## 2026-10-27: forty minutes, and the cut
+
+The gate had grown to about 36 minutes of suite. The run at 08:16 did 7,722s of work at 4 workers, the
+floor was 2,000s, and wacc's tests were 6,190s of the 7,316s the per-file lines add up to. Four files
+made up 5,003s of that. Each was timed again alone on an idle machine:
+
+| file | in the gate | alone |
+|---|---:|---:|
+| `coverage_test.wac` | 1,604s | 218s |
+| `commandparity_test.wac` | 1,244s | 101s |
+| `cases_test.wac` | 1,095s | 29s |
+| `selfhost_test.wac` | 1,060s | 12s |
+
+So most of the gate is contention, not work. Each of these files starts compiler processes of its own,
+and four workers of them oversubscribe five shared cores by far more than four.
+
+**The operator ruled the cut.** Moved to the heavy lane:
+- `coveragecorpus_test.wac`, split out of `coverage_test.wac`, whose counter test stays in the gate;
+- `commandparity_test.wac`;
+- the four wacc bootstrap stages, `selfemit`, `selfhostemit`, `fixpointemit` and `bootstrapemit`.
+  `bootstrap.sh` and `selfhost_test.wac` already cover these on every wacc change.
+
+`tools/push.sh` no longer runs `wac task docs`, the site's Deno test with `npx tsc -b`, or
+`wac task coverage:all`. Each is still a task, listed in `docs/development.md`. Whether to also run the
+gate at fewer workers is still to be measured.

@@ -1,0 +1,263 @@
+// What a lex costs beyond reading its input.
+//
+// `issues/lang/0398b`: every lowering pass lexes each file it rewrites, `std` included, so a check of a
+// one-line program that imports `std` lexed 173 KB about twenty times. Lexing was 43% of that check,
+// and close to half of it produced no token: a token array sized at one token per byte and filled with
+// zeros, 3.5 MB for `std`'s 65,030 slots, and two passes over the input that sized the mode and nesting
+// stacks before the real one began.
+//
+// The stacks now grow as they are pushed, so the second test pins what the presized lexer produced on
+// nesting deeper than any stack starts: the fingerprints below are the old lexer's own output.
+//
+// The rest of that cost was the number of lexes and parses, which the last two tests count.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseGraph, lowerSources } from "../../src/api.wac";
+import { lex, Lexed } from "../../src/lex.wac";
+import { importSpecs } from "../../src/files.wac";
+import { builtinEnumVariants, builtinVariadicCallees, coreSource, stdSource } from "../../src/coretext.wac";
+import { enumVariantsOfText, variadicCalleesIn } from "../../src/scans.wac";
+import { Res } from "../../src/path.wac";
+import { Core } from "std";
+
+/** `s`, `n` times over. */
+string repeated(string s, i32 n) {
+  u8[] b = s.toBytes();
+  u8[] all = u8[].filled(b.len() * n, 0);
+  for (i32 i = 0; i < n; i++) { all.copyFrom(b, 0, i * b.len(), b.len()); }
+  return string.fromBytes(all);
+}
+
+/** The count, the errors, and a hash of every field of every token. */
+string fingerprint(Lexed l) {
+  i32 h = 7;
+  for (i32 i = 0; i < l.tokenCount * 5; i++) { h = h * 31 + l.tokens[i]; }
+  return "count " + itoa(l.tokenCount) + " errors " + itoa(l.errorCount) + " hash " + itoa(h);
+}
+
+export string test_the_token_array_is_sized_by_the_tokens_read(Core core) {
+  T t = T.create();
+  Lexed l = lex(stdSource().toBytes());
+  i32 used = l.tokenCount * 5;
+  // Twice what was used, because growth doubles; the slack is for a small file's starting size.
+  t.isTrue(l.tokens.len() <= 2 * used + 4096,
+           "lexing std filled " + itoa(l.tokens.len()) + " slots and used " + itoa(used));
+  return t.report();
+}
+
+export string test_nesting_deeper_than_any_starting_stack_lexes_as_before(Core core) {
+  T t = T.create();
+  t.eqStr(fingerprint(lex(("i32 x = " + repeated("(", 4000) + "1" + repeated(")", 4000) + ";\n").toBytes())),
+          "count 8006 errors 0 hash 1147720021", "4,000 parentheses");
+  t.eqStr(fingerprint(lex(("void f() " + repeated("{ ", 4000) + repeated("} ", 4000) + "\n").toBytes())),
+          "count 8005 errors 0 hash 378276796", "4,000 blocks");
+  // A `}` closing a struct literal ends an expression, so the `<` after the last one compares.
+  t.eqStr(fingerprint(lex(("P x = " + repeated("P { a: ", 3000) + "1" + repeated(" }", 3000) + " < 2;\n").toBytes())),
+          "count 15008 errors 0 hash -440964983", "3,000 struct literals, then a comparison");
+  t.eqStr(fingerprint(lex(("Node f() { return " + repeated("<a>", 3000) + "t" + repeated("</a>", 3000) + "; }\n").toBytes())),
+          "count 21010 errors 0 hash 255651999", "3,000 nested elements");
+  t.eqStr(fingerprint(lex(("Node f() { return <p>" + repeated("{<b>", 2000) + "x" + repeated("</b>}", 2000) + "</p>; }\n").toBytes())),
+          "count 18017 errors 0 hash 817592894", "2,000 splices, each holding an element");
+  return t.report();
+}
+
+/** The best of three checks of `/t/m.wac`, which imports `/t/lib.wac` and `k` files that each import it too. */
+i64 timeGraph(Core core, string lib, i32 k) {
+  string[] paths = string[].filled(k + 2, "");
+  string[] texts = string[].filled(k + 2, "");
+  string uses = "import { Lib } from \"./lib.wac\";\n";
+  paths[0] = "/t/m.wac";
+  paths[1] = "/t/lib.wac";
+  texts[1] = lib;
+  string entry = uses;
+  for (i32 i = 0; i < k; i++) {
+    paths[i + 2] = "/t/u" + itoa(i) + ".wac";
+    texts[i + 2] = uses + "export i32 f" + itoa(i) + "(Lib l) { return l.x; }\n";
+    entry = entry + "import { f" + itoa(i) + " } from \"./u" + itoa(i) + ".wac\";\n";
+  }
+  texts[0] = entry + "export i32 main() { return 0; }\n";
+  i64 best = 0 as i64;
+  for (i32 r = 0; r < 3; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    diagnoseGraph(paths, texts, "/t/m.wac");
+    i64 d = core.monotonicNanos().wait() - t0;
+    if (r == 0 || d < best) { best = d; }
+  }
+  return best;
+}
+
+// **What a large file adds to a check does not grow with the files that import it.** The checker lexed
+// and parsed every file again for each closure that reached it, only to collect its lexical and parse
+// errors, which `declCountsAndFronts` had in hand already; and it searched every file's bytes for
+// `export type` once per closure. A 250 KB function body imported by five files and by twenty: what it
+// added to the check was 2.3 times as much at twenty, and should be about the same.
+export string test_a_large_file_costs_a_check_the_same_however_many_files_import_it(Core core) {
+  T t = T.create();
+  string head = "export struct Lib { i32 x; }\n";
+  string big = head + "export i32 work(i32 a) {\n  i32 x = a;\n" + repeated("  x = x * 3 + (x >> 2) - a;\n", 9000)
+    + "  return x;\n}\n";
+  timeGraph(core, big, 5);
+  i64 few = timeGraph(core, big, 5) - timeGraph(core, head, 5);
+  i64 many = timeGraph(core, big, 20) - timeGraph(core, head, 20);
+  t.isTrue(many * (2 as i64) < few * (3 as i64),
+           "250 KB imported by five files added " + itoa((few / (1000000 as i64)) as! i32) + " ms to the check, and by twenty "
+           + itoa((many / (1000000 as i64)) as! i32) + " ms");
+  return t.report();
+}
+
+// **The lowering reads a file once, not once per pass.** A dozen passes each lexed every file they
+// looked at, and `std` declares enums, statics and type defaults enough that most of them looked: 29
+// lexes of `std` and `core` to lower a one-line program that imports them. A pass that leaves a file
+// alone now hands the next one the same tokens (`Reads`, in `frontend.wac`); the passes that rewrite it
+// still lex what they wrote.
+export string test_lowering_a_program_that_imports_std_lexes_std_about_once(Core core) {
+  T t = T.create();
+  string[] paths = ["/t/m.wac", "std", "core"] as string[];
+  string[] texts = ["import { Sys } from \"std\";\nexport i32 main(Sys sys) { return 0; }\n", stdSource(), coreSource()] as string[];
+  u8[] s = stdSource().toBytes();
+  u8[] c = coreSource().toBytes();
+  lowerSources(paths, texts, Res.empty());
+  i64 lexing = 0 as i64;
+  i64 lowering = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    lex(s);
+    lex(c);
+    i64 t1 = core.monotonicNanos().wait();
+    lowerSources(paths, texts, Res.empty());
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
+    if (r == 0 || t2 - t1 < lowering) { lowering = t2 - t1; }
+  }
+  i64 lexes = lowering / (lexing < (1 as i64) ? 1 as i64 : lexing);
+  t.isTrue(lexes <= (22 as i64),
+           "lowering took " + itoa((lowering / (1000000 as i64)) as! i32) + " ms, " + itoa(lexes as! i32)
+           + " times the " + itoa((lexing / (1000 as i64)) as! i32) + " µs of lexing std and core once");
+  return t.report();
+}
+
+// **Lowering a file that imports nothing reads neither `std` nor `core`.** The variant pass parsed both
+// whole on every compile to list their enums' variants, and the variadic pass searched `core` for its
+// variadic methods: two thirds of checking a one-line file with no imports. Both lists are fixed when
+// the compiler is built, so `gen:core` writes them into `coretext.wac` beside the type defaults.
+export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Core core) {
+  T t = T.create();
+  string[] paths = ["/t/m.wac"] as string[];
+  string[] texts = ["export i32 f(i32 n) { return n; }\n"] as string[];
+  u8[] c = coreSource().toBytes();
+  lowerSources(paths, texts, Res.empty());
+  i64 lexing = 0 as i64;
+  i64 lowering = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    lex(c);
+    i64 t1 = core.monotonicNanos().wait();
+    lowerSources(paths, texts, Res.empty());
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
+    if (r == 0 || t2 - t1 < lowering) { lowering = t2 - t1; }
+  }
+  t.isTrue(lowering < lexing,
+           "lowering one line took " + itoa((lowering / (1000 as i64)) as! i32) + " µs, and lexing core once "
+           + itoa((lexing / (1000 as i64)) as! i32) + " µs");
+  return t.report();
+}
+
+/** The tables `gen:core` wrote are what the lowering would have read off the embedded text. */
+export string test_the_built_tables_are_what_the_text_says(Core core) {
+  T t = T.create();
+  t.eqStr(builtinEnumVariants(), enumVariantsOfText(coreSource()) + enumVariantsOfText(stdSource()),
+          "the enums of core and std");
+  t.eqStr(builtinVariadicCallees(), variadicCalleesIn(coreSource()), "core's variadic functions");
+  t.isTrue(builtinVariadicCallees().indexOf("|all|") >= 0, "Ticket.all is among them");
+  return t.report();
+}
+
+// **A file's import list costs a lex, not a parse.** `wac` reads every file of a program for its imports
+// before compiling any, `std` included, and that went through the whole frontend: a lex and a parse of
+// 173 KB to find one `import` line. The list is read off the tokens.
+export string test_reading_a_files_imports_does_not_parse_it(Core core) {
+  T t = T.create();
+  u8[] s = stdSource().toBytes();
+  importSpecs(s);
+  i64 lexing = 0 as i64;
+  i64 reading = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    lex(s);
+    i64 t1 = core.monotonicNanos().wait();
+    importSpecs(s);
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
+    if (r == 0 || t2 - t1 < reading) { reading = t2 - t1; }
+  }
+  t.isTrue(reading < lexing * (2 as i64),
+           "std's imports took " + itoa((reading / (1000 as i64)) as! i32) + " µs to read, and lexing it "
+           + itoa((lexing / (1000 as i64)) as! i32) + " µs");
+  return t.report();
+}
+
+/** The best of three checks of `paths`, entered at `entry`. */
+i64 timeCheck(Core core, string[] paths, string[] texts, string entry) {
+  i64 best = 0 as i64;
+  for (i32 r = 0; r < 3; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    diagnoseGraph(paths, texts, entry);
+    i64 d = core.monotonicNanos().wait() - t0;
+    if (r == 0 || d < best) { best = d; }
+  }
+  return best;
+}
+
+// **Checking a program does not check `std`.** Every file of the graph took a turn as the entry, the
+// built-ins included, so a one-line program that imports `std` paid for checking all of `std`'s bodies
+// and lowering its `async` ones — more than checking `std` alone. Their diagnostics are fixed when the
+// compiler is built, and the first assertion here is what keeps them empty.
+export string test_checking_a_program_does_not_check_std(Core core) {
+  T t = T.create();
+  string[] alone = ["/t/std.wac", "core"] as string[];
+  string[] aloneTexts = [stdSource(), coreSource()] as string[];
+  t.eqStr(diagnoseGraph(alone, aloneTexts, "/t/std.wac"), "", "std, checked as an ordinary file");
+  string[] paths = ["/t/m.wac", "std", "core"] as string[];
+  string[] texts = ["import { Sys } from \"std\";\nexport i32 main(Sys sys) { return 0; }\n", stdSource(), coreSource()] as string[];
+  t.eqStr(diagnoseGraph(paths, texts, "/t/m.wac"), "", "a program that imports it");
+  i64 program = timeCheck(core, paths, texts, "/t/m.wac");
+  i64 std = timeCheck(core, alone, aloneTexts, "/t/std.wac");
+  t.isTrue(program * (4 as i64) < std * (3 as i64),
+           "checking one line that imports std took " + itoa((program / (1000000 as i64)) as! i32)
+           + " ms, and checking std " + itoa((std / (1000000 as i64)) as! i32) + " ms");
+  return t.report();
+}
+
+// **A graph builds `core`'s text once.** Every closure the check walks has `core` in it, and each built
+// the text afresh from the embedded lines — about 300 µs, while checking a one-line file is less.
+// Sixty files that import nothing should cost less per file than building that text once.
+export string test_a_graph_builds_cores_text_once(Core core) {
+  T t = T.create();
+  i32 k = 60;
+  string[] paths = string[].filled(k, "");
+  string[] texts = string[].filled(k, "");
+  for (i32 i = 0; i < k; i++) {
+    paths[i] = "/t/f" + itoa(i) + ".wac";
+    texts[i] = "export i32 f" + itoa(i) + "(i32 n) { return n; }\n";
+  }
+  diagnoseGraph(paths, texts, paths[0]);
+  coreSource();
+  i64 graph = 0 as i64;
+  i64 building = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    diagnoseGraph(paths, texts, paths[0]);
+    i64 t1 = core.monotonicNanos().wait();
+    coreSource();
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < graph) { graph = t1 - t0; }
+    if (r == 0 || t2 - t1 < building) { building = t2 - t1; }
+  }
+  i64 perFile = graph / (k as i64);
+  t.isTrue(perFile < building,
+           "each of 60 files took " + itoa((perFile / (1000 as i64)) as! i32) + " µs to check, and core's text "
+           + itoa((building / (1000 as i64)) as! i32) + " µs to build");
+  return t.report();
+}

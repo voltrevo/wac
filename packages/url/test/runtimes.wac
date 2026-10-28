@@ -1,0 +1,213 @@
+// Node's `URL` and Deno's, asked the same questions by one small script.
+//
+// Deno's `URL` and Node's disagree. Not on anything exotic — `file:///c|/x`, `file:////a` and a
+// backslash in a non-special path all come out differently, and each runtime is self-consistent
+// about it. So "the host's own URL" is not one oracle, and picking the one that happens to be
+// running the test would have quietly made this package match a specific runtime rather than the
+// standard. Neither is right everywhere, either: Node is right on the file-URL cases, Deno that a
+// relative reference cannot be resolved against an opaque path unless it starts with `#`.
+//
+// So the tests use them in three ways, all decided here in wac:
+//
+//   - **Node alone**, for the hand-written groups in `parse_test.wac`, which hold out the five known
+//     divergences by name;
+//   - **where both agree**, for the generated sweeps in `fuzz_test.wac`, which cannot name anything
+//     and so take only agreement — and **count** what they had to skip, because a corpus that drifted
+//     into the disagreement bucket would leave every remaining comparison passing on almost nothing;
+//   - **against each other**, to assert that a recorded divergence is still one.
+//
+// **`URL_JS` below is the whole oracle, and it only answers.** It used to be a TypeScript program
+// beside the tests that took this package's answers, spawned Node itself — which is why it needed
+// `--allow-run` — and did the comparing. Since 2026-10-27 the same script runs once under each
+// runtime, with no permissions under either (`packages/wactest/src/inline.wac`), and says what that
+// runtime's `URL` makes of each line. `issues/system/0161` has the history before that.
+//
+// A question is `<inputHex> <baseHex|->`; an answer is the hex of `test/probe.wac`'s `describe` form
+// (NUL-separated, field 0 `1` or `0`). Hex both ways because a URL input contains every byte there is,
+// newline included, and because Node hands stdin over in chunks that may split a UTF-8 sequence.
+
+import { T } from "../../wactest/src/assert.wac";
+import { Lines, hex } from "../../wactest/src/oracle.wac";
+import { askScript, askNodeScript } from "../../wactest/src/inline.wac";
+import { Procs } from "std";
+import { Vec } from "core";
+import { parse, parseWithBase } from "./probe.wac";
+
+/** What this runtime's `URL` says about each `<inputHex> <baseHex|->`, as hex of `describe`'s form. */
+static string URL_JS =
+  "let s = ''; for await (const c of process.stdin) s += c;\n" +
+  "const L = s.split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const hex = (t) => Array.from(new TextEncoder().encode(t), (b) => b.toString(16).padStart(2, '0')).join('');\n" +
+  "const str = (h) => new TextDecoder().decode(new Uint8Array((h.match(/../g) || []).map((x) => parseInt(x, 16))));\n" +
+  "const say = (l) => {\n" +
+  "  const [i, b] = l.split(' ');\n" +
+  "  try {\n" +
+  "    const u = b === '-' ? new URL(str(i)) : new URL(str(i), str(b));\n" +
+  "    return hex(['1', u.href, u.protocol.slice(0, -1), u.username, u.password, u.hostname, u.port,\n" +
+  "      u.pathname, u.search, u.hash].join(String.fromCharCode(0)));\n" +
+  "  } catch { return hex('0'); }\n" +
+  "};\n" +
+  "console.log(L.map(say).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
+
+/** Inputs, each with its base (`""` for none) and this package's answer in hex. */
+export struct Cases {
+  Vec<string> inputs;
+  Vec<string> bases;
+  Vec<string> ours;
+
+  void add(this, string input, string base) {
+    u8[] a = base == "" ? parse(input.toBytes()) : parseWithBase(input.toBytes(), base.toBytes());
+    this.inputs.push(input);
+    this.bases.push(base);
+    this.ours.push(hex(a));
+  }
+
+  i32 count(this) { return this.inputs.len(); }
+
+  string label(this, i32 i) {
+    string b = this.bases.get(i);
+    return b == "" ? "\"\{this.inputs.get(i)}\"" : "\"\{this.inputs.get(i)}\" against \"\{b}\"";
+  }
+
+  /** A fresh copy of the questions each time, because asking consumes them. */
+  Lines lines(this) {
+    Lines out = Lines.create();
+    for (i32 i = 0; i < this.inputs.len(); i++) {
+      string b = this.bases.get(i);
+      out.add(hex(this.inputs.get(i).toBytes()) + " " + (b == "" ? "-" : hex(b.toBytes())));
+    }
+    return out;
+  }
+
+  Cases create() { return Cases(Vec.create(), Vec.create(), Vec.create()); }
+}
+
+export async string[] askNode(T t, Procs procs, Cases c, string what) {
+  return await askNodeScript(t, procs, URL_JS, c.lines(), "\{what} (Node)");
+}
+
+export async string[] askDeno(T t, Procs procs, Cases c, string what) {
+  return await askScript(t, procs, URL_JS, c.lines(), "\{what} (Deno)");
+}
+
+/** An answer's fields: `["0"]` for a rejection, otherwise `1` and the nine components. */
+export string[] fields(string answerHex) {
+  u8[] h = answerHex.toBytes();
+  u8[] b = u8[].filled(h.len() / 2, 0);
+  for (i32 i = 0; i < b.len(); i++) { b[i] = (nibble(h[2 * i]) * 16 + nibble(h[2 * i + 1])) as@ u8; }
+  i32 n = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 0) { n = n + 1; } }
+  string[] out = string[].filled(n, "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != 0) { continue; }
+    u8[] part = u8[].filled(i - from, 0);
+    for (i32 k = 0; k < part.len(); k++) { part[k] = b[from + k]; }
+    out[at] = string.fromBytes(part);
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}
+
+i32 nibble(u8 c) { return c >= 'a' ? (c as i32) - 87 : (c as i32) - 48; }
+
+string[] NAMES() {
+  return ["", "href", "protocol", "username", "password", "hostname", "port", "pathname", "search",
+          "hash"];
+}
+
+/** Why `ours` and `theirs` differ, naming the first field that does; `""` when they agree. */
+string disagreement(string ours, string theirs, bool hrefOnly, string who) {
+  if (ours == theirs) { return ""; }
+  string[] a = fields(ours);
+  string[] b = fields(theirs);
+  if (a[0] != b[0]) {
+    return "wac " + (a[0] == "1" ? "accepted" : "rejected") + ", " + who + " " +
+           (b[0] == "1" ? "accepted" : "rejected");
+  }
+  if (a[0] != "1") { return ""; }
+  string[] names = NAMES();
+  i32 last = hrefOnly ? 1 : 9;
+  for (i32 f = 1; f <= last; f++) {
+    if (a[f] != b[f]) { return "\{names[f]} was \"\{a[f]}\", \{who} \{who == "Node" ? "says" : "say"} \"\{b[f]}\""; }
+  }
+  return "";
+}
+
+/** Fail for the first ten, count the rest — a sweep wrong everywhere says so in one line. */
+struct Tally {
+  i32 n;
+
+  void fail(this, T t, string what, string why) {
+    if (this.n < 10) { t.fail("\{what}: \{why}"); }
+    this.n = this.n + 1;
+  }
+
+  void close(this, T t, string what) {
+    if (this.n > 10) { t.fail("\{what}: \{this.n - 10} more disagreement(s) not shown"); }
+  }
+}
+
+/** Every case against Node alone, all nine components. */
+export async void compareWithNode(T t, Procs procs, Cases c, string what) {
+  string[] node = await askNode(t, procs, c, what);
+  if (node.len() != c.count()) { return; }
+  Tally tally = Tally(0);
+  for (i32 i = 0; i < c.count(); i++) {
+    string why = disagreement(c.ours.get(i), node[i], false, "Node");
+    if (why != "") { tally.fail(t, what, "\{c.label(i)}: \{why}"); }
+  }
+  tally.close(t, what);
+}
+
+/**
+ * Every case against what both runtimes agree on, skipping and counting the rest; fails if more than
+ * `percent` of them had to be skipped. `hrefOnly` compares the href and the verdict alone.
+ */
+export async void compareWhereBothAgree(T t, Procs procs, Cases c, string what, bool hrefOnly,
+                                        i32 percent) {
+  string[] deno = await askDeno(t, procs, c, what);
+  string[] node = await askNode(t, procs, c, what);
+  if (deno.len() != c.count() || node.len() != c.count()) { return; }
+  Tally tally = Tally(0);
+  i32 skipped = 0;
+  string first = "";
+  for (i32 i = 0; i < c.count(); i++) {
+    if (deno[i] != node[i]) {
+      if (skipped < 5) { first = first + (skipped == 0 ? "" : " | ") + c.label(i); }
+      skipped = skipped + 1;
+      continue;   // the runtimes disagree; not evidence about anything
+    }
+    string why = disagreement(c.ours.get(i), node[i], hrefOnly, "both runtimes");
+    if (why != "") { tally.fail(t, what, "\{c.label(i)}: \{why}"); }
+  }
+  tally.close(t, what);
+  t.isTrue(skipped * 100 <= c.count() * percent,
+           "\{what}: the runtimes disagreed on \{skipped}/\{c.count()} cases, above the \{percent}% " +
+           "this allows — the oracle has become too thin to mean much. First few: \{first}");
+}
+
+/** Whether Node accepts each case, one verdict per case. */
+export async bool[] nodeAccepts(T t, Procs procs, Cases c, string what) {
+  string[] node = await askNode(t, procs, c, what);
+  bool[] out = bool[].filled(node.len(), false);
+  for (i32 i = 0; i < node.len(); i++) { out[i] = fields(node[i])[0] == "1"; }
+  return out;
+}
+
+/** Fail for each case the two runtimes now agree on — same verdict and same href. */
+export async void stillDiffer(T t, Procs procs, Cases c, string what) {
+  string[] deno = await askDeno(t, procs, c, what);
+  string[] node = await askNode(t, procs, c, what);
+  if (deno.len() != c.count() || node.len() != c.count()) { return; }
+  for (i32 i = 0; i < c.count(); i++) {
+    string[] d = fields(deno[i]);
+    string[] n = fields(node[i]);
+    if (d[0] == n[0] && (d[0] != "1" || d[1] == n[1])) {
+      string href = n[0] == "1" ? "\"\{n[1]}\"" : "(rejected)";
+      t.fail("\{what}: \{c.label(i)}: both runtimes now say \{href} — drop this entry");
+    }
+  }
+}

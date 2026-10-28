@@ -78,6 +78,10 @@ if [ -n "$out" ]; then
     /*) ;;
     *) out="$(pwd)/$out" ;;
   esac
+  # **And its directory made now**, not at the copy. `syncDemos.ts` asks for `.cache/wac-deno`, and
+  # `.cache/` is gitignored, so a fresh checkout — CI's — has none: the Pages deploy built a correct
+  # command for nine minutes and then failed the `cp`. Made here, an unusable `-o` fails in a second.
+  mkdir -p "$(dirname "$out")" || { echo "bootstrap.sh: cannot make the directory for -o '$out'" >&2; exit 2; }
 fi
 
 say()  { echo "bootstrap: $*" >&2; }
@@ -169,37 +173,6 @@ fi
 
 cd "$root"
 say "building from $(git -C . rev-parse --short HEAD 2>/dev/null || echo 'a tree with no git') on $host"
-
-# ------------------------------------------------------- the embedded core/ and std/
-#
-# **The compiler carries `core/*.wac` and `std/platform.wac` inside it**, as
-# `packages/wacc/src/coretext.wac` — `isBuiltinSpec` there answers true for those specifiers, so an
-# import of them never touches the disk. This script does not regenerate that file, so an edit to
-# `std/platform.wac` has no effect whatever until `wac task gen:core` runs. The compiler says so
-# now — `the compiler's copy of that built-in does not export this name`, and a help line naming this
-# command — but only once you try to use the edit. This says it before the build. `issues/system/0291b`.
-#
-# **Checked here because the check that exists runs too late.** `tools/wac/gencore_test.wac` asks the
-# same question in the suite, which `tools/push.sh` reaches *after* the build — so it can only report
-# a failure the build has already had. A guard whose value is being the sentence that explains
-# something has to run before the thing it explains.
-#
-# Only when a binary is already here to ask with. A fresh clone has none, and cannot have edited
-# `std/` and rebuilt either, so there is nothing for it to catch — the same shape as the wasmtime
-# host's "only when it exists" further down.
-for wac_have in native/v8/target/release/wac native/target/release/wac; do
-  [ -x "$wac_have" ] || continue
-  if ! "$wac_have" task gen:core --check >/dev/null 2>&1; then
-    echo "bootstrap: packages/wacc/src/coretext.wac is out of step with core/ and std/." >&2
-    echo "   The compiler carries those files, so your edit to one of them will not be in the" >&2
-    echo "   build — and the failure it causes names your import rather than this. Run:" >&2
-    echo "       wac task gen:core" >&2
-    echo "   issues/system/0291b. Refusing rather than regenerating: this writes a checked-in file" >&2
-    echo "   and that is a commit you should be making on purpose." >&2
-    exit 1
-  fi
-  break
-done
 
 # ---------------------------------------------------------------- the ladder
 #
@@ -315,6 +288,40 @@ case "$host" in
     }
     ;;
 esac
+
+# ------------------------------------------------------- the embedded core/ and std/
+#
+# **The compiler carries `core/*.wac` and `std/platform.wac` inside it**, as
+# `packages/wacc/src/coretext.wac` — `isBuiltinSpec` there answers true for those specifiers, so an
+# import of them never touches the disk. This script does not regenerate that file, so an edit to
+# `std/platform.wac` has no effect whatever until `wac task gen:core` runs. The compiler says so
+# now — `the compiler's copy of that built-in does not export this name`, and a help line naming this
+# command — but only once you try to use the edit. This says it before the fixed point and the
+# install. `issues/system/0291b`.
+#
+# **Asked of the command this run just built, never of one found in the tree.** This script starts
+# from the host alone. It used to ask whichever `target/release/wac` an earlier build had left, through
+# `wac task gen:core`, whose `tasks.json5` line names the v8 binary outright — so a tree holding only
+# the wasmtime one refused every bootstrap, saying the embedding was stale when the answer was that
+# nothing could check it. Running `gencore.wac` directly means the binary asked is the binary named.
+#
+# **Its own words on failure**, because a non-zero exit is not by itself the answer "stale": the
+# generator also fails when it cannot read the tree, and that should not be reported as an edit.
+if ! embedding="$("$built" run --allow-read tools/wac/gencore.wac --check 2>&1)"; then
+  case "$embedding" in *"do not match"*) stale=1 ;; *) stale=0 ;; esac
+  if [ "$stale" -eq 1 ]; then
+    echo "bootstrap: packages/wacc/src/coretext.wac is out of step with core/ and std/." >&2
+    echo "   The compiler carries those files, so your edit to one of them will not be in the" >&2
+    echo "   build — and the failure it causes names your import rather than this. Run:" >&2
+    echo "       wac task gen:core" >&2
+    echo "   issues/system/0291b. Refusing rather than regenerating: this writes a checked-in file" >&2
+    echo "   and that is a commit you should be making on purpose." >&2
+  else
+    echo "bootstrap: the command it built could not check the embedding of core/ and std/:" >&2
+    printf '%s\n' "$embedding" | sed 's/^/    /' >&2
+  fi
+  exit 1
+fi
 
 # ---------------------------------------------------------------- check, then install
 #

@@ -20,6 +20,7 @@
 // the host fills in (`std/platform.wac`), and the compiler cannot make one, so there is no `Sys` to
 // call and nothing to ban. The only genuine wall is a wasm import, which no wac function is.
 
+import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import { Arm, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind, Method, Param, Program,
          Stmt, StmtKind, Ty } from "./ast.wac";
 import { Lexed, tokenStride } from "./lex.wac";
@@ -473,6 +474,12 @@ export struct Decls {
   i32[] impTo;
   string[] impDecl;
   i32 impCount;
+
+  /** The indices of `decls` that are `type` declarations, in order — found once, by `typeDeclAt`. */
+  i32[]? typeDecls;
+
+  /** `impName` by name (`keyindex.wac`), filled where the imports are. */
+  KeyIndex impIndex;
 
   u8[] srcOf(const this, i32 fi) {
     return fi >= 0 && fi < this.srcs.len() ? this.srcs[fi] : this.blobSrc;
@@ -2188,10 +2195,16 @@ export void keyDecls(Decls cx) {
     cx.names[d] = declNameOf(cx, d);
     cx.exported[d] = declExportedOf(cx.decls[d]);
   }
+  // **Whether another declaration shares the name, through an index** — this compared every pair,
+  // the square of the closure, once per static view (`issues/lang/0398b`).
+  KeyIndex byName = KeyIndex.create();
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    if (cx.names[d] != "") { keyAdd(byName, cx.names[d], d); }
+  }
   for (i32 d = 0; d < cx.decls.len(); d++) {
     if (cx.names[d] == "") { cx.keys[d] = ""; continue; }
     bool twice = false;
-    for (i32 e = 0; e < cx.decls.len(); e++) {
+    for (i32 e = keyFirst(byName, cx.names[d]); e >= 0; e = byName.next[e]) {
       if (e != d && cx.names[e] == cx.names[d]) { twice = true; }
     }
     cx.keys[d] = twice ? cx.names[d] + "@" + decimalText(cx.declFiles[d]) : cx.names[d];
@@ -2256,7 +2269,7 @@ export Decls declsOfProgram(u8[] src, Lexed lexed, Decl[] decls) {
                Expr?[].filled(nc < 1 ? 1 : nc, null), i32[].filled(nc < 1 ? 1 : nc, 0), 0,
                string[].filled(nd, ""), string[].filled(nd, ""), bool[].filled(nd, false),
                i32[].filled(nc < 1 ? 1 : nc, 0),
-               i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0);
+               i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0, null, KeyIndex.create());
   for (i32 d = 0; d < decls.len(); d++) { cx.declFiles[d] = 0 - 1; }
   // **Before the tables, because the tables are keyed on what it decides.** A struct's fields are
   // filed under the struct's identity, not under the spelling one file gave it.
@@ -2342,7 +2355,7 @@ export Decls declsOfFiles(string[] paths, string[] sources, Lexed?[] lexes, Prog
                    Expr?[].filled(nc < 1 ? 1 : nc, null), i32[].filled(nc < 1 ? 1 : nc, 0), 0,
                    string[].filled(nd2, ""), string[].filled(nd2, ""), bool[].filled(nd2, false),
                    i32[].filled(nc < 1 ? 1 : nc, 0),
-                   i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0);
+                   i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0, null, KeyIndex.create());
   keyDecls(cx);
 
   // **The import edges, from the files' own `import` lines.** Without them a name a file spells
@@ -2377,6 +2390,7 @@ export Decls declsOfFiles(string[] paths, string[] sources, Lexed?[] lexes, Prog
         for (i32 it = 0; it < items.len(); it++) {
           cx.impFrom[cx.impCount] = ifi;
           cx.impName[cx.impCount] = tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].aliasTok);
+          keyAdd(cx.impIndex, cx.impName[cx.impCount], cx.impCount);
           cx.impTo[cx.impCount] = to;
           cx.impDecl[cx.impCount] = tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].nameTok);
           cx.impCount = cx.impCount + 1;
@@ -3093,9 +3107,35 @@ bool isNullTy(u8[] src, Lexed lx, Ty t) {
   }
 }
 
+/** The indices of the `type` declarations among `decls`, in order. */
+i32[] typeDeclIndices(Decl[] decls) {
+  i32 n = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    match (decls[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): { n = n + 1; }
+      default: { }
+    }
+  }
+  i32[] out = i32[].filled(n, 0);
+  i32 k = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    match (decls[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): { out[k] = d; k = k + 1; }
+      default: { }
+    }
+  }
+  return out;
+}
+
 /** The declaration index of a `type` declaration named `name` as file `fi` sees it, or -1. */
 export i32 typeDeclAt(Decls cx, string name, i32 fi) {
-  for (i32 d = 0; d < cx.decls.len(); d++) {
+  // **Only the `type` declarations**, found once: this is asked of every type name the emitter
+  // resolves, and walking every declaration of the module for the few that are `type` was the largest
+  // single cost of building box's shell once the others had gone (`issues/lang/0398b`).
+  if (cx.typeDecls is null) { cx.typeDecls = typeDeclIndices(cx.decls); }
+  i32[] tds = cx.typeDecls!;
+  for (i32 k = 0; k < tds.len(); k++) {
+    i32 d = tds[k];
     match (cx.decls[d].kind) {
       TypeDecl(nameTok, typeParams, alias, body, exported): {
         i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
@@ -3107,7 +3147,7 @@ export i32 typeDeclAt(Decls cx, string name, i32 fi) {
   }
   // **Through the name an import gave it** — `import { IntBox as IB }` makes `IB` that declaration in
   // this file. Matched by spelling alone, a renamed alias named nothing, and `IB` was a type of its own.
-  for (i32 e = 0; e < cx.impCount; e++) {
+  for (i32 e = keyFirst(cx.impIndex, name); e >= 0; e = cx.impIndex.next[e]) {
     if (cx.impFrom[e] != fi || cx.impName[e] != name || cx.impDecl[e] == name) { continue; }
     return typeDeclAt(cx, cx.impDecl[e], cx.impTo[e]);
   }

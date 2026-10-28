@@ -5,7 +5,7 @@
 // and its tree together, because every token index in the tree refers to that source and those tokens.
 
 import { Decl, Program } from "./ast.wac";
-import { lex, Lexed } from "./lex.wac";
+import { lex, Lexed, tokenStride } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 
 /** One file, read. `src`, `lexed` and `prog` belong together — see the header. */
@@ -34,4 +34,99 @@ export Frontend frontendOf(string path, u8[] src) {
   P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   return Frontend(src, lexed, prog, p.errors, p.errorCount, p.errorNotes, p.errorWidths);
+}
+
+// ---- One read of each text, for the passes that rewrite a program's text ----
+//
+// The lowering is a dozen passes, each `string[] → string[]`, and each lexed every file it looked at:
+// `std` is 173 KB and was lexed about twenty times to check a one-line program that imports it, which
+// was most of what that check cost (`issues/lang/0398b`). A pass that leaves a file alone hands the
+// next pass the same text, so the next pass can have the same tokens.
+//
+// **Two kinds of answer, because parsing writes to its tokens.** `readLexed` is the lexer's output and
+// is never parsed; `readProgram` is parsed from a copy of it, and `readParsedLexed` is that copy, which
+// is what the program's token indices refer to. A caller may read either and must write to neither.
+
+/** The texts read so far, each with its bytes, its tokens and — once asked for — its tree. */
+export struct Reads {
+  string[] texts;
+  u8[][] srcs;
+  Lexed?[] lexes;
+  Lexed?[] parsedLexes;
+  Program?[] progs;
+  i32 n;
+  /** `text.len() & 1023` → the newest entry of that length, or -1; `next` chains the older ones. */
+  i32[] head;
+  i32[] next;
+
+  Reads create() {
+    return Reads(string[](), u8[][](), Lexed?[](), Lexed?[](), Program?[](), 0, i32[](), i32[]());
+  }
+}
+
+/** The entry for `text`, read now if it has not been: lexed, not yet parsed. */
+export i32 readOf(Reads r, string text) {
+  if (r.head.len() == 0) { r.head = i32[].filled(1024, 0 - 1); }
+  i32 b = text.len() & 1023;
+  for (i32 i = r.head[b]; i >= 0; i = r.next[i]) {
+    if (r.texts[i] == text) { return i; }
+  }
+  if (r.n >= r.texts.len()) {
+    i32 size = r.texts.len() * 2 + 8;
+    string[] texts = string[].filled(size, "");
+    u8[][] srcs = u8[][].filled(size, u8[]());
+    Lexed?[] lexes = Lexed?[].defaulted(size);
+    Lexed?[] parsedLexes = Lexed?[].defaulted(size);
+    Program?[] progs = Program?[].defaulted(size);
+    i32[] next = i32[].filled(size, 0 - 1);
+    for (i32 i = 0; i < r.n; i++) {
+      texts[i] = r.texts[i];
+      srcs[i] = r.srcs[i];
+      lexes[i] = r.lexes[i];
+      parsedLexes[i] = r.parsedLexes[i];
+      progs[i] = r.progs[i];
+      next[i] = r.next[i];
+    }
+    r.texts = texts;
+    r.srcs = srcs;
+    r.lexes = lexes;
+    r.parsedLexes = parsedLexes;
+    r.progs = progs;
+    r.next = next;
+  }
+  i32 at = r.n;
+  u8[] src = text.toBytes();
+  r.texts[at] = text;
+  r.srcs[at] = src;
+  r.lexes[at] = lex(src);
+  r.next[at] = r.head[b];
+  r.head[b] = at;
+  r.n = at + 1;
+  return at;
+}
+
+/** The bytes of entry `at`. Read them; do not write them. */
+export u8[] readSrc(Reads r, i32 at) { return r.srcs[at]; }
+
+/** The tokens of entry `at` as the lexer wrote them — never parsed. Read them; do not write them. */
+export Lexed readLexed(Reads r, i32 at) { return r.lexes[at]!; }
+
+/** The tree of entry `at`, parsed on first asking from a copy of its tokens. */
+export Program readProgram(Reads r, i32 at) {
+  if (r.progs[at] is null) {
+    Lexed l = r.lexes[at]!;
+    i32 used = l.tokenCount * tokenStride();
+    i32[] tokens = i32[].filled(used, 0);
+    tokens.copyFrom(l.tokens, 0, 0, used);
+    Lexed mine = Lexed(tokens, l.tokenCount, l.errors, l.errorCount, 0, false);
+    r.progs[at] = parseProgram(P.create(r.srcs[at], mine));
+    r.parsedLexes[at] = mine;
+  }
+  return r.progs[at]!;
+}
+
+/** The tokens `readProgram(r, at)`'s indices refer to — the parser's copy, with what it appended. */
+export Lexed readParsedLexed(Reads r, i32 at) {
+  readProgram(r, at);
+  return r.parsedLexes[at]!;
 }

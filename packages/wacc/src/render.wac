@@ -11,8 +11,8 @@
 // absent field reads as empty, so a row that has nothing to say about one is a row that does not
 // mention it — which is what keeps adding a field from rewriting every diagnostic in the repository.
 //
-// `packages/wacc/tools/wireDiagnostics.ts` turns it back into the reference's `DiagError`, which
-// `wacDiag` prints
+// A TypeScript adapter once turned it back into the reference's `DiagError`, which
+// `wacDiag` printed
 //
 //     error: return type does not match the function's
 //       --> main.wac:1:28

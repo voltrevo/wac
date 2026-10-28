@@ -425,12 +425,8 @@ export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core
   // **Both hosts, because this was in both** — the v8 host had the machinery to hand an unclaimed
   // answer back and spent it on datagrams only, and the wasmtime host had no way to ask. A fix for
   // one host is not a fix.
-  string why = nativeHostWhyNot(cli);
-  if (why == "") {
-    check(t, cli, nativeBinaryPath(core, cli, "lostbytes"), path, "wasmtime");
-  } else {
-    core.log("skipping the wasmtime arm: \{why}");
-  }
+  string native = nativeBinaryPath(cli, t);
+  if (native != "") { check(t, cli, native, path, "wasmtime"); }
 
   // **And the other two capabilities that take something they cannot recreate.** Both hosts again,
   // which is the point: these were fixed on one host and closed as done, and nothing but this case
@@ -442,16 +438,13 @@ export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core
     string dialPath = writtenAs(cli, "connect", CONNECT_PROGRAM);
     checkTaken(t, cli, binaryPath(cli), stdinPath, acceptPath, "v8");
     checkDialled(t, cli, binaryPath(cli), dialPath, "v8");
-    if (why == "") {
-      string nat = nativeBinaryPath(core, cli, "lostbytes");
-      checkTaken(t, cli, nat, stdinPath, acceptPath, "wasmtime");
-      checkDialled(t, cli, nat, dialPath, "wasmtime");
+    if (native != "") {
+      checkTaken(t, cli, native, stdinPath, acceptPath, "wasmtime");
+      checkDialled(t, cli, native, dialPath, "wasmtime");
     }
     string ownPath = writtenAs(cli, "ownstdin", OWNSTDIN_PROGRAM);
     checkOwnStdin(t, cli, binaryPath(cli), ownPath, "v8");
-    if (why == "") {
-      checkOwnStdin(t, cli, nativeBinaryPath(core, cli, "lostbytes"), ownPath, "wasmtime");
-    }
+    if (native != "") { checkOwnStdin(t, cli, native, ownPath, "wasmtime"); }
     cli.remove(ownPath, false).wait();
     cli.remove(dialPath, false).wait();
     cli.remove(stdinPath, false).wait();

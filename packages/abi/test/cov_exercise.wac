@@ -39,7 +39,7 @@ import {
   test_the_table_of_what_the_real_tools_do_is_still_true as st__the_table_of_what_the_real_tools_do_is_still_true,
 } from "./wac/strictness_test.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 bad = 0;
@@ -95,7 +95,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED strictness_test test_every_malformation_is_refused_and_says_which_rule");
     bad = bad + 1;
   }
-  if (st__the_table_of_what_the_real_tools_do_is_still_true(core, cli).len() > 0) {
+  if ((await st__the_table_of_what_the_real_tools_do_is_still_true(sys)).len() > 0) {
     core.warn("error: FAILED strictness_test test_the_table_of_what_the_real_tools_do_is_still_true");
     bad = bad + 1;
   }

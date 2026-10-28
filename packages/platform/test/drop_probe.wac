@@ -1,0 +1,12 @@
+// The page `drop_live.test.ts` drops files and folders on: it logs every `Picked` it is handed, and
+// nothing else, so the test reads exactly what a program would see.
+import { Page, Picked } from "../../web";
+
+export async i32 main(Page page) {
+  page.title("ready");
+  while (true) {
+    Picked p = await page.nextFile();
+    page.log(p.ok ? "picked \{p.name} \{p.bytes.len()}" : "refused \{p.name}: \{p.error}");
+  }
+  return 0;
+}

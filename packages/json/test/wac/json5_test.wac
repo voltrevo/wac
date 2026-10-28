@@ -13,42 +13,46 @@
 //
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
-// **The reference half stayed TypeScript, because it is the reference.** Four of these six tests
+// **The reference half stayed JavaScript, because it is the reference.** Four of these six tests
 // compare this package's two entry points against each other and ask the host nothing at all. The
 // first needs `JSON.stringify`'s number spelling, which is a fact about the reference rather than
-// about a harness, so it goes through `../oracle.ts` — the same file the other wac tests here use.
+// about a harness, so it asks `JSON5` below — a script that only answers; since 2026-10-27 the
+// comparing is done here (`packages/wactest/src/inline.wac`).
 //
-// **The corpus is served by the oracle rather than read here**, which is the one thing that changed
-// shape in the move. Reading `vendor/json5.json` from wac would mean parsing it with the parser
-// under test, and a misread would arrive as hundreds of disagreements about JSON5 rather than as one
-// about the harness. So `json5corpus` hands over the inputs and `json5cmp` keeps the expected
-// answers on the far side entirely: two batches, two processes, and no shared implementation
-// between the question and the answer.
+// **The corpus is parsed by the host rather than here.** Parsing `vendor/json5.json` in wac would
+// mean parsing it with the parser under test, and a misread would arrive as hundreds of disagreements
+// about JSON5 rather than as one about the harness. So this file reads the bytes and hands them over
+// whole, and `JSON.parse` splits them into cases, each input in hex: two batches, two processes, and
+// no shared implementation between the question and the answer. The script runs with no permissions,
+// which is why the reading is done on this side.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Answers, Lines, ask, hex } from "../../../wactest/src/oracle.wac";
+import { Lines, hex } from "../../../wactest/src/oracle.wac";
+import { askScript } from "../../../wactest/src/inline.wac";
 import { endsWith, joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import { Result } from "core";
 import { decoded } from "../../../codec/src/hex.wac";
 import { canonicalize, canonicalizeJson5, parse, parseJson5 } from "../../src/json.wac";
 import { JsonValue } from "../../src/value.wac";
 import { JsonError } from "../../src/parse.wac";
 
-static string ORACLE = "packages/json/test/oracle.ts";
+static string CORPUS = "packages/json/test/vendor/json5.json";
 static string DIR = "packages/json/test/jsontestsuite";
 
 /**
- * The oracle, with read access and nothing else.
- *
- * `askDeno` runs it with no grants at all, which is right for the ops that only compute — and this
- * is the one that reads the vendored corpus off disk. Granted here rather than by widening the
- * shared helper: every other caller of it would then be running with a capability none of them
- * needs, and the grant would stop saying anything about who actually uses it.
+ * Two questions. `corpus <hex>` is the vendored file: one answer per case, `<inputHex> <json>`, where
+ * `json` is `JSON.stringify` of the reference's value or `reject`. `respell <hex>` is our canonical
+ * output, read and written again by `JSON.stringify`, so both sides are in one number spelling.
  */
-Answers askOracle(T t, Cli cli, Lines lines, string what) {
-  return ask(t, cli, "deno", ["run", "--allow-read", "--no-check", ORACLE], lines, what);
-}
+static string JSON5 =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const text = (h) => new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16)));\n" +
+  "const hex = (s) => [...new TextEncoder().encode(s)].map((b) => b.toString(16).padStart(2, '0')).join('');\n" +
+  "const corpus = (h) => JSON.parse(text(h)).cases.map((c) => hex(c.input) + ' ' + (c.json ?? 'reject'));\n" +
+  "const respell = (h) => { try { return JSON.stringify(JSON.parse(text(h))); } catch { return 'not JSON'; } };\n" +
+  "const out = L.flatMap((l) => { const [k, h] = l.split(' '); return k === 'corpus' ? corpus(h) : [respell(h)]; });\n" +
+  "console.log(out.concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 /**
  * Inputs where this parser knowingly answers differently, each with the reason.
@@ -89,46 +93,54 @@ bool isKnown(string input) {
   return false;
 }
 
-export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli cli) {
+export async string test_every_vendored_case_agrees_with_the_reference(Sys sys) {
   T t = T.create();
 
-  // Batch one: the inputs. One request line, one answer per case.
+  // Batch one: the corpus, whole, split into cases by the host.
+  Result<u8[], string> file = await sys.readFile(CORPUS);
+  if (file.isErr()) {
+    t.fail("cannot read \{CORPUS} — \{file.err() ?? ""}");
+    return t.report();
+  }
   Lines want = Lines.create();
-  want.add("json5corpus");
-  Answers got = askOracle(t, cli, want, "the json5 corpus");
-  if (!got.ok) { return t.report(); }
-  t.isTrue(got.lines.len() > 400,
-           "only \{got.lines.len()} corpus cases came back — the corpus is not being read");
-  if (got.lines.len() <= 400) { return t.report(); }
+  want.add("corpus \{hex(file.unwrap())}");
+  string[] got = await askScript(t, sys.procs(), JSON5, want, "the json5 corpus");
+  t.isTrue(got.len() > 400, "only \{got.len()} corpus cases came back — the corpus is not being read");
+  if (got.len() <= 400) { return t.report(); }
 
-  string[] inputs = string[].filled(got.lines.len(), "");
-  for (i32 i = 0; i < got.lines.len(); i++) {
-    string line = got.lines[i];
-    i32 sp = line.indexOf(" ");
+  string[] inputs = string[].filled(got.len(), "");
+  string[] reference = string[].filled(got.len(), "");
+  for (i32 i = 0; i < got.len(); i++) {
+    i32 sp = got[i].indexOf(" ");
     if (sp < 0) {
-      t.fail("corpus line \{i} is not `case <hex>`: \{line}");
+      t.fail("corpus line \{i} is not `<hex> <json>`: \{got[i]}");
       return t.report();
     }
-    inputs[i] = string.fromBytes(decoded(line.slice(sp + 1, line.len())));
+    inputs[i] = string.fromBytes(decoded(got[i].slice(0, sp)));
+    reference[i] = got[i].slice(sp + 1, got[i].len());
   }
 
-  // Batch two: our answer for each, adjudicated against the vendored one.
-  Lines asked = Lines.create();
+  // Batch two: what we accept, spelled the way the reference's answers are.
+  string[] ours = string[].filled(inputs.len(), "reject");
+  i32[] asked = i32[].filled(inputs.len(), -1);
+  Lines respell = Lines.create();
   for (i32 i = 0; i < inputs.len(); i++) {
-    u8[]? ours = canonicalizeJson5(inputs[i].toBytes()).ok();
-    asked.add("json5cmp \{i} " + (ours is not null ? "1" : "0") + " " + hex(ours ?? u8[]()));
+    u8[]? out = canonicalizeJson5(inputs[i].toBytes()).ok();
+    if (out is null) { continue; }
+    asked[i] = respell.n;
+    respell.add("respell \{hex(out!)}");
   }
-  Answers verdicts = askOracle(t, cli, asked, "the json5 comparison");
-  if (!verdicts.ok) { return t.report(); }
-  t.eqI32(verdicts.lines.len(), inputs.len(), "a verdict per case");
-  if (verdicts.lines.len() != inputs.len()) { return t.report(); }
+  string[] spelled = await askScript(t, sys.procs(), JSON5, respell, "the json5 comparison");
+  if (spelled.len() != respell.n) { return t.report(); }
+  for (i32 i = 0; i < inputs.len(); i++) {
+    if (asked[i] >= 0) { ours[i] = spelled[asked[i]]; }
+  }
 
   string[] wrong = string[].filled(8, "");
   i32 nWrong = 0;
   i32 divergedAsExpected = 0;
   for (i32 i = 0; i < inputs.len(); i++) {
-    string v = verdicts.lines[i];
-    if (v == "agree") {
+    if (ours[i] == reference[i]) {
       if (isKnown(inputs[i])) {
         if (nWrong < wrong.len()) {
           wrong[nWrong] = "\"\{inputs[i]}\" is listed as a known divergence but now agrees — " +
@@ -140,8 +152,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
     }
     if (isKnown(inputs[i])) { divergedAsExpected = divergedAsExpected + 1; continue; }
     if (nWrong < wrong.len()) {
-      i32 sp = v.indexOf(" ");
-      wrong[nWrong] = sp < 0 ? v : string.fromBytes(decoded(v.slice(sp + 1, v.len())));
+      wrong[nWrong] = "\"\{inputs[i]}\": json5 says \{reference[i]}, we say \{ours[i]}";
       nWrong = nWrong + 1;
     } else {
       nWrong = nWrong + 1;

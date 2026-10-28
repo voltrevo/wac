@@ -193,7 +193,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
            "the stopped server left an image with no users");
   if (!onDisk.ok) { return t.report(); }
 
-  string native = nativeBinaryPath(core, cli, "arrival_users");
+  string native = nativeBinaryPath(cli, t);
   if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
   string mod = builtProgram(cli, ENTRY, "sshd-arrival", SSHD_GRANTS());
   // One artefact: the module is what the native host is handed, manifest section and all.

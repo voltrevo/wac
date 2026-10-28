@@ -20,24 +20,18 @@
 //
 // ## What the move changed
 //
-// `test/oracle.ts` was a module these tests imported; it is now `test/batchOracle.ts`, a program, so
-// a wac test can be the caller. The bulk groups ask it for `nodeonly` — Node alone, with the five
-// divergent inputs excluded by name — where the generated sweeps in `fuzz_test.wac` take only what
-// both runtimes agree on, because they cannot name anything.
+// The oracle was a module these tests imported, then a program they handed their answers to; since
+// 2026-10-27 it is a small script in `test/runtimes.wac` that only answers, and the comparing is
+// here. The bulk groups ask Node alone, with the five divergent inputs excluded by name, where the
+// generated sweeps in `fuzz_test.wac` take only what both runtimes agree on, because they cannot
+// name anything.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Sys } from "std";
 import { parse, parseWithBase } from "../probe.wac";
-
-static string ORACLE = "packages/url/test/batchOracle.ts";
-
-/** The oracle spawns Node, so it needs `--allow-run` of its own. */
-void ask(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "deno", ["run", "--no-check", "--allow-run", ORACLE], lines, what);
-}
+import { Cases, compareWithNode, nodeAccepts, stillDiffer } from "../runtimes.wac";
 
 /** What this package answers, in `probe.wac`'s own NUL-separated form. */
 u8[] answer(string input, string base) {
@@ -117,23 +111,19 @@ bool isDivergent(string input, string base) {
 }
 
 /** Every input against one base, compared against Node — minus the five held out. */
-void checkAll(T t, Cli cli, string[] inputs, string base, string what) {
-  Lines lines = Lines.create();
-  lines.add("nodeonly");
-  i32 sent = 0;
+async void checkAll(T t, Sys sys, string[] inputs, string base, string what) {
+  Cases cases = Cases.create();
   for (i32 i = 0; i < inputs.len(); i++) {
     if (isDivergent(inputs[i], base)) { continue; }
-    lines.add("u " + hex(inputs[i].toBytes()) + " " +
-              (base == "" ? "-" : hex(base.toBytes())) + " " + hex(answer(inputs[i], base)));
-    sent = sent + 1;
+    cases.add(inputs[i], base);
   }
-  t.isTrue(sent > 0, "\{what}: every input was held out, so nothing was compared");
-  ask(t, cli, lines, what);
+  t.isTrue(cases.count() > 0, "\{what}: every input was held out, so nothing was compared");
+  await compareWithNode(t, sys.procs(), cases, what);
 }
 
-export string test_absolute_urls_with_every_component(Core core, Cli cli) {
+export async string test_absolute_urls_with_every_component(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://example.com/", "https://example.com:8443/a/b?c=d#e", "http://user@example.com/",
     "http://user:pw@example.com/", "http://:pw@example.com/", "http://example.com",
     "http://example.com?q", "http://example.com#f", "http://example.com/?#",
@@ -142,9 +132,9 @@ export string test_absolute_urls_with_every_component(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_scheme_handling(Core core, Cli cli) {
+export async string test_scheme_handling(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "HTTP://example.com/", "HtTpS://Example.COM/", "http://example.com:80/",
     "https://example.com:443/", "ftp://example.com:21/", "ws://example.com:80/",
     "wss://example.com:443/", "http://example.com:8080/", "http://example.com:0/",
@@ -156,18 +146,18 @@ export string test_scheme_handling(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_ports_that_are_not_ports(Core core, Cli cli) {
+export async string test_ports_that_are_not_ports(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://h:65536/", "http://h:99999999/", "http://h:abc/", "http://h:/", "http://h:-1/",
     "http://h: 80/"
   ], "", "ports that are not ports");
   return t.report();
 }
 
-export string test_path_normalisation(Core core, Cli cli) {
+export async string test_path_normalisation(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://h/a/b/../c", "http://h/a/b/./c", "http://h/../../..", "http://h/a/..",
     "http://h/a/../", "http://h/.", "http://h/./", "http://h//a//b//", "http://h/a/%2e/b",
     "http://h/a/%2E%2e/b", "http://h/a/.%2e/b", "http://h\\a\\b", "http://h/a\\b",
@@ -177,9 +167,9 @@ export string test_path_normalisation(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_percent_encoding_by_component(Core core, Cli cli) {
+export async string test_percent_encoding_by_component(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://h/ \"<>`{}", "http://h/?\" <>#", "http://h/?a'b", "foo://h/?a'b",
     "http://h/#\" <>`", "http://h/%41%42", "http://h/%zz", "http://h/%", "http://h/%a",
     "http://user na:me@h/", "http://h/a?b#c d", "http://h/\{oneByte(1)}\{oneByte(0x1F)}",
@@ -190,9 +180,9 @@ export string test_percent_encoding_by_component(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_hosts_ipv4_in_all_its_spellings(Core core, Cli cli) {
+export async string test_hosts_ipv4_in_all_its_spellings(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://127.0.0.1/", "http://127.1/", "http://127.0.1/", "http://2130706433/",
     "http://0x7f.1/", "http://0x7f000001/", "http://0177.0.0.1/", "http://0300.0250.0.1/",
     "http://1.2.3.4./", "http://0/", "http://0x/", "http://256.1.1.1/", "http://1.2.3.4.5/",
@@ -202,9 +192,9 @@ export string test_hosts_ipv4_in_all_its_spellings(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_hosts_ipv6(Core core, Cli cli) {
+export async string test_hosts_ipv6(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://[::1]/", "http://[::]/", "http://[1:2:3:4:5:6:7:8]/", "http://[1::8]/",
     "http://[::ffff:127.0.0.1]/", "http://[0:0:0:0:0:0:0:1]/", "http://[2001:db8::1]:8080/",
     "http://[1:2:3:4:5:6:7:8:9]/", "http://[1::2::3]/", "http://[::1", "http://[]/",
@@ -213,9 +203,9 @@ export string test_hosts_ipv6(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_hosts_names_empty_and_forbidden_bytes(Core core, Cli cli) {
+export async string test_hosts_names_empty_and_forbidden_bytes(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "http://example.com/", "http://EXAMPLE.COM/", "http://sub.domain.example.com/",
     "http://h%65llo/", "http:///", "http://:80/", "http://a b/", "http://a#b/", "http://a<b/",
     "http://a|b/", "http://a%2fb/", "foo://a b/", "foo://a%20b/", "http://.../",
@@ -224,9 +214,9 @@ export string test_hosts_names_empty_and_forbidden_bytes(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_file_urls(Core core, Cli cli) {
+export async string test_file_urls(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "file:///a/b", "file://localhost/a", "file://LOCALHOST/a", "file://host/a", "file:///",
     "file://", "file:", "file:/a", "file:a", "file:///c:/x", "file:///c|/x", "file://c:/x",
     "file:///C:/", "file:///c:", "file:////a", "file:///a/../b", "file://\\\\a"
@@ -241,14 +231,14 @@ string[] relativeRefs() {
   ];
 }
 
-export string test_relative_resolution_against_a_base(Core core, Cli cli) {
+export async string test_relative_resolution_against_a_base(Sys sys) {
   T t = T.create();
   string[] bases = [
     "http://example.com/a/b/c?q#f", "http://example.com/", "https://user:pw@host:8080/p/q",
     "file:///a/b/c", "foo://host/p", "foo:opaque"
   ];
   for (i32 i = 0; i < bases.len(); i++) {
-    checkAll(t, cli, relativeRefs(), bases[i], "against \"\{bases[i]}\"");
+    await checkAll(t, sys, relativeRefs(), bases[i], "against \"\{bases[i]}\"");
   }
   return t.report();
 }
@@ -260,9 +250,9 @@ export string test_relative_resolution_against_a_base(Core core, Cli cli) {
  * branch. Written as differential cases like everything else, so they pin behaviour and not merely
  * execution.
  */
-export string test_edges_the_main_groups_miss(Core core, Cli cli) {
+export async string test_edges_the_main_groups_miss(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     // A path with no host that starts with an empty segment, which the serializer has to protect
     // with `/.` or it would re-parse as an authority.
     "foo:/.//x", "foo:/..//x", "web+demo:/.//not-a-host/",
@@ -293,23 +283,23 @@ export string test_edges_the_main_groups_miss(Core core, Cli cli) {
   string[] bases = ["file:///c:/a/b", "file:///c:", "file://h/c:/x"];
   string[] refs = ["..", "/x", "x", "../..", "d:/y", "/d:/y"];
   for (i32 i = 0; i < bases.len(); i++) {
-    checkAll(t, cli, refs, bases[i], "drive letters against \"\{bases[i]}\"");
+    await checkAll(t, sys, refs, bases[i], "drive letters against \"\{bases[i]}\"");
   }
   return t.report();
 }
 
-export string test_whitespace_and_control_bytes_are_stripped(Core core, Cli cli) {
+export async string test_whitespace_and_control_bytes_are_stripped(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "  http://h/  ", "\thttp://h/", "ht\ntp://h/", "http://h/a\tb", "http://h/a\rb",
     "\{oneByte(0)}http://h/", "http://h/ "
   ], "", "whitespace");
   return t.report();
 }
 
-export string test_inputs_that_must_be_rejected(Core core, Cli cli) {
+export async string test_inputs_that_must_be_rejected(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys, [
     "", "   ", "http", "://h/", "http:", "1http://h/", "http://", "http://:@/", "//h/",
     "/a/b", "a/b"
   ], "", "rejections");
@@ -323,21 +313,26 @@ export string test_inputs_that_must_be_rejected(Core core, Cli cli) {
  * rejected instead. Asserted rather than skipped so that the day it is implemented, or the day
  * something else starts rejecting these for a different reason, the test says so.
  */
-export string test_a_non_ascii_domain_is_rejected_rather_than_mapped(Core core, Cli cli) {
+export async string test_a_non_ascii_domain_is_rejected_rather_than_mapped(Sys sys) {
   T t = T.create();
   string[] cases = ["http://café.com/", "http://日本.jp/"];
-  Lines lines = Lines.create();
+  Cases asked = Cases.create();
   for (i32 i = 0; i < cases.len(); i++) {
     t.isFalse(accepted(cases[i], ""),
               "\{cases[i]}: a non-ASCII domain was accepted, so IDNA may have landed");
     // The other side of the same claim, and it is not decoration: without it, the day something
     // else starts rejecting these the "we reject it" half above would keep passing and the
     // divergence would have quietly become an agreement about nothing.
-    lines.add("nodeok \{hex(cases[i].toBytes())} - 1");
+    asked.add(cases[i], "");
   }
-  ask(t, cli, lines, "IDNA, which must still be a divergence");
+  bool[] node = await nodeAccepts(t, sys.procs(), asked, "IDNA, which must still be a divergence");
+  t.eqI32(node.len(), cases.len(), "IDNA: Node gave a verdict on each");
+  for (i32 i = 0; i < node.len(); i++) {
+    t.isTrue(node[i], "\{cases[i]}: Node rejects it, and this expected the opposite — the " +
+             "divergence has moved");
+  }
   // An already-punycoded domain is ASCII, so it needs no mapping and must agree.
-  checkAll(t, cli, ["http://xn--caf-dma.com/"], "", "an already-punycoded domain");
+  await checkAll(t, sys, ["http://xn--caf-dma.com/"], "", "an already-punycoded domain");
   return t.report();
 }
 
@@ -388,20 +383,19 @@ export string test_a_reference_resolves_against_an_opaque_path_only_with_a_hash(
  * Node is right on four of these and Deno on the fifth. That is the reason the bulk of this file
  * uses Node and excludes these five, rather than trusting either runtime completely.
  */
-export string test_runtime_divergences_judged_against_the_standard(Core core, Cli cli) {
+export async string test_runtime_divergences_judged_against_the_standard(Sys sys) {
   T t = T.create();
   string[] ins = divergentInputs();
   string[] bs = divergentBases();
   string[] wanted = divergentWanted();
   string[] why = divergentWhy();
-  Lines lines = Lines.create();
+  Cases asked = Cases.create();
   for (i32 i = 0; i < ins.len(); i++) {
     string label = bs[i] == "" ? "\"\{ins[i]}\""
                                : "\"\{ins[i]}\" against \"\{bs[i]}\"";
     t.eqStr(href(ins[i], bs[i]), wanted[i], "\{label} — because \{why[i]}");
-    lines.add("stilldiffer " + hex(ins[i].toBytes()) + " " +
-              (bs[i] == "" ? "-" : hex(bs[i].toBytes())));
+    asked.add(ins[i], bs[i]);
   }
-  ask(t, cli, lines, "the recorded divergences are still divergences");
+  await stillDiffer(t, sys.procs(), asked, "the recorded divergences are still divergences");
   return t.report();
 }

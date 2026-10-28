@@ -3186,3 +3186,25 @@ point this issue makes about `--explain-selection` being dead the day after it p
 Not moved, and still last: `curated.ts` and `known.ts`. They are data, and the window where the data
 exists in two places should be as short as possible — so they go with the switchover rather than
 before it.
+
+## 2026-10-27: a JavaScript oracle is an inline script that only answers
+
+**The operator's ruling:** using Deno as an oracle is fine, but the oracle should be a small script in
+the test, not a `.ts` file beside it. So the roles were swapped. The script prints what JavaScript says
+for each question, and the wac test compares with `agree` (`packages/wactest/src/inline.wac`). The
+script runs as a `deno run` `data:` URL with no permissions, or under `node --permission` where Node is
+the reference.
+
+**Converted:** `abi`, `bignum` (and its coverage driver's operand service), `datetime`, `fmt`, `json`,
+`regex`, `ssz`, `unicode` and `url`. Eleven `.ts` oracle files are gone, and the scripts that replaced
+them are 4 to 27 lines each. `url` asks both runtimes with one script, because its tests assert where
+Node and Deno disagree. Every converted oracle was sabotaged once to show it can still fail a test. All
+nine coverage drivers build and hold their floors.
+
+**Not converted:**
+- The packages that design 0013's step 5 is changing (`crypto`, `tor`, `tls`, `http`, `ssh`, `server`,
+  `webrtc`, wacc's), until it lands.
+- `mpt` and `zstd`, whose oracles run our own TypeScript implementations rather than JavaScript's.
+  Under CLAUDE.md's rule, that keeps a retired implementation alive as the oracle. Fixed vectors, as
+  `test/vendor/` already holds for some cases, are the likely replacement. That is a decision, not a
+  port.

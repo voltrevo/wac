@@ -21,16 +21,15 @@
 // assertion would report agreement between two hosts that printed nothing. So the test also pins the
 // exact line count, the stage-3 ordering, and that stage 4 timed out.
 //
-// ## When cargo is not there
+// ## When the wasmtime host is not there
 //
-// The runtime is Rust and the rest of the repo is not. If cargo is missing the native half is skipped
-// — **loudly**, and the Deno half still runs and still asserts, so a skip cannot be mistaken for a
-// pass. Silent skipping is how a differential test comes to compare nothing.
+// The case fails, naming the build — `requireNativeHost`. It used to skip the native half loudly, and a
+// loud skip is still a gate that passed having compared nothing; `tools/push.sh` builds the host.
 //
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";
@@ -74,14 +73,7 @@ Ran runIt(Cli cli, string cmd, string[] args) {
  * `-a`, so `-print` lived only in the `Cargo.toml` branch and the `*.rs` branch carried no action.
  * `wac task seed` owns the build; `wac task seed:native` does this crate alone.
  */
-string nativeBinary(Core core, Cli cli) {
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.warn("SKIPPING the native half, and the Deno half still runs: \{why}");
-    return "";
-  }
-  return nativeHost(cli);
-}
+string nativeBinary(Cli cli, T t) { return requireNativeHost(cli, t); }
 
 string buildOne(Cli cli, string entry, bool native, string out, string[] grants) {
   if (native) {
@@ -244,10 +236,10 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
   if (why != "") { return t.report(); }
   Ran js = runIt(cli, denoProgram, ["one", "two"]);
 
-  // The Deno half on its own, so that a skipped native half still tests something.
+  // The Deno half on its own, so a failure says which half broke.
   assertConformant(t, js, "deno");
 
-  string native = nativeBinary(core, cli);
+  string native = nativeBinary(cli, t);
   if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
   why = buildOne(cli, ENTRY, true, "\{dir}/wacland", ["--allow-read", "--allow-env"]);
   t.eqStr(why, "", "the native half built");
@@ -428,7 +420,7 @@ export string test_running_a_host_program_agrees_between_the_two_native_hosts(Co
   t.eqStr(why, "", "the probe built");
   if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
 
-  // The V8 host first, and asserted on its own, so a skipped native half still tests something.
+  // The V8 host first, and asserted on its own, so a failure says which host broke.
   Ran v8 = runIt(cli, "\{root(cli)}/native/v8/target/release/wac", ["\{out}.wasm"]);
   t.eqI32(v8.code, 0, "the probe exited zero on the V8 host: \{v8.out}\{v8.err}");
   t.isTrue(contains(v8.err, "inherit: ran=yes status=0 buffered=0/0"), v8.err);
@@ -436,7 +428,7 @@ export string test_running_a_host_program_agrees_between_the_two_native_hosts(Co
   t.isTrue(contains(v8.err, "cleared: ran=yes only-what-was-passed=yes"), v8.err);
   t.isTrue(contains(v8.out, "from the grandchild"), "the inherited stream: \{v8.out}");
 
-  string native = nativeBinary(core, cli);
+  string native = nativeBinary(cli, t);
   if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
   Ran rs = runIt(cli, native, ["\{out}.wasm"]);
   t.eqI32(rs.code, 0, "and on the wasmtime host: \{rs.out}\{rs.err}");

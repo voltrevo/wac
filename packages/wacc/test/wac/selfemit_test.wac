@@ -1,5 +1,7 @@
 // Rung 5's tracker: how much of `wacc` can `wacc` compile?
 //
+// test-lane: heavy — 226s in a loaded gate, measured 2026-10-27; it compiles wacc's own sources, which `bootstrap.sh` does on every wacc change anyway
+//
 // The ladder's last rung is the bootstrap — this compiler compiling its own source — and the useful
 // version of that question is not yes or no but *how far*. This reports how many of wacc's own
 // sources produce a whole module, so the number moves as the emitter grows rather than staying at

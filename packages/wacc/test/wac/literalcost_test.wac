@@ -1,0 +1,67 @@
+// A string literal evaluated in a loop costs about what a variable does.
+//
+// wacc scans text one character at a time — `string c = t[i]; if (c == "[" || c == "<") …` — and every
+// literal in that test is evaluated once per character. `issues/lang/0398b`: through `array.new_data`
+// each evaluation was a call into the engine's runtime that took a lock, and that loop ran about 12×
+// slower than the same loop with its literals held in variables set before it. Spread over every such
+// scanner it was a fifth of building box's shell, as lock and allocation time no one function owned.
+//
+// The program times both forms and exits with how many times slower the literals were, so the
+// emitted code is measured by the engine that runs it rather than by reading its bytes.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "std";
+import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
+
+static string PROGRAM = "import { Sys, Core } from \"std\";\n"
+  + "i32 withLiterals(string t, i32 rounds) {\n"
+  + "  i32 n = 0;\n"
+  + "  for (i32 r = 0; r < rounds; r++) {\n"
+  + "    for (i32 i = 0; i < t.len(); i++) {\n"
+  + "      string c = t[i];\n"
+  + "      if (c == \"[\" || c == \"<\") { n = n + 1; }\n"
+  + "      if (c == \"]\" || c == \">\") { n = n - 1; }\n"
+  + "    }\n"
+  + "  }\n"
+  + "  return n;\n"
+  + "}\n"
+  + "i32 withVariables(string t, i32 rounds) {\n"
+  + "  string lb = \"[\"; string lt = \"<\"; string rb = \"]\"; string gt = \">\";\n"
+  + "  i32 n = 0;\n"
+  + "  for (i32 r = 0; r < rounds; r++) {\n"
+  + "    for (i32 i = 0; i < t.len(); i++) {\n"
+  + "      string c = t[i];\n"
+  + "      if (c == lb || c == lt) { n = n + 1; }\n"
+  + "      if (c == rb || c == gt) { n = n - 1; }\n"
+  + "    }\n"
+  + "  }\n"
+  + "  return n;\n"
+  + "}\n"
+  + "export i32 main(Sys sys) {\n"
+  + "  Core core = sys.core;\n"
+  + "  string t = \"fn[Result<i32,string>(Vec<core$Job>,fn[void(i32)],string[])]\";\n"
+  + "  withLiterals(t, 2000); withVariables(t, 2000);\n"
+  + "  i64 t0 = core.monotonicNanos().wait();\n"
+  + "  i32 a = withLiterals(t, 20000);\n"
+  + "  i64 t1 = core.monotonicNanos().wait();\n"
+  + "  i32 b = withVariables(t, 20000);\n"
+  + "  i64 t2 = core.monotonicNanos().wait();\n"
+  + "  if (a != b) { return 100; }\n"
+  + "  i64 v = t2 - t1;\n"
+  + "  if (v < (1 as i64)) { v = 1 as i64; }\n"
+  + "  i64 ratio = (t1 - t0) / v;\n"
+  + "  return ratio > (99 as i64) ? 99 : ratio as! i32;\n"
+  + "}\n";
+
+export string test_a_literal_in_a_loop_costs_about_what_a_variable_does(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runEmittedOne(cli, "/t/m.wac", PROGRAM, scratchDir(cli), "literalcost.wasm");
+  t.isTrue(r.ok, "the program ran — " + r.error + r.stderr);
+  if (!r.ok) { return t.report(); }
+  t.isTrue(r.status != 100, "both loops counted the same brackets");
+  t.isTrue(r.status < 3,
+           "the loop comparing against literals took " + itoa(r.status)
+           + "× as long as the same loop comparing against variables");
+  return t.report();
+}

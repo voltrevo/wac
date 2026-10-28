@@ -81,7 +81,7 @@ export string test_wac_run_takes_a_main_with_no_capabilities_and_returns_its_ans
 
 export string test_the_wasmtime_host_takes_one_too(Core core, Cli cli) {
   T t = T.create();
-  string wacland = nativeBinaryPath(core, cli, "runcli");
+  string wacland = nativeBinaryPath(cli, t);
   if (wacland == "") { return t.report(); }
 
   string dir = programIn(cli, t, "runcli-native", NOCAPS);

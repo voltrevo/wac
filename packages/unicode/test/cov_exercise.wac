@@ -61,7 +61,7 @@ u8[][] malformed() {
   ];
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 seen = 0;
@@ -140,7 +140,7 @@ export i32 main(Sys sys) {
   // surrogate rejection in `encodedLength`, and the four-byte encode arm — all three tested
   // since `unicode_test.wac` was written, none of them reachable from here before.
   i32 bad = 0;
-  if (u__simple_case_mapping_agrees_with_the_host(core, cli).len() > 0) {
+  if ((await u__simple_case_mapping_agrees_with_the_host(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_simple_case_mapping_agrees_with_the_host");
     bad = bad + 1;
   }
@@ -148,7 +148,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED unicode_test test_sharp_s_under_simple_uppercase");
     bad = bad + 1;
   }
-  if (u__fold_is_an_equivalence(core, cli).len() > 0) {
+  if ((await u__fold_is_an_equivalence(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_fold_is_an_equivalence");
     bad = bad + 1;
   }
@@ -160,7 +160,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED unicode_test test_fold_all_matches_fold_equal");
     bad = bad + 1;
   }
-  if (u__mapping_whole_strings_agrees_with_the_host(core, cli).len() > 0) {
+  if ((await u__mapping_whole_strings_agrees_with_the_host(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_mapping_whole_strings_agrees_with_the_host");
     bad = bad + 1;
   }
@@ -168,27 +168,27 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED unicode_test test_fold_equal_on_named_pairs");
     bad = bad + 1;
   }
-  if (u__fold_equal_over_random_strings(core, cli).len() > 0) {
+  if ((await u__fold_equal_over_random_strings(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_fold_equal_over_random_strings");
     bad = bad + 1;
   }
-  if (u__utf8_encoding_matches_the_host_at_every_code_point(core, cli).len() > 0) {
+  if ((await u__utf8_encoding_matches_the_host_at_every_code_point(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_utf8_encoding_matches_the_host_at_every_code_point");
     bad = bad + 1;
   }
-  if (u__invalid_utf8_is_rejected(core, cli).len() > 0) {
+  if ((await u__invalid_utf8_is_rejected(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_invalid_utf8_is_rejected");
     bad = bad + 1;
   }
-  if (u__scalar_counting_matches_the_host(core, cli).len() > 0) {
+  if ((await u__scalar_counting_matches_the_host(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_scalar_counting_matches_the_host");
     bad = bad + 1;
   }
-  if (u__random_byte_strings_never_crash_the_decoder(core, cli).len() > 0) {
+  if ((await u__random_byte_strings_never_crash_the_decoder(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_random_byte_strings_never_crash_the_decoder");
     bad = bad + 1;
   }
-  if (u__is_printable_agrees_with_the_host(core, cli).len() > 0) {
+  if ((await u__is_printable_agrees_with_the_host(sys)).len() > 0) {
     core.warn("error: FAILED unicode_test test_is_printable_agrees_with_the_host");
     bad = bad + 1;
   }

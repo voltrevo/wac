@@ -92,8 +92,36 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
     return "";
   }
 
-  string out = "\{dir}/wac";
-  Exec built = sh(cli, "bash bootstrap.sh --host \{host} -o '\{out}' 2>&1");
+  // **From a copy of the tracked files, not from this working tree**, because CI builds from a fresh
+  // checkout and every working tree is full of leftovers: `.cache/`, two `target/` directories, a
+  // seed. Each of the Pages deploy's breaks has been a script that was right here and wrong there.
+  string tree = "\{dir}/tree";
+  Exec copied = sh(cli, "mkdir -p '\{tree}' && git ls-files -z | tar --null -T - -cf - | tar -xf - -C '\{tree}'");
+  t.eqI32(copied.status, 0, "could not copy the tree: \{string.fromBytes(copied.stdout)}");
+  if (copied.status != 0) { return ""; }
+
+  // **Decoys where an earlier build would have left a `wac`.** The script starts from the host and
+  // nothing else, so a command from before must never be run — the embedding check once asked one,
+  // and a wasmtime binary with no v8 binary beside it made every bootstrap refuse a clean tree. Each
+  // decoy leaves a mark, so this sees the call even if the script ignores what the decoy answered.
+  string mark = "\{dir}/a-leftover-ran";
+  string decoy = "#!/bin/sh\necho \"$0\" >> '\{mark}'\nexit 1\n";
+  for (string p in ["native/target/release/wac", "native/v8/target/release/wac"]) {
+    cli.mkdir("\{tree}/\{p.slice(0, p.len() - 4)}", true).wait();
+    Change wrote = cli.writeFile("\{tree}/\{p}", decoy.toBytes()).wait();
+    Exec made = sh(cli, "chmod +x '\{tree}/\{p}'");
+    t.isTrue(wrote.ok() && made.status == 0, "could not plant \{p} — \{wrote.message}");
+  }
+
+  // **Into a directory that does not exist yet**, because that is what CI hands it: `syncDemos.ts`
+  // asks for `.cache/wac-deno`, `.cache/` is gitignored, and a fresh checkout has none. Every working
+  // tree has one, so a `-o` into an existing directory passed here while the Pages deploy failed on
+  // `cp: cannot create regular file` after a complete, correct bootstrap.
+  string out = "\{dir}/not-made-yet/wac";
+  Exec built = sh(cli, "cd '\{tree}' && bash bootstrap.sh --host \{host} -o '\{out}' 2>&1");
+  FileResult ran = cli.readFile(mark).wait();
+  t.isTrue(!ran.ok, "\{host}: bootstrap.sh ran a command left over from an earlier build:\n"
+                    + (ran.ok ? string.fromBytes(ran.bytes) : ""));
   t.eqI32(built.status, 0,
           "bootstrap.sh --host \{host} failed:\n\{string.fromBytes(built.stdout)}");
   if (built.status != 0) { return ""; }

@@ -1,0 +1,89 @@
+// How this package's tests put a document to an inline oracle, and how they compare two trees there.
+//
+// A document travels as **hex**, because half the corpus is not valid UTF-8 and a document that went
+// through a text encoding would not be the document under test. The hex is the question's last word,
+// after a readable preview the script ignores, so a disagreement names the document rather than its
+// bytes. Not a test file: `wac test` walks `*_test.wac`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, hex } from "../../../wactest/src/oracle.wac";
+import { askScript } from "../../../wactest/src/inline.wac";
+import { Procs } from "std";
+import { Vec } from "core";
+
+/**
+ * `doc` as a question line: up to 60 bytes of it with everything outside printable ASCII as `\xNN`,
+ * then a space and the whole of it in hex. The script reads only the last word.
+ */
+export string question(u8[] doc) {
+  string out = "";
+  i32 n = doc.len() < 60 ? doc.len() : 60;
+  for (i32 i = 0; i < n; i++) {
+    u8 c = doc[i];
+    if (c >= 0x20 && c < 0x7F) {
+      out = out + string.fromBytes([c] as u8[]);
+    } else {
+      out = out + "\\x" + hex([c] as u8[]);
+    }
+  }
+  if (n < doc.len()) { out = out + "…"; }
+  return out + " " + hex(doc);
+}
+
+/**
+ * What `JSON.parse` makes of each document, the hex in a question's last word: one spelling of the
+ * tree — object keys sorted, `-0` kept — or `rejected`, or `not utf-8` from a strict decoder.
+ */
+static string TREE =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const text = (h) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16))); } catch { return null; } };\n" +
+  "const tree = (v) => v === null || typeof v !== 'object' ? (Object.is(v, -0) ? '-0' : JSON.stringify(v))\n" +
+  "  : Array.isArray(v) ? '[' + v.map((x) => tree(x)) + ']'\n" +
+  "  : '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + tree(v[k])) + '}';\n" +
+  "const say = (h) => { const s = text(h); if (s === null) return 'not utf-8'; try { return tree(JSON.parse(s)); } catch { return 'rejected'; } };\n" +
+  "console.log(L.map((l) => say(l.split(' ').pop())).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
+
+/** Pairs of documents that should be one tree: our canonical output, and what it was made from. */
+export struct Trees {
+  Lines lines;
+  Vec<string> originals;
+
+  void add(this, u8[] ours, u8[] original) {
+    this.lines.add(question(ours));
+    this.lines.add(question(original));
+    this.originals.push(question(original));
+  }
+
+  i32 count(const this) { return this.originals.len(); }
+
+  Trees create() { return Trees(Lines.create(), Vec.create()); }
+}
+
+/**
+ * Ask the host for the tree of every document in `trees`, and fail for each pair whose trees differ.
+ *
+ * `TREE` answers each document with one spelling of its parsed value — keys sorted, `-0` kept — or with
+ * `rejected` / `not utf-8`, so equal trees are equal strings and the comparison is here. A pair whose
+ * *original* the host cannot read is skipped: the accept/reject decision is another check's subject,
+ * and reporting it here too would count one disagreement twice.
+ */
+export async void sameTrees(T t, Procs procs, Trees trees, string what) {
+  i32 n = trees.count();
+  string[] got = await askScript(t, procs, TREE, trees.lines, what);
+  if (got.len() != 2 * n) {
+    t.fail("\{what}: \{got.len()} answer(s) for \{2 * n} document(s)");
+    return;
+  }
+  i32 wrong = 0;
+  for (i32 i = 0; i < n; i++) {
+    string ours = got[2 * i];
+    string theirs = got[2 * i + 1];
+    if (theirs == "rejected" || theirs == "not utf-8" || ours == theirs) { continue; }
+    if (wrong < 10) {
+      t.fail("\{what}: \{trees.originals.get(i)} — the host reads it as \{theirs}, " +
+             "and what we emitted as \{ours}");
+    }
+    wrong = wrong + 1;
+  }
+  if (wrong > 10) { t.fail("\{what}: \{wrong - 10} more tree(s) differ, not shown"); }
+}

@@ -1,0 +1,616 @@
+// Two walks in the compiler that must not multiply by the size of the program.
+//
+// test-lane: heavy — 27s in a 4-worker suite, measured 2026-10-27; its doubling ratios read the machine's load as well as the compiler, and five of them failed a 4-worker suite on correct code that passes alone
+//
+// `issues/lang/0398b`: building box's shell took 66 s against 6 s in August, and a third of it was the
+// checker scanning every source of the graph once per type name, a fifth the emitter walking every
+// variant once per field once per named instance. Each was linear on its own and the product was the
+// cost. Neither changes an answer, so nothing else here can see them come back.
+//
+// A wall-clock bound would flake on a loaded machine, so each test is a ratio of two runs made back to
+// back, differing only in the thing the walk multiplies by: with the walk linear the two are close.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFiles, emitFiles, lowerSources } from "../../src/api.wac";
+import { Res } from "../../src/path.wac";
+import { lex } from "../../src/lex.wac";
+import { synthSource, synthTokens } from "../../src/asyncsynth.wac";
+import { Core } from "std";
+
+/** `parts` as one string, copied once — `out = out + part` would be the cost being measured. */
+string joinedParts(string[] parts, i32 n) {
+  i32 total = 0;
+  for (i32 i = 0; i < n; i++) { total = total + parts[i].toBytes().len(); }
+  u8[] out = u8[].filled(total, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < n; i++) {
+    u8[] b = parts[i].toBytes();
+    out.copyFrom(b, 0, at, b.len());
+    at = at + b.len();
+  }
+  return string.fromBytes(out);
+}
+
+i32 millis(i64 nanos) { return (nanos / (1000000 as i64)) as! i32; }
+
+/** An entry naming `n` struct types in signatures, importing one name from `/t/lib.wac`. */
+string namingEntry(i32 n) {
+  string[] parts = string[].filled(2 * n + 1, "");
+  parts[0] = "import { Lib } from \"./lib.wac\";\n";
+  for (i32 i = 0; i < n; i++) {
+    parts[1 + 2 * i] = "struct S" + itoa(i) + " { i32 v; }\n";
+    parts[2 + 2 * i] = "i32 f" + itoa(i) + "(S" + itoa(i) + " a, Lib l) { return a.v; }\n";
+  }
+  return joinedParts(parts, 2 * n + 1);
+}
+
+/** `/t/lib.wac`: its one declaration, then `kb` kilobytes of comment. */
+string libWithComment(i32 kb) {
+  string line = "// filler filler filler filler filler filler filler filler filler filler filler filler\n";
+  i32 n = kb * 1024 / line.len() + 1;
+  string[] parts = string[].filled(n + 1, line);
+  parts[0] = "export struct Lib { i32 x; }\n";
+  return joinedParts(parts, n + 1);
+}
+
+i64 timeCheck(Core core, string entry, string lib) {
+  i64 t0 = core.monotonicNanos().wait();
+  diagnoseFiles(["/t/m.wac", "/t/lib.wac"], [entry, lib], "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The checker reads the graph's `export type` names once, not once per type name.** Until the view of
+// every file is built, each named type asks whether some file declares it as a `type`, and that was a
+// search of every source's whole text. Beside a 1 MB file, doubling the names checked from 300 to 600
+// costs about 1.3× when the file is read once — reading a megabyte is a cost both runs pay — and
+// about 2× when it is read once per name, which is what it was: 6.2 s against 3.1.
+//
+// Not a megabyte against one line, which is what this compared first: once the rest of the compiler
+// got faster, merely lexing the megabyte outweighed checking the names, and a correct checker failed.
+//
+// **Nor 300 names against 600, which is what it compared second.** By 2026-10-27 checking the names
+// had become the larger cost, so doubling them doubled the time even with the file read once. That
+// was 50 ms against 96 in a loaded gate, the same 2× the broken checker showed. So this now asks
+// whether the two costs *add* or *multiply*: 600 names beside the megabyte, against 600 names beside
+// nothing plus one name beside the megabyte. Reading the file per name is 600 megabytes, seconds
+// where the sum is milliseconds, and no loaded machine closes a gap that wide.
+export string test_a_large_imported_file_is_not_rescanned_per_type_name(Core core) {
+  T t = T.create();
+  string big = libWithComment(1024);
+  string small = libWithComment(0);
+  string one = namingEntry(1);
+  string many = namingEntry(600);
+  timeCheck(core, many, big);
+  i64 both = timeCheck(core, many, big);
+  i64 names = timeCheck(core, many, small);
+  i64 file = timeCheck(core, one, big);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 b2 = timeCheck(core, many, big);
+    i64 n2 = timeCheck(core, many, small);
+    i64 f2 = timeCheck(core, one, big);
+    if (b2 < both) { both = b2; }
+    if (n2 < names) { names = n2; }
+    if (f2 < file) { file = f2; }
+  }
+  t.isTrue(both < (names + file) * (3 as i64),
+           "600 named types beside a 1 MB file: " + itoa(millis(both)) + " ms; beside nothing: "
+           + itoa(millis(names)) + " ms; one name beside it: " + itoa(millis(file)) + " ms");
+  return t.report();
+}
+
+/**
+ * An enum of 2,000 variants, a struct of 400 fields, and 200 functions — each naming `Box<i32>`, or
+ * when `named` is false doing the same with a bare `i32`, so the two differ only in the instance.
+ */
+string instanceProgram(bool named) {
+  string[] parts = string[].filled(2000 + 400 + 200 + 3, "");
+  i32 n = 0;
+  parts[n] = "struct Box<T> { T v; }\nenum Many {\n"; n++;
+  for (i32 i = 0; i < 2000; i++) { parts[n] = "  V" + itoa(i) + "(i32 x),\n"; n++; }
+  parts[n] = "}\nstruct Wide {\n"; n++;
+  for (i32 i = 0; i < 400; i++) { parts[n] = "  i32 w" + itoa(i) + ";\n"; n++; }
+  parts[n] = "}\n"; n++;
+  for (i32 i = 0; i < 200; i++) {
+    parts[n] = named
+        ? "export i32 f" + itoa(i) + "() { Box<i32> b = Box<i32>(" + itoa(i) + "); return b.v; }\n"
+        : "export i32 f" + itoa(i) + "() { i32 b = " + itoa(i) + "; return b; }\n";
+    n++;
+  }
+  return joinedParts(parts, n);
+}
+
+i64 timeEmit(Core core, string src) {
+  i64 t0 = core.monotonicNanos().wait();
+  emitFiles(["/t/m.wac"], [src], "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Naming an instance looks at its own variants, not at every variant once per field.** Registering
+// `Box<i32>`'s array fields walks every field of the program, and asked `enumOf` — a walk of every
+// variant — about each. The two programs are the same size; only one names the instance. It was
+// 3,408 ms against 112.
+export string test_naming_an_instance_does_not_walk_every_variant_per_field(Core core) {
+  T t = T.create();
+  string bare = instanceProgram(false);
+  string named = instanceProgram(true);
+  timeEmit(core, bare);
+  i64 a = timeEmit(core, bare);
+  i64 b = timeEmit(core, named);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, bare);
+    i64 b2 = timeEmit(core, named);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "200 functions beside 2,000 variants and 400 fields: " + itoa(millis(a))
+           + " ms with `i32`, " + itoa(millis(b)) + " ms with `Box<i32>`");
+  return t.report();
+}
+
+/** `/t/lib.wac`: `export struct P`, then `decls` functions. */
+string declsLib(i32 decls) {
+  string[] parts = string[].filled(decls + 1, "");
+  parts[0] = "export struct P { i32 v; }\n";
+  for (i32 i = 0; i < decls; i++) {
+    parts[1 + i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+  }
+  return joinedParts(parts, decls + 1);
+}
+
+/** 300 functions naming the imported `P` four times each, or when `named` is false `i32` instead. */
+string importingEntry(bool named) {
+  string[] parts = string[].filled(301, "");
+  parts[0] = "import { P, g1 } from \"./lib.wac\";\nexport i32 h() { return g1(); }\n";
+  for (i32 i = 0; i < 300; i++) {
+    parts[1 + i] = named
+        ? "export i32 f" + itoa(i) + "(P a, P b) { P c = P(1); P d = a; return c.v + d.v + b.v; }\n"
+        : "export i32 f" + itoa(i) + "(i32 a, i32 b) { i32 c = 1; i32 d = a; return c + d + b; }\n";
+  }
+  return joinedParts(parts, 301);
+}
+
+i64 timeEmitTwo(Core core, string entry, string lib) {
+  i64 t0 = core.monotonicNanos().wait();
+  emitFiles(["/t/m.wac", "/t/lib.wac"], [entry, lib], "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Resolving a name does not walk every declaration.** The emitter found a name's key by walking
+// every declaration of the module, up to four times when the name came from another file, and every new
+// declaration walked them all again to see whether its key was taken. So the same entry cost twice as
+// much beside a file of 8,000 functions as beside one of 4,000, though the entry calls one of them and
+// the rest are pruned: 231 ms against 111. Found through an index, the two are the same.
+export string test_resolving_a_name_does_not_walk_every_declaration(Core core) {
+  T t = T.create();
+  string fewer = declsLib(4000);
+  string more = declsLib(8000);
+  string entry = importingEntry(false);
+  timeEmitTwo(core, entry, fewer);
+  timeEmitTwo(core, entry, more);
+  i64 a = timeEmitTwo(core, entry, fewer);
+  i64 b = timeEmitTwo(core, entry, more);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmitTwo(core, entry, fewer);
+    i64 b2 = timeEmitTwo(core, entry, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (3 as i64),
+           "the same entry: " + itoa(millis(a)) + " ms beside 4,000 declarations, " + itoa(millis(b))
+           + " ms beside 8,000");
+  return t.report();
+}
+
+/** `n` structs, each with a method using another — no type defaults anywhere. */
+string manyStructs(i32 n) {
+  string[] parts = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) {
+    parts[i] = "struct S" + itoa(i) + " { i32 v; i32 get(this) { return this.v; } }\n";
+  }
+  return joinedParts(parts, n);
+}
+
+i64 timeLower(Core core, string src) {
+  i64 t0 = core.monotonicNanos().wait();
+  lowerSources(["/t/m.wac"], [src], Res.empty());
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Lowering reads a source once, however many types it declares.** Asking whether a file declares
+// a type with a default argument found each `struct` by copying the rest of the text and searching it
+// again, for `enum ` too, to the end — so a file of many structs cost the square of its length, and
+// `std`, embedded in every build, is such a file. Doubling the structs should double the time; it took
+// 4.2× (376 ms against 1,595 at 3,000 and 6,000). The sizes are large enough that a linear pass takes
+// tens of milliseconds, since at 18 ms a busy gate once read a correct pass as 2.7×.
+export string test_lowering_reads_a_source_once_however_many_types_it_declares(Core core) {
+  T t = T.create();
+  string fewer = manyStructs(6000);
+  string more = manyStructs(12000);
+  timeLower(core, fewer);
+  timeLower(core, more);
+  i64 a = timeLower(core, fewer);
+  i64 b = timeLower(core, more);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeLower(core, fewer);
+    i64 b2 = timeLower(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "lowering 6,000 structs: " + itoa(millis(a)) + " ms; 12,000: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
+
+/** `/t/lib.wac` with one `type` declaration, `P` and 4,000 functions. */
+string typedLib() {
+  string[] parts = string[].filled(4002, "");
+  parts[0] = "export struct P { i32 v; }\n";
+  parts[1] = "export type Q = i32;\n";
+  for (i32 i = 0; i < 4000; i++) {
+    parts[2 + i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+  }
+  return joinedParts(parts, 4002);
+}
+
+/** An entry importing `k` of lib's functions, then naming `P` 2,400 times. */
+string manyImports(i32 k) {
+  string[] names = string[].filled(k, "");
+  for (i32 i = 0; i < k; i++) { names[i] = ", g" + itoa(i); }
+  string[] parts = string[].filled(601, "");
+  parts[0] = "import { P, Q" + joinedParts(names, k) + " } from \"./lib.wac\";\n"
+             + "export i32 h() { Q q = g1(); return q; }\n";
+  for (i32 i = 0; i < 600; i++) {
+    parts[1 + i] = "export i32 f" + itoa(i) + "(P a, P b) { P c = P(1); P d = a; return c.v + d.v + b.v; }\n";
+  }
+  return joinedParts(parts, 601);
+}
+
+// **Asking whether a name is a `type` does not walk every import.** In a program with any `type`
+// declaration — `std` has several — each type name the emitter met that was not one walked every import
+// of the graph for a renaming of it. Importing three times as many names should cost what the extra
+// import lines cost and no more; it cost a share of every type name.
+export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Core core) {
+  T t = T.create();
+  string lib = typedLib();
+  string fewer = manyImports(1000);
+  string more = manyImports(3000);
+  timeEmitTwo(core, fewer, lib);
+  timeEmitTwo(core, more, lib);
+  i64 a = timeEmitTwo(core, fewer, lib);
+  i64 b = timeEmitTwo(core, more, lib);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmitTwo(core, fewer, lib);
+    i64 b2 = timeEmitTwo(core, more, lib);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  // **1.5×, between the two sources, measured 2026-10-27 on an idle machine.** The source before the
+  // fix took 226 ms and 394 ms, which is 1.74×. Today's takes 77 ms and 100 ms, which is 1.30×, so the
+  // 1.25× this asserted first failed on correct code.
+  t.isTrue(b * (2 as i64) < a * (3 as i64),
+           "naming `P` 2,400 times: " + itoa(millis(a)) + " ms importing 1,000 names, " + itoa(millis(b))
+           + " ms importing 3,000");
+  return t.report();
+}
+
+i64 timeSynth(Core core, i32 states) {
+  u8[] src = "i32 f() { return 0; }\n".toBytes();
+  u8[] tailed = synthSource(src, 4, states, 2);
+  i64 t0 = core.monotonicNanos().wait();
+  synthTokens(lex(src), tailed, 4, states, 2, 1, 1);
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The async lowering's tail of spellings is placed in one walk, not one walk per word.** Each word's
+// token needs its byte offset in the tail, and that was asked of `synthOffset` once per word — which
+// rebuilt the whole list of words and summed the lengths of every word before it. A file's tail carries
+// a numeral per state, so the cost was the square of its states: `std` has enough that this was a
+// tenth of checking a one-line program that imports it. Doubling the states should double the work.
+export string test_placing_the_async_tail_does_not_rebuild_it_per_word(Core core) {
+  T t = T.create();
+  timeSynth(core, 1500);
+  i64 a = timeSynth(core, 1500);
+  i64 b = timeSynth(core, 3000);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeSynth(core, 1500);
+    i64 b2 = timeSynth(core, 3000);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "placing the tail: " + itoa(millis(a)) + " ms for 1,500 states, " + itoa(millis(b))
+           + " ms for 3,000");
+  return t.report();
+}
+
+/** `/t/lib.wac` with `n` structs, each with a function taking it, and `/t/other.wac` with `n` structs and some bulk each. */
+string[] reachedTypes(i32 n) {
+  string pad = "// filler filler filler filler filler filler filler filler filler filler filler filler filler filler\n";
+  string bulk = joinedParts(string[].filled(24, pad), 24);
+  string[] lib = string[].filled(n, "");
+  string[] other = string[].filled(n, "");
+  string[] names = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) {
+    lib[i] = "export struct S" + itoa(i) + " { i32 v; }\nexport i32 f" + itoa(i) + "(S" + itoa(i) + " a) { return a.v; }\n";
+    other[i] = "export struct O" + itoa(i) + " { i32 v; }\n" + bulk;
+    names[i] = (i == 0 ? "" : ", ") + "f" + itoa(i);
+  }
+  return ["import { " + joinedParts(names, n) + " } from \"./lib.wac\";\nimport { O0 } from \"./other.wac\";\n"
+          + "export i32 main() { return 0; }\n", joinedParts(lib, n), joinedParts(other, n)] as string[];
+}
+
+i64 timeReached(Core core, string[] texts) {
+  i64 t0 = core.monotonicNanos().wait();
+  diagnoseFiles(["/t/m.wac", "/t/lib.wac", "/t/other.wac"], texts, "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Whether a reached type is declared by another file is asked of an index, not of every file.** For
+// each type a signature reaches, the checker walked the declarations of every other file in the closure
+// — copying each one's whole text, `std` and `core` included — to see whether the name was ambiguous.
+// The product of reached types and closure size: 6% of checking `packages/box`. Here both double, so
+// the work should double; it took 2.9 times as long.
+export string test_a_reached_type_is_not_looked_for_in_every_file(Core core) {
+  T t = T.create();
+  string[] fewer = reachedTypes(200);
+  string[] more = reachedTypes(400);
+  timeReached(core, fewer);
+  timeReached(core, more);
+  i64 a = timeReached(core, fewer);
+  i64 b = timeReached(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeReached(core, fewer);
+    i64 b2 = timeReached(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "200 reached types: " + itoa(millis(a)) + " ms; 400: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
+
+/** An entry that declares a `static`, importing one of `n` functions from `/t/lib.wac`. */
+string[] staticEntry(i32 n) {
+  string[] lib = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { lib[i] = "export i32 f" + itoa(i) + "() { return " + itoa(i) + "; }\n"; }
+  return ["import { f0 } from \"./lib.wac\";\nstatic i32 S = 1;\nexport i32 main() { return f0() + S; }\n",
+          joinedParts(lib, n)] as string[];
+}
+
+i64 timeStatic(Core core, string[] texts) {
+  i64 t0 = core.monotonicNanos().wait();
+  diagnoseFiles(["/t/m.wac", "/t/lib.wac"], texts, "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The static evaluator keys its declarations in one pass.** Each declaration's key is its name, or
+// its name and file when another declaration shares the name — and whether one does was asked by
+// comparing it with every other declaration of the closure. A file that says `static` builds that view
+// up front, so importing a large library cost the square of its size: 9% of checking `packages/box`.
+export string test_keying_the_static_view_does_not_compare_every_pair(Core core) {
+  T t = T.create();
+  string[] fewer = staticEntry(3000);
+  string[] more = staticEntry(6000);
+  timeStatic(core, fewer);
+  timeStatic(core, more);
+  i64 a = timeStatic(core, fewer);
+  i64 b = timeStatic(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeStatic(core, fewer);
+    i64 b2 = timeStatic(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "3,000 declarations: " + itoa(millis(a)) + " ms; 6,000: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
+
+/** `n` structs of ten fields, each read whole by one exported function. */
+string wideStructs(i32 n) {
+  string[] parts = string[].filled(2 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string s = "S" + itoa(i);
+    string decl = "struct " + s + " {";
+    string sum = "0";
+    for (i32 f = 0; f < 10; f++) {
+      decl = decl + " i32 a" + itoa(f) + ";";
+      sum = sum + " + s.a" + itoa(f);
+    }
+    parts[2 * i] = decl + " }\n";
+    parts[2 * i + 1] = "export i32 f" + itoa(i) + "(" + s + " s) { return " + sum + "; }\n";
+  }
+  return joinedParts(parts, 2 * n);
+}
+
+// **Finding a struct or a field does not walk every one the module has.** The emitter searched its
+// tables from the top for each name it met, so twice the structs cost more than three times as much:
+// 4,654 ms for 800 structs of ten fields against 15,616 for 1,600. Found through an index, 163
+// against 361.
+export string test_emitting_a_field_does_not_walk_every_field(Core core) {
+  T t = T.create();
+  string fewer = wideStructs(1000);
+  string more = wideStructs(2000);
+  timeEmit(core, fewer);
+  timeEmit(core, more);
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "1,000 structs of ten fields: " + itoa(millis(a)) + " ms; 2,000: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
+
+/** `n` structs with a generic method, each called four times with its type argument inferred. */
+string genericMethods(i32 n) {
+  string[] parts = string[].filled(2 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string s = "S" + itoa(i);
+    parts[2 * i] = "struct " + s + " { i32 v; U id<U>(this, U x) { return x; } }\n";
+    parts[2 * i + 1] = "export i32 f" + itoa(i) + "(i32 x) { " + s + " s = " + s
+        + "(x); return s.id(x) + s.id(1) + s.id(2) + s.id(3); }\n";
+  }
+  return joinedParts(parts, 2 * n);
+}
+
+// **Inferring a generic method's instance does not walk every declaration.** Each call to one found its
+// owner's declaration by reading the name of every declaration of the program in turn, so twice the
+// structs cost about three times as much and the walk was 86% of emitting 2,000 of them.
+export string test_inferring_a_method_instance_does_not_walk_every_declaration(Core core) {
+  T t = T.create();
+  string fewer = genericMethods(1500);
+  string more = genericMethods(3000);
+  timeEmit(core, fewer);
+  timeEmit(core, more);
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "1,500 structs with a generic method: " + itoa(millis(a)) + " ms; 3,000: " + itoa(millis(b))
+           + " ms");
+  return t.report();
+}
+
+/** `n` structs, each with a field of its own `fn<…>` type, and a local of it. */
+string funcrefStructs(i32 n) {
+  string[] parts = string[].filled(3 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string s = "S" + itoa(i);
+    string k = "k" + itoa(i);
+    parts[3 * i] = "i32 " + k + "(" + s + " s) { return s.v; }\n";
+    parts[3 * i + 1] = "struct " + s + " { i32 v; fn<i32(" + s + ")> cb; }\n";
+    string f = "fn<i32(" + s + ")>";
+    parts[3 * i + 2] = "export i32 f" + itoa(i) + "(i32 x) { " + s + " s = " + s + "(x, " + k + "); "
+        + f + " h = " + k + "; " + f + " g = h; " + f + " e = g; " + f + " d = e; "
+        + "return s.v + h(s) + g(s) + e(s) + d(s) + s.cb(s); }\n";
+  }
+  return joinedParts(parts, 3 * n);
+}
+
+// **Finding a signature or a called function's declaration does not walk them all.** Each `fn<…>` type
+// the emitter met was looked for in every signature registered so far, and each call looked for a
+// generic declaration of its name by reading every declaration's name, so twice the structs cost three
+// times as much.
+export string test_a_signature_is_not_looked_for_in_every_signature(Core core) {
+  T t = T.create();
+  string fewer = funcrefStructs(1000);
+  string more = funcrefStructs(2000);
+  // **Both must be emitted**, or the ratio measures a refusal: past about 2,048 structs a table runs
+  // out and the module is declined in a fraction of the time.
+  t.isTrue(emitFiles(["/t/m.wac"], [fewer], "/t/m.wac").len() > 1000, "1,000 structs emitted");
+  t.isTrue(emitFiles(["/t/m.wac"], [more], "/t/m.wac").len() > 1000, "2,000 structs emitted");
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  // **2.9×, between the two sources, measured 2026-10-27 on an idle machine.** The source before the
+  // fix took 1,244 ms and 3,990 ms, which is 3.2×. Today's takes 347 ms and 911 ms, which is 2.63×,
+  // because a superlinear part remains. So the 2.5× this asserted first failed a gate on correct code.
+  t.isTrue(b * (10 as i64) < a * (29 as i64),
+           "1,000 structs with a `fn<…>` field: " + itoa(millis(a)) + " ms; 2,000: " + itoa(millis(b))
+           + " ms");
+  return t.report();
+}
+
+/** `n` enums of three variants, each built and matched by four exported functions. */
+string manyEnums(i32 n) {
+  string[] parts = string[].filled(5 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string e = "E" + itoa(i);
+    string a = "A" + itoa(i);
+    string b = "B" + itoa(i);
+    parts[5 * i] = "enum " + e + " { " + a + ", " + b + "(i32 x), C" + itoa(i) + " }\n";
+    for (i32 k = 1; k < 5; k++) {
+      parts[5 * i + k] = "export i32 f" + itoa(i) + "_" + itoa(k) + "(i32 x) { " + e + " p = " + e + "."
+          + b + "(x); " + e + " q = " + e + "." + a + "; match (p) { " + b
+          + "(y): { return y; } default: { return 0; } } }\n";
+    }
+  }
+  return joinedParts(parts, 5 * n);
+}
+// **Asking which enum a variant belongs to does not walk every variant.** Every type name the emitter
+// canonicalised was looked for among all the program's variants, so twice the enums cost nearly four
+// times as much: 444 ms for 320 of them against 1,650 for 640.
+export string test_canonicalising_a_type_does_not_walk_every_variant(Core core) {
+  T t = T.create();
+  string fewer = manyEnums(320);
+  string more = manyEnums(640);
+  // **Both must be emitted**: past about 2,048 variants a table runs out and the module is declined.
+  t.isTrue(emitFiles(["/t/m.wac"], [fewer], "/t/m.wac").len() > 1000, "320 enums emitted");
+  t.isTrue(emitFiles(["/t/m.wac"], [more], "/t/m.wac").len() > 1000, "640 enums emitted");
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "320 enums: " + itoa(millis(a)) + " ms; 640: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
+
+/** 100 functions each called once — generic, or when `generic` is false plain — importing `P`. */
+string hundredCallees(bool generic) {
+  string[] parts = string[].filled(201, "");
+  parts[0] = "import { P } from \"./lib.wac\";\nexport i32 h(P p) { return p.v; }\n";
+  for (i32 i = 0; i < 100; i++) {
+    parts[1 + 2 * i] = generic ? "T id" + itoa(i) + "<T>(T x) { return x; }\n"
+                               : "i32 id" + itoa(i) + "(i32 x) { return x; }\n";
+    parts[2 + 2 * i] = "export i32 f" + itoa(i) + "(i32 x) { return id" + itoa(i) + "(x); }\n";
+  }
+  return joinedParts(parts, 201);
+}
+
+// **Naming a generic function's instance does not walk every declaration.** In a program of more than
+// one file, an instance's key asks whether another file declares a generic function of its name, and
+// that read the name of every declaration — for every generic declaration each instance walk passed.
+// Beside a file of 8,000 functions, 100 generic callees took 2,710 ms against 95 for 100 plain ones.
+// Still quadratic and not tested here: those walks pair every instance with every declaration.
+export string test_keying_a_generic_function_does_not_walk_every_declaration(Core core) {
+  T t = T.create();
+  string lib = declsLib(8000);
+  string plain = hundredCallees(false);
+  string generic = hundredCallees(true);
+  t.isTrue(emitFiles(["/t/m.wac", "/t/lib.wac"], [generic, lib], "/t/m.wac").len() > 1000,
+           "the generic callees emitted");
+  i64 a = timeEmitTwo(core, plain, lib);
+  i64 b = timeEmitTwo(core, generic, lib);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmitTwo(core, plain, lib);
+    i64 b2 = timeEmitTwo(core, generic, lib);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "beside 8,000 declarations: " + itoa(millis(a)) + " ms for 100 plain callees, " + itoa(millis(b))
+           + " ms for 100 generic ones");
+  return t.report();
+}

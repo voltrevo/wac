@@ -1,0 +1,28 @@
+// Two types that cross the boundary get two names.
+//
+// An array of instances gets helpers a host calls by name — `$bind$arr_<element>_get` — and the
+// element's spelling is folded into a name a host can declare: every run of bytes a name cannot hold
+// became one `$`, and a trailing run was dropped. So `MapEntry<string, string[]>` lost its `[]` and was
+// `MapEntry$string$string`, the name `MapEntry<string, string>` already had. A program holding a
+// `Map<string, string>` and a `Map<string, string[]>` built a module the engine refused for a duplicate
+// export — found by `wac` itself, which keeps both in one cache (`issues/lang/0398b`).
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Core } from "std";
+import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
+
+static string PROGRAM = "export struct Box<T> { T v; }\n"
+  + "export i32 countA(Box<string>[] a) { return a.len(); }\n"
+  + "export i32 countB(Box<string[]>[] b) { return b.len(); }\n"
+  + "export i32 main() {\n"
+  + "  Box<string>[] a = [Box<string>(\"x\")] as Box<string>[];\n"
+  + "  Box<string[]>[] b = [Box<string[]>([\"y\"] as string[])] as Box<string[]>[];\n"
+  + "  return countA(a) + countB(b);\n"
+  + "}\n";
+
+export string test_an_instance_over_an_array_is_not_named_as_one_over_its_element(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runEmittedOne(cli, "/t/m.wac", PROGRAM, scratchDir(cli), "bindnames.wasm");
+  t.isTrue(r.ok && r.status == 2, "the module loads and answers 2 — " + r.error + r.stderr + r.stdout);
+  return t.report();
+}

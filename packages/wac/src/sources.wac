@@ -17,6 +17,7 @@
 // cycle-free because nothing in this file knows about the command.
 
 import { Cli, FileResult } from "std";
+import { Map, hashString, stringEq } from "core";
 import { Fs } from "../../fs/src/fs.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, relativeTo, resolveFromAt } from "../../wacc/src/path.wac";
@@ -411,8 +412,31 @@ async Boundary crossBoundary(Fs fs, string base, string from, string spec, strin
                         (fromRoot == "" ? "" : " at \{relativeTo(base, fromRoot)}"));
 }
 
+/**
+ * What one command has read already, for its next `gather` — every successful read, by path, and the
+ * project roots found. A project check gathers each of its files' closures in turn, and they overlap:
+ * without this, checking `packages/box` read 8,630 files to find 423 (`issues/lang/0398b`).
+ */
+export struct ReadCache {
+  Map<string, FileResult> files;
+  /** Each file's text and import specifiers, which `gather` derives from its bytes — a lex each time. */
+  Map<string, string> texts;
+  Map<string, string[]> specs;
+  RootCache roots;
+
+  ReadCache create() {
+    return ReadCache(Map.create(hashString, stringEq), Map.create(hashString, stringEq),
+                     Map.create(hashString, stringEq), RootCache.create());
+  }
+}
+
 export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
-  RootCache rootCache = RootCache.create();
+  return await gatherWith(fs, cli, entry, lazy, ReadCache.create());
+}
+
+/** `gather`, reading through `cache` — see `ReadCache`. */
+export async Sources gatherWith(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache) {
+  RootCache rootCache = cache.roots;
   // **A file that cannot be read is an error when something needs it** — spec ch05
   // `§wac-reach-import-lazy-2jhptfk`. A build (`lazy`) leaves it out and carries on: if a declaration
   // the entry reaches imports from it, the import survives reachability and the checker says the file
@@ -475,7 +499,9 @@ export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
     string builtin = path == "core" ? coreSource() : path == "std" ? stdSource() : "";
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
-      FileResult r = await fs.readFile(path);
+      FileResult? had = cache.files.get(path);
+      FileResult r = had is null ? await fs.readFile(path) : had!;
+      if (had is null && r.ok) { cache.files.set(path, r); }
       if (!r.ok && lazy && at > 0) {
         absent[at] = true;
         at = at + 1;
@@ -490,8 +516,12 @@ export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       }
       bytes = r.bytes;
     }
-    texts[at] = string.fromBytes(bytes);
-    string[] specs = importSpecs(bytes);
+    string? knownText = cache.texts.get(path);
+    string[]? knownSpecs = cache.specs.get(path);
+    texts[at] = knownText is null ? string.fromBytes(bytes) : knownText!;
+    string[] specs = knownSpecs is null ? importSpecs(bytes) : knownSpecs!;
+    if (knownText is null) { cache.texts.set(path, texts[at]); }
+    if (knownSpecs is null) { cache.specs.set(path, specs); }
     for (string spec in specs) {
       // **A `@/` is resolved here or the graph is short a file**, and the root is looked up only
       // when one of this file's specifiers asks for it — so a program with no project reference

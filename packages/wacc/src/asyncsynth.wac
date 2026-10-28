@@ -269,6 +269,9 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 args, i
   i32 have = lexed.tokenCount + lexed.synthCount;
   i32[] out = i32[].filled((have + w.len()) * stride, 0);
   for (i32 i = 0; i < have * stride; i++) { out[i] = lexed.tokens[i]; }
+  // **Walked once, as `synthOffset` walks it** — asking it per word rebuilt the list and summed every
+  // earlier length each time, the square of the states (`issues/lang/0398b`).
+  i32 offset = synthBase(src);
   for (i32 i = 0; i < w.len(); i++) {
     i32 at = (have + i) * stride;
     // **The kind matters and is not always `kIdent`.** An `IntLit` reads its value out of the
@@ -281,8 +284,10 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 args, i
     else if (i == synthPlus()) { k = kPlus(); }
     else if (i == synthVoid()) { k = kVoid(); }
     out[at] = k;
-    out[at + 1] = synthOffset(src, ups, states, args, i);
-    out[at + 2] = w[i].toBytes().len();
+    i32 len = w[i].toBytes().len();
+    out[at + 1] = offset;
+    out[at + 2] = len;
+    if (offset >= 0) { offset = offset + len + 1; }
     out[at + 3] = line;
     out[at + 4] = col;
   }

@@ -18,10 +18,13 @@
 // ## Why the oracle is still JavaScript
 //
 // It is the only implementation with this range. python's `datetime` stops at year 1 and year 9999,
-// and half the interesting cases here are outside that — year zero, the BCE side, ±275 760. So
-// `test/oracle.ts` stays where it is and only the *caller* moved: this file computes the answers and
-// hands them over for checking, **one process per test** rather than one host call per day. Same
-// oracle, and the three-hundred-thousand-day sweep costs one spawn.
+// and half the interesting cases here are outside that — year zero, the BCE side, ±275 760.
+//
+// **`DATE` below is the whole oracle, and it only answers.** It used to be a TypeScript file beside
+// the tests, which took this file's answers and did the comparing. Since 2026-10-27 the script says
+// what `Date` says for each question, and `agree` compares in wac (`packages/wactest/src/inline.wac`).
+// Still **one process per test** rather than one host call per day, so the three-hundred-thousand-day
+// sweep costs one spawn.
 //
 // `test/probe.wac` also stays, for `packages/datetime/test/cov_exercise.wac`, but nothing here goes
 // through it — the real signatures are in reach, so `Parsed` arrives as a struct rather than as three
@@ -31,15 +34,33 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Core, Cli } from "std";
-import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
+import { Sys } from "std";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
 import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, weekday,
          dayOfYear } from "../../src/civil.wac";
 import { Parsed, parse, format } from "../../src/rfc3339.wac";
 
-static string ORACLE = "packages/datetime/test/oracle.ts";
-
-void check(T t, Cli cli, Lines lines, string what) { checkDeno(t, cli, ORACLE, lines, what); }
+/**
+ * What `Date` says, one line for each question: `civil <day>` is `Y M D weekday`; `days Y M D` the day
+ * number, or `out of range`; `leap Y` 1 or 0; `mlen Y M` and `yday Y M D` a count; `fmt <ms>` the ISO
+ * string; `parse <stamp>` the epoch millisecond, or `NaN` when `Date.parse` refuses it.
+ */
+static string DATE =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const D = 86400000;\n" +
+  "const utc = (y, m, d) => { const t = new Date(0); t.setUTCFullYear(y, m - 1, d); t.setUTCHours(0, 0, 0, 0); return t.getTime(); };\n" +
+  "const say = (k, a) => {\n" +
+  "  const n = a.map(Number);\n" +
+  "  if (k === 'civil') { const t = new Date(n[0] * D); return [t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate(), t.getUTCDay()].join(' '); }\n" +
+  "  if (k === 'days') { const w = Math.floor(utc(n[0], n[1], n[2]) / D); return Number.isFinite(w) ? String(w) : 'out of range'; }\n" +
+  "  if (k === 'leap') { const t = new Date(0); t.setUTCFullYear(n[0], 1, 29); return t.getUTCMonth() === 1 ? '1' : '0'; }\n" +
+  "  if (k === 'mlen') { const [y, m] = n; return String(Math.round((utc(m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1, 1) - utc(y, m, 1)) / D)); }\n" +
+  "  if (k === 'yday') { return String(Math.round((utc(n[0], n[1], n[2]) - utc(n[0], 1, 1)) / D) + 1); }\n" +
+  "  if (k === 'fmt') { return new Date(n[0]).toISOString(); }\n" +
+  "  if (k === 'parse') { return String(Date.parse(a[0])); }\n" +
+  "  return 'no such question: ' + k;\n" +
+  "};\n" +
+  "console.log(L.map((l) => { const [k, ...a] = l.split(' '); return say(k, a); }).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 // The sweep bounds, as day numbers rather than years, because that is what the loop counts in.
 i64 dayOf(i32 y) { return daysFromCivil(y, 1, 1); }
@@ -52,9 +73,9 @@ i64 dayOf(i32 y) { return daysFromCivil(y, 1, 1); }
  * tests — day numbers, the inverse, and the weekday — over the same range; one line carries all
  * three, so it is one sweep and the oracle checks each field.
  */
-export string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(Core core, Cli cli) {
+export async string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i64 start = dayOf(1600);
   i64 end = dayOf(2400);
   for (i64 n = start; n < end; n = n + 1) {
@@ -66,11 +87,10 @@ export string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(
       t.fail("day \{n} round-tripped to \{back}");
       return t.report();
     }
-    lines.add("civil \{n} \{c.year} \{c.month} " +
-              "\{c.day} \{weekday(n)}");
+    asked.add("civil \{n}", "\{c.year} \{c.month} \{c.day} \{weekday(n)}");
   }
-  t.isTrue(lines.n >= 290000, "the sweep is four centuries — \{lines.n} days");
-  check(t, cli, lines, "four centuries");
+  t.isTrue(asked.count() >= 290000, "the sweep is four centuries — \{asked.count()} days");
+  await agree(t, sys.procs(), DATE, asked, "four centuries");
   return t.report();
 }
 
@@ -80,9 +100,9 @@ export string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(
  * Well outside the range anything realistic uses, and where a formula that quietly assumed a positive
  * year would break. Year 1 and the BCE side included.
  */
-export string test_the_far_past_and_far_future(Core core, Cli cli) {
+export async string test_the_far_past_and_far_future(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] years = [
                       -271820, -100000, -4713, -1, 0, 1, 100, 1000, 1969, 1970, 1971, 2100,
                       100000, 275759
@@ -95,46 +115,45 @@ export string test_the_far_past_and_far_future(Core core, Cli cli) {
       i32 m = months[k];
       i32 d = days[k];
       i64 n = daysFromCivil(y, m, d);
-      lines.add("days \{y} \{m} \{d} \{n}");
+      asked.add("days \{y} \{m} \{d}", "\{n}");
       Civil back = civilFromDays(n);
       t.isTrue(back.year == y && back.month == m && back.day == d,
                "\{y}-\{m}-\{d} round-tripped to " +
                "\{back.year}-\{back.month}-\{back.day}");
     }
   }
-  check(t, cli, lines, "the far range");
+  await agree(t, sys.procs(), DATE, asked, "the far range");
   return t.report();
 }
 
 /** Leap years and month lengths, over six thousand years including the BCE side. */
-export string test_leap_years_and_month_lengths(Core core, Cli cli) {
+export async string test_leap_years_and_month_lengths(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 y = -2000; y <= 4000; y++) {
-    lines.add("leap \{y} " + (isLeap(y) ? "1" : "0"));
+    asked.add("leap \{y}", isLeap(y) ? "1" : "0");
     for (i32 m = 1; m <= 12; m++) {
-      lines.add("mlen \{y} \{m} \{daysInMonth(y, m)}");
+      asked.add("mlen \{y} \{m}", "\{daysInMonth(y, m)}");
     }
   }
-  check(t, cli, lines, "leap years and month lengths");
+  await agree(t, sys.procs(), DATE, asked, "leap years and month lengths");
   return t.report();
 }
 
-export string test_day_of_year_agrees_with_date(Core core, Cli cli) {
+export async string test_day_of_year_agrees_with_date(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] years = [1900, 1970, 1999, 2000, 2001, 2020, 2024, 2100];
   for (i32 i = 0; i < years.len(); i++) {
     i32 y = years[i];
     for (i32 m = 1; m <= 12; m++) {
       i32[] ds = [1, 15, daysInMonth(y, m)];
       for (i32 k = 0; k < ds.len(); k++) {
-        lines.add("yday \{y} \{m} \{ds[k]} " +
-                  "\{dayOfYear(y, m, ds[k])}");
+        asked.add("yday \{y} \{m} \{ds[k]}", "\{dayOfYear(y, m, ds[k])}");
       }
     }
   }
-  check(t, cli, lines, "day of year");
+  await agree(t, sys.procs(), DATE, asked, "day of year");
   return t.report();
 }
 
@@ -164,23 +183,23 @@ i64 spreadMillis(Rng rng) {
   return draw * 100000 - 200000000000;
 }
 
-export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
+export async string test_format_matches_date_to_iso_string(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i64[] fixed = [0, 1, -1, 999, 1000, -1000, -999];
   for (i32 i = 0; i < fixed.len(); i++) {
-    lines.add("fmt \{fixed[i]} \{string.fromBytes(format(fixed[i]))}");
+    asked.add("fmt \{fixed[i]}", string.fromBytes(format(fixed[i])));
   }
   // Every hour of a day either side of the epoch, where the floor-division cases live.
   for (i32 h = -48; h <= 48; h++) {
     i64 ms = (h as i64) * 3600000;
-    lines.add("fmt \{ms} \{string.fromBytes(format(ms))}");
+    asked.add("fmt \{ms}", string.fromBytes(format(ms)));
   }
   // And a spread across the whole range `Date` supports.
   Rng rng = Rng(0x1f2e3d4c);
   for (i32 i = 0; i < 20000; i++) {
     i64 ms = spreadMillis(rng);
-    lines.add("fmt \{ms} \{string.fromBytes(format(ms))}");
+    asked.add("fmt \{ms}", string.fromBytes(format(ms)));
   }
   // Outside 0000..9999, where the year needs a sign and six digits. The random spread above cannot
   // reach here — it covers about 1963 to 1976 — so a four-digit year that silently took the value
@@ -195,9 +214,9 @@ export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
                      -8640000000000000  // -271821-04-20, the smallest
   ];
   for (i32 i = 0; i < wide.len(); i++) {
-    lines.add("fmt \{wide[i]} \{string.fromBytes(format(wide[i]))}");
+    asked.add("fmt \{wide[i]}", string.fromBytes(format(wide[i])));
   }
-  check(t, cli, lines, "format");
+  await agree(t, sys.procs(), DATE, asked, "format");
   return t.report();
 }
 
@@ -223,17 +242,17 @@ string[] wellFormedStamps() {
   ];
 }
 
-export string test_parse_matches_date_parse(Core core, Cli cli) {
+export async string test_parse_matches_date_parse(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] stamps = wellFormedStamps();
   for (i32 i = 0; i < stamps.len(); i++) {
     Parsed p = parse(stamps[i].toBytes());
     t.isTrue(p.ok, "\{stamps[i]} was rejected");
     if (!p.ok) { continue; }
-    lines.add("parse \{p.millis} \{stamps[i]}");
+    asked.add("parse \{stamps[i]}", "\{p.millis}");
   }
-  check(t, cli, lines, "parse");
+  await agree(t, sys.procs(), DATE, asked, "parse");
   return t.report();
 }
 
@@ -329,16 +348,16 @@ export string test_malformed_timestamps_are_rejected() {
  * whether it still rejects them too, because the day it does not is the day it could have been the
  * answer.
  */
-export string test_a_leap_second_is_rejected(Core core, Cli cli) {
+export async string test_a_leap_second_is_rejected(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] leapSeconds = ["2016-12-31T23:59:60Z", "2015-06-30T23:59:60Z"];
   for (i32 i = 0; i < leapSeconds.len(); i++) {
     t.isFalse(parse(leapSeconds[i].toBytes()).ok,
               "\{leapSeconds[i]} was accepted, so leap seconds may now be supported");
-    lines.add("nan \{leapSeconds[i]}");
+    asked.add("parse \{leapSeconds[i]}", "NaN");
   }
-  check(t, cli, lines, "leap seconds");
+  await agree(t, sys.procs(), DATE, asked, "leap seconds");
   return t.report();
 }
 

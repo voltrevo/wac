@@ -2127,9 +2127,16 @@ export string coreSource() {
     " */\n",
     "export T hypothetical<T>() { trap; }\n"
   ] as string[];
-  string s = "";
-  for (i32 i = 0; i < lines.len(); i++) { s = s + lines[i]; }
-  return s;
+  i32 total = 0;
+  for (i32 i = 0; i < lines.len(); i++) { total = total + lines[i].toBytes().len(); }
+  u8[] all = u8[].filled(total, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    u8[] b = lines[i].toBytes();
+    all.copyFrom(b, 0, at, b.len());
+    at = at + b.len();
+  }
+  return string.fromBytes(all);
 }
 
 /** `std`, the module `import { … } from "std"` reaches. */
@@ -7075,9 +7082,16 @@ export string stdSource() {
     "  void unload(this) { this.cli.unload(this.handle); }\n",
     "}\n"
   ] as string[];
-  string s = "";
-  for (i32 i = 0; i < lines.len(); i++) { s = s + lines[i]; }
-  return s;
+  i32 total = 0;
+  for (i32 i = 0; i < lines.len(); i++) { total = total + lines[i].toBytes().len(); }
+  u8[] all = u8[].filled(total, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    u8[] b = lines[i].toBytes();
+    all.copyFrom(b, 0, at, b.len());
+    at = at + b.len();
+  }
+  return string.fromBytes(all);
 }
 
 /** `core`'s files, in the order `coreSource` carries them. */
@@ -7115,6 +7129,19 @@ export string[] coreSymbols() {
  */
 export string builtinTypeDefaults() {
   return "Result|2|;union" + "\n";
+}
+
+/**
+ * The enums `core` and then `std` declare, as `Name|V1|V2|` lines — `enumVariantsIn` from `scans.wac`,
+ * run here once, so `lowerUnqualifiedVariants` need not parse both on every compile.
+ */
+export string builtinEnumVariants() {
+  return "Read|Data|End|Failed|\nResult|Ok|Err|\nStep|Waiting|Yielded|Done|\n";
+}
+
+/** The names of `core`'s variadic functions and methods, as `|a|b|` — `variadicCalleesIn` from `scans.wac`. */
+export string builtinVariadicCallees() {
+  return "|all|any|anyWithIndex|";
 }
 
 /**

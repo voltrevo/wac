@@ -28,6 +28,7 @@
 import { Core, Cli, FileResult, Sys } from "std";
 import { joined, splitKeepingEmpty, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { enumVariantsOfText, variadicCalleesIn } from "../../packages/wacc/src/scans.wac";
 
 /** Every file of `core`, in the order the module carries them. */
 string[] coreTree() {
@@ -286,10 +287,22 @@ string asWac(string text) {
   }
   // `as string[]` because wac-L5 builds this file too, and it reads an array literal only with
   // its type written after it.
+  //
+  // **Into one buffer, not `s = s + lines[i]`.** That copies everything so far once per line — about
+  // 350 MB to build `std` — and wacc asks for these texts several times per build, so it was most of
+  // the time of compiling anything (`issues/lang/0398b`). Measuring first and copying each line once
+  // is linear in the text.
   out = out + "  ] as string[];\n";
-  out = out + "  string s = \"\";\n";
-  out = out + "  for (i32 i = 0; i < lines.len(); i++) { s = s + lines[i]; }\n";
-  return out + "  return s;";
+  out = out + "  i32 total = 0;\n";
+  out = out + "  for (i32 i = 0; i < lines.len(); i++) { total = total + lines[i].toBytes().len(); }\n";
+  out = out + "  u8[] all = u8[].filled(total, 0);\n";
+  out = out + "  i32 at = 0;\n";
+  out = out + "  for (i32 i = 0; i < lines.len(); i++) {\n";
+  out = out + "    u8[] b = lines[i].toBytes();\n";
+  out = out + "    all.copyFrom(b, 0, at, b.len());\n";
+  out = out + "    at = at + b.len();\n";
+  out = out + "  }\n";
+  return out + "  return string.fromBytes(all);";
 }
 
 /** `"a", "b"` — the body of a `[…]` literal. */
@@ -300,6 +313,22 @@ string quotedList(string[] paths) {
 }
 
 string blk(string[] ls) { return joined(ls, "\n"); }
+
+/** `s` as one string literal, its line breaks written `\n` — a table, without a `+` per row. */
+string oneLiteral(string s) {
+  string q = quoted(s);
+  u8[] b = q.toBytes();
+  i32 breaks = 0;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 10) { breaks++; } }
+  u8[] out = u8[].filled(b.len() + breaks, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 10) { out[at] = 92; out[at + 1] = 110; at = at + 2; continue; }
+    out[at] = b[i];
+    at = at + 1;
+  }
+  return string.fromBytes(out);
+}
 
 /**
  * `Name|count|d0;d1;…` for each `struct` or `enum` header in `text` with a default type argument — the
@@ -414,6 +443,19 @@ string waccFile(Tree tree) {
     " */",
     "export string builtinTypeDefaults() {",
     "  return " + typeDefaultsWac(typeDefaultsTable(core + "\n" + tree.stdText())) + ";",
+    "}",
+    "",
+    "/**",
+    " * The enums `core` and then `std` declare, as `Name|V1|V2|` lines — `enumVariantsIn` from `scans.wac`,",
+    " * run here once, so `lowerUnqualifiedVariants` need not parse both on every compile.",
+    " */",
+    "export string builtinEnumVariants() {",
+    "  return " + oneLiteral(enumVariantsOfText(core) + enumVariantsOfText(tree.stdText())) + ";",
+    "}",
+    "",
+    "/** The names of `core`'s variadic functions and methods, as `|a|b|` — `variadicCalleesIn` from `scans.wac`. */",
+    "export string builtinVariadicCallees() {",
+    "  return " + oneLiteral(variadicCalleesIn(core)) + ";",
     "}",
     "",
     "/**",

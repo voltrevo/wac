@@ -1,0 +1,155 @@
+// An oracle written inline, in the test that asks it.
+//
+// The pattern before this was a `test/oracle.ts` per package: the test sent its cases with its own
+// answers attached, and the script compared and printed `FAIL …`. So the comparison lived in
+// TypeScript, in a file beside the test, and most of each script was the checking rather than the
+// reference. The operator's rule (2026-10-27) is that Deno is a host, the bootstrap and an oracle, and
+// that an oracle should be a small script in the test rather than a file of its own.
+//
+// So the roles are the other way round here. The script only **answers**: one line out for each line
+// in, computed by the JavaScript the test trusts (`Date`, `BigInt`, `URL`, `JSON`, …). The test keeps
+// its own answer beside each question, and `agree` does the comparing in wac.
+//
+// **It runs with no permissions.** `deno eval` always has all of them, so the script goes to
+// `deno run` as a `data:` URL instead, which gets none: reading stdin needs no grant, and nothing else
+// is wanted. `--no-config` and `--no-lock` keep it from reading the repository's `deno.json` or
+// writing its `deno.lock`.
+//
+// A URL parser strips newlines and reads `#` as the start of a fragment, so `scriptUrl` encodes
+// those two and `%`, and the script can be written as ordinary multi-line JavaScript. Write it without
+// backslashes: a wac string reads them first. `String.fromCharCode(10)` is a newline.
+
+import { T } from "./assert.wac";
+import { Lines } from "./oracle.wac";
+import { Procs, Launch } from "std";
+import { Buf } from "core";
+
+/** `js` as a `data:` URL `deno run` will load: `%`, `#` and newlines encoded, nothing else touched. */
+export string scriptUrl(string js) {
+  Buf out = Buf.create();
+  out.pushAll("data:text/javascript,".toBytes());
+  u8[] b = js.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    u8 c = b[i];
+    if (c == '%') { out.pushAll("%25".toBytes()); continue; }
+    if (c == '#') { out.pushAll("%23".toBytes()); continue; }
+    if (c == '\n') { out.pushAll("%0A".toBytes()); continue; }
+    out.push(c);
+  }
+  return string.fromBytes(out.take());
+}
+
+/**
+ * Run `js` over `lines` and hand back what it printed, one entry per line, less the closing `DONE <n>`.
+ *
+ * The script reads every line from stdin and must print `DONE <n>` last, `n` being how many it read.
+ * A script that stopped early, failed, or could not be started is a failure here, and the answer is
+ * empty.
+ *
+ * It takes `Procs` rather than `Cli` because that is the handle `design/system/0013` leaves standing.
+ */
+export async string[] askScript(T t, Procs procs, string js, Lines lines, string what) {
+  string[] args = ["run", "--no-prompt", "--no-config", "--no-lock", scriptUrl(js)];
+  return await answersOf(t, procs, "deno", args, lines, what);
+}
+
+/**
+ * `askScript` under Node rather than Deno, for a test whose reference is Node's answer — or both
+ * runtimes', where they disagree and the test says which is right.
+ *
+ * `--permission` gives the script no file, child or worker access, which is where `deno run` leaves
+ * the Deno one. A script meant for both reads stdin as `for await (const c of process.stdin)`, which
+ * each runtime accepts.
+ */
+export async string[] askNodeScript(T t, Procs procs, string js, Lines lines, string what) {
+  return await answersOf(t, procs, "node", ["--permission", "--input-type=module", "-e", js], lines, what);
+}
+
+async string[] answersOf(T t, Procs procs, string runtime, string[] args, Lines lines, string what) {
+  string out = "";
+  match (await procs.exec(runtime, args, lines.buf.take(), string[](), Launch.plain())) {
+    Ok(r): {
+      if (r.status != 0) {
+        t.fail("\{what}: the oracle exited \{r.status} — \{string.fromBytes(r.stderr)}");
+        return string[]();
+      }
+      out = string.fromBytes(r.stdout);
+    }
+    Err(e): {
+      t.fail("\{what}: the oracle did not start — is `\{runtime}` on the path?");
+      return string[]();
+    }
+  }
+  string[] all = linesOf(out);
+  string last = all.len() == 0 ? "" : all[all.len() - 1];
+  t.eqStr(last, "DONE \{lines.n}", "\{what}: the oracle answered everything it was sent");
+  if (last != "DONE \{lines.n}") { return string[](); }
+  string[] answers = string[].filled(all.len() - 1, "");
+  answers.copyFrom(all, 0, 0, all.len() - 1);
+  return answers;
+}
+
+/** Questions for a script, each with the answer this side expects. */
+export struct Asked {
+  Lines lines;
+  Buf questions;
+  Buf ours;
+
+  /** One question, one line; neither may contain a newline. */
+  void add(this, string question, string answer) {
+    this.lines.add(question);
+    this.questions.pushAll(question.toBytes());
+    this.questions.push('\n');
+    this.ours.pushAll(answer.toBytes());
+    this.ours.push('\n');
+  }
+
+  i32 count(const this) { return this.lines.n; }
+
+  Asked create() { return Asked(Lines.create(), Buf.create(), Buf.create()); }
+}
+
+/** Every line of `text`, empty ones included — each `add` ends exactly one. */
+string[] linesOf(string text) {
+  i32 n = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { n = n + 1; }
+  }
+  string[] out = string[].filled(n, "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) != "\n") { continue; }
+    out[at] = text.slice(from, i);
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}
+
+/**
+ * Ask `js` every question in `asked`, and fail for each answer that differs from this side's.
+ *
+ * The first ten disagreements are reported with the question, this side's answer and the oracle's;
+ * the rest are counted, so a sweep that is wrong everywhere says so in one line rather than in a
+ * hundred thousand. Answers whether every answer agreed.
+ */
+export async bool agree(T t, Procs procs, string js, Asked asked, string what) {
+  string[] questions = linesOf(string.fromBytes(asked.questions.take()));
+  string[] ours = linesOf(string.fromBytes(asked.ours.take()));
+  string[] theirs = await askScript(t, procs, js, asked.lines, what);
+  if (theirs.len() != ours.len()) {
+    t.fail("\{what}: \{theirs.len()} answer(s) to \{ours.len()} question(s)");
+    return false;
+  }
+  i32 wrong = 0;
+  for (i32 i = 0; i < ours.len(); i++) {
+    if (theirs[i] == ours[i]) { continue; }
+    if (wrong < 10) {
+      t.fail("\{what}: \{questions[i]} — ours \{ours[i]}, the oracle's \{theirs[i]}");
+    }
+    wrong = wrong + 1;
+  }
+  if (wrong > 10) { t.fail("\{what}: \{wrong - 10} more disagreement(s) not shown"); }
+  return wrong == 0;
+}

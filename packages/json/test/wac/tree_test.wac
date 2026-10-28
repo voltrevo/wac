@@ -14,18 +14,28 @@
 // describing is the one the language gives, and spec/spec/enums.md is where that is stated.
 //
 // Everything else moves as it was, with the last test — the one that checks the tree against a
-// *different* implementation — going through `test/oracle.ts`.
+// *different* implementation — asking `RESTRINGIFY`, a script that only answers, while `agree`
+// compares in wac (`packages/wactest/src/inline.wac`).
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
 import { ftoa } from "../../../fmt/src/ftoa.wac";
 import { parse, stringify } from "../../src/json.wac";
 import { JsonValue, JsonArray, JsonObject, JsonMember } from "../../src/value.wac";
+import { question } from "./questions.wac";
 
-static string ORACLE = "packages/json/test/oracle.ts";
+/**
+ * `JSON.stringify(JSON.parse(doc))` for the document in each question's last word, or `refused` when a
+ * strict decode or the parse throws.
+ */
+static string RESTRINGIFY =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const bytes = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));\n" +
+  "const again = (h) => { try { return JSON.stringify(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes(h)))); } catch { return 'refused'; } };\n" +
+  "console.log(L.map((l) => again(l.split(' ').pop())).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 /** The variant's name, which is what the host-side test read as a `tag`. */
 string tagOf(JsonValue v) {
@@ -142,7 +152,7 @@ export string test_a_tree_handed_back_serializes_to_what_it_came_from() {
  * consumer would write it rather than by calling `stringify`. A shape that is self-consistently wrong
  * survives everything above and fails here.
  */
-export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, Cli cli) {
+export async string test_the_tree_walks_to_the_same_data_the_host_produces(Sys sys) {
   T t = T.create();
   string[] docs = [
     "null", "true", "false", "0", "-1", "42", "1.5", "-2.25", "1e3",
@@ -153,15 +163,15 @@ export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, 
     "{\"a\":1,\"a\":2}",
     "  \t{ \"spaced\" : [ 1 , 2 ] }\n"
   ];
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes()).ok();
     t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (v is null) { continue; }
-    lines.add("restringify \{hex(docs[i].toBytes())} \{hex(walk(v!).toBytes())}");
+    asked.add(question(docs[i].toBytes()), walk(v!));
   }
-  t.eqI32(lines.n, docs.len(), "every document was walked");
-  checkDeno(t, cli, ORACLE, lines, "the walked tree");
+  t.eqI32(asked.count(), docs.len(), "every document was walked");
+  await agree(t, sys.procs(), RESTRINGIFY, asked, "the walked tree");
   return t.report();
 }
 

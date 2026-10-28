@@ -18,7 +18,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot, wacBinary }
+import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot, requireNativeHost, wacBinary }
   from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
@@ -332,15 +332,9 @@ export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(C
   t.eqI32(v8Granted.code, 0, v8Granted.err);
   t.eqStr(trimmed(v8Granted.out), "read=ok net=denied", v8Granted.out + v8Granted.err);
 
-  // The wasmtime host is asked for rather than built — `issues/system/0208` — and says why when it is
-  // not there. Skipped rather than failed, because a checkout may never have run `seed:native`; the
-  // three hosts above still ran, which is what stops the skip from hiding everything.
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.warn("   skipping the wasmtime half: \{why}");
-    return t.report();
-  }
-  string wacland = nativeHost(cli);
+  // The wasmtime host is asked for rather than built — `issues/system/0208` — and required.
+  string wacland = requireNativeHost(cli, t);
+  if (wacland == "") { return t.report(); }
   Ran wlDenied = run(cli, wacland, [runner, mod, ""]);
   t.eqI32(wlDenied.code, 0, wlDenied.err);
   t.eqStr(trimmed(wlDenied.out), "read=denied net=denied", wlDenied.out + wlDenied.err);

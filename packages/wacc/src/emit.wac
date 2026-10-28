@@ -16,6 +16,7 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
+import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import {
   Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
   decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
@@ -541,13 +542,43 @@ void registerNamed(Env env, string t) {
   // field is `Node<i32>[]` again — round until the compiler's stack ran out. An array is registered
   // before its element is visited, so asking first ends every such cycle at its second step.
   if (t.indexOf("<") > 0 && (env.isStructName(t) || env.isEnumName(t))) {
+    // **`t`'s variants found once, not once per field.** Asking `enumOf` — a walk of every variant —
+    // about every field of the program, for every instance an expression names, was a fifth of
+    // building box's shell (`issues/lang/0398b`).
+    string[] mine = variantsOwnedBy(env, t);
     for (i32 f = 0; f < env.fieldCount; f++) {
       string owner = env.fieldOwners[f];
-      if (owner != t && env.enumOf(owner) != t) { continue; }
+      if (owner != t && !anyIs(mine, owner)) { continue; }
       string ft = env.fieldTypes[f];
       if ((isArrayType(ft) && !hasArrayType(env, ft)) || isBoxedName(ft)) { registerNamed(env, ft); }
     }
   }
+}
+
+/**
+ * The variants `env.enumOf` answers `t` for: those `t` owns, less any whose name an earlier variant
+ * already has, since `enumOf` answers with the first.
+ */
+string[] variantsOwnedBy(Env env, string t) {
+  i32 n = 0;
+  for (i32 v = keyFirst(env.variantOwnerIx, t); v >= 0; v = env.variantOwnerIx.next[v]) { if (env.variantOwners[v] == t) { n = n + 1; } }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  for (i32 v = keyFirst(env.variantOwnerIx, t); v >= 0; v = env.variantOwnerIx.next[v]) {
+    if (env.variantOwners[v] != t) { continue; }
+    bool first = true;
+    for (i32 j = 0; j < v; j++) { if (env.variantNames[j] == env.variantNames[v]) { first = false; } }
+    if (first) { out[k] = env.variantNames[v]; k = k + 1; }
+  }
+  string[] exact = string[].filled(k, "");
+  exact.copyFrom(out, 0, 0, k);
+  return exact;
+}
+
+/** Whether some element of `xs` is `x`. */
+bool anyIs(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
 }
 
 /** Whether array type `t` has its type-section entry already. */
@@ -806,7 +837,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
       // file that writes the call.** Both are in play in one iteration, which is why this cannot use
       // the walk preamble the pass-level loops use: only the name comparison moves.
       Decl[] gd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
-      i32 named = genericFuncFor(env, raw, env.curFile);
+      i32 named = genericFuncFor(env, src, lexed, raw, env.curFile);
       for (i32 d = 0; d < gd.len(); d++) {
         if (named >= 0 && d != named) { continue; }
         u8[] gs = srcFor(env.fileSrcs, src, env.declFile(d));
@@ -815,7 +846,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
           Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() != targs.len()) { continue; }
             if (tokenTextOf(gs, gl, nameTok) != raw) { continue; }
-            string key = genericFuncKey(env, d, raw);
+            string key = genericFuncKey(env, src, lexed, d, raw);
             string inst = key + "<";
             for (i32 i = 0; i < targs.len(); i++) {
               string a = env.canonType(typeOfTyName(env, src, lexed, targs[i]));
@@ -862,8 +893,8 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
   Program pg = env.prog!;
   // The name and the parameter types belong to the declaring file; the arguments to this one.
   Decl[] cd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
-  i32 named = genericFuncFor(env, raw, env.curFile);
-  for (i32 d = 0; d < cd.len(); d++) {
+  i32 named = genericFuncFor(env, src, lexed, raw, env.curFile);
+  for (i32 d = treeDeclFirst(env, src, lexed, raw); d >= 0; d = env.treeIx.next[d]) {
     if (named >= 0 && d != named) { continue; }
     u8[] cs = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed cl = lexFor(env.fileLexeds, lexed, env.declFile(d));
@@ -871,7 +902,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
-        string key = genericFuncKey(env, d, raw);
+        string key = genericFuncKey(env, src, lexed, d, raw);
         if (params.len() != args.len()) { return ""; }
         string[] bound = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < args.len(); i++) {
@@ -1321,7 +1352,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
   // The template, its method and that method's parameter types are read against the file that
   // declares them; `args` are written here.
   Decl[] md = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
-  for (i32 d = 0; d < md.len(); d++) {
+  for (i32 d = treeDeclFirst(env, src, lexed, tmpl); d >= 0; d = env.treeIx.next[d]) {
     u8[] ms = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (md[d].kind) {
@@ -2072,7 +2103,7 @@ export struct Env {
   }
 
   i32 funcAt(const this, string name) {
-    for (i32 i = 0; i < this.funcCount; i++) {
+    for (i32 i = keyFirst(this.funcIx, name); i >= 0; i = this.funcIx.next[i]) {
       if (this.funcs[i] == name) { return i; }
     }
     return -1;
@@ -2170,7 +2201,7 @@ export struct Env {
    * declares them both is written.
    */
   i32 sigType(this, string t) {
-    for (i32 i = 0; i < this.sigCount; i++) {
+    for (i32 i = keyFirst(this.sigIx, t); i >= 0; i = this.sigIx.next[i]) {
       if (this.sigTypes[i] == t) { return this.arrayCount + this.structCount + i; }
     }
     if (this.sigCount >= this.sigTypes.len()) {
@@ -2178,6 +2209,7 @@ export struct Env {
       return 0;
     }
     this.sigTypes[this.sigCount] = t;
+    keyAdd(this.sigIx, t, this.sigCount);
     this.sigCount = this.sigCount + 1;
     i32 mine = this.sigCount - 1;
     if (isTupleEntry(t)) { return this.arrayCount + this.structCount + mine; }
@@ -2258,7 +2290,7 @@ export struct Env {
 
   i32 structType(this, string name) {
     string n = this.canonType(name);
-    for (i32 i = 0; i < this.structCount; i++) {
+    for (i32 i = keyFirst(this.structIx, n); i >= 0; i = this.structIx.next[i]) {
       if (this.structNames[i] == n) { return this.arrayCount + i; }
     }
     return -1;
@@ -2274,7 +2306,7 @@ export struct Env {
 
   bool isStructName(const this, string name) {
     string n = this.canonType(name);
-    for (i32 i = 0; i < this.structCount; i++) {
+    for (i32 i = keyFirst(this.structIx, n); i >= 0; i = this.structIx.next[i]) {
       if (this.structNames[i] == n) { return true; }
     }
     return false;
@@ -2315,7 +2347,7 @@ export struct Env {
 
   /** A struct's parent, or `""`. */
   string parentOf(const this, string owner) {
-    for (i32 i = 0; i < this.structCount; i++) {
+    for (i32 i = keyFirst(this.structIx, owner); i >= 0; i = this.structIx.next[i]) {
       if (this.structNames[i] == owner) { return this.structParents[i]; }
     }
     return "";
@@ -2338,7 +2370,7 @@ export struct Env {
   i32 fieldIndex(const this, string owner, string field) {
     i32 base = this.inheritedCount(owner);
     i32 n = 0;
-    for (i32 i = 0; i < this.fieldCount; i++) {
+    for (i32 i = keyFirst(this.fieldIx, owner); i >= 0; i = this.fieldIx.next[i]) {
       if (this.fieldOwners[i] != owner) { continue; }
       if (this.fieldNames[i] == field) { return base + n; }
       n = n + 1;
@@ -2349,7 +2381,7 @@ export struct Env {
   /** How many fields a struct has, which decides whether a bare `P()` is a default construction. */
   i32 fieldCountOf(const this, string owner) {
     i32 n = this.inheritedCount(owner);
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] == owner) { n = n + 1; }
     }
     return n;
@@ -2360,7 +2392,7 @@ export struct Env {
     i32 base3 = this.inheritedCount(owner);
     if (i < base3) { return this.fieldNullableAt(this.parentOf(owner), i); }
     i32 n = base3;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldNullable[f]; }
       n = n + 1;
@@ -2373,7 +2405,7 @@ export struct Env {
     i32 baseN = this.inheritedCount(owner);
     if (i < baseN) { return this.fieldNameAt(this.parentOf(owner), i); }
     i32 n = baseN;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldNames[f]; }
       n = n + 1;
@@ -2386,7 +2418,7 @@ export struct Env {
     i32 base5 = this.inheritedCount(owner);
     if (i < base5) { return this.fieldIndexOf(this.parentOf(owner), i); }
     i32 n = base5;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return f; }
       n = n + 1;
@@ -2399,7 +2431,7 @@ export struct Env {
     i32 base4 = this.inheritedCount(owner);
     if (i < base4) { return this.fieldTypeAt(this.parentOf(owner), i); }
     i32 n = base4;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldTypes[f]; }
       n = n + 1;
@@ -2440,6 +2472,7 @@ export struct Env {
       return;
     }
     this.funcs[this.funcCount] = name;
+    keyAdd(this.funcIx, name, this.funcCount);
     this.funcReturns[this.funcCount] = ret;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = ptypes.len();
@@ -2476,7 +2509,7 @@ export struct Env {
 
   /** A field's wac type, which decides how it is read and what it produces. */
   string fieldType(const this, string owner, string field) {
-    for (i32 i = 0; i < this.fieldCount; i++) {
+    for (i32 i = keyFirst(this.fieldIx, owner); i >= 0; i = this.fieldIx.next[i]) {
       if (this.fieldOwners[i] == owner && this.fieldNames[i] == field) { return this.fieldTypes[i]; }
     }
     string p2 = this.parentOf(owner);
@@ -3111,6 +3144,38 @@ export struct Env {
   string[] thunkRecvs;
   B[] thunkBodies;
 
+  /**
+   * `declNames` by name, so finding a declaration does not walk them all (`keyindex.wac`). `keyAt`
+   * walked every declaration up to four times for every type name the emitter resolved, and `declare`
+   * walked them all again for each new one (`issues/lang/0398b`).
+   */
+  KeyIndex declIndex;
+
+  /**
+   * `structNames`, `fieldOwners` and `funcs` by name, kept as each row is added — `structAdded`,
+   * `fieldAdded`, `addFunc`. The lookups below are `const` and so cannot build one when asked, and
+   * walking the table was half of emitting a program of a few thousand structs (`issues/lang/0398b`).
+   * `fieldIx` is keyed by owner, so a struct's fields come out in declaration order.
+   */
+  KeyIndex structIx;
+  KeyIndex fieldIx;
+  KeyIndex funcIx;
+
+  /**
+   * The declaration tree the passes walk — `mergedDecls`, or the one program's — by written name,
+   * built on first use by `treeDeclFirst` and dropped whenever either is assigned. A generic method
+   * call found its owner by reading every declaration's name (`issues/lang/0398b`).
+   */
+  KeyIndex treeIx;
+  bool treeIxBuilt;
+
+  /** `sigTypes` by spelling, kept as `sigType` appends — it was a walk of every signature per one asked. */
+  KeyIndex sigIx;
+
+  /** `variantNames` by name and by owner, kept by `variantAdded` — `canonType` asked `enumOf` of every type name. */
+  KeyIndex variantIx;
+  KeyIndex variantOwnerIx;
+
   /** The component tag recorded at this position, in this file and instance, or -1. */
   i32 markupSiteAt(const this, i32 line, i32 col) {
     for (i32 i = 0; i < this.markupCount; i++) {
@@ -3459,7 +3524,9 @@ export struct Env {
                i32[].filled(1024, 0), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
                i32[].filled(1024, 0), 0,
                0, 0, string[].filled(2048, ""), string[].filled(2048, ""), string[].filled(2048, ""),
-               B[].filled(2048, B.create()));
+               B[].filled(2048, B.create()),
+               KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), KeyIndex.create(),
+               KeyIndex.create(), false, KeyIndex.create(), KeyIndex.create(), KeyIndex.create());
   }
 
   
@@ -3480,8 +3547,9 @@ export struct Env {
   string declareKeyed(this, string name, i32 f, bool exported, bool stepAside) {
     bool taken = stepAside;
     // **The bare key**, not the bare name: a variant that yielded holds `Read@n`, which leaves `Read`
-    // to the type declared after it.
-    for (i32 i = 0; i < this.declCount; i++) {
+    // to the type declared after it. A key is its name or its name and an `@`, so only a declaration
+    // of this name can hold this key.
+    for (i32 i = keyFirst(this.declIndex, name); i >= 0; i = this.declIndex.next[i]) {
       if (this.declKeys[i] == name) { taken = true; }
     }
     string key = name;
@@ -3492,6 +3560,7 @@ export struct Env {
       this.declFiles[this.declCount] = f;
       this.declKeys[this.declCount] = key;
       this.declExported[this.declCount] = exported;
+      keyAdd(this.declIndex, name, this.declCount);
       this.declCount = this.declCount + 1;
     }
     return key;
@@ -3529,7 +3598,7 @@ export struct Env {
     // — and a speculative question whose answer is discarded must not leave the module unemittable.
     if (this.localAt(name) >= 0) { return name; }
     // This file's own declaration first — shadowing, as the language has it.
-    for (i32 i = 0; i < this.declCount; i++) {
+    for (i32 i = keyFirst(this.declIndex, name); i >= 0; i = this.declIndex.next[i]) {
       if (this.declNames[i] == name && this.declFiles[i] == f) { return this.declKeys[i]; }
     }
     // Then **the import that names it**. `import { p } from "./a.wac"` says where `p` comes from,
@@ -3537,7 +3606,7 @@ export struct Env {
     // the language's own rule rather than an approximation of it.
     for (i32 e = 0; e < this.importCount; e++) {
       if (this.importFrom[e] != f || this.importNames[e] != name) { continue; }
-      for (i32 i = 0; i < this.declCount; i++) {
+      for (i32 i = keyFirst(this.declIndex, this.importDecls[e]); i >= 0; i = this.declIndex.next[i]) {
         if (this.declNames[i] == this.importDecls[e] && this.declFiles[i] == this.importTo[e]) {
           return this.declKeys[i];
         }
@@ -3548,7 +3617,7 @@ export struct Env {
     // answer is a guess whenever two of them do.
     string imported = "";
     i32 importedCandidates = 0;
-    for (i32 i = 0; i < this.declCount; i++) {
+    for (i32 i = keyFirst(this.declIndex, name); i >= 0; i = this.declIndex.next[i]) {
       if (this.declNames[i] != name) { continue; }
       // **A file's private declaration is not a candidate for anyone else.** This file's own came
       // first, above, and returned; what is left here belongs to another file, and only what that
@@ -3573,7 +3642,7 @@ export struct Env {
     // shows up as *"expected (ref null 1), got (ref null 7)"* in a third file that mentions neither.
     string found = "";
     i32 candidates = 0;
-    for (i32 i = 0; i < this.declCount; i++) {
+    for (i32 i = keyFirst(this.declIndex, name); i >= 0; i = this.declIndex.next[i]) {
       if (this.declNames[i] != name) { continue; }
       // The same rule, and here it decides whether the name is *ambiguous* rather than which
       // declaration wins: a private one in a file this one never mentions used to make a
@@ -3620,7 +3689,7 @@ export struct Env {
 
   /** The enum a variant belongs to, or `""` — which is also the question "is this a variant". */
   string enumOf(const this, string variant) {
-    for (i32 i = 0; i < this.variantCount; i++) {
+    for (i32 i = keyFirst(this.variantIx, variant); i >= 0; i = this.variantIx.next[i]) {
       if (this.variantNames[i] == variant) { return this.variantOwners[i]; }
     }
     return "";
@@ -3628,7 +3697,7 @@ export struct Env {
 
   /** Whether a name is an enum's own name, which is what a construction is qualified by. */
   bool isEnumName(const this, string name) {
-    for (i32 i = 0; i < this.variantCount; i++) {
+    for (i32 i = keyFirst(this.variantOwnerIx, name); i >= 0; i = this.variantOwnerIx.next[i]) {
       if (this.variantOwners[i] == name) { return true; }
     }
     return false;
@@ -3646,7 +3715,7 @@ export struct Env {
    * `spec/cases/0099`.
    */
   string variantKeyIn(const this, string owner, string written) {
-    for (i32 i = 0; i < this.variantCount; i++) {
+    for (i32 i = keyFirst(this.variantOwnerIx, owner); i >= 0; i = this.variantOwnerIx.next[i]) {
       if (this.variantOwners[i] != owner) { continue; }
       if (this.variantNames[i] == written) { return this.variantNames[i]; }
       if (this.variantNames[i].len() > written.len() &&
@@ -3658,7 +3727,7 @@ export struct Env {
   }
 
   i32 variantAt(const this, string variant) {
-    for (i32 i = 0; i < this.variantCount; i++) {
+    for (i32 i = keyFirst(this.variantIx, variant); i >= 0; i = this.variantIx.next[i]) {
       if (this.variantNames[i] == variant) { return i; }
     }
     return -1;
@@ -4645,7 +4714,7 @@ string bindTypesOf(Front f) {
     if (env.isEnumName(name)) {
       string line = "E\t" + metaTypeSpelling(env, name) + "\t" + bind + "\t";
       bool first = true;
-      for (i32 v = 0; v < env.variantCount; v++) {
+      for (i32 v = keyFirst(env.variantOwnerIx, name); v >= 0; v = env.variantOwnerIx.next[v]) {
         if (env.variantOwners[v] != name) { continue; }
         if (!first) { line = line + ";"; }
         first = false;
@@ -6069,12 +6138,14 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   }
   if (fileCountOf(progs) > 0) {
     env.prog = prog;
+    env.treeIxBuilt = false;
     // So a later phase can resolve what an earlier one recorded — see `Env.fileSrcs`.
     env.fileSrcs = srcs;
     env.fileLexeds = lexeds;
     // **Before any pass, because every pass below walks it.** `Env.mergedDecls`.
     Merged mg = mergedTreeOf(progs);
     env.mergedDecls = mg.decls;
+    env.treeIxBuilt = false;
     env.mergedFiles = mg.files;
     // **A field's type found while the table is still partial is a guess, and so is any ambiguity it
     // finds.** Every one is resolved again by `resolveStructRefs` once every file is declared; an
@@ -6254,7 +6325,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     env.structNames[env.structCount] = cname;
     env.structParentToks[env.structCount] = -1;
     env.structParents[env.structCount] = "";
-    env.structCount = env.structCount + 1;
+    structAdded(env);
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cname;
@@ -6263,7 +6334,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
       // enclosing function hold the same one-field struct, so a write through either is seen by both.
       env.fieldTypes[env.fieldCount] = cellStructName(env.capTypes[li][c]);
       env.fieldNullable[env.fieldCount] = false;
-      env.fieldCount = env.fieldCount + 1;
+      fieldAdded(env);
     }
     // The cell struct for each captured type, registered once.
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
@@ -6273,13 +6344,13 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
       env.structNames[env.structCount] = cellName;
       env.structParentToks[env.structCount] = -1;
       env.structParents[env.structCount] = "";
-      env.structCount = env.structCount + 1;
+      structAdded(env);
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cellName;
       env.fieldNames[env.fieldCount] = "v";
       env.fieldTypes[env.fieldCount] = env.capTypes[li][c];
       env.fieldNullable[env.fieldCount] = false;
-      env.fieldCount = env.fieldCount + 1;
+      fieldAdded(env);
     }
   }
 
@@ -6562,7 +6633,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         // One function per instance, in the same place in the order its registration put it.
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
           countAt = countAt + 1;
           // **The first declaration of that name, and no other**, as registration took — see the
@@ -6743,7 +6814,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       match (pd5[di].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
           registerFuncTypes(env, src, lexed, returnType, params, "");
@@ -6812,7 +6883,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     string sn = bindStructs[si3];
     if (env.isEnumName(sn)) {
       env.sigType("fn[i32(" + sn + ")]");
-      for (i32 v = 0; v < env.variantCount; v++) {
+      for (i32 v = keyFirst(env.variantOwnerIx, sn); v >= 0; v = env.variantOwnerIx.next[v]) {
         if (env.variantOwners[v] != sn) { continue; }
         string vparams = "";
         for (i32 k = 0; k < env.variantArity[v]; k++) {
@@ -7200,7 +7271,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         // happened to infer the same one would collide on it.
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           // **The first declaration of that name, and no other.** A function instance is named by its
           // template's bare name, so `ready<Stat>` matched both `platform/frame.wac`'s `ready<T>` and
           // `web/system.wac`'s. Registration registered one — the first, then `funcAt` said it was
@@ -7548,7 +7619,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     if (!env.isEnumName(en2)) { continue; }
     exportFunc(exports, fnName, "$bind$e_" + bindNameFor(env, src, lexed, en2) + "_tag", bulkAt);
     bulkAt = bulkAt + 1;
-    for (i32 v = 0; v < env.variantCount; v++) {
+    for (i32 v = keyFirst(env.variantOwnerIx, en2); v >= 0; v = env.variantOwnerIx.next[v]) {
       if (env.variantOwners[v] != en2) { continue; }
       string vn2 = bareVariantName(env.variantNames[v]);
       exportFunc(exports, fnName, "$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_new", bulkAt);
@@ -8359,7 +8430,7 @@ string armVariant(Env env, u8[] src, Lexed lexed, i32 tok, string en) {
   // **Within this enum**, not within the file. Two enums in one module may each have an `Ok` — one
   // module here has an `Opened.Ok` and a `Found.Ok` — and resolving the arm by file scope finds
   // whichever was declared first, which is a different enum's variant with the same spelling.
-  for (i32 i = 0; i < env.variantCount; i++) {
+  for (i32 i = keyFirst(env.variantOwnerIx, en); i >= 0; i = env.variantOwnerIx.next[i]) {
     if (env.variantOwners[i] != en) { continue; }
     string vk = env.variantNames[i];
     if (vk == raw) { return vk; }
@@ -8441,7 +8512,7 @@ i32 enumSlot(Env env, string ty, string field) {
   string en = env.canonType(ty);
   if (env.enumOf(ty) != "") { return env.fieldIndex(en, ty + "." + field); }
   i32 found = -1;
-  for (i32 i = 0; i < env.variantCount; i++) {
+  for (i32 i = keyFirst(env.variantOwnerIx, en); i >= 0; i = env.variantOwnerIx.next[i]) {
     if (env.variantOwners[i] != en) { continue; }
     i32 at = env.fieldIndex(en, env.variantNames[i] + "." + field);
     if (at < 0) { continue; }
@@ -9132,7 +9203,13 @@ void emitRawString(B fb, Env env, string text) { emitStringBytes(fb, env, text.t
  * way everywhere, so a run of more than ten thousand bytes was an `array.new_fixed` the engine refuses.
  */
 void emitStringBytes(B fb, Env env, u8[] bytes) {
-  if (env.inConstExpr) {
+  // **A short literal is built in place, too.** `array.new_data` is a call into the engine's runtime
+  // that takes a lock, and `array.new_fixed` is an allocation optimised code makes inline — so a
+  // literal compared against once per character, `if (c == "[")`, ran a scanning loop about 20× slower
+  // than the same loop over variables (`issues/lang/0398b`, `literalcost_test.wac`). Up to eight bytes
+  // the code is at most a few bytes longer than the segment form; past that the segment keeps what
+  // `issues/lang/0162` measured.
+  if (env.inConstExpr || bytes.len() <= 8) {
     for (i32 i = 0; i < bytes.len(); i++) { fb.byte(65); fb.i32leb(bytes[i] as i32); }
     fb.byte(251);
     fb.u32leb(8);   // array.new_fixed
@@ -14045,7 +14122,7 @@ string[] genericParamTypes(Env env, u8[] src, Lexed lexed, string raw, string in
     match (gd[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0 || tokenTextOf(ds, dl, nameTok) != raw) { continue; }
-        if (inst.indexOf("<") > 0 && genericFuncKey(env, d, raw) != inst.slice(0, inst.indexOf("<"))) { continue; }
+        if (inst.indexOf("<") > 0 && genericFuncKey(env, src, lexed, d, raw) != inst.slice(0, inst.indexOf("<"))) { continue; }
         env.curFile = fi;
         i32 pushed = pushSubstitution(env, ds, dl, typeParams, inst, raw);
         string[] out = string[].filled(params.len(), "");
@@ -14076,7 +14153,7 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
       match (w3d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
           env.curFile = w3f;
           return pushed;
@@ -14182,7 +14259,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       match (w5d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
           env.walkCount = 0;
           env.assignedCount = 0;
@@ -18426,7 +18503,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.structParentToks[env.structCount] = pt;
               env.structParents[env.structCount] =
                   pt < 0 ? "" : nameKeyOf(env, src, lexed, pt);
-              env.structCount = env.structCount + 1;
+              structAdded(env);
             }
             for (i32 f = 0; f < fields.len(); f++) {
               if (env.fieldCount >= env.fieldNames.len()) {
@@ -18438,7 +18515,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[f].type);
               env.fieldNullable[env.fieldCount] = isNullableTy(fields[f].type);
               noteFieldInit(env, env.fieldCount, fields[f].init, src, lexed);
-              env.fieldCount = env.fieldCount + 1;
+              fieldAdded(env);
             }
             for (i32 m = 0; m < methods.len(); m++) {
               // **A method with its own letters may not be able to say its types here.** Its entry is
@@ -18513,7 +18590,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           // with its parameters and return type resolved under the substitution the name carries.
           Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() == 0) { continue; }
-            if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[i]) { continue; }
+            if (genericFuncKey(env, src, lexed, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[i]) { continue; }
             if (env.funcAt(inst) >= 0) { continue; }
             i32 fpushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
             string[] fpts = string[].defaulted(params.len());
@@ -18551,7 +18628,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.structNames[env.structCount] = inst;
               env.structParentToks[env.structCount] = -1;
               env.structParents[env.structCount] = "";
-              env.structCount = env.structCount + 1;
+              structAdded(env);
             }
             if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); }
             if (env.fieldCount < env.fieldNames.len()) {
@@ -18559,7 +18636,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldNames[env.fieldCount] = " tag";
               env.fieldTypes[env.fieldCount] = "i32";
               env.fieldNullable[env.fieldCount] = false;
-              env.fieldCount = env.fieldCount + 1;
+              fieldAdded(env);
             }
             i32 eslot = 1;
             for (i32 v = 0; v < variants.len(); v++) {
@@ -18571,7 +18648,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
                 env.variantTags[env.variantCount] = v;
                 env.variantSlot[env.variantCount] = eslot;
                 env.variantArity[env.variantCount] = variants[v].fields.len();
-                env.variantCount = env.variantCount + 1;
+                variantAdded(env);
               }
               for (i32 fi = 0; fi < variants[v].fields.len(); fi++) {
                 if (env.fieldCount >= env.fieldNames.len()) {
@@ -18583,7 +18660,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
                   tokenTextOf(src, lexed, variants[v].fields[fi].nameTok);
                 env.fieldTypes[env.fieldCount] =
                   typeOfTyName(env, src, lexed, variants[v].fields[fi].type);
-                env.fieldCount = env.fieldCount + 1;
+                fieldAdded(env);
               }
               eslot = eslot + variants[v].fields.len();
             }
@@ -18766,10 +18843,10 @@ string genericDeclName(Env env, i32 d) {
  * function after it took its neighbour's index (`spec/cases/0568`). `text` is the name as written,
  * which is the answer for a program of one file.
  */
-string genericFuncKey(Env env, i32 d, string text) {
+string genericFuncKey(Env env, u8[] src, Lexed lexed, i32 d, string text) {
   if (env.mergedDecls.len() == 0) { return text; }
   i32 f = env.declFile(d);
-  for (i32 e = 0; e < env.mergedDecls.len(); e++) {
+  for (i32 e = treeDeclFirst(env, src, lexed, text); e >= 0; e = env.treeIx.next[e]) {
     if (e == d || env.declFile(e) == f) { continue; }
     if (genericDeclName(env, e) == text) { return text + "@" + numText(f); }
   }
@@ -18780,11 +18857,11 @@ string genericFuncKey(Env env, i32 d, string text) {
  * Which generic function `raw` a call in file `f` names — its own file's, then the one its imports
  * name, then the first — or -1 for a program of one file, where there is only one.
  */
-i32 genericFuncFor(Env env, string raw, i32 f) {
+i32 genericFuncFor(Env env, u8[] src, Lexed lexed, string raw, i32 f) {
   if (env.mergedDecls.len() == 0) { return 0 - 1; }
   i32 first = 0 - 1;
   i32 imported = 0 - 1;
-  for (i32 d = 0; d < env.mergedDecls.len(); d++) {
+  for (i32 d = treeDeclFirst(env, src, lexed, raw); d >= 0; d = env.treeIx.next[d]) {
     if (genericDeclName(env, d) != raw) { continue; }
     i32 df = env.declFile(d);
     if (df == f) { return d; }
@@ -18797,8 +18874,10 @@ i32 genericFuncFor(Env env, string raw, i32 f) {
 }
 
 /** Whether some file of the program declares a struct or an enum called `name`. */
-bool typeNamedAnywhere(Env env, string name) {
-  for (i32 d = 0; d < env.mergedDecls.len(); d++) {
+bool typeNamedAnywhere(Env env, u8[] src, Lexed lexed, string name) {
+  // Only a merged tree is asked about; the index falls back to the one program's when there is none.
+  if (env.mergedDecls.len() == 0) { return false; }
+  for (i32 d = treeDeclFirst(env, src, lexed, name); d >= 0; d = env.treeIx.next[d]) {
     i32 fi = d < env.mergedFiles.len() ? env.mergedFiles[d] : 0 - 1;
     if (fi < 0 || fi >= env.fileSrcs.len()) { continue; }
     i32 tok = 0 - 1;
@@ -18832,7 +18911,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           // name it resolves to is not known until every struct in the program has been declared.
           env.structParentToks[env.structCount] = parentTok;
           env.structParents[env.structCount] = "";
-          env.structCount = env.structCount + 1;
+          structAdded(env);
         }
         for (i32 i = 0; i < fields.len(); i++) {
           // **A field this table has no room for is not a field it can do without.** `struct.new`
@@ -18850,7 +18929,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.fieldTyFiles[env.fieldCount] = env.curFile;
           env.fieldNullable[env.fieldCount] = isNullableTy(fields[i].type);
           noteFieldInit(env, env.fieldCount, fields[i].init, src, lexed);
-          env.fieldCount = env.fieldCount + 1;
+          fieldAdded(env);
         }
       }
       // **An enum is registered as a struct**, because that is what it becomes: slot 0 is the tag
@@ -18866,7 +18945,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.structNames[env.structCount] = ename;
           env.structParentToks[env.structCount] = -1;
           env.structParents[env.structCount] = "";
-          env.structCount = env.structCount + 1;
+          structAdded(env);
         }
         if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); }
         if (env.fieldCount < env.fieldNames.len()) {
@@ -18874,14 +18953,14 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.fieldNames[env.fieldCount] = " tag";
           env.fieldTypes[env.fieldCount] = "i32";
           env.fieldNullable[env.fieldCount] = false;
-          env.fieldCount = env.fieldCount + 1;
+          fieldAdded(env);
         }
         i32 slot = 1;
         for (i32 v = 0; v < variants.len(); v++) {
           // A variant is reachable exactly when its enum is.
           string vtext = tokenTextOf(src, lexed, variants[v].nameTok);
           string vname = env.declareKeyed(vtext, fileFor(env, lexed, variants[v].nameTok, file), exported,
-                                          typeNamedAnywhere(env, vtext));
+                                          typeNamedAnywhere(env, src, lexed, vtext));
           if (env.variantCount >= env.variantNames.len()) { env.ranOut("enum variants"); }
           if (env.variantCount < env.variantNames.len()) {
             env.variantNames[env.variantCount] = vname;
@@ -18889,7 +18968,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
             env.variantTags[env.variantCount] = v;
             env.variantSlot[env.variantCount] = slot;
             env.variantArity[env.variantCount] = variants[v].fields.len();
-            env.variantCount = env.variantCount + 1;
+            variantAdded(env);
           }
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
             if (env.fieldCount >= env.fieldNames.len()) {
@@ -18910,7 +18989,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
             env.fieldTys[env.fieldCount] = variants[v].fields[i].type;
             env.fieldTyFiles[env.fieldCount] = env.curFile;
             env.fieldNullable[env.fieldCount] = isNullableTy(variants[v].fields[i].type);
-            env.fieldCount = env.fieldCount + 1;
+            fieldAdded(env);
           }
           slot = slot + variants[v].fields.len();
         }
@@ -19179,11 +19258,64 @@ void resolveStructRefs(Env env, u8[] src, Lexed lexed, u8[][] srcs, Lexed?[] lex
     }
     if (!moved) { break; }
   }
+  // The rows moved, so the index of them is rebuilt rather than patched.
+  env.structIx = KeyIndex.create();
+  for (i32 i = 0; i < env.structCount; i++) { keyAdd(env.structIx, env.structNames[i], i); }
+}
+
+/**
+ * The first declaration of the tree the passes walk that may be called `name`, or -1: follow
+ * `env.treeIx.next`, and keep testing the name, since a bucket holds other names too. A declaration
+ * that names nothing is in no bucket. `src` and `lexed` are the one program's, as for `srcFor`.
+ */
+i32 treeDeclFirst(Env env, u8[] src, Lexed lexed, string name) {
+  if (!env.treeIxBuilt) {
+    env.treeIx = KeyIndex.create();
+    env.treeIxBuilt = true;
+    Decl[] md = env.mergedDecls;
+    if (md.len() == 0 && !(env.prog is null)) {
+      Program pg = env.prog!;
+      md = pg.decls;
+    }
+    for (i32 d = 0; d < md.len(); d++) {
+      u8[] ms = srcFor(env.fileSrcs, src, env.declFile(d));
+      Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
+      i32 tok = 0 - 1;
+      match (md[d].kind) {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): { tok = nameTok; }
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { tok = nameTok; }
+        EnumDecl(nameTok, variants, exported, methods, typeParams): { tok = nameTok; }
+        default: { }
+      }
+      if (tok >= 0) { keyAdd(env.treeIx, tokenTextOf(ms, ml, tok), d); }
+    }
+  }
+  return keyFirst(env.treeIx, name);
+}
+
+/** Count the variant just written at `variantCount`, and index it by name and by owner. */
+void variantAdded(Env env) {
+  keyAdd(env.variantIx, env.variantNames[env.variantCount], env.variantCount);
+  keyAdd(env.variantOwnerIx, env.variantOwners[env.variantCount], env.variantCount);
+  env.variantCount = env.variantCount + 1;
+}
+
+/** Count the struct just written at `structCount`, and index it by name. */
+void structAdded(Env env) {
+  keyAdd(env.structIx, env.structNames[env.structCount], env.structCount);
+  env.structCount = env.structCount + 1;
+}
+
+/** Count the field just written at `fieldCount`, and index it by owner. */
+void fieldAdded(Env env) {
+  keyAdd(env.fieldIx, env.fieldOwners[env.fieldCount], env.fieldCount);
+  env.fieldCount = env.fieldCount + 1;
 }
 
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // Kept, so a call to a generic function can read the declaration it names from wherever it is
   env.prog = prog;
+  env.treeIxBuilt = false;
   declareStructs(env, src, lexed, prog, file);
   resolveStructRefs(env, src, lexed, u8[][].filled(0, u8[]()), Lexed?[]());
   declareConsts(env, src, lexed, prog, file);
@@ -19707,12 +19839,13 @@ Ev staticEvalOf(Env env, u8[] src, Lexed lexed) {
                        string[].filled(nd, ""), string[].filled(nd, ""), bool[].filled(nd, false),
                        i32[].filled(env.constCount < 1 ? 1 : env.constCount, 0),
                        i32[].filled(ni, 0), string[].filled(ni, ""), i32[].filled(ni, 0), string[].filled(ni, ""),
-                       env.importCount);
+                       env.importCount, null, KeyIndex.create());
   // Bound to a local first: an assignment through an unwrap does not parse on wac-L5.
   Decls scx = env.staticCx!;
   for (i32 e = 0; e < env.importCount; e++) {
     scx.impFrom[e] = env.importFrom[e];
     scx.impName[e] = env.importNames[e];
+    keyAdd(scx.impIndex, env.importNames[e], e);
     scx.impTo[e] = env.importTo[e];
     scx.impDecl[e] = env.importDecls[e];
   }
@@ -20970,6 +21103,13 @@ string bindNameOf(string spelling) {
       tmp[n] = 95; tmp[n + 1] = 110; tmp[n + 2] = 117; tmp[n + 3] = 108; tmp[n + 4] = 108;
       n = n + 5;
       pending = false;
+    } else if (c == 91 && i + 1 < a.len() && a[i + 1] == 93) {
+      // `[]`, as `Arr` — as `bindArrSuffix` spells it. Dropped with the other punctuation, it made
+      // `MapEntry<string, string[]>` the same name as `MapEntry<string, string>`: a duplicate export.
+      tmp[n] = 65; tmp[n + 1] = 114; tmp[n + 2] = 114;
+      n = n + 3;
+      i = i + 1;
+      pending = false;
     } else if (ok) {
       if (pending && n > 0) { tmp[n] = 36; n = n + 1; }        // `$`, one per run
       pending = false;
@@ -21502,7 +21642,7 @@ void emitBoxHelpers(B funcs, B code, Env env, string prim) {
 
 i32 enumHelperCount(Env env, string ename) {
   i32 n = 1;
-  for (i32 v = 0; v < env.variantCount; v++) {
+  for (i32 v = keyFirst(env.variantOwnerIx, ename); v >= 0; v = env.variantOwnerIx.next[v]) {
     if (env.variantOwners[v] != ename) { continue; }
     n = n + 1 + env.variantArity[v];
   }
@@ -21536,7 +21676,7 @@ void emitEnumHelpers(B funcs, B code, Env env, string ename) {
   code.u32leb(tb.len);
   code.bytes(tb);
 
-  for (i32 v = 0; v < env.variantCount; v++) {
+  for (i32 v = keyFirst(env.variantOwnerIx, ename); v >= 0; v = env.variantOwnerIx.next[v]) {
     if (env.variantOwners[v] != ename) { continue; }
     i32 arity = env.variantArity[v];
     i32 slot0 = env.variantSlot[v];

@@ -140,6 +140,27 @@ Cover gap(string op, string note) { return Cover(op, "gap", "", "", note); }
 bool isCompared(Cover c) { return c.kind != "gap"; }
 
 /**
+ * Whether `src` calls `name` itself, not a longer name ending in it. `binaryPath(` is the tail of
+ * `nativeBinaryPath(`, which answers the *wasmtime* binary, so a bare substring credited every file
+ * that drives wasmtime through that helper with the V8 host as well.
+ */
+bool hasCall(string src, string name) {
+  u8[] bytes = src.toBytes();
+  i32 from = 0;
+  while (true) {
+    i32 found = src.slice(from, src.len()).indexOf(name);
+    if (found < 0) { return false; }
+    i32 at = from + found;
+    if (at == 0) { return true; }
+    u8 before = bytes[at - 1];
+    bool ident = (before >= 97 && before <= 122) || (before >= 65 && before <= 90)
+                 || (before >= 48 && before <= 57) || before == 95;
+    if (!ident) { return true; }
+    from = at + 1;
+  }
+}
+
+/**
  * The hosts a backing test actually drives, as a sorted `+`-joined list, or "" if it drives none.
  *
  * Keyed on **call-shaped** patterns rather than bare words: `"deno"` appears in comments in most of
@@ -149,14 +170,17 @@ bool isCompared(Cover c) { return c.kind != "gap"; }
 string hostsOfFile(Cli cli, string path) {
   string src = sourceOf(cli, path);
   string out = "";
-  if (src.indexOf("nativeHost(") >= 0) { out = out + "wasmtime"; }
+  // `nativeBinaryPath` and `requireNativeHost` answer the wasmtime binary too, and the second does not
+  // contain `nativeHost(` — the capital is in the way — so each is named rather than left to a substring.
+  if (src.indexOf("nativeHost(") >= 0 || src.indexOf("requireNativeHost(") >= 0
+      || src.indexOf("nativeBinaryPath(") >= 0) { out = out + "wasmtime"; }
   // **Four spellings, and the literal path is the one that matters most.** `native_test.wac` reaches
   // the V8 binary as `root(cli) + "/native/v8/target/release/wac"` — no helper — and with only the
   // three helper names this file derived it as wasmtime-only, against a note that says in as many
   // words *"run by both native binaries"*. The floor test below is what surfaced that; the fix is a
   // fourth pattern rather than a fourth guess.
-  if (src.indexOf("wacBinary(") >= 0 || src.indexOf("binaryPath(") >= 0
-      || src.indexOf("nativeBinaryPath(") >= 0 || src.indexOf("native/v8/target/release/wac") >= 0) {
+  if (src.indexOf("wacBinary(") >= 0 || hasCall(src, "binaryPath(")
+      || src.indexOf("native/v8/target/release/wac") >= 0) {
     out = out + (out == "" ? "" : "+") + "v8";
   }
   if (src.indexOf("denoBatch(") >= 0 || src.indexOf("builtByDeno(") >= 0

@@ -713,6 +713,12 @@ does exactly this for the wasmtime host: the binary lives at a well-known path, 
 builds it, and eleven test files ask for a reason to print when it is absent rather than building a
 Rust crate nobody asked for. `issues/system/0208`.
 
+**That precedent was reversed on 2026-10-27**, and the reason bears on this design. A skip, however
+loud, is a gate that passed having asked one host fewer: the wasmtime host could not finish any
+program and only a checkout that happened to have the binary saw it (`issues/system/0367c`). Those
+tests now *fail* without the host, and `tools/push.sh` builds it. A Deno-hosted `wac` that a
+comparison needs is the same: the gate builds it, or the comparison is not in the gate.
+
 So the JS hosts want the same treatment: a well-known path, a `denoHostWhyNot` / `nodeHostWhyNot`,
 and `bootstrap.sh --host deno|nodejs -o` filling them.
 
@@ -786,8 +792,8 @@ So it is a live oracle that has caught a real bug, and it runs **on every gate**
 is always available.
 
 **Under the successor pattern it would not.** One artefact run under two `wac` binaries needs a
-Deno-hosted `wac` to exist, and — following `nativeHostWhyNot`'s precedent — a test whose host is
-absent skips with a reason. `bootstrap.sh --host deno` takes 45 seconds and nothing builds it as part
+Deno-hosted `wac` to exist, and — following `nativeHostWhyNot`'s precedent as it then stood — a test
+whose host is absent skips with a reason. (That precedent is reversed; see above.) `bootstrap.sh --host deno` takes 45 seconds and nothing builds it as part
 of a push.
 
 So the conversion trades *compared on every run* for *compared when somebody built the host*. That is

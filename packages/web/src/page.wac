@@ -54,6 +54,11 @@ export static i32 MOD_META = 8;
 /** A file the user handed over — chosen with an `<input type="file">`, or dropped on the page. */
 export struct Picked {
   bool ok;
+  /**
+   * Its name — or, for a file inside a folder the user handed over, its path from that folder down:
+   * `photos/2024/a.jpg`. A folder dropped on the page, or chosen with `<input type="file"
+   * webkitdirectory>`, arrives as one `Picked` per file in it; the folder itself never arrives.
+   */
   string name;
   u8[] bytes;
   /** Why it could not be read, when `ok` is false. */

@@ -37,6 +37,7 @@
 // `/tmp`, where three agents would share a name.
 
 import { Cli, Exec, Stat, FileResult } from "std";
+import { T } from "./assert.wac";
 import { Located, Manifest, packageEntry, readManifest } from "../../wacpkg/src/manifest.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
@@ -360,6 +361,20 @@ export i64 newestOf(Cli cli, string path) {
  * is `packages/wac/src/wac.wac` and each host carries it as its seed; the engine is the difference.
  */
 export string nativeHost(Cli cli) { return "\{cli.cwd().wait()}/native/target/release/wac"; }
+
+/**
+ * The wasmtime host, **required**: a missing or stale one fails `t`, saying how to build it.
+ *
+ * **Never a skip.** Every caller used to skip its wasmtime half when this host was absent, each with
+ * its own warning, so a gate in a checkout without the binary passed having asked one host fewer and
+ * said so only in a log line. A test either needs the host or it does not; `tools/push.sh` builds it.
+ * `""` after the failure is recorded, so a caller can return early without running against nothing.
+ */
+export string requireNativeHost(Cli cli, T t) {
+  string why = nativeHostWhyNot(cli);
+  t.isTrue(why == "", "the wasmtime host is required here and is not ready: \{why}");
+  return why == "" ? nativeHost(cli) : "";
+}
 
 /**
  * `""` when the wasmtime host is built and not older than `native/`, otherwise why not.

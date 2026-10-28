@@ -684,3 +684,20 @@ facts; one is a Deno oracle; two dissolve with the harness and the mutation tool
 two — `timeout` and `listen` — are marginal and would need something outside the program to observe
 what they assert. The right next question for this directory is not "which do we port" but "which of
 these dissolve when `harness/` and `tools/mutate` do", and that is three of them.
+
+## 2026-10-27: what can move while design 0013 step 5 is in flight
+
+The operator's rule is unchanged, and an oracle is explicitly allowed. agent-a's unpushed step-5 work
+covers `std/`, `box`, `sh`, `fs`, most packages and `tools/*.wac`. So for now any new wac waits, and so
+does any work under `box` or `sh`, `.test.ts` included.
+
+- **Deleted, because nothing runs them:** `harness/reap.ts` with its test, whose ssh callers are now
+  wac, and `tools/_spawncmp.ts`.
+- **Waits for step 5:** `harness/testLane.ts` duplicates `runTests.wac`'s lanes, and only
+  `tools/lane.test.ts` and `tools/jobsSweep.sh` keep it alive. Its guards (a dated cost on each heavy
+  marker, the two lane caps, no file in both lanes) need a home in `tools/wac/lanemarkers_test.wac`
+  first, and agent-a is editing that file.
+- **In role:** the CI site scripts. `syncWacc.ts`, `syncBootstrap.ts`, `tsc` and `vite` build the React
+  playground, which runs code in the page. `syncDemos.ts` builds the Deno-hosted `wac`.
+- **`deno.lock`'s stray `npm:is-number@7`** was a network probe, `deno cache npm:is-number@7`, run in
+  the checkout on 2026-09-02. It was not a test.
