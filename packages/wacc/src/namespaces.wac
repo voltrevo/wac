@@ -1084,7 +1084,11 @@ i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src
   // test file parsed by itself — needs it to parse, so each `X.m` is spelled as the member's own name,
   // `@"X.m" as m`. Left as it was there, `import { html.p } from "./page.wac"` did not parse, and a
   // directory run dropped every test in the file without a word.
-  if (target == -1 && !loose) { return endTok; }
+  //
+  // **A build spells them the same way** when the module is not in its graph — which, after `pruneForBuild`, is
+  // what an import of a name nothing declares looks like: it reached nothing, so its file was pruned. Left as
+  // written there, the line drew a cascade of "unexpected token" at a dot the parser has never accepted
+  // (`checkgraph_test.wac`); spelled, it parses, and the name is what it always was — needed or not.
   if (target == -1) {
     i32 u = t + 2;
     while (u < close) {
@@ -1121,8 +1125,10 @@ i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src
     string chain = first;
     i32 j = i;
     while (src.kind(j + 1) == kDot() && src.kind(j + 2) == kIdent()) { chain = chain + "." + src.text(j + 2); j = j + 2; }
+    i32 chainEnd = j;
     string local = src.text(j);
-    if (src.kind(j + 1) == kAs()) { local = src.text(j + 2); j = j + 2; }
+    bool renamed = src.kind(j + 1) == kAs();
+    if (renamed) { local = src.text(j + 2); j = j + 2; }
     i32 itemEnd = j;
     i32 next = j + 1;
     if (src.kind(next) == kComma()) { next = next + 1; }
@@ -1155,6 +1161,13 @@ i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src
              blankOf(src.src, src.outerStart(itemStart), src.outerStart(next < close ? next : close)));
       wanted.want(hit.module, importItem(hit.name, local));
       removed = removed + 1;
+    } else if (!resolved && chainItem) {
+      // **A chain that names nothing there** is still an import of one name — its qualified one, `@"X.m"` — so the
+      // import check says that file does not export it, and which part is missing. Left as it was written, the
+      // parser met a dot it has never accepted in an import list, and a correctly spelled line drew a cascade of
+      // "unexpected token" at it (`checkgraph_test.wac`).
+      ed.add(src.outerStart(itemStart), src.outerEnd(chainEnd), "@\"" + chain + "\"" + (renamed ? "" : " as " + local));
+      kept = kept + 1;
     } else {
       // **An imported struct with static fields is a namespace too**, so `P.K` reaches `@"P.K"`
       // while `P` stays imported as the type it is (spec ch27 `§wac-static-field-we2jbmc`).
