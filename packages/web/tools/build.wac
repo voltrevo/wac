@@ -330,10 +330,27 @@ export string systemSide() {
           },
         };
       };
+      // Why `bytes` cannot be started as a program, or "": a wasm module carrying the manifest that describes it.
+      const wacNotRunnable = (bytes) => {
+        if (!WebAssembly.validate(bytes)) {
+          return bytes.length >= 4 && bytes[0] === 0 && bytes[1] === 97 && bytes[2] === 115 && bytes[3] === 109
+            ? "that is not a valid wasm module" : "a page starts wasm modules, and that is not one";
+        }
+        return WebAssembly.Module.customSections(new WebAssembly.Module(bytes), "wac.manifest").length > 0 ? ""
+          : "that module carries no wac.manifest section, so a page cannot describe it";
+      };
       const wacOwn = (b) => b.byteOffset === 0 && b.byteLength === b.buffer.byteLength ? [b.buffer] : [];
       // `me` is who this program is: a page (no arguments, no input, its output on the console), or a
-      // copy of one started by `spawnSelf`, whose arguments, directory and streams its parent supplied.
+      // copy of one started by `spawnSelf`, or a module started by `spawn`, whose arguments, directory and
+      // streams its parent supplied.
+      //
+      // `wacServer` is the requests as plain JavaScript, `request` and `exit`: what a module the page was
+      // handed is driven with (`wacModule`), and what `wacSystem` wraps as the page's own `System`.
       const wacSystem = (answer, me) => {
+        const s = wacServer(answer, me);
+        return System.of(s.request, s.exit);
+      };
+      const wacServer = (answer, me) => {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
         let rootP = null;
@@ -393,7 +410,12 @@ export string systemSide() {
           else if (toErr) console.warn(new TextDecoder().decode(bytes));
           else console.log(new TextDecoder().decode(bytes));
         };
-        // `OP_SPAWN_SELF`'s bytes: the module (empty: this program), then the arguments, each length-prefixed.
+        // `OP_SPAWN`'s and `OP_SPAWN_SELF`'s bytes: the module (empty: this program), then the arguments, each
+        // length-prefixed. `moduleOf` is the first part, `partsOf` the rest.
+        const moduleOf = (b) => {
+          const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+          return b.slice(4, 4 + v.getUint32(0, true));
+        };
         const partsOf = (b) => {
           const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
           let at = 4 + v.getUint32(0, true);
@@ -476,7 +498,8 @@ export string systemSide() {
             case 12: case 48: emit(op === 48, bytes); return ok(id, NONE, 0n, 0n, 1);
             case 19: return read(id, me.stdin);
             case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(performance.now() * 1e6))), n); return;
-            case 49: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0);
+            case 27: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0, moduleOf(bytes));
+            case 49: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0, null);
             case 24: return read(id, n === 1 && me.served ? me.fsIn : handles.get(n)?.q);
             case 25: {
               const to = handles.get(n);
@@ -533,11 +556,11 @@ export string systemSide() {
             default: return answer(id, 9, "a page does not serve request " + op, NONE, 0n, 0n, 0);
           }
         };
-        return System.of(request, (code) => {
+        return { request, exit: (code) => {
           if (!me.child) throw new Error("the program exited with " + code);
           me.post(["exit", code]);
           close();
-        });
+        } };
 
         // ── Programs started from this one ───────────────────────────────────────────────────────
         // A child is a worker on this very script, told who it is by its first message. Its output,
@@ -554,9 +577,17 @@ export string systemSide() {
           c.out.end(); c.err.end(); c.fs.end();
           c.settle(code);
         }
-        function spawn(req, args, grants, cwd, serveFs) {
+        // `wasm` is a module to run (`OP_SPAWN`), or null for another copy of this page (`OP_SPAWN_SELF`). Either
+        // way the child is a worker on this very script; its first message says which it is.
+        function spawn(req, args, grants, cwd, serveFs, wasm) {
           if (typeof WorkerGlobalScope === "undefined") {
             return answer(req, 9, "a page built --in-page cannot start programs", NONE, 0n, 0n, 0);
+          }
+          // **A module is checked before anything starts**, as the other hosts check one: a file that is not a wac
+          // program is refused here, at `spawn`, rather than started in a worker that then fails to compile it.
+          if (wasm !== null) {
+            const why = wacNotRunnable(wasm);
+            if (why !== "") return answer(req, 5, why, NONE, 0n, 0n, 0);
           }
           const worker = new Worker(self.location.href);
           let settle;
@@ -579,7 +610,8 @@ export string systemSide() {
             c.err.push(enc.encode((e.message || "the program stopped") + "\\n"));
             stop(c, 134);
           };
-          worker.postMessage(["init", { args, grants, cwd, serveFs }]);
+          if (wasm === null) worker.postMessage(["init", { args, grants, cwd, serveFs }]);
+          else worker.postMessage(["module", { wasm, args, grants, cwd, serveFs }], wacOwn(wasm));
           if (dropped.delete(req)) return stop(c, 143);
           // `m` packs the error stream's handle (low 32 bits) and the served-files channel's (high 32).
           ok(req, NONE, BigInt(h), (BigInt(eh) & 0xffffffffn) | (BigInt(fh) << 32n));
@@ -601,6 +633,210 @@ export string childSide() {
         let p = null;
         p = Spawned.create(wacSystem((...a) => p.answer(...a), me), init.grants);
         p.start();
+        return (m) => {
+          if (m[0] === "stdin") stdin.push(m[1]);
+          else if (m[0] === "stdinEnd") stdin.end();
+          else if (m[0] === "fs") fsIn.push(m[1]);
+        };
+      };
+      """;
+}
+
+/**
+ * A module the page was handed, run in a worker of its own (design/system/0015): `OP_SPAWN`'s other half.
+ *
+ * **Driven from its manifest**, as `packages/platform/host/driver.ts` drives one on Deno and Node: the module
+ * describes its own boundary in a `wac.manifest` section, and since design/system/0013 step 6 that boundary is a
+ * handful of plain values — `__wacHost` takes the host's four calls, `__wacAnswered` takes an answer, and the rest
+ * are opaque references handed straight back. So the conversions are strings, arrays and functions, and they are
+ * `marshal.ts`'s, written again here because a page carries no TypeScript.
+ *
+ * **Its requests are served by `wacServer`**, the same switch that serves the page's own program and a copy of the
+ * page — one implementation of what a request means in a browser.
+ *
+ * **It never blocks.** Its `waitAny` answers `HOST_CANNOT_WAIT` (-2); an `async` program then hands control back,
+ * and is run on with `__wacAdvance` once an answer has arrived. An answer the browser has at once — the clock, an
+ * argument, a write to a stream — is delivered inside the request that asked, as on every host; anything else is
+ * delivered between turns, when the module is running nothing. A program whose `main` is not `async` blocks on its
+ * first wait for the browser, and stops saying so.
+ */
+export string moduleSide() {
+  return """
+      const wacModule = (init) => {
+        const stdin = wacQueue(), fsIn = wacQueue();
+        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
+                     post: (m, transfer) => postMessage(m, transfer ?? []) };
+        const mod = new WebAssembly.Module(init.wasm);
+        const section = WebAssembly.Module.customSections(mod, "wac.manifest");
+        const manifest = section.length === 0 ? null : JSON.parse(new TextDecoder().decode(section[0]));
+        const said = (text) => postMessage(["err", new TextEncoder().encode(text + String.fromCharCode(10))]);
+        if (manifest === null) {
+          said("this is not a wac program: it carries no wac.manifest section");
+          postMessage(["exit", 126]);
+          close();
+          return () => {};
+        }
+        // ── The conversions: `marshal.ts`, by the shape of a type string. ──────────────────────────────
+        let ex = null;
+        const call = (name, ...a) => {
+          if (typeof ex[name] !== "function") throw new Error("the module exports no " + name);
+          return ex[name](...a);
+        };
+        const mem = () => new Uint8Array(ex["$bind$mem"].buffer);
+        const SCALARS = new Set(["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "bool"]);
+        const bindName = (n) => n.replace(/[^A-Za-z0-9_]+/g, "$").replace(/^[$]+|[$]+$/g, "");
+        const shapeOf = (type) => {
+          const t = type.trim();
+          if (t.endsWith("?")) return shapeOf(t.slice(0, -1));
+          if (t === "void" || t === "") return { kind: "void" };
+          if (t === "string") return { kind: "string" };
+          if (SCALARS.has(t)) return { kind: "scalar", name: t };
+          if (t.endsWith("[]")) {
+            const elem = shapeOf(t.slice(0, -2));
+            const suffix = elem.kind === "scalar" ? elem.name : elem.kind === "string" ? "string"
+              : elem.kind === "array" ? elem.suffix + "Arr" : bindName(elem.name ?? "void");
+            return { kind: "array", elem, suffix };
+          }
+          return { kind: "ref", name: t };
+        };
+        const give = (make, data) => {
+          call("$bind$mem_ensure", data.length);
+          mem().set(data, 0);
+          return call(make, data.length);
+        };
+        const fromWasm = (sh, w) => {
+          if (w === null || w === undefined) return null;
+          switch (sh.kind) {
+            case "void": return undefined;
+            case "scalar": return sh.name === "bool" ? w !== 0 : w;
+            case "ref": return w;
+            case "string": {
+              const n = call("$bind$str_len", w);
+              call("$bind$mem_ensure", n);
+              call("$bind$str_to_mem", w);
+              return new TextDecoder().decode(mem().slice(0, n));
+            }
+            case "array": {
+              if (sh.elem.kind === "scalar" && sh.elem.name === "u8") {
+                const n = call("$bind$arr_u8_len", w);
+                call("$bind$mem_ensure", n);
+                call("$bind$arr_u8_to_mem", w);
+                return mem().slice(0, n);
+              }
+              const n = call("$bind$arr_" + sh.suffix + "_len", w);
+              const out = [];
+              for (let i = 0; i < n; i++) out.push(fromWasm(sh.elem, call("$bind$arr_" + sh.suffix + "_get", w, i)));
+              return out;
+            }
+          }
+        };
+        // A function becomes a funcref, made by the module from a slot — the one conversion a host cannot do.
+        const slots = manifest.callbacks.map(() => []);
+        const toWasm = (type, v) => {
+          const base = type.endsWith("?") ? type.slice(0, -1) : type;
+          if (base.startsWith("fn[") && typeof v === "function") {
+            const j = manifest.callbacks.findIndex((c) => c.type === base);
+            if (j < 0) throw new Error(base + " has no dispatcher in this module");
+            let slot = slots[j].indexOf(v);
+            if (slot < 0) { slot = slots[j].length; slots[j].push(v); }
+            return call(manifest.callbacks[j].helper, slot);
+          }
+          const sh = shapeOf(base);
+          if (v === null || v === undefined) return sh.kind === "void" ? undefined : null;
+          switch (sh.kind) {
+            case "void": return undefined;
+            case "scalar": return sh.name === "bool" ? (v ? 1 : 0) : v;
+            case "ref": return v;
+            case "string": return give("$bind$str_from_mem", new TextEncoder().encode(String(v)));
+            case "array": {
+              if (sh.elem.kind === "scalar" && sh.elem.name === "u8") return give("$bind$arr_u8_from_mem", Uint8Array.from(v));
+              const filled = typeof ex["$bind$arr_" + sh.suffix + "_new0"] === "function";
+              if (filled && v.length === 0) return call("$bind$arr_" + sh.suffix + "_new0");
+              const arr = filled ? call("$bind$arr_" + sh.suffix + "_new", v.length, toWasm(elemType(base), v[0]))
+                                 : call("$bind$arr_" + sh.suffix + "_new", v.length);
+              for (let i = filled ? 1 : 0; i < v.length; i++) call("$bind$arr_" + sh.suffix + "_set", arr, i, toWasm(elemType(base), v[i]));
+              return arr;
+            }
+          }
+        };
+        const elemType = (t) => t.slice(0, -2);
+        const wac = {};
+        manifest.callbacks.forEach((cb, j) => {
+          wac[cb.field] = (slot, ...rest) => {
+            const f = slots[j][slot];
+            if (f === undefined) throw new Error("no function in slot " + slot + " of " + cb.type);
+            const out = f(...(cb.params ?? []).map((t, i) => fromWasm(shapeOf(t), rest[i])));
+            return cb.ret === "void" ? undefined : toWasm(cb.ret, out);
+          };
+        });
+        ex = new WebAssembly.Instance(mod, { wac }).exports;
+        const app = {};
+        for (const sig of manifest.exports) {
+          if (typeof ex[sig.name] !== "function") continue;
+          app[sig.name] = (...a) => {
+            const out = ex[sig.name](...sig.params.map((t, i) => toWasm(t, a[i])));
+            return sig.ret === "" || sig.ret === "void" ? undefined : fromWasm(shapeOf(sig.ret), out);
+          };
+        }
+        // ── Serving it. ───────────────────────────────────────────────────────────────────────────────
+        // Answers the browser has at once, delivered inside the request: the clock, randomness, an argument,
+        // the directory, a write to standard output or error.
+        const AT_ONCE = new Set([1, 2, 3, 6, 7, 41, 12, 48]);
+        let host = null, run = null, asking = -1, finished = false, turning = false;
+        const arrived = [];
+        const deliver = (a) => app.__wacAnswered(host, ...a);
+        const turn = () => {
+          turning = false;
+          if (finished) return;
+          while (arrived.length > 0) deliver(arrived.shift());
+          if (run === null) return;
+          run = app.__wacAdvance(run);
+          settle();
+        };
+        const answer = (...a) => {
+          if (finished) return;
+          if (asking >= 0 && AT_ONCE.has(asking)) return deliver(a);
+          arrived.push(a);
+          if (!turning) { turning = true; setTimeout(turn, 0); }
+        };
+        const server = wacServer(answer, me);
+        const settle = () => {
+          if (finished || run === null || !app.__wacDone(run)) return;
+          finished = true;
+          server.exit(app.__wacStatus(run));
+        };
+        const request = (op, id, a, b, text, bytes) => {
+          const was = asking;
+          asking = op;
+          try { server.request(op, id, a, b, text, bytes); } finally { asking = was; }
+        };
+        // A page cannot wait: `HOST_CANNOT_WAIT`, and an `async` program yields.
+        const waitAny = (ids, millis) => -2;
+        const exitWith = (code) => {
+          finished = true;
+          server.exit(code);
+          throw new Error("exited");
+        };
+        const interrupted = () => false;
+        try {
+          host = app.__wacHost(request, waitAny, exitWith, interrupted);
+          if (typeof app.__wacStart === "function") {
+            run = app.__wacStart(host);
+            settle();
+          } else {
+            const sig = manifest.exports.find((e) => e.name === "main");
+            if (sig === undefined) throw new Error("the module has no main");
+            const code = app.main(...(sig.params.length > 0 ? [host] : []));
+            finished = true;
+            server.exit(code ?? 0);
+          }
+        } catch (e) {
+          if (!finished) {
+            said(String(e?.message ?? e));
+            finished = true;
+            server.exit(134);
+          }
+        }
         return (m) => {
           if (m[0] === "stdin") stdin.push(m[1]);
           else if (m[0] === "stdinEnd") stdin.end();
@@ -833,12 +1069,14 @@ export string workerIndexFor(string title, string module, bool spawn) {
   return head(title)
        + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + systemSide()
        + programSide()
-       + (spawn ? childSide() : "")
-       // The first message says who this worker is: the page's program, or a copy started by one.
+       + (spawn ? childSide() : "") + moduleSide()
+       // The first message says who this worker is: the page's program, a copy started by one, or a module one
+       // was handed.
        + "let receive = null;\n"
        + "onmessage = (e) => {\n"
        + "  if (receive !== null) return receive(e.data);\n"
        + "  receive = e.data[0] === \"init\" ? wacChild(e.data[1])\n"
+       + "    : e.data[0] === \"module\" ? wacModule(e.data[1])\n"
        + "    : wacProgram((m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
        + "};\n</script>\n"
        + documentScript(documentSide()
