@@ -232,16 +232,16 @@ export string test_the_wac_binary_is_not_older_than_the_rust_it_is_built_from(Co
  * It returns a reason for *absent* as well as for *stale*, which this has to tell apart — so the
  * binary is stat-ed here for that one distinction and nothing else.
  */
-export string test_the_wasmtime_host_if_built_is_not_older_than_the_rust_it_is_built_from(
+export string test_the_wasmtime_host_is_built_and_not_older_than_the_rust_it_is_built_from(
     Core core, Cli cli) {
   T t = T.create();
+  // **Absent is a failure, not a pass.** This said "not built here, so nothing can be stale" and
+  // passed, and every file that drives this host then skipped its half — so a gate in a checkout
+  // without the binary was green having asked one host fewer. `tools/push.sh` builds it.
   Stat built = cli.stat(nativeHost(cli)).wait();
-  if (!built.exists) {
-    // Never built here, so nothing can be out of date. Asserted rather than returned silently: a
-    // report with no assertions in it is indistinguishable from a test that did not run.
-    t.eqBool(built.exists, false, "the wasmtime host is not built here, so nothing can be stale");
-    return t.report();
-  }
+  t.isTrue(built.exists, "the wasmtime host is not built — `tools/push.sh` builds it before the suite,\n"
+                         + "  and by hand it is `./bootstrap.sh --host wasmtime`");
+  if (!built.exists) { return t.report(); }
   t.eqStr(nativeHostWhyNot(cli), "",
           "the wasmtime host is stale. Every test that drives it is running the older one, and a\n"
           + "  two-host differential then fails saying the host lacks something the tree has.\n"
@@ -276,14 +276,12 @@ export string test_the_wasmtime_host_if_built_is_not_older_than_the_rust_it_is_b
  * **Absent is fine, stale is not**, on the same reasoning as the binary above: a fresh clone has no
  * wasmtime host and the callers build it when they want it.
  */
-export string test_the_wasmtime_seed_if_built_is_not_older_than_anything_it_is_built_from(
+export string test_the_wasmtime_seed_is_not_older_than_anything_it_is_built_from(
     Core core, Cli cli) {
   T t = T.create();
   Stat built = cli.stat(nativeHost(cli)).wait();
-  if (!built.exists) {
-    t.eqBool(built.exists, false, "the wasmtime host is not built here, so its seed cannot be stale");
-    return t.report();
-  }
+  t.isTrue(built.exists, "the wasmtime host is not built, so it carries no seed to check");
+  if (!built.exists) { return t.report(); }
   t.eqStr(seedWhyNot(cli, WASMTIME_SEED(), "./bootstrap.sh --host wasmtime"), "",
           "the compiler inside the wasmtime host is not current, and `cargo build` will not fix\n"
           + "  it — the seed is an input to that build, not an output of it, so the binary check\n"

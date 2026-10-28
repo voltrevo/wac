@@ -158,9 +158,9 @@ separate: the same seed module, the same 21 capabilities, the same manifest crat
 now, and what it proves is unchanged, which is the point: the proof is that a wac program runs with
 no JavaScript underneath it, and that is a property of the *program*, not of a second product.
 
-It is not built by default. `nativeHostWhyNot()` in `packages/wactest/src/built.wac` gives the eleven
-tests that reach for it a reason to print, so a checkout without one skips loudly rather than
-quietly losing coverage — `issues/system/0208`.
+It is not built by `./bootstrap.sh`; `tools/push.sh` builds it, and the tests that reach for it fail
+rather than skip without it (`requireNativeHost` in `packages/wactest/src/built.wac`). They skipped
+loudly until 2026-10-27, and `issues/system/0367c` is what that hid: a host that finished no program.
 
 Running under `wasmtime` as an ordinary program comes *before* a bootable image, because bootable is
 Wasmtime **and** no operating system **and** a kernel **and** `init` **and** a block device, and only

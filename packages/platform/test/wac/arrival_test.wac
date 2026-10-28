@@ -36,7 +36,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std";
 import { builtByDeno, builtProgram, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
@@ -53,14 +53,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
  * `-a`, so `-print` lived only in the `Cargo.toml` branch and the `*.rs` branch carried no action.
  * `wac task seed` owns the build; `wac task seed:native` does this crate alone.
  */
-string nativeBinary(Core core, Cli cli) {
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.warn("arrival: SKIPPING the native half — \{why}");
-    return "";
-  }
-  return nativeHost(cli);
-}
+string nativeBinary(Cli cli, T t) { return requireNativeHost(cli, t); }
 
 string buildOne(Cli cli, bool native, string out) {
   string[] grants = ["--allow-read", "--allow-write"];
@@ -187,7 +180,7 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
   Stat s = cli.stat("\{w.dir}/\{IMG}").wait();
   t.isTrue(s.size > (100 as i64), "the image is \{s.size as~ i32} bytes — nothing written");
 
-  string native = nativeBinary(core, cli);
+  string native = nativeBinary(cli, t);
   if (native == "") { cli.remove(w.dir, true).wait(); return t.report(); }
 
   // **Two.** The host with no JavaScript in it opens the same file: the same names, the same bytes,
@@ -231,7 +224,7 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
 export string test_a_session_that_changes_nothing_writes_the_same_bytes_on_either_host(
     Core core, Cli cli) {
   T t = T.create();
-  string native = nativeBinary(core, cli);
+  string native = nativeBinary(cli, t);
   if (native == "") { return t.report(); }
   World w = world(cli, "twice");
   t.isTrue(w.ok, "imaged built for both hosts — \{w.error}");
@@ -278,7 +271,7 @@ export string test_neither_host_reaches_the_disk_except_through_the_grants_the_i
   // image gets an `/etc/hostname` of its own, with contents this machine's cannot have, and both hosts
   // have to read that one.
   T t = T.create();
-  string native = nativeBinary(core, cli);
+  string native = nativeBinary(cli, t);
   if (native == "") { return t.report(); }
   World w = world(cli, "sealed");
   t.isTrue(w.ok, "imaged built for both hosts — \{w.error}");

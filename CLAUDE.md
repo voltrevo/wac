@@ -115,10 +115,12 @@ not depend on one. Both carry the *same* seed module and answer the same 21 capa
 binaries are 68 MB and 15 MB. Neither is a different product, which is why the wasmtime one stopped
 being called `wacland` on 2026-08-28: Wacland is the system, not one of its hosts.
 
-**The wasmtime binary is not built by default and a checkout without one is not quietly short of
-coverage.** Eleven test files reach for it; `nativeHostWhyNot()` in `packages/wactest/src/built.wac`
-gives them a reason to print, and they skip with it rather than build a Rust crate nobody asked for.
-`issues/system/0208`.
+**The wasmtime binary is not built by `./bootstrap.sh`, and the gate builds it.** A test that drives
+it asks `requireNativeHost` in `packages/wactest/src/built.wac`, which *fails* when the binary is
+absent or stale and says how to build it — never a skip. They used to skip, loudly, and a loud skip
+is still a gate that passed having asked one host fewer: on 2026-10-27 the host could not finish any
+program at all (`issues/system/0367c`) and only a checkout that happened to have the binary saw it.
+`tools/push.sh` builds it before the suite; by hand it is `./bootstrap.sh --host wasmtime`.
 
 **It builds one payload, since 2026-08-25.** The binary used to carry three — a compiler, a shell and
 a fetcher, answering `wac build`/`run`/`test`, `wac sh` and `wac update` — and `issues/system/0257c`

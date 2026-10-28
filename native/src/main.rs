@@ -1178,9 +1178,10 @@ fn prepare(
     // from the export being called, and `enter` truncates to `main`'s own signature below, so building
     // what is there and letting each caller take its share is the arrangement both need.
     let mut args: Vec<Val> = Vec::new();
-    if let Ok(core) = build(&mut *store, &instance, m, "Core") {
+    let mut shared: Vec<(String, Val)> = Vec::new();
+    if let Ok(core) = build(&mut *store, &instance, m, "Core", &mut shared) {
         args.push(core);
-        if let Ok(cli) = build(&mut *store, &instance, m, "Cli") {
+        if let Ok(cli) = build(&mut *store, &instance, m, "Cli", &mut shared) {
             args.push(cli);
         }
     }
@@ -1391,11 +1392,19 @@ fn funcref_for(
 }
 
 /// Build one capability struct — `Core` or `Cli` — from the manifest's field order.
+///
+/// **`shared` is what the module made for itself, by type, across every struct of one world.** `Core`
+/// and `Cli` each have a `Sched` field and must be handed the *same* one: built per struct, `Cli`'s
+/// tickets were linked to a scheduler `Core.drainUntil` never looks at, so an `async` `main` awaiting
+/// `cli.readFile(…)` was told *"main cannot finish"* — and the seed's own `main` is one, so nothing
+/// ran on this host at all. The V8 host's builder carries the same list for the same reason.
+/// `issues/system/0367c`.
 fn build(
     store: &mut Store<Host>,
     instance: &wasmtime::Instance,
     m: &Manifest,
     name: &str,
+    shared: &mut Vec<(String, Val)>,
 ) -> Result<Val, wasmtime::Error> {
     let spec = m
         .find_struct(name)
@@ -1413,6 +1422,10 @@ fn build(
         // so a program is *handed* somewhere for its continuations to wait without this host knowing
         // what a continuation is.
         if m.callback_index(&field.ty).is_none() {
+            if let Some((_, v)) = shared.iter().find(|(ty, _)| *ty == field.ty) {
+                caps.push(v.clone());
+                continue;
+            }
             let made = m
                 .find_struct(&field.ty)
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "create"))
@@ -1429,6 +1442,7 @@ fn build(
                 .ok_or_else(|| wasmtime::Error::msg(format!("no {made}")))?;
             let mut out = [Val::I32(0)];
             ctor.call(&mut *store, &[], &mut out)?;
+            shared.push((field.ty.clone(), out[0].clone()));
             caps.push(out[0].clone());
             continue;
         }

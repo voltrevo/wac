@@ -26,7 +26,7 @@
 
 import { Core, Cli, Sys } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
-import { nativeBinaryPath } from "../../packages/wactest/src/host.wac";
+import { nativeHost, nativeHostWhyNot } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
 import { Vec } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
@@ -56,7 +56,7 @@ export i32 main(Sys sys) {
   // **The wasmtime host is not built by default**, and a checkout without one is not quietly short of
   // coverage — `issues/system/0208`. This is the whole comparison, so there is nothing to report
   // without it.
-  string native = nativeBinaryPath(core, cli, "corpus:hosts");
+  string native = nativeHostWhyNot(cli) == "" ? nativeHost(cli) : "";
   if (native == "") {
     core.warn("corpus:hosts: cargo has not built `native`, so there is no second host to compare with");
     return 2;
