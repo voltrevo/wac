@@ -2,6 +2,7 @@
 name = "wax"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 # No dependencies, deliberately. An assembler whose job is to be auditable by reading should not
 # begin by asking the reader to audit a dependency tree.

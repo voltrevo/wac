@@ -6,6 +6,7 @@
 name = "wac-wasmtime"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "A host for wac programs with no JavaScript in it — design/0001 step 2a"
 
 # The binary keeps the plain name: `native/target/release/wac`, beside `native/v8/target/release/wac`.
