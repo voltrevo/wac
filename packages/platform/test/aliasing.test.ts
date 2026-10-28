@@ -122,8 +122,8 @@ Deno.test("two concurrent recvs each get their own bytes", async () => {
   }
 });
 
-Deno.test("a recv and a chunked file read do not collide either", async () => {
-  // The same buffer served `readChunk` and `recv`, so the collision is not only
+Deno.test("a socket read and a file stream read do not collide either", async () => {
+  // The same buffer once served a file stream and a socket, so the collision is not only
   // socket-to-socket: a program streaming a file while talking to a peer hits it too.
   const file = await Deno.makeTempFile({ prefix: "wac-alias-" });
   const peer = speaker("P".repeat(500));
@@ -138,10 +138,14 @@ Deno.test("a recv and a chunked file read do not collide either", async () => {
     dial.set(i32le(peer.port), 0);
     dial.set(h, 4);
     const hp = readI32le(await call(OP.CONNECT, dial));
-    await call(OP.OPEN_INPUT, str(file));
+    const opened = str(file);
+    const open = new Uint8Array(4 + opened.length);
+    open.set(i32le(0), 0);
+    open.set(opened, 4);
+    const hf = readI32le(await call(OP.OPEN_FILE, open));
 
     const [fromFile, fromPeer] = await Promise.all([
-      call(OP.READ_CHUNK),
+      call(OP.RECV, i32le(hf)),
       call(OP.RECV, i32le(hp)),
     ]);
     const sf = new TextDecoder().decode(readBytes(fromFile));
@@ -153,6 +157,7 @@ Deno.test("a recv and a chunked file read do not collide either", async () => {
     assertEquals(sp.length, 500, `the socket read returned ${sp.length} bytes, not 500`);
 
     await call(OP.CLOSE_SOCKET, i32le(hp));
+    await call(OP.CLOSE_FILE, i32le(hf));
   } finally {
     peer.close();
     await Promise.allSettled([peer.done]);

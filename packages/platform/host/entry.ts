@@ -14,67 +14,23 @@
 import { type Bridge, bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { denoWorld } from "./deno.ts";
-import { WacExit, worldFor } from "./provider.ts";
+import { mainArgs, WacExit } from "./provider.ts";
 
 /**
  * The generated module of an application.
  *
- * `main(Core, Cli) -> i32` is the whole contract. It was a struct with `start` and `run`
- * first, which bought nothing: a program that runs once and exits has no state to keep
- * between calls, so the struct was ceremony around a function.
+ * `main` answering an `i32` is the whole contract, called with the value `__wacHost` answers when the
+ * program takes one (design/system/0013 step 6) and with nothing when it declared nothing. Answers
+ * reach it through `__wacAnswered`. Anything else a bundle exports is the program's own.
  *
- * This went on to say "a *service*, called repeatedly, will want the struct — and can have it
- * then." **A worker calls `main` repeatedly now (wac-mono 0076) and wanted no struct at all**: wac
- * has no module-level variables, so nothing can survive one call into the next whatever shape the
- * entry point has. What repeated calls did need was on this side of the boundary — see
- * `runAsWorker`, which builds the capabilities once because the funcref table cannot afford a
- * second set. A service that keeps state *between* requests is still a different shape, and
- * `packages/server`'s `serve(u8[], i64) -> Served` is what it looks like today.
+ * A worker calls `main` repeatedly (wac-mono 0076). wac has no module-level variables, so nothing
+ * survives one call into the next; what repeated calls need is on this side — see `runAsWorker`, which
+ * builds the host once because the funcref table cannot afford a second set.
  */
 export type AppModule = {
-  Core: { of(...a: unknown[]): unknown };
-  Cli: { of(...a: unknown[]): unknown };
-  FileResult: { of(...a: unknown[]): unknown };
-  Stat: { of(...a: unknown[]): unknown };
-  HostSocket: { of(...a: unknown[]): unknown };
-  /** Bytes and sender in one answer — `Cli.receiveFrom`, and `design/system/0007`. */
-  Datagram: { of(...a: unknown[]): unknown };
-  /** The monomorphised `Pending<T>`s — one per capability return type. */
-  Pending_i32: { of(...a: unknown[]): unknown };
-  Pending_i64: { of(...a: unknown[]): unknown };
-  Pending_string: { of(...a: unknown[]): unknown };
-  Pending_stringOpt: { of(...a: unknown[]): unknown };
-  Pending_u8Arr: { of(...a: unknown[]): unknown };
-  /** `env` answers bytes-or-nothing: a value is not text, and unset is not empty. wac-mono 0065. */
-  Pending_u8ArrOpt: { of(...a: unknown[]): unknown };
-  Pending_bool: { of(...a: unknown[]): unknown };
-  Pending_stringArrOpt: { of(...a: unknown[]): unknown };
-  Pending_FileResult: { of(...a: unknown[]): unknown };
-  Pending_Stat: { of(...a: unknown[]): unknown };
-  Pending_HostSocket: { of(...a: unknown[]): unknown };
-  Pending_Datagram: { of(...a: unknown[]): unknown };
-  Pending_HostChild: { of(...a: unknown[]): unknown };
-  HostChild: { of(...a: unknown[]): unknown };
-  Captured: { of(...a: unknown[]): unknown };
-  Pending_Captured: { of(...a: unknown[]): unknown };
-  /** `Cli.exec`'s answer — a host program run to completion. `issues/system/0165`. */
-  Exec: { of(...a: unknown[]): unknown };
-  Pending_Exec: { of(...a: unknown[]): unknown };
-  Read: { Data(...a: unknown[]): unknown; End(): unknown; Failed(...a: unknown[]): unknown };
-  /**
-   * `Cli.load`'s answer and `Cli.call`'s — `issues/system/0240c`.
-   *
-   * Not optional, unlike `Page`: `Cli`'s own field types name them, so a module with a `Cli` has both
-   * classes whether or not the program ever loads anything.
-   */
-  LoadedModule: { of(...a: unknown[]): unknown };
-  CallResult: { of(...a: unknown[]): unknown };
-  Change: { of(...a: unknown[]): unknown };
-  Pending_Change: { of(...a: unknown[]): unknown };
-  Pending_Read: { of(...a: unknown[]): unknown };
-  // **Variadic on purpose**: a program is handed the capabilities it named and no others, so a
-  // `main(Core)` is called with one argument. `worldFor` builds the list. `issues/lang/0107`.
-  main: (...caps: unknown[]) => number;
+  main: (...host: unknown[]) => number;
+  __wacHost?: (...calls: unknown[]) => unknown;
+  __wacAnswered?: (...answer: unknown[]) => void;
 };
 
 type Start = { sab: SharedArrayBuffer; child?: boolean };
@@ -161,7 +117,7 @@ export type Grants = {
 };
 
 /**
- * The worker half: wait for the bridge, build the capabilities, run `main`.
+ * The worker half: wait for the bridge, make the host, run `main`.
  *
  * CallResult by the generated worker entry, which imports this module *before* the
  * application so the handler above is installed first.
@@ -241,13 +197,13 @@ export async function runLauncher(
 
 async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
   const worker = self as unknown as { postMessage(m: Result): void };
-  // **One bridge and one set of capabilities for the life of this worker**, however many programs it
-  // runs. `main` may be called more than once because wac has no module-level variables — a
-  // program's whole state is reachable from its own frame and gone when it returns — but the
-  // *capabilities* must not be rebuilt per run: bindgen registers one wasm function per host
-  // function and only sixteen per signature can be live, so a fifth run used to fail with "at most
-  // 16 distinct fn[void(i32)] functions can be passed to this module". So the bridge is re-pointed
-  // at each run's buffer instead (`Bridge.rebind`), and `Core` and `Cli` are built once.
+  // **One bridge and one host for the life of this worker**, however many programs it runs. `main`
+  // may be called more than once because wac has no module-level variables — a program's whole state
+  // is reachable from its own frame and gone when it returns — but the host's calls must not be
+  // rebuilt per run: the module registers one wasm function per host function and only sixteen per
+  // signature can be live, so a fifth run used to fail with "at most 16 distinct fn[void(i32)]
+  // functions can be passed to this module". So the bridge is re-pointed at each run's buffer
+  // instead (`Bridge.rebind`), and the host is made once.
   let b: Bridge | undefined;
   let world: unknown[] | undefined;
   for (;;) {
@@ -257,32 +213,22 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
       else if (b.sab !== start.sab) b.rebind(start.sab);
       try {
         if (typeof app.main !== "function") {
-          throw new Error("an application must export `main(Core, Cli) -> i32`");
+          throw new Error("an application must export `main(__WacHost) -> i32`");
         }
         // The counter array is allocated by this call, not at instantiation: without it every
         // instrumented function traps on its first branch, and the message names the program under
         // test rather than the missing call. the deleted harness/wacCoverage.ts had learnt the same thing.
         if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
-        // Only the capabilities this program named — `worldFor` carries the reason.
-        if (world === undefined) world = worldFor(b, app as unknown as Record<string, unknown>);
+        // A host only for a program that takes one — `mainArgs` carries the reason.
+        if (world === undefined) world = mainArgs(b, app as unknown as Record<string, unknown>);
         const code = app.main(...world);
-        // **Work scheduled and never run is an error.** `main` returning is the program saying it is
-        // done, and a continuation still waiting says it was not — the answer would simply never
-        // arrive, silently. A program that meant to leave says so with `core.dropAll()`.
-        const left = (world[0] as { outstanding?: () => number })?.outstanding?.() ?? 0;
-        if (left > 0) {
-          throw new Error(
-            `finished with ${left} continuation(s) still waiting — call \`core.drain()\` to run ` +
-              "them, or `core.dropAll()` to abandon them",
-          );
-        }
         if (cov !== undefined) dumpCoverage(app, cov);
         worker.postMessage({ ok: true, code });
       } catch (err) {
         // Dumped for a failed run too: a mutant that makes a program *crash* is killed by whichever
         // test ran it, and that test is exactly the one the attribution needs to know about.
         if (cov !== undefined) dumpCoverage(app, cov);
-        // `Core.exit`: the program ended itself, abandoning what was left — a status, not a failure.
+        // `sys.exit`: the program ended itself, abandoning what was left — a status, not a failure.
         if (err instanceof WacExit) { worker.postMessage({ ok: true, code: err.code }); continue; }
         worker.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
       }
@@ -300,7 +246,7 @@ async function runAsLauncher(
     args: [...Deno.args],
     fs: { read: grants.read === true, write: grants.write === true },
     net: grants.net === true,
-    // **Missing here, and that is why `Cli.exec` had never run on this host.** `run` was added to
+    // **Missing here, and that is why `exec` had never run on this host.** `run` was added to
     // `Grants`, to the capability and to `binary.ts`, and to none of the seams between them: the
     // launcher built a world with no `run` in it, so a program built with `--allow-run` was refused
     // by its own host. `issues/system/0165`.

@@ -1,6 +1,8 @@
 # 0370a — cancelling a host ticket that another wait already settled leaks what it answered
 
-- **Status:** open
+- **Status:** closed
+- **Closed:** 2026-10-28 by agent-a
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-10-28
 - **Kind:** bug
@@ -41,3 +43,16 @@ and blocks deleting `Cli` (design/system/0013 step 6). Two shapes of an answer, 
 
 The port also saw a leak when the cancel came *before* the connect finished, which `Cli` did not; that
 one is not understood yet.
+
+## Resolution
+
+The second shape, as the operator's ruling before step 6 put it: **an answer nobody has read is still the host's.**
+Under the flat host ABI (design/system/0013 step 6) a host's `waitAny` delivers only the answers it was asked about,
+and a request that takes something — a connection, a child, a file, bytes off a stream — is never answered inside
+the request that made it. So an answer nobody waited for is still in flight when `cancel` sends `OP_DROP`, and the
+host gives back what it took: the child is stopped unless it was started detached, the connection is closed, the
+bytes go back to their stream. `cancel` in core is unchanged — a settled ticket was delivered because something
+waited for it, and that is the program's to close.
+
+`lostbytes_test.wac`'s connect and own-input arms and `droppedchild_test.wac` run on std's handles and pass on both
+native hosts. The leak with the cancel *before* the connect finished was not measured again: no case here cancels that early.

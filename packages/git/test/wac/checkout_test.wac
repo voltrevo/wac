@@ -14,7 +14,7 @@
 // cleaned it up.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 import { flatten } from "core";

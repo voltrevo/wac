@@ -87,7 +87,7 @@
 // result.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Change, Cli, Core, Exec, FileResult, Stat, ChildEnv, Env, Files, Launch, Net, Output, Procs, Sys, Socket } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Net, Output, Procs, Sys, Socket } from "std";
 import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, joined } from "../../../wactest/src/strings.wac";

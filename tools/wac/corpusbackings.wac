@@ -51,7 +51,7 @@
 // `issues/system/0290b` unblocked, and the fourth done. It needed `Cli.execWithIn` for the host arm's
 // per-script directory and `builtApp` for the three binaries.
 
-import { Cli, Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
+import { Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";

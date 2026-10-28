@@ -23,7 +23,7 @@
 // `asn1.wac` for `export u8[] oid…` and fails if the two lists disagree.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Files, Launch, Procs, Sys } from "std";
 import { hex } from "../../../wactest/src/oracle.wac";
 import {
   oidEd25519, oidSubjectAltName, oidBasicConstraints, oidEcPublicKey, oidPrime256v1, oidSecp384r1,

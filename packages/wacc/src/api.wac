@@ -3977,11 +3977,10 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  *
  * ## What "reaches" means, exactly
  *
- * A **bearing type** is `Sys`, a type `std` declares whose methods reach the host — `Cli`, `Core`,
- * `Listener`, `Socket`, `Child` — or any type with a field, a variant payload or a method return
- * whose type is bearing, to a fixpoint (spec ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause was not theoretical: until step 5 of design/system/0013
- * (385d952b9), the remote filesystem and platform's `stream.wac` both held a `Cli cli;` field, so a
- * file handed one of those had the whole capability set without ever naming `Cli`.
+ * A **bearing type** is `Sys`, or a handle a `Sys` gives out — `Files`, `Output`, `Clock`, `Socket` and the rest
+ * (`bearingRoots`) — or any type with a field, a variant payload or a method return whose type is bearing, to a
+ * fixpoint (spec ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause is not theoretical: platform's `Sink`
+ * holds an `Output`, so a file handed one can write without ever naming a handle.
  *
  * A **file reaches** if any declaration in it mentions a bearing type in a field, a parameter or a
  * return. A file that mentions none is *sealed*: nothing in it can perform an effect, whatever its
@@ -4010,8 +4009,8 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  *   names, so a `Vec.remove` would read as the filesystem. Field-level needs the checker's types, and
  *   a column that is 21% short would be read as exhaustive — which is the failure this whole function
  *   is written against.
- * - **A generic parameterised over a bearing type is not tracked.** `Vec<Cli>` mentions `Cli` and is
- *   caught by the mention scan, but a `T` bound to `Cli` at a distant call site is not.
+ * - **A generic parameterised over a bearing type is not tracked.** `Vec<Files>` mentions `Files` and is
+ *   caught by the mention scan, but a `T` bound to `Files` at a distant call site is not.
  *
  * ## The output
  *
@@ -4193,21 +4192,28 @@ string firstBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
 }
 
 /** The types a host reaches through directly — what every other bearing type holds, in the end. */
-bool isBearingRoot(string name) {
-  return name == "Sys" || name == "Cli" || name == "Core" || name == "Listener" || name == "Socket"
-      || name == "Child" || name == "HostSocket" || name == "HostChild";
+bool isBearingRoot(string name) { return rootIndex(name) >= 0; }
+
+/**
+ * `Sys`, the host's own value, and every handle a `Sys` gives out (spec ch49): each reaches the host, and since
+ * design/system/0013 most are structs of closures, so no field of theirs names it. `Sys` first, so a type holding
+ * several is reported through the whole capability.
+ */
+string[] bearingRoots() {
+  return ["Sys", "__WacHost", "Files", "Output", "Input", "Clock", "Random", "Env", "Net", "Listener", "Socket",
+          "Datagrams", "Procs", "Child", "Modules", "Module"] as string[];
 }
 
-/** The first root bearing type a tab-delimited list names, `Sys` first, or "". */
+i32 rootIndex(string name) {
+  string[] roots = bearingRoots();
+  for (i32 i = 0; i < roots.len(); i++) { if (roots[i] == name) { return i; } }
+  return 0 - 1;
+}
+
+/** The first root bearing type a tab-delimited list names, in `bearingRoots` order, or "". */
 string firstRoot(string held) {
-  if (listMentions(held, "Sys")) { return "Sys"; }
-  if (listMentions(held, "Cli")) { return "Cli"; }
-  if (listMentions(held, "Core")) { return "Core"; }
-  if (listMentions(held, "Listener")) { return "Listener"; }
-  if (listMentions(held, "Socket")) { return "Socket"; }
-  if (listMentions(held, "Child")) { return "Child"; }
-  if (listMentions(held, "HostSocket")) { return "HostSocket"; }
-  if (listMentions(held, "HostChild")) { return "HostChild"; }
+  string[] roots = bearingRoots();
+  for (i32 i = 0; i < roots.len(); i++) { if (listMentions(held, roots[i])) { return roots[i]; } }
   return "";
 }
 

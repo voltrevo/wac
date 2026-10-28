@@ -44,7 +44,7 @@
 // is now a statement about the cache rather than about what else happened to be running.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, ChildEnv, Launch, Env, Files, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Launch, Env, Files, Output, Procs, Sys } from "std";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir, madeDir, putFile } from "../../../wactest/src/host.wac";
 import { flatten } from "core";

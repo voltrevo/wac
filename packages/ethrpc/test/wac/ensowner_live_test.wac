@@ -22,7 +22,7 @@
 // carried before it is used.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Clock, Env, Files, Net, Output, Procs, Sys } from "std";
+import { Exec, Clock, Env, Files, Net, Output, Procs, Sys } from "std";
 import { freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, blockHash, castRpc, castRun, haveAnvil, runExample, stopAnvil }
   from "./anvil_probe.wac";

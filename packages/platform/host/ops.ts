@@ -8,8 +8,8 @@ export const OP = {
   NOW_MILLIS: 1,
   MONOTONIC_NANOS: 2,
   RANDOM_BYTES: 3,
-  LOG: 4,
-  WARN: 5,
+  // 4 and 5 were `LOG` and `WARN`, lines a host printed for the program. Retired rather than reused: a line is
+  // bytes on standard output or error, `WRITE_STDOUT` and `WRITE_STDERR` (design/system/0013 step 6).
   ARG_COUNT: 6,
   ARG: 7,
   ENV: 8,
@@ -22,9 +22,10 @@ export const OP = {
   MKDIR: 15,
   REMOVE: 16,
   RENAME: 17,
-  OPEN_INPUT: 18,
+  // 18 and 20 were `OPEN_INPUT` and `OPEN_OUTPUT`, which redirected standard input and output to a
+  // file. Retired with `Cli` rather than reused (design/system/0013 step 6): a program streams a file
+  // through `OPEN_FILE`.
   READ_CHUNK: 19,
-  OPEN_OUTPUT: 20,
   CONNECT: 21,
   LISTEN: 22,
   ACCEPT: 23,
@@ -40,23 +41,23 @@ export const OP = {
   // `main(Page)` now, which talks to the document by messages and needs no bridge
   // (design/system/0011 step 7).
   CWD: 41,
-  PUSH_CHILD: 42,
-  POP_CHILD: 43,
+  // 42 and 43 were `PUSH_CHILD` and `POP_CHILD`, an applet run in process as a frame. Retired with
+  // `Cli` rather than reused (design/system/0013 step 6): nothing called them but `Cli`'s own fields.
   // 44 was `EXEC`, the same capability without an environment or a choice about the child's streams.
   // Retired rather than reused — see `EXEC_WITH` at the end.
-  OUTPUT_ERROR: 45,
+  // 45 was `OUTPUT_ERROR`, why a write to an `OPEN_OUTPUT` file failed; it went with that.
   LINK_STAT: 47,
   WRITE_STDERR: 48,
   SPAWN_SELF: 49,
   /**
-   * "Has the user asked to interrupt?" — see `Core.askInterrupt` in `platform.wac`.
+   * "Has the user asked to interrupt?" — `__WacHost.interrupted` in `std/platform.wac`.
    *
    * Answered from what the host already knows, so it starts nothing; it still parks the worker like
    * every opcode, and that is the point rather than the cost — see the note in `provider.ts`.
    */
   ASK_INTERRUPT: 50,
   /**
-   * "Make this file executable, or stop it being" — see `Cli.setExecutable` in `platform.wac`.
+   * "Make this file executable, or stop it being" — `Files.setExecutable` in `std/platform.wac`.
    *
    * One bit rather than a mode, because git's regular-file modes differ only in that bit and because a
    * browser's OPFS has no mode bits at all, so a general `chmod` would be unanswerable on one of the four
@@ -80,34 +81,17 @@ export const OP = {
    */
   CLOSE_SEND: 57,
   /**
-   * `Cli.execWith` — a host program, run to completion. `issues/system/0165`.
+   * `Procs.exec` — a host program, run to completion, in a directory. `issues/system/0165`, `0290b`.
    *
-   * A new number rather than a longer payload on 44, for the reason `CLOSE_SEND` is not a flag: a
-   * host that had not been rebuilt would read the environment as the head of stdin, silently, where
-   * an opcode it does not serve fails and names itself. `Cli.exec` is a method that calls this one,
-   * so each host still implements exactly one of them.
+   * **44 and 58 were earlier spellings of it, and are not reused**: a binary or a worker bundle built
+   * before still sends them and should fail rather than be misread — a host that had not been rebuilt
+   * would read the environment or the directory as the head of standard input, silently, where an
+   * opcode it does not serve fails and names itself. They are not listed here because
+   * `conformance_test.wac` reads this table as *the surface*.
    */
+  EXEC: 59,
   /**
-   * `Cli.execWithIn` — a host program, run to completion, in a directory. `issues/system/0290b`.
-   *
-   * **58 was `EXEC_WITH`, and is not reused.** `Cli.execWith` is a method over this one now, so
-   * nothing sends 58; the number is left alone rather than given to something else, because a
-   * per-agent binary or a worker bundle built before this still sends it and should fail rather than
-   * be misread. It is not listed here because `conformance_test.wac` reads this table as *the
-   * surface* — an opcode with no capability behind it reads as one the native hosts dropped.
-   *
-   * A new number rather than a longer payload on 58, for the reason 58 itself is not a longer
-   * payload on 44: a host that had not been rebuilt would read the directory as the head of standard
-   * input, silently, where an opcode it does not serve fails and names itself. This repository has
-   * three per-agent binaries that go stale on their own and a wasmtime host that is not built by
-   * default, so "a host that had not been rebuilt" is the ordinary case rather than a hypothetical.
-   *
-   * `Cli.execWith` is a method that calls this one with `""`, so each host still implements exactly
-   * one of the three.
-   */
-  EXEC_WITH_IN: 59,
-  /**
-   * "Set this file's permission bits" — see `Cli.chmod` in `platform.wac`.
+   * "Set this file's permission bits" — `Files.chmod` in `std/platform.wac`.
    *
    * `SET_EXECUTABLE` above is the narrow form and stays: it promises one bit and changes one bit,
    * which is what a git checkout wants. This promises the mode. `issues/system/0296c`.
@@ -116,10 +100,13 @@ export const OP = {
   OPEN_FILE: 61,
   CLOSE_FILE: 62,
   CLOSE_OUTPUT: 63,
-  // **`Cli.load`, `Cli.call` and `Cli.unload` have no opcode**, and that is the design rather than an
-  // omission. A loaded module lives in the *caller's own realm* and its capabilities are built against
-  // the caller's own bridge — so nothing about it crosses to the launcher, and the three are
-  // implemented in `provider.ts` where `Core` and `Cli` are already built. `issues/system/0240c`.
+  // **Answered in the worker's own realm and never sent to the launcher**: a loaded module lives in
+  // the caller's realm, its requests served over the caller's own bridge, so nothing about it crosses.
+  // Numbered because std asks for them like any other request. `issues/system/0240c`.
+  LOAD: 64,
+  CALL: 65,
+  UNLOAD: 66,
+  VALIDATE: 67,
 } as const;
 
 /**
@@ -134,7 +121,7 @@ export const GRANT_WRITE = 2;
 export const GRANT_NET = 4;
 export const GRANT_ENV = 8;
 /**
- * `Cli.exec` — running a host *program*, which is not what `spawn` does.
+ * `Procs.exec` — running a host *program*, which is not what `spawn` does.
  *
  * Its own bit because it is its own authority: a world that may start a confined wasm module must
  * be able to refuse a host binary without refusing both, and a page always refuses this one.

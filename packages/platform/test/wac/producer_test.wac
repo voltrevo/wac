@@ -22,7 +22,7 @@
 // into another package's test helpers is a dependency the packages themselves do not have.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { joined } from "../../../wactest/src/strings.wac";
 import { leb, name } from "./section.wac";
 import { freshDir } from "../../../wactest/src/host.wac";

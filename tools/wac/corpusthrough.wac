@@ -27,7 +27,7 @@
 // `tools/wac/shvectors.wac` writes from that file — because it could not read wac data. This reads
 // the source.
 
-import { Cli, Exec, Sys, ChildEnv, Env, Files, Output, Procs, Launch } from "std";
+import { Exec, Sys, ChildEnv, Env, Files, Output, Procs, Launch } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";

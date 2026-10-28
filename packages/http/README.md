@@ -128,7 +128,7 @@ not to have been chunked after all.
 
 `src/proxy.wac` opens a tunnel — `CONNECT host:port`, a `2xx`, and from there the socket carries
 whatever the caller tunnels rather than HTTP. `design/system/0005` step 6 is why: the container this
-is developed in has **no direct egress**, so `Cli.connect` alone reaches nothing outside it.
+is developed in has **no direct egress**, so `Net.connect` alone reaches nothing outside it.
 
 Split the way `client_probe.wac` describes: `parseProxy`, `connectRequest` and `readReply` are pure
 and covered by `test/proxy.test.ts`; `connectThrough` owns a socket and is covered by

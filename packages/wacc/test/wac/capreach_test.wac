@@ -4,14 +4,13 @@
 // `[§wac-cli-audit-denominator-2wq7knx]`
 //
 // **What makes the question answerable is that wac has no ambient authority.** A capability is a
-// funcref field on `Cli` or `Core`; a function not handed one cannot call one, whatever its body
-// says. So `capReachFiles` is a statement about declared types, and these are the shapes it has to
+// `Sys` or a handle one gave out; a function not handed one cannot use one, whatever its body says. So `capReachFiles` is a statement about declared types, and these are the shapes it has to
 // get right.
 //
 // ## The direction that must never be wrong
 //
-// *Sealed is never wrong.* The tool over-approximates freely the other way — a file taking a `Cli` to
-// read `argCount` reads as reaching, and that is fine — but a file it clears must genuinely have
+// *Sealed is never wrong.* The tool over-approximates freely the other way — a file taking a `Sys` to
+// read its arguments reads as reaching, and that is fine — but a file it clears must genuinely have
 // nothing to perform an effect with. Every case below is written to attack that direction: each one
 // is a way a capability could arrive that a naive scan would miss.
 //
@@ -26,7 +25,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { capReachFiles } from "../../src/api.wac";
 import { field, linesOf } from "../../src/text.wac";
-import { Cli, Core } from "std";
 
 /** The status `capReachFiles` gave one path — `reaches`, `sealed`, or "" if it said nothing. */
 string statusOf(string table, string path) {
@@ -49,15 +47,15 @@ string viaOf(string table, string path) {
 string[] paths2(string a, string b) { return [a, b]; }
 string[] paths3(string a, string b, string c) { return [a, b, c]; }
 
-export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not() {
+export string test_a_file_handed_nothing_is_sealed_and_one_handed_files_is_not() {
   T t = T.create();
   string table = capReachFiles(
     paths2("pure.wac", "uses.wac"),
     paths2("export i32 twice(i32 n) { return n * 2; }\n",
-           "import { Cli } from \"std\";\nexport i32 go(Cli c) { return 0; }\n"));
+           "import { Files } from \"std\";\nexport i32 go(Files f) { return 0; }\n"));
   t.eqStr(statusOf(table, "pure.wac"), "sealed", "a file with no capability in any signature");
-  t.eqStr(statusOf(table, "uses.wac"), "reaches", "a file taking a `Cli`");
-  t.eqStr(viaOf(table, "uses.wac"), "Cli", "and it should say through what");
+  t.eqStr(statusOf(table, "uses.wac"), "reaches", "a file taking a `Files`");
+  t.eqStr(viaOf(table, "uses.wac"), "Files", "and it should say through what");
   return t.report();
 }
 
@@ -70,7 +68,7 @@ export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_
   T t = T.create();
   string table = capReachFiles(
     paths2("holder.wac", "user.wac"),
-    paths2("import { Cli } from \"std\";\nexport struct Holder { Cli cli; i32 n; }\n",
+    paths2("import { Files } from \"std\";\nexport struct Holder { Files files; i32 n; }\n",
            "import { Holder } from \"./holder.wac\";\nexport i32 use(Holder h) { return h.n; }\n"));
   t.eqStr(statusOf(table, "holder.wac"), "reaches", "the struct that holds it");
   t.eqStr(statusOf(table, "user.wac"), "reaches",
@@ -85,38 +83,38 @@ export string test_an_enum_variant_carries_a_capability_as_a_field_does() {
   T t = T.create();
   string table = capReachFiles(
     paths2("backing.wac", "caller.wac"),
-    paths2("import { Cli } from \"std\";\n"
-           + "export enum Backing { Host(Cli cli), Memory(i32 size) }\n",
+    paths2("import { Files } from \"std\";\n"
+           + "export enum Backing { Host(Files files), Memory(i32 size) }\n",
            "import { Backing } from \"./backing.wac\";\nexport i32 pick(Backing b) { return 0; }\n"));
   t.eqStr(statusOf(table, "caller.wac"), "reaches", "a variant's field is a way in");
   return t.report();
 }
 
 export string test_a_method_that_answers_a_capability_makes_its_type_bearing() {
-  // Holding the type is enough when a method hands the capability back — `Fs.onHost(Cli, i64)` is the
+  // Holding the type is enough when a method hands the capability back — `Fs.onHost` was the
   // way in and a method answering one would be the way out.
   T t = T.create();
   string table = capReachFiles(
     paths2("vend.wac", "taker.wac"),
-    paths2("import { Cli } from \"std\";\n"
-           + "export struct Vend { i32 n;\n  Cli give(this) { return this.n as~ Cli; }\n}\n",
+    paths2("import { Files } from \"std\";\n"
+           + "export struct Vend { i32 n;\n  Files give(this) { return this.n as~ Files; }\n}\n",
            "import { Vend } from \"./vend.wac\";\nexport i32 t(Vend v) { return 0; }\n"));
   t.eqStr(statusOf(table, "taker.wac"), "reaches", "a method's return is a way out");
   return t.report();
 }
 
-export string test_a_type_whose_name_starts_with_cli_is_not_a_capability() {
-  // **The substring trap.** `Cli` is inside `ClientState`, and a scan matching on substrings would
+export string test_a_type_whose_name_starts_with_a_handles_is_not_a_capability() {
+  // **The substring trap.** `Files` is inside `Filesystem`, and a scan matching on substrings would
   // report most of `packages/tls` as reaching the host. The list is tab-delimited and searched with
   // the separators, which is the whole reason for that format.
   T t = T.create();
   string table = capReachFiles(
     paths2("client.wac", "uses.wac"),
-    paths2("export struct ClientState { i32 seq; }\nexport struct Corefile { i32 n; }\n",
-           "import { ClientState, Corefile } from \"./client.wac\";\n"
-           + "export i32 f(ClientState s, Corefile c) { return s.seq; }\n"));
-  t.eqStr(statusOf(table, "client.wac"), "sealed", "`ClientState` is not `Cli`");
-  t.eqStr(statusOf(table, "uses.wac"), "sealed", "`Corefile` is not `Core`");
+    paths2("export struct Filesystem { i32 seq; }\nexport struct Outputter { i32 n; }\n",
+           "import { Filesystem, Outputter } from \"./client.wac\";\n"
+           + "export i32 f(Filesystem s, Outputter c) { return s.seq; }\n"));
+  t.eqStr(statusOf(table, "client.wac"), "sealed", "`Filesystem` is not `Files`");
+  t.eqStr(statusOf(table, "uses.wac"), "sealed", "`Outputter` is not `Output`");
   return t.report();
 }
 
@@ -147,7 +145,7 @@ export string test_the_analysis_can_say_sealed_at_all() {
   string table = capReachFiles(
     paths3("pure.wac", "uses.wac", "alsopure.wac"),
     paths3("export i32 twice(i32 n) { return n * 2; }\n",
-           "import { Cli } from \"std\";\nexport i32 go(Cli c) { return 0; }\n",
+           "import { Files } from \"std\";\nexport i32 go(Files f) { return 0; }\n",
            "export string name() { return \"x\"; }\n"));
   i32 sealed = 0;
   i32 reaches = 0;
@@ -158,5 +156,22 @@ export string test_the_analysis_can_say_sealed_at_all() {
   }
   t.eqI32(sealed, 2, "two files should be sealed");
   t.eqI32(reaches, 1, "and exactly one should reach");
+  return t.report();
+}
+
+export string test_a_handle_a_sys_gave_out_is_a_way_in_as_the_sys_is() {
+  // **Every value a `Sys` hands out reaches the host** (spec ch49): an `Output` writes, a `Files` reads and
+  // writes, a `Clock` asks. Since design/system/0013 they are structs of closures, so no field of theirs names
+  // the host — and a struct holding one was called sealed, which is the one wrong answer this audit may not give.
+  T t = T.create();
+  string table = capReachFiles(
+    paths3("sink.wac", "report.wac", "clock.wac"),
+    paths3("import { Output } from \"std\";\nexport struct Sink { Output? out; }\n",
+           "import { Sink } from \"./sink.wac\";\nexport void report(Sink s) { }\n",
+           "import { Clock } from \"std\";\nexport i64 at(Clock c) { return 0 as i64; }\n"));
+  t.eqStr(statusOf(table, "sink.wac"), "reaches", "a struct holding an `Output`");
+  t.eqStr(statusOf(table, "report.wac"), "reaches", "and a file taking that struct");
+  t.eqStr(viaOf(table, "report.wac"), "Sink", "through the struct");
+  t.eqStr(statusOf(table, "clock.wac"), "reaches", "a file taking a `Clock`");
   return t.report();
 }

@@ -21,7 +21,7 @@
 // cache miss says so, and the override is how the future cache gets tested at all.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, ChildEnv, Env, Files, Procs, Sys, Launch } from "std";
+import { Exec, ChildEnv, Env, Files, Procs, Sys, Launch } from "std";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir, putFile } from "../../../wactest/src/host.wac";
 import { flatten } from "core";

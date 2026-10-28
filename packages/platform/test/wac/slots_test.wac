@@ -7,8 +7,7 @@
 // direction — submit more calls than there are slots and park for ever with the held slots unable to
 // complete.
 //
-// Checked by reading both sources as text, the way `test/wac/order_test.wac` checks the field order it
-// depends on. A compile would be a heavier way to learn the same thing.
+// Checked by reading both sources as text. A compile would be a heavier way to learn the same thing.
 //
 // ## Host-side until 2026-08-19, `issues/system/0161`
 //

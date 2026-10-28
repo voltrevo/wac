@@ -23,10 +23,9 @@ import { bridgeOf, CHUNK, newBridge } from "./layout.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
 import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, OP } from "./ops.ts";
 import { randomBytes } from "./entropy.ts";
-import { ChildStack, envRecord, joinPath, packCaptured, unpackExec, unpackPush } from "./child.ts";
+import { envRecord, joinPath, unpackExec } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
 import {
-  CHANGED_OK,
   FAULT_NOT_GRANTED,
   FAULT_OTHER,
   FAULT_REFUSED,
@@ -75,32 +74,19 @@ export type DenoWorldOptions = {
    * UTF-8 round trip of it. wac-mono 0065.
    */
   args?: (string | Uint8Array)[];
-  /** Where output goes. Defaults to the console. */
-  /**
-   * **May answer a promise, and every caller awaits it.**
-   *
-   * Declared `void` and implemented `async` — which TypeScript permits, since a `Promise<void>` is
-   * assignable to `void` — this dropped the promise at each call site. Two consequences, one loud
-   * and one silent: a rejection became an *unhandled* one and took the process down (issue 0115,
-   * `yes | head -1` under load), and two writes could land in either order under backpressure,
-   * because the guest was released before the first had finished. A spawned child's output goes
-   * through here, and pushing to a queue is asynchronous exactly when the queue is full.
-   */
-  log?(line: string): void | Promise<void>;
-  warn?(line: string): void | Promise<void>;
   /** Restrict the filesystem, or leave it out for none at all. */
   fs?: { read?: boolean; write?: boolean };
   /** The network, or leave it out for none at all. */
   net?: boolean;
   /**
-   * Running a host *program* — `Cli.exec`. Left out means every call is refused.
+   * Running a host *program* — `exec`. Left out means every call is refused.
    *
    * Its own option rather than a corner of `fs`, because it is its own authority: a world that may
    * read and write files is not thereby entitled to run `/bin/sh`. A page has no form of this at
    * all. `issues/system/0165`.
    */
   run?: boolean;
-  /** Environment lookups, or leave it out to report every variable unset. */
+  /** Environment lookups, or leave it out to refuse them as not granted. */
   env?(name: string): string | undefined;
   /**
    * Where exact bytes go, and where standard input comes from.
@@ -108,6 +94,11 @@ export type DenoWorldOptions = {
    * Absent means the real ones. A *spawned* world is given queues instead, which is how a
    * child's output reaches its parent through a handle rather than the terminal — the only
    * reason these exist.
+   *
+   * **May answer a promise, and every caller awaits it.** Declared `void` and implemented `async` —
+   * which TypeScript permits — the promise was dropped at each call site: a rejection became an
+   * *unhandled* one and took the process down (issue 0115, `yes | head -1` under load), and two writes
+   * could land in either order under backpressure. Pushing to a full queue is asynchronous.
    */
   write?(bytes: Uint8Array): void | Promise<void>;
   /** Where exact bytes on the *error* stream go. A spawned world sends both to its parent. */
@@ -220,12 +211,13 @@ function failed(why: string): Uint8Array {
   return out;
 }
 
-/** A `warn` payload as a line of a captured error stream: its bytes, then a newline. */
-function lineOf(p: Uint8Array): Uint8Array {
-  const out = new Uint8Array(p.length + 1);
-  out.set(p, 0);
-  out[p.length] = 10;
-  return out;
+/**
+ * A failed write to standard output or error, as std reads one: a reader that went away has no words —
+ * std says it in its own — and anything else, a full disk, keeps the host's.
+ */
+function readerGone(e: unknown): unknown {
+  const message = e instanceof Error ? e.message : String(e);
+  return /broken pipe|os error 32/i.test(message) ? new Error("") : e;
 }
 
 /**
@@ -341,8 +333,6 @@ async function onPath<T>(path: string, work: () => Promise<T>): Promise<T> {
 
 export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   const args = opts.args ?? [];
-  const log = opts.log ?? ((l: string) => console.log(l));
-  const warn = opts.warn ?? ((l: string) => console.error(l));
   // `Faulted`, so a withheld capability arrives as its own category rather than as an `EACCES` lookalike:
   // `FAULT_DENIED` is the file saying no, and this is the program never having been given the file.
   const deny = (what: string) => {
@@ -353,7 +343,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone.
   const outClosed = [false, false];
   const refuseClosed = (toErr: boolean) => {
-    if (outClosed[toErr ? 1 : 0]) { outputFailure = ""; throw new Error("the output has been closed"); }
+    // No words: a reader that has gone is the host's empty sentence, which std says in its own.
+    if (outClosed[toErr ? 1 : 0]) throw new Error("");
   };
   const selfSource = opts.selfSource;
   const readIn = opts.readStdin;
@@ -399,15 +390,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         ...(give.net ? { net: true } : {}),
         ...(give.env ? { env: opts.env } : {}),
         ...(give.run ? { run: true } : {}),
-        // A line of output is bytes on the handle, with the newline `log` implies. The parent
-        // cannot tell `log` from `write` — nor can a pipe, which is the point.
-        log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
-        // ...and its error output goes to the *other* stream, which `recv(errHandle)` reads. A
-        // program has two, and merging them made a shell count an error message in `cat x | wc -c`.
-        warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
         // A full queue has to *fail* the write, or a program written to stop when the other end
-        // goes away never learns: `box yes` is `while (cli.write(block)) {}`. Throwing is how the
-        // host says false — the same shape `pushChild`'s cap uses.
+        // goes away never learns: `box yes` writes until a write fails. Throwing is how the host
+        // says it failed.
         write: async (b: Uint8Array) => {
           // Awaited: a full queue *waits* for the parent to read, and only a queue that has ended
           // refuses. The two were one answer, and a producer told to stop when it should have waited
@@ -500,11 +485,6 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
     return childHandles(h, eh, fh, "");
   };
 
-  // The current streaming input. One at a time rather than a handle per file, because the
-  // wac side has nowhere to carry a handle in a bare funcref — see the note in platform.wac, which
-  // no longer says "no closures": lambdas capture, and the shape here predates them.
-  let source: Deno.FsFile | null = null;   // null means standard input
-  let sink: Deno.FsFile | null = null;     // null means standard output
   /**
    * A destination for one read. **Never shared between reads.**
    *
@@ -554,15 +534,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   const fsChannels = new Map<number, { req: ByteQueue; rep: ByteQueue }>();
   let nextHandle = FIRST_FREE_HANDLE;
 
-  // A program running inside this one: what it reads, what it writes, and where it stands.
-  // `P` is applied to every path below and is the identity when nothing is pushed.
-  const kids = new ChildStack();
-  // `write` answers a bool and cannot carry a reason, so this is recorded for `outputError`. The
-  // reads no longer need an equivalent: `Read` carries theirs.
-  let outputFailure = "";
-  // A path as this world means it: a pushed child's directory first, then this world's own. Both are
-  // the same join — `joinPath` leaves an absolute path alone and ignores an empty base.
-  const P = (path: string) => joinPath(opts.cwd ?? "", kids.path(path));
+  // A path as this world means it: `joinPath` leaves an absolute path alone and ignores an empty base.
+  const P = (path: string) => joinPath(opts.cwd ?? "", path);
 
   return {
     [OP.NOW_MILLIS]: () => i64le(BigInt(Date.now())),
@@ -582,51 +555,26 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         setTimeout(() => ok(i64le(BigInt(Math.round(performance.now() * 1e6)))), readI32le(p))
       ),
     [OP.RANDOM_BYTES]: (p) => randomBytes(readI32le(p)),
-    // `log` is standard output, so a child's lines are kept with the rest of its output rather
-    // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
-    [OP.LOG]: async (p) => {
-      if (kids.active) { kids.write(lineOf(p)); return EMPTY; }
-      await log(unstr(p));
-      return EMPTY;
-    },
-    // `warn` is standard error, so a child's diagnostics are kept with its output rather than
-    // landing on the parent's terminal in the middle of a pipeline. A newline is added because
-    // `warn` is a line-at-a-time capability and a captured stream is bytes.
     /**
      * Nobody can ask this host to interrupt, so the answer is no — the answer, not a stub.
      *
-     * `Core.askInterrupt` is answered by whoever owns the keyboard. Here the terminal belongs to
+     * `interrupted` is answered by whoever owns the keyboard. Here the terminal belongs to
      * whatever started the process, and over ssh to `sshd`, which is a wac program on the far side of
      * an encrypted socket. A host that cannot be asked truthfully reports that it has not been.
      */
     [OP.ASK_INTERRUPT]: () => i32le(0),
-    [OP.WARN]: async (p) => {
-      if (kids.warn(lineOf(p))) return EMPTY;
-      await warn(unstr(p));
-      return EMPTY;
-    },
 
-    [OP.PUSH_CHILD]: (p) => {
-      const { argv, stdin, cwd, inheritInput } = unpackPush(p);
-      kids.push(argv, stdin, cwd, inheritInput);
-      return EMPTY;
-    },
-    [OP.POP_CHILD]: () => {
-      const { out, err, truncated } = kids.pop();
-      return packCaptured(out, err, truncated);
-    },
-
-    // A child has its own command line: an applet reading `cli.arg(1)` must see what the shell
-    // typed, not what the shell itself was started with.
-    [OP.ARG_COUNT]: () => i32le((kids.args() ?? args).length),
+    [OP.ARG_COUNT]: () => i32le(args.length),
     [OP.ARG]: (p) => {
-      const own = kids.args() ?? args;
       const i = readI32le(p);
       // The bytes, unchanged. A program that wants text says `string.fromBytes` on its own side.
-      return i >= 0 && i < own.length ? argBytes(own[i]) : EMPTY_ARG;
+      return i >= 0 && i < args.length ? argBytes(args[i]) : EMPTY_ARG;
     },
+    // Without the grant, refused rather than unset: a program can tell "you may not ask" from "it is not
+    // there", which the one byte of presence below cannot say.
     [OP.ENV]: (p) => {
-      const v = opts.env?.(unstr(p));
+      if (opts.env === undefined) throw new Faulted(FAULT_NOT_GRANTED, "Not granted to this application");
+      const v = opts.env(unstr(p));
       if (v === undefined) return new Uint8Array([0]);
       const b = str(v);
       const out = new Uint8Array(1 + b.length);
@@ -644,58 +592,28 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
 
     // stdin and stdout need no grant: what the user pipes in and what the program prints
     // are the user's own doing, not a reach into something they did not offer.
-    [OP.READ_STDIN]: async () =>
-      kids.readAll() ?? (readIn === undefined ? await readAllStdin() : await readIn()),
+    [OP.READ_STDIN]: async () => readIn === undefined ? await readAllStdin() : await readIn(),
     [OP.WRITE_STDOUT]: async (p) => {
       refuseClosed(false);
-      if (kids.active) {
-        if (!kids.write(p)) throw new Error("the child's output buffer is full");
-        return EMPTY;
-      }
-      // **`openOutput`'s file first, and the caller's `write` second.** These were the other way round,
-      // so a caller that supplies `write` — every spawned child, and `harness/appRun.ts` — silently lost
-      // the redirection: `openOutput` truncated the file and every byte still went to the caller's sink.
-      // Nothing noticed because nothing had asked a *child* to redirect its own output until `sh` began
-      // streaming into `> file` (wac-mono 0070); `box wget url out` run as a child wrote an empty file.
-      //
-      // The order is not arbitrary. `write` in the options says where *standard output* goes;
-      // `openOutput` is the program saying its output is a file now, which is not standard output.
       try {
-        if (sink !== null) {
-          let at = 0;
-          while (at < p.length) at += await sink.write(p.subarray(at));
-          return EMPTY;
-        }
         if (writeOut !== undefined) { await writeOut(p.slice()); return EMPTY; }
         await writeAllStdout(p);
         return EMPTY;
       } catch (e) {
-        // Recorded and then rethrown: the throw is what makes `write` answer false, and the record
-        // is what lets a caller tell a full disk from a reader that went away.
-        const message = e instanceof Error ? e.message : String(e);
-        outputFailure = /broken pipe|os error 32/i.test(message) ? "" : message;
-        throw e;
+        // A reader that went away is said with no words, so std can tell it from a full disk.
+        throw readerGone(e);
       }
     },
 
-    /**
-     * Standard error as bytes, beside `warn`'s line.
-     *
-     * Deliberately *not* through `sink`: `openOutput` redirects standard output, and a redirection
-     * that took the error stream with it would make the two impossible to separate — which is the
-     * whole reason a program has two of them.
-     */
+    /** Standard error as bytes. */
     [OP.WRITE_STDERR]: async (p) => {
       refuseClosed(true);
-      if (kids.active) { kids.warn(p); return EMPTY; }
       if (writeErrOut !== undefined) { await writeErrOut(p.slice()); return EMPTY; }
       try {
         await writeAllStderr(p);
         return EMPTY;
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        outputFailure = /broken pipe|os error 32/i.test(message) ? "" : message;
-        throw e;
+        throw readerGone(e);
       }
     },
 
@@ -769,23 +687,6 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       return changed(() => onPath(path, () => Deno.writeFile(path, p.subarray(4 + n))));
     },
 
-    // The mutation tier. Each throws on failure and the wac side reads that as `false`,
-    // so an application never has to tell "not permitted" from "did not exist" — which
-    // is again the correct amount for it to know.
-    [OP.OPEN_INPUT]: async (p) => {
-      const path = unstr(p);
-      source?.close();
-      source = null;
-      if (path === "") return CHANGED_OK;      // standard input, and the default
-      // `changed`, so "not there" is `FAULT_NOT_FOUND` and the caller can say what `cat` says —
-      // the streaming half used to answer with the host's sentence while `readFile` answered a
-      // category, which is one program wording one failure two ways.
-      if (!opts.fs?.read) return changeBytes(FAULT_NOT_GRANTED, "filesystem read not granted to this application");
-      const full = P(path);
-      return await changed(async () => {
-        source = await onPath(full, () => Deno.open(full, { read: true }));
-      });
-    },
     /**
      * A file as a stream of its own: `how` is 0 to read, 1 to create or truncate, 2 to create or append.
      * Its handle is read with `recv`, written with `send` and closed with `closeSocket`, like a socket's.
@@ -810,32 +711,23 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       file.close();
       return EMPTY;
     },
-    /**
-     * The end of this program's output or its diagnostic output; it goes on running. Not under a pushed child,
-     * whose output is its parent's until it is popped.
-     */
+    /** The end of this program's output or its diagnostic output; it goes on running. */
     [OP.CLOSE_OUTPUT]: (p) => {
       const toErr = readI32le(p) !== 0;
-      if (kids.active) throw new Error("a pushed child cannot close its parent's output");
       if (outClosed[toErr ? 1 : 0]) return EMPTY;
       outClosed[toErr ? 1 : 0] = true;
-      if (!toErr && sink !== null) { sink.close(); sink = null; }
-      else if (opts.closeOutput !== undefined) opts.closeOutput(toErr);
+      if (opts.closeOutput !== undefined) opts.closeOutput(toErr);
       else if (toErr ? writeErrOut === undefined : writeOut === undefined) (toErr ? Deno.stderr : Deno.stdout).close();
       return EMPTY;
     },
     [OP.READ_CHUNK]: async () => {
-      // A pushed child reads what it was fed and then end of input — never the parent's own
-      // standard input, which would let a filter inside a shell swallow the terminal.
-      const fed = source === null ? kids.readChunk() : null;
-      if (fed !== null) return fed.length === 0 ? END : data(fed);
-      if (source === null && readChunkIn !== undefined) {
+      if (readChunkIn !== undefined) {
         const piped = await readChunkIn();
         return piped.length === 0 ? END : data(piped);
       }
       try {
         const into = fresh();
-        const n = source === null ? await Deno.stdin.read(into) : await source.read(into);
+        const n = await Deno.stdin.read(into);
         // A short read is not the end; only null is.
         return n === null ? END : data(into.subarray(0, n));
       } catch (e) {
@@ -849,26 +741,6 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         return failed(readFailure(e));
       }
     },
-    [OP.OUTPUT_ERROR]: () => str(outputFailure),
-
-    [OP.OPEN_OUTPUT]: async (p) => {
-      const path = unstr(p);
-      // Closed before the next one opens, so a program that has finished writing a file
-      // can rename over it — see the note in platform.wac.
-      sink?.close();
-      sink = null;
-      if (path === "") return CHANGED_OK;
-      if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
-      // `changed`, so a directory that does not exist is `FAULT_NOT_FOUND` rather than an errno and an
-      // absolute path in somebody's shell diagnostic.
-      const full = P(path);
-      return await changed(() =>
-        onPath(full, async () => {
-          sink = await Deno.open(full, { write: true, create: true, truncate: true });
-        })
-      );
-    },
-
     /**
      * Bind a datagram socket. The address rule is `listen`'s: empty means every interface, and
      * `"127.0.0.1"` is the one a program has to ask for.
@@ -1030,8 +902,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         // (0121), and a send into a full queue did not wait, so backpressure did not hold (0120).
         // The runtime with no JavaScript in it has always answered `stream.write` here.
         //
-        // Throwing is how a `Pending<bool>` says false on this side: `provider.ts`'s `ok` is
-        // "collect did not throw", which is the same route `deny` already takes.
+        // Throwing is how a send says it did not go: `provider.ts` answers the error as a fault, which is
+        // the same route `deny` already takes.
         if (!await kid.in.push(p.slice(4))) throw new Error("the child's input has ended");
         return EMPTY;
       }
@@ -1152,13 +1024,13 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
     },
 
     /**
-     * `Cli.exec` — run a host program to completion.
+     * `exec` — run a host program to completion.
      *
      * `status` and `error` are separate in the answer: a program that ran and exited non-zero is
      * not a program that could not be started, and the first is the case a differential oracle
      * cares about most.
      */
-    [OP.EXEC_WITH_IN]: async (p) => {
+    [OP.EXEC]: async (p) => {
       const { path, args, env, stdin, clearEnv, inherit, cwd } = unpackExec(p);
       if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
       try {

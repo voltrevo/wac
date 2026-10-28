@@ -2,9 +2,9 @@
 //!
 //! Items 3 and 4 of wac-mono 0087, and the piece D12 and D13 are about.
 //!
-//! A capability returns before its work has happened. The value that comes back is a `Pending<T>` —
-//! an id and three shared functions — and the id is a row here. A worker thread records the outcome;
-//! `waitAny` parks until one of a list of ids has one.
+//! A request returns before its work has happened, and the work is a row here. A worker thread records
+//! the outcome; `waitAny` parks until one of a list of rows has one, and the host then delivers it to
+//! the program through `__wacAnswered` — design/system/0013 step 6.
 //!
 //! ## What is deliberately not the JavaScript design
 //!
@@ -44,8 +44,8 @@ use std::time::{Duration, Instant};
 
 /// What a finished request produced.
 ///
-/// One variant per `Pending<T>` this runtime can complete. A capability whose `T` is not here is not
-/// implemented, and says so rather than completing with something plausible.
+/// One variant per shape of answer, flattened by `main.rs`'s `flatten` into the one shape every
+/// request gets.
 #[derive(Debug, Clone)]
 pub enum Outcome {
     I32(i32),
@@ -59,8 +59,6 @@ pub enum Outcome {
     /// this type rather than `string` is that the two used to be indistinguishable (wac-mono 0065).
     BytesOpt(Option<Vec<u8>>),
     Bool(bool),
-    /// What a child frame wrote: `Captured{out, err, truncated}`.
-    Captured(Vec<u8>, Vec<u8>, bool),
     /// `Exec(status, stdout, stderr, error)` — a host program run to completion.
     ///
     /// The exit code and the reason it could not be started are separate: a program that ran and

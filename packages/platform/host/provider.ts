@@ -1,35 +1,29 @@
-// Worker side: turn a bridge into the capability structs a wac application receives.
+// Worker side: serve a wac program's requests over the bridge — design/system/0013 step 6.
 //
-// Every closure here is created **once per application**, never per call. bindgen
-// registers each distinct function identity in a fixed table of sixteen per signature and
-// never frees a slot, so a fresh closure per call dies on the seventeenth with a
-// `RangeError` a long way from its cause. `packages/stream` hit this and its README says
-// the same thing: hold stable functions and put the varying part in their arguments.
+// A program hands its host four calls through `__wacHost` and is answered through `__wacAnswered`, all
+// in plain values: a request is an opcode, the program's own id for it, two integers, a string and
+// bytes, and every answer is one shape — `fault, text, bytes, n, m, flags`. So nothing here builds a
+// wac value. A request is turned into the payload the launcher already serves (`deno.ts`, `node.ts`,
+// `browser.ts`), and the launcher's reply into that one shape.
 //
-// That rule is why a ticket carries an `i32` and three *shared* resolvers rather than a
-// closure over its own answer. Every `readFile` in a program hands back the same three
-// functions with a different number in front of them.
+// The four functions are created **once per program**, never per call. The module registers each
+// distinct function identity in a fixed table per signature and never frees a slot, so a fresh closure
+// per call dies on the seventeenth with a `RangeError` a long way from its cause.
 //
-// A ticket's number is its slot and its generation packed together, so nothing has to be
-// kept in a table here and a ticket dropped on the floor leaks nothing on this side. Four
-// slots is two bits; the generation takes the rest.
+// **An answer arrives only from inside `request` or `waitAny`**, which is what makes re-entry safe: a
+// request this worker answers in its own realm (`load`, `call`) or by a round trip it may block on (a
+// clock, an argument, a write) is answered before `request` returns, and the rest when `waitAny` sees
+// their slot finish.
 
-import { type Bridge, SLOTS } from "./layout.ts";
+import { type Bridge } from "./layout.ts";
 import {
   cancel,
-  // **One name for it, and the local shadow below is a different one.** This was imported twice —
-  // as `collect` and as `realCollect` — so that `cliOf` could declare `const collect` shadowing the
-  // first and still reach the second. That is legal TypeScript and `packages/ts` cannot bundle it:
-  // it reads an imported name through its exporting module *everywhere it appears*, so a local of
-  // the same name is indistinguishable from the import, and it refuses rather than guess. The
-  // shadowing itself is unchanged — `cliOf` still declares `collect` — it simply no longer collides
-  // with an import. `issues/system/0242c`, `design/system/0009`.
-  collect as realCollect,
+  collect,
   hostCall,
   HostCallError,
   i32le,
   isDone,
-  waitAny,
+  waitAny as waitOn,
   readI32le,
   readI64le,
   str,
@@ -40,65 +34,22 @@ import {
 import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, OP } from "./ops.ts";
 import { asAppModule, drive, manifestIn } from "./driver.ts";
 import type { Driven } from "./driver.ts";
+import {
+  FAULT_NONE,
+  FAULT_NOT_GRANTED,
+  FAULT_OTHER,
+  FAULT_UNSUPPORTED,
+  STAT_EXEC,
+  STAT_FAULT,
+  STAT_MODE,
+} from "./faults.ts";
+
 /** One export's wac signature, as the manifest records it — `Manifest.exports` in `native.ts`. */
 type ExportSig = { name: string; params: string[]; ret: string };
-import { FAULT_NONE, FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC, STAT_MODE } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
-const SLOT_BITS = Math.ceil(Math.log2(SLOTS));
-const SLOT_MASK = (1 << SLOT_BITS) - 1;
 
-const pack = (t: Ticket): number => t.slot | (t.gen << SLOT_BITS);
-const unpack = (id: number): Ticket => ({ slot: id & SLOT_MASK, gen: id >>> SLOT_BITS });
-
-/** The generated classes this needs from a module that imports `platform.wac`. */
-export type PlatformClasses = {
-  Core: { of(...caps: unknown[]): unknown };
-  Cli: { of(...caps: unknown[]): unknown };
-  FileResult: { of?(...a: unknown[]): unknown };
-  /**
-   * The world's scheduler, which the host **builds** rather than implements.
-   *
-   * Every other field of a capability is a function this side supplies; this one is a wac value with
-   * wac logic on it — `Core.delay`, `Core.drain` and `Core.dropAll` are methods over it. All the host
-   * does is call `create` once, so a program is handed a scheduler the same way it is handed a
-   * filesystem: because the world had one to give.
-   */
-  Sched: { create(): unknown };
-};
-
-/** One monomorphised `Pending<T>`. bindgen names them `Pending_FileResult` and so on. */
-type PendingClass = { of(id: number, resolve: unknown, settled: unknown, drop: unknown): unknown };
-
-/** Every `Pending<T>` the world hands out. */
-export type PendingClasses = {
-  Pending_i32: PendingClass;
-  Pending_i64: PendingClass;
-  Pending_string: PendingClass;
-  Pending_stringOpt: PendingClass;
-  Pending_u8ArrOpt: PendingClass;
-  Pending_u8Arr: PendingClass;
-  Pending_bool: PendingClass;
-  Pending_stringArrOpt: PendingClass;
-  Pending_FileResult: PendingClass;
-  Pending_Stat: PendingClass;
-  Pending_HostSocket: PendingClass;
-  Pending_HostChild: PendingClass;
-  Pending_Captured: PendingClass;
-  Pending_Read: PendingClass;
-  Pending_Change: PendingClass;
-  Pending_Datagram: PendingClass;
-  Pending_Exec: PendingClass;
-};
-
-/**
- * `Core`, built from the bridge.
- *
- * `log` and `warn` hand back nothing. A ticket for a line of output would be noise at
- * every call site for a capability no program will overlap, and the world keeps writes to
- * one destination in order anyway, so a caller loses nothing by not being able to wait.
- */
-/** What `Core.exit` throws: the program asked to end now with `code`. Caught where `main` was called. */
+/** What `exitWith` throws: the program asked to end now with `code`. Caught where `main` was called. */
 export class WacExit extends Error {
   // A declared field rather than a parameter property: our TypeScript is erasable by design
   // (`design/system/0009` D4), and `readonly code` in the parameter list is the one construct that is
@@ -110,900 +61,485 @@ export class WacExit extends Error {
   }
 }
 
-export function coreOf(
-  b: Bridge,
-  cls: { Core: PlatformClasses["Core"]; Sched: PlatformClasses["Sched"] } & PendingClasses,
-  // **Handed in rather than made here**, because `Cli` needs the same one: a capability that answers
-  // with a ticket and the world that dispatches it are the same world, so both objects a program's
-  // `main` is given must share a scheduler or a `Cli` ticket's continuation is registered where
-  // nothing drains it. Defaulted, so a caller that wants only a `Core` is unchanged.
-  sched?: unknown,
-): unknown {
-  const settled = (id: number) => isDone(b, unpack(id));
-  const drop = (id: number) => { cancel(b, unpack(id)); };
-  const i64 = (id: number) => readI64le(realCollect(b, unpack(id)));
-  const bytes = (id: number) => realCollect(b, unpack(id));
+/** An answer, in the one shape every request is answered in. */
+type Flat = { fault: number; text: string; bytes: Uint8Array; n: bigint; m: bigint; flags: number };
 
-  const asI64 = (t: Ticket) => cls.Pending_i64.of(pack(t), i64, settled, drop);
-  const asBytes = (t: Ticket) => cls.Pending_u8Arr.of(pack(t), bytes, settled, drop);
+const flat = (o: Partial<Flat>): Flat => ({
+  fault: o.fault ?? FAULT_NONE,
+  text: o.text ?? "",
+  bytes: o.bytes ?? EMPTY,
+  n: o.n ?? 0n,
+  m: o.m ?? 0n,
+  flags: o.flags ?? 0,
+});
 
-  return cls.Core.of(
-    /*= nowMillis */
-    () => asI64(submit(b, OP.NOW_MILLIS, EMPTY)),
-    /*= monotonicNanos */
-    () => asI64(submit(b, OP.MONOTONIC_NANOS, EMPTY)),
-    /*= sleepMillis */
-    (ms: number) => asI64(submit(b, OP.SLEEP_MILLIS, i32le(ms))),
-    /*= randomBytes */
-    (n: number) => asBytes(submit(b, OP.RANDOM_BYTES, i32le(n))),
-    /*= log */
-    // Submitted *and collected*. A bare submit claims a slot the worker never gives
-    // back, so four log lines exhausted the ring and the fifth call parked forever —
-    // which showed up as `ls .` failing while `ls somefile` worked, because only the
-    // former reached a log loop.
-    (line: string) => { hostCall(b, OP.LOG, str(line)); },
-    /*= warn */
-    (line: string) => { hostCall(b, OP.WARN, str(line)); },
+/** A failure, with the category the error carries — `FAULT_OTHER` when nothing said better. */
+const failure = (e: unknown): Flat =>
+  flat({
+    fault: e instanceof HostCallError ? e.fault : FAULT_OTHER,
+    text: e instanceof Error ? e.message : String(e),
+  });
 
-    /*= waitAny */
-    // No opcode, and no slot: the wait is on the completion counter in this worker's own
-    // memory, and the deadline is `Atomics.wait`'s own timeout, so the host is not involved at
-    // all. Returns the *index* rather than the id, because the caller already knows which
-    // ticket it put where, and -1 when nothing settled in time.
-    //
-    // In `Core` because it grants nothing — it cannot start work, only notice that some has
-    // finished. It began on `Cli`, which left an interactive page unable to wait on a click or
-    // a dropped file, and that is precisely the question it exists to answer.
-    (ids: Int32Array, millis: number) => {
-      const tickets = Array.from(ids, unpack);
-      const settled = waitAny(b, tickets, millis);
-      if (settled === null) return -1;
-      return tickets.findIndex((t) => t.slot === settled.slot && t.gen === settled.gen);
-    },
+const REFUSED = "Not granted to this application";
 
-    /*= askInterrupt */
-    // **A round trip per ask, and that is also why it works.** Every opcode parks this worker —
-    // `hostCall` is submit-then-collect, and `waitAny` above is *not* a counter-example: it is
-    // answered from this worker's own memory and involves no host at all. So there is no free poll to
-    // build on. But while the worker is parked the page's main thread is running, and in a page that
-    // is exactly where a keydown arrives and where the bridge is serviced — so the parking is what
-    // gives the host a chance to have seen the `^C`.
-    () => readI32le(hostCall(b, OP.ASK_INTERRUPT, EMPTY)),
-    /*= exit */
-    // Thrown, not acted on: the throw unwinds the program's wasm frames to whoever called `main`, which
-    // catches `WacExit` and reports its status as the program's.
-    (code: number) => { throw new WacExit(code); },
-    /*= sched */
-    // **Built, not implemented.** The scheduler is wac code and wac state; the host's whole part in
-    // it is calling `create` once, so that a program handed a world is handed somewhere for its
-    // continuations to wait. `Core.delay`, `Core.drain` and `Core.dropAll` are the program's view.
-    sched ?? cls.Sched.create(),
-  );
+/** Which grant each guarded opcode needs, for a *loaded* module — see `hostFor`'s `grants`. */
+const NEEDS: Record<number, number> = {
+  [OP.READ_FILE]: GRANT_READ,
+  [OP.STAT]: GRANT_READ,
+  [OP.LINK_STAT]: GRANT_READ,
+  [OP.READ_DIR]: GRANT_READ,
+  [OP.WRITE_FILE]: GRANT_WRITE,
+  [OP.MKDIR]: GRANT_WRITE,
+  [OP.REMOVE]: GRANT_WRITE,
+  [OP.RENAME]: GRANT_WRITE,
+  [OP.SET_EXECUTABLE]: GRANT_WRITE,
+  [OP.CHMOD]: GRANT_WRITE,
+  [OP.CONNECT]: GRANT_NET,
+  [OP.LISTEN]: GRANT_NET,
+  [OP.BIND_DATAGRAM]: GRANT_NET,
+  [OP.ENV]: GRANT_ENV,
+  [OP.EXEC]: GRANT_RUN,
+};
+
+// ── Requests, as the launcher's payloads ──────────────────────────────────────────────────────
+
+const cat = (...parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+/** A length-prefixed head, so the host can tell where it ends. */
+const prefixed = (head: Uint8Array, body: Uint8Array): Uint8Array => cat(i32le(head.length), head, body);
+const flag = (on: boolean): Uint8Array => new Uint8Array([on ? 1 : 0]);
+
+/** std's packed `bytes` — `u32` length-prefixed parts, a list a `u32` count of them (design 0013). */
+class Parts {
+  at = 0;
+  readonly b: Uint8Array;
+  constructor(b: Uint8Array) { this.b = b; }
+  u32(): number {
+    const n = readI32le(this.b, this.at) >>> 0;
+    this.at += 4;
+    return n;
+  }
+  part(): Uint8Array {
+    const n = this.u32();
+    const out = this.b.subarray(this.at, this.at + n);
+    this.at += n;
+    return out;
+  }
+  list(): Uint8Array[] {
+    const n = this.u32();
+    const out: Uint8Array[] = [];
+    for (let i = 0; i < n; i++) out.push(this.part());
+    return out;
+  }
 }
 
-/**
- * `Cli`, built from the bridge.
- *
- * `readFile` answers with a `FileResult` rather than a nullable array so a failure can
- * carry its reason — the wac side gets `ok`, the bytes, and the host's message.
- */
-export function cliOf(
-  b: Bridge,
-  cls: {
-    Sched: PlatformClasses["Sched"];
-    Cli: PlatformClasses["Cli"];
-    FileResult: { of(...a: unknown[]): unknown };
-    Stat: { of(...a: unknown[]): unknown };
-    HostSocket: { of(...a: unknown[]): unknown };
-    Datagram: { of(...a: unknown[]): unknown };
-    HostChild: { of(...a: unknown[]): unknown };
-    LoadedModule: { of(...a: unknown[]): unknown };
-    CallResult: { of(...a: unknown[]): unknown };
-    Captured: { of(...a: unknown[]): unknown };
-    Exec: { of(...a: unknown[]): unknown };
-    Change: { of(...a: unknown[]): unknown };
-    Read: {
-      Data(bytes: Uint8Array): unknown;
-      End(): unknown;
-      Failed(why: string): unknown;
-    };
-  } & PendingClasses,
-  /**
-   * Which grants this `Cli` carries, or `undefined` for "whatever the launcher serves".
-   *
-   * **Only a *loaded* module passes one** — `issues/system/0242c`. A program's own grants are the
-   * launcher's business: it serves the bridge and refuses what the build did not ask for. A module
-   * this program loaded shares that bridge, so the launcher cannot tell its calls from its loader's
-   * and cannot narrow them — which made `wac test --allow-read` hand a test the *command's* write
-   * capability, and a test wrote a file it had no business writing.
-   *
-   * So the narrowing is in the world the loaded module is handed, and that is enough for the reason
-   * `spawn`'s own note gives: **the isolation is the language's, not the runtime's.** A wac module
-   * cannot reach past the capabilities it was given, because wac has no ambient anything. It would
-   * not be enough for arbitrary JavaScript, and a loaded module is a wac module.
-   *
-   * Intersection needs no arithmetic here: asking for more than the loader holds still ends at the
-   * launcher, which refuses on the loader's grants. This narrows, and the bridge cannot widen.
-   */
-  grants?: number,
-  sched?: unknown,
-): unknown {
-  const settled = (id: number) => isDone(b, unpack(id));
-  const drop = (id: number) => { cancel(b, unpack(id)); };
+/** An argument vector as `children.ts`'s `unpackArgs` reads it — the same count-then-parts std packs. */
+const argvBytes = (args: Uint8Array[]): Uint8Array =>
+  cat(i32le(args.length), ...args.flatMap((a) => [i32le(a.length), a]));
 
-  /** Which grant each guarded opcode needs. An opcode absent from here needs none. */
-  const NEEDS: Record<number, number> = {
-    [OP.READ_FILE]: GRANT_READ,
-    [OP.STAT]: GRANT_READ,
-    [OP.LINK_STAT]: GRANT_READ,
-    [OP.READ_DIR]: GRANT_READ,
-    [OP.OPEN_INPUT]: GRANT_READ,
-    [OP.WRITE_FILE]: GRANT_WRITE,
-    [OP.MKDIR]: GRANT_WRITE,
-    [OP.REMOVE]: GRANT_WRITE,
-    [OP.RENAME]: GRANT_WRITE,
-    [OP.SET_EXECUTABLE]: GRANT_WRITE,
-    [OP.CHMOD]: GRANT_WRITE,
-    [OP.OPEN_OUTPUT]: GRANT_WRITE,
-    [OP.CONNECT]: GRANT_NET,
-    [OP.LISTEN]: GRANT_NET,
-    [OP.BIND_DATAGRAM]: GRANT_NET,
-    [OP.ENV]: GRANT_ENV,
-    [OP.EXEC_WITH_IN]: GRANT_RUN,
-  };
+/** Arguments joined by NULs, which is how `EXEC` carries them: a NUL cannot appear in one. */
+const nulJoined = (xs: Uint8Array[]): Uint8Array =>
+  cat(...xs.flatMap((x, i) => (i === 0 ? [x] : [new Uint8Array([0]), x])));
 
-  /**
-   * Every guarded call goes through here, so the check is in one place rather than twenty.
-   *
-   * A denied call is given a ticket that is never submitted and whose id is remembered; `collect`
-   * below throws for it, and each shape's resolver already turns a thrown error into *its own*
-   * refusal — a failed `FileResult`, a `Change` with a fault, a `Socket` with a negative handle.
-   * That is why this needed no change per capability: the refusal shapes were already written.
-   */
-  const refused = new Set<number>();
-  let nextRefusal = -1;
-  const send = (op: number, payload: Uint8Array): Ticket => {
-    const need = NEEDS[op];
-    if (need !== undefined && grants !== undefined && (grants & need) === 0) {
-      // A slot number no bridge hands out, so it cannot collide with a real ticket.
-      const t: Ticket = { slot: nextRefusal--, gen: 0 };
-      refused.add(pack(t));
-      return t;
-    }
-    return submit(b, op, payload);
-  };
-
-  /**
-   * `collect`, shadowed for this world only.
-   *
-   * The resolvers below all read their answer through this name, so refusing here refuses in every
-   * shape at once and in the wording `platform.wac`'s own `faultWords` uses for the category.
-   */
-  const collect = (bridge: Bridge, t: Ticket): Uint8Array => {
-    // **A `HostCallError` with the category, not a bare `Error`.** `FileResult` and `Change` both read
-    // `.fault` off what they catch, so this is what makes a refused write answer *denied* rather than
-    // *failed* — the distinction `faultWords` exists for, and the one the native host already made.
-    // The wording is `platform.wac`'s own `reasonOf` phrase for the category.
-    if (refused.has(pack(t))) {
-      throw new HostCallError("Not granted to this application", FAULT_NOT_GRANTED);
-    }
-    return realCollect(bridge, t);
-  };
-
-  // One resolver per return shape, hoisted for the reason in the file header.
-  const bytes = (id: number) => collect(b, unpack(id));
-  const i32 = (id: number) => readI32le(collect(b, unpack(id)));
-  const text = (id: number) => unstr(collect(b, unpack(id)));
-  /** Empty means it worked; anything else is the host's message. */
-  const outcome = (id: number) => {
-    try {
-      collect(b, unpack(id));
-      return "";
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e);
-    }
-  };
-  /** True when it worked. A failure is an answer here, not an exception. */
-  const ok = (id: number) => {
-    try {
-      collect(b, unpack(id));
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  /** Bytes, or empty where a broken source is indistinguishable from an ended one. */
-  const chunk = (id: number) => {
-    try {
-      return collect(b, unpack(id));
-    } catch {
+/** The launcher's payload for a request, or `null` for one it does not serve. */
+function payloadOf(op: number, a: number, b: number, text: string, bytes: Uint8Array): Uint8Array | null {
+  switch (op) {
+    case OP.NOW_MILLIS: case OP.MONOTONIC_NANOS: case OP.ARG_COUNT: case OP.READ_STDIN:
+    case OP.READ_CHUNK: case OP.CWD: case OP.ASK_INTERRUPT:
       return EMPTY;
+    case OP.RANDOM_BYTES: case OP.ARG: case OP.SLEEP_MILLIS: case OP.ACCEPT: case OP.RECV:
+    case OP.CLOSE_SOCKET: case OP.CLOSE_SEND: case OP.CLOSE_FILE: case OP.CLOSE_OUTPUT:
+    case OP.RECEIVE_FROM: case OP.CLOSE_FEED: case OP.EXIT_CODE:
+      return i32le(a);
+    case OP.ENV: case OP.READ_FILE: case OP.STAT: case OP.LINK_STAT: case OP.READ_DIR:
+      return str(text);
+    case OP.WRITE_STDOUT: case OP.WRITE_STDERR:
+      return bytes;
+    case OP.WRITE_FILE:
+      return prefixed(str(text), bytes);
+    case OP.MKDIR: case OP.REMOVE: case OP.SET_EXECUTABLE:
+      return cat(flag(a !== 0), str(text));
+    case OP.RENAME:
+      return prefixed(str(text), bytes);
+    case OP.CHMOD: case OP.OPEN_FILE: case OP.CONNECT: case OP.LISTEN: case OP.BIND_DATAGRAM:
+      return cat(i32le(a), str(text));
+    case OP.SEND:
+      return cat(i32le(a), bytes);
+    case OP.SEND_TO: {
+      const who = str(text);
+      return cat(i32le(a), i32le(b), i32le(who.length), who, bytes);
     }
-  };
-  const fileResult = (id: number) => {
-    try {
-      return cls.FileResult.of(true, collect(b, unpack(id)), "", 0);
-    } catch (e) {
-      // The category as well as the message, so a program can say what GNU says about a missing file
-      // instead of printing the host's sentence — `FAULT_OTHER` when nothing said better. wac-mono 0062.
-      const fault = e instanceof HostCallError ? e.fault : FAULT_OTHER;
-      return cls.FileResult.of(false, EMPTY, e instanceof Error ? e.message : String(e), fault);
+    case OP.SPAWN: case OP.SPAWN_SELF: {
+      // std: the module (empty for this program), then the arguments as a list — which is exactly the
+      // launcher's `prefixed(source, argv)`, so `SPAWN` passes it through. `DETACHED` and the served bit
+      // are std's business; the input and output bits are the host's, in the low two.
+      const serves = (b & 256) !== 0;
+      const inherit = b & 3;
+      const tail = prefixed(str(text), cat(op === OP.SPAWN ? i32le(inherit) : new Uint8Array([inherit]), flag(serves)));
+      if (op === OP.SPAWN) return cat(i32le(a), bytes, tail);
+      const p = new Parts(bytes);
+      p.part();
+      return cat(i32le(a), argvBytes(p.list()), tail);
     }
-  };
-  const stat = (id: number) => {
-    try {
-      const out = collect(b, unpack(id));
-      // exists, isFile, isDir as bytes, then size and mtime as little-endian i64s, then isSymlink, the
-      // fault, isExecutable and the mode — each appended rather than inserted, so the offsets above never had to
-      // move. That is why the newest field sits past the fault rather than beside the flag it belongs with.
-      const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
-      return cls.Stat.of(
-        out[0] === 1, out[1] === 1, out[2] === 1,
-        dv.getBigInt64(3, true), dv.getBigInt64(11, true),
-        out[19] === 1, out[STAT_EXEC] === 1, out[20] ?? 0, dv.getUint32(STAT_MODE, true),
+    case OP.EXEC: {
+      const p = new Parts(bytes);
+      const program = p.part();
+      const args = p.list();
+      const input = p.part();
+      const pairs = p.list();
+      return cat(
+        flag((a & 1) !== 0),
+        flag((a & 2) !== 0),
+        prefixed(program, prefixed(nulJoined(args), prefixed(nulJoined(pairs), prefixed(str(text), input)))),
       );
-    } catch {
-      // The bridge itself failed, which is not absence — `FAULT_OTHER`, because nothing said better.
-      return cls.Stat.of(false, false, false, 0n, 0n, false, false, FAULT_OTHER, 0);
     }
-  };
-  const dirNames = (id: number) => {
-    try {
-      const out = collect(b, unpack(id));
-      if (out.length === 0) return [];
-      // NUL-separated: a filename may contain anything but a NUL or a slash.
-      return unstr(out).split("\u0000");
-    } catch {
+    default:
       return null;
-    }
-  };
-  const maybeText = (id: number) => {
-    const out = collect(b, unpack(id));
-    // One byte of presence in front, because an unset variable and an empty one are
-    // different and a bare empty payload cannot say which this is.
-    return out[0] === 1 ? unstr(out.subarray(1)) : null;
-  };
-  /**
-   * The same, as bytes: an environment value is not text, any more than an argument is.
-   *
-   * **The one shape that had to catch, and the reason `env` diverged.** `send` refuses a guarded call
-   * centrally and `collect` throws for it, on the argument — written a few lines up — that "each
-   * shape's resolver already turns a thrown error into *its own* refusal … the refusal shapes were
-   * already written". They were, except this one: `u8[]?` has no fault field, so nothing absorbed the
-   * throw and a program that was not granted the environment **trapped** here while both native hosts
-   * answered null. `issues/system/0256c`, found by a differential row that existed for a day before
-   * anything ran it.
-   *
-   * Null is what `Cli.env`'s own type documents — "null when the variable is unset" — and it is what
-   * the native hosts already did, so this is the four of them agreeing rather than a new rule. It
-   * does conflate "you may not ask" with "it is not set", which `issues/system/0238c` removed from
-   * `Socket` for the reason that a caller acts differently on the two; the fix for that is a shape
-   * that can say which, and it is `0256c`'s remaining half.
-   *
-   * Only `FAULT_NOT_GRANTED` is swallowed. Any other failure is still a failure, because a host that
-   * broke while answering is not a variable that is unset.
-   */
-  const maybeBytes = (id: number) => {
-    let out: Uint8Array;
-    try {
-      out = collect(b, unpack(id));
-    } catch (e) {
-      if (e instanceof HostCallError && e.fault === FAULT_NOT_GRANTED) return null;
-      throw e;
-    }
-    return out[0] === 1 ? out.slice(1) : null;
-  };
-  const child = (id: number) => {
-    try {
-      // A handle, then — when the handle is negative — why it never started. The host waits for the
-      // source to load before answering, so "it is not a worker bundle" arrives here as a `Child`
-      // with a reason rather than as an error that killed this program. wac-mono issue 0021.
-      // Three handles, then — when they are negative — why there is nothing to read. The output
-      // stream and the error stream are separate because a program has two of them, and the third is
-      // the filesystem channel a child asks its parent on; see `Child`.
-      const out = collect(b, unpack(id));
-      const handle = readI32le(out);
-      const errHandle = readI32le(out.subarray(4));
-      const fsHandle = readI32le(out.subarray(8));
-      return cls.HostChild.of(handle, errHandle, fsHandle, handle < 0 ? unstr(out.subarray(12)) : "");
-    } catch (e) {
-      return cls.HostChild.of(-1, -1, -1, e instanceof Error ? e.message : String(e));
-    }
-  };
-  /**
-   * `Exec(status, stdout, stderr, error)` — status, then two length-prefixed streams, then the
-   * reason it could not be started.
-   *
-   * The status and the error are separate on purpose: a program that ran and exited non-zero is the
-   * case every differential oracle asks about, and folding it into a fault would put it out of
-   * reach. See `Exec` in `platform.wac`.
-   */
-  const execAnswer = (id: number) => {
-    try {
-      const out = collect(b, unpack(id));
-      const status = readI32le(out) | 0;
-      const nOut = readI32le(out.subarray(4));
-      const nErr = readI32le(out.subarray(8));
-      return cls.Exec.of(
-        status,
-        out.subarray(12, 12 + nOut),
-        out.subarray(12 + nOut, 12 + nOut + nErr),
-        unstr(out.subarray(12 + nOut + nErr)),
-      );
-    } catch (e) {
-      return cls.Exec.of(0, EMPTY, EMPTY, e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const captured = (id: number) => {
-    try {
-      const out = collect(b, unpack(id));
-      // The two streams in one answer, standard output length-prefixed. One call rather than two
-      // because they are one fact: what the child wrote before it stopped.
-      const n = readI32le(out);
-      // A length, then the truncation flag, then the two streams — see `Captured.truncated`.
-      return cls.Captured.of(out.subarray(5, 5 + n), out.subarray(5 + n), out[4] === 1);
-    } catch {
-      return cls.Captured.of(EMPTY, EMPTY, false);
-    }
-  };
-  /**
-   * A `Read`, from a payload whose first byte is the state: 0 data, 1 end, 2 failed.
-   *
-   * A tag rather than "empty means end", which is the ambiguity the enum exists to remove — the wire
-   * had the same hole as the signature did.
-   */
-  const readOf = (out: Uint8Array) => {
-    if (out.length === 0 || out[0] === 1) return cls.Read.End();
-    if (out[0] === 2) return cls.Read.Failed(unstr(out.subarray(1)));
-    return cls.Read.Data(out.subarray(1));
-  };
-  /** For `recv` and `readChunk`. A bridge failure is itself a failed read. */
-  const read = (id: number) => {
-    try {
-      return readOf(collect(b, unpack(id)));
-    } catch (e) {
-      return cls.Read.Failed(e instanceof Error ? e.message : String(e));
-    }
-  };
-  /** A `Change`: the fault category, then the host's message. */
-  const change = (id: number) => {
-    try {
-      const out = collect(b, unpack(id));
-      if (out.length === 0) return cls.Change.of(0, "");
-      return cls.Change.of(out[0], unstr(out.subarray(1)));
-    } catch (e) {
-      // **The category when the error carries one**, which `FileResult` above has always done and this
-      // did not: a refused write read as `failed` where a refused *read* read as `denied`, so one
-      // capability's refusal was a different kind of thing from another's. `FAULT_OTHER` when nothing
-      // said better — the bridge itself failing is not a category this world names.
-      const fault = e instanceof HostCallError ? e.fault : FAULT_OTHER;
-      return cls.Change.of(fault, e instanceof Error ? e.message : String(e));
-    }
-  };
-  const socket = (id: number) => {
-    try {
-      // A handle, this socket's own port, then the peer's address for a socket that came from
-      // `accept` — empty for one that came from `connect` or `listen`, where the peer is either the
-      // caller's own choice or nobody. The port is what makes `listen(…, 0)` usable: the kernel picks
-      // a free one and the program is told which.
-      const out = collect(b, unpack(id));
-      return cls.HostSocket.of(
-        readI32le(out), "", unstr(out.subarray(8)), readI32le(out.subarray(4)), FAULT_NONE);
-    } catch (e) {
-      // **The same line `Change` uses nine lines above**, and the reason is the one written there: a
-      // refusal and a failure are different things to act on, and this answered both with a sentence.
-      // `issues/system/0238c`; `probe.wac` is the program that had to match `"ot granted"` with the
-      // first letter dropped because the hosts spell the refusal two ways.
-      const fault = e instanceof HostCallError ? e.fault : FAULT_OTHER;
-      return cls.HostSocket.of(-1, e instanceof Error ? e.message : String(e), "", 0, fault);
-    }
-  };
-
-  // Bytes and sender in one answer: the peer's port, the peer's address, then the payload. See
-  // `Datagram` in platform.wac for why those arrive together rather than through two calls.
-  const datagram = (id: number) => {
-    try {
-      const out = collect(b, unpack(id));
-      const peerLen = readI32le(out.subarray(4));
-      return cls.Datagram.of(
-        out.slice(8 + peerLen),
-        unstr(out.subarray(8, 8 + peerLen)),
-        readI32le(out),
-        "",
-      );
-    } catch (e) {
-      return cls.Datagram.of(new Uint8Array(0), "", 0, e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const T = {
-    i32: (t: Ticket) => cls.Pending_i32.of(pack(t), i32, settled, drop),
-    text: (t: Ticket) => cls.Pending_string.of(pack(t), text, settled, drop),
-    outcome: (t: Ticket) => cls.Pending_string.of(pack(t), outcome, settled, drop),
-    maybeText: (t: Ticket) => cls.Pending_stringOpt.of(pack(t), maybeText, settled, drop),
-    maybeBytes: (t: Ticket) => cls.Pending_u8ArrOpt.of(pack(t), maybeBytes, settled, drop),
-    bytes: (t: Ticket) => cls.Pending_u8Arr.of(pack(t), bytes, settled, drop),
-    chunk: (t: Ticket) => cls.Pending_u8Arr.of(pack(t), chunk, settled, drop),
-    ok: (t: Ticket) => cls.Pending_bool.of(pack(t), ok, settled, drop),
-    file: (t: Ticket) => cls.Pending_FileResult.of(pack(t), fileResult, settled, drop),
-    stat: (t: Ticket) => cls.Pending_Stat.of(pack(t), stat, settled, drop),
-    dir: (t: Ticket) => cls.Pending_stringArrOpt.of(pack(t), dirNames, settled, drop),
-    socket: (t: Ticket) => cls.Pending_HostSocket.of(pack(t), socket, settled, drop),
-    captured: (t: Ticket) => cls.Pending_Captured.of(pack(t), captured, settled, drop),
-    exec: (t: Ticket) => cls.Pending_Exec.of(pack(t), execAnswer, settled, drop),
-    read: (t: Ticket) => cls.Pending_Read.of(pack(t), read, settled, drop),
-    change: (t: Ticket) => cls.Pending_Change.of(pack(t), change, settled, drop),
-    datagram: (t: Ticket) => cls.Pending_Datagram.of(pack(t), datagram, settled, drop),
-    child: (t: Ticket) => cls.Pending_HostChild.of(pack(t), child, settled, drop),
-  };
-
-  const twoPaths = (from: string, to: string): Uint8Array => {
-    const a = str(from);
-    const bs = str(to);
-    const out = new Uint8Array(4 + a.length + bs.length);
-    out.set(i32le(a.length), 0);
-    out.set(a, 4);
-    out.set(bs, 4 + a.length);
-    return out;
-  };
-  const flagged = (on: boolean, path: string): Uint8Array => {
-    const p = str(path);
-    const out = new Uint8Array(1 + p.length);
-    out[0] = on ? 1 : 0;
-    out.set(p, 1);
-    return out;
-  };
-  /** `head` then `body`, with nothing in between — what `connect` and `send` expect. */
-  const headed = (head: Uint8Array, body: Uint8Array): Uint8Array => {
-    const out = new Uint8Array(head.length + body.length);
-    out.set(head, 0);
-    out.set(body, head.length);
-    return out;
-  };
-  /** A length-prefixed head, so the host can tell where it ends — `writeFile` and `rename`. */
-  /** One byte, so a boolean can travel where a length prefix would be overkill. */
-  const flag = (on: boolean): Uint8Array => new Uint8Array([on ? 1 : 0]);
-
-  const prefixed = (head: Uint8Array, body: Uint8Array): Uint8Array => {
-    const out = new Uint8Array(4 + head.length + body.length);
-    out.set(i32le(head.length), 0);
-    out.set(head, 4);
-    out.set(body, 4 + head.length);
-    return out;
-  };
-
-  /**
-   * An argument vector: a count, then each argument length-prefixed.
-   *
-   * `children.ts`'s `unpackArgs` reads it. Bytes, and a length each, because an argument is bytes — the
-   * old format joined them as text with NUL separators and lost anything that was not valid UTF-8 on the
-   * way through. wac-mono 0065.
-   */
-  const argvBytes = (args: Uint8Array[]): Uint8Array => {
-    let total = 4;
-    for (const a of args) total += 4 + a.length;
-    const out = new Uint8Array(total);
-    out.set(i32le(args.length), 0);
-    let at = 4;
-    for (const a of args) {
-      out.set(i32le(a.length), at);
-      out.set(a, at + 4);
-      at += 4 + a.length;
-    }
-    return out;
-  };
-
-  return cls.Cli.of(
-    /*= argCount */
-    () => T.i32(send(OP.ARG_COUNT, EMPTY)),
-    /*= arg */
-    (i: number) => T.bytes(send(OP.ARG, i32le(i))),
-    /*= env */
-    (name: string) => T.maybeBytes(send(OP.ENV, str(name))),
-
-    /*= readStdin */
-    // stdin and stdout, which need no grant — see the note in platform.wac.
-    () => T.bytes(send(OP.READ_STDIN, EMPTY)),
-    /*= write */
-    // Blocking, matching `platform.wac`: these two act on the current stream, which is
-    // ordered anyway, and are handed to the streaming transforms as bare funcrefs.
-    (bytes: Uint8Array) => {
-      try {
-        collect(b, send(OP.WRITE_STDOUT, bytes));
-        return true;
-      } catch {
-        return false;   // a closed pipe is an answer, not a crash
-      }
-    },
-
-    /*= writeErr */
-    // Standard error as bytes, the same shape as `write` and failing the same way. `warn` is still
-    // the right thing for a diagnostic line; this is for a program relaying someone else's output.
-    (bytes: Uint8Array) => {
-      try {
-        collect(b, send(OP.WRITE_STDERR, bytes));
-        return true;
-      } catch {
-        return false;
-      }
-    },
-
-    /*= readFile */
-    (path: string) => T.file(send(OP.READ_FILE, str(path))),
-    /*= writeFile */
-    // `change`, not `ok`: the answer is a fault category and the host's message.
-    (path: string, body: Uint8Array) =>
-      T.change(send(OP.WRITE_FILE, prefixed(str(path), body))),
-    /*= stat */
-    (path: string) => T.stat(send(OP.STAT, str(path))),
-    /*= linkStat */
-    (path: string) => T.stat(send(OP.LINK_STAT, str(path))),
-    /*= readDir */
-    (path: string) => T.dir(send(OP.READ_DIR, str(path))),
-
-    /*= mkdir */
-    (path: string, parents: boolean) => T.change(send(OP.MKDIR, flagged(parents, path))),
-    /*= remove */
-    (path: string, recursive: boolean) => T.change(send(OP.REMOVE, flagged(recursive, path))),
-    /*= rename */
-    (from: string, to: string) => T.change(send(OP.RENAME, twoPaths(from, to))),
-    /*= setExecutable */
-    // Same `flagged` encoding as `mkdir` and `remove`: one bool, one path. The bool is "should it be
-    // executable", not "toggle" — a toggle would make the result depend on what was there.
-    (path: string, on: boolean) => T.change(send(OP.SET_EXECUTABLE, flagged(on, path))),
-    /*= chmod */
-    // The mode ahead of the path, the same shape `listen` uses for a port — a bool would not carry it,
-    // which is the whole difference from `setExecutable` above.
-    (path: string, mode: number) => T.change(send(OP.CHMOD, headed(i32le(mode), str(path)))),
-
-    /*= openInput */
-    // `change`, not `outcome`, for the same reason `openOutput` uses it: a category the caller can put
-    // into its own words, rather than an errno in somebody's shell diagnostic.
-    (path: string) => T.change(send(OP.OPEN_INPUT, str(path))),
-    /*= readChunk */
-    // A ticket, as `recv`'s is: the three states arrive as a `Read`, so a broken read cannot be
-    // mistaken for the end of the input, and a world that cannot block awaits it like any other.
-    () => T.read(send(OP.READ_CHUNK, EMPTY)),
-    /*= outputError */
-    () => T.text(send(OP.OUTPUT_ERROR, EMPTY)),
-    /*= openOutput */
-    // `change`, not `outcome`: the answer is a fault category and the host's message, so a shell can
-    // say what GNU says rather than passing an errno through.
-    (path: string) => T.change(send(OP.OPEN_OUTPUT, str(path))),
-
-    /*= connect */
-    (host: string, port: number) => T.socket(send(OP.CONNECT, headed(i32le(port), str(host)))),
-    /*= listen */
-    // The port, then the address — `headed` puts the fixed-width part first, as `spawn` does.
-    (address: string, port: number) => T.socket(send(OP.LISTEN, headed(i32le(port), str(address)))),
-    /*= accept */
-    (handle: number) => T.socket(send(OP.ACCEPT, i32le(handle))),
-    /*= recv */
-    (handle: number) => T.read(send(OP.RECV, i32le(handle))),
-    /*= send */
-    (handle: number, body: Uint8Array) => T.ok(send(OP.SEND, headed(i32le(handle), body))),
-    /*= closeSocket */
-    (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
-    /*= closeSend */
-    (handle: number) => { hostCall(b, OP.CLOSE_SEND, i32le(handle)); },
-    /*= openFile */
-    // How, then the path — the fixed-width part first, as everywhere.
-    (path: string, how: number) => T.socket(send(OP.OPEN_FILE, headed(i32le(how), str(path)))),
-    /*= closeFile */
-    (handle: number) => T.ok(send(OP.CLOSE_FILE, i32le(handle))),
-    /*= closeOutput */
-    (toErr: boolean) => T.ok(send(OP.CLOSE_OUTPUT, i32le(toErr ? 1 : 0))),
-
-    /*= bindDatagram */
-    // The port, then the address, exactly as `listen` — the same shape because it is the same question.
-    (address: string, port: number) =>
-      T.socket(send(OP.BIND_DATAGRAM, headed(i32le(port), str(address)))),
-    /*= receiveFrom */
-    (handle: number) => T.datagram(send(OP.RECEIVE_FROM, i32le(handle))),
-    /*= sendTo */
-    // Handle, port, then the address length-prefixed so the payload after it can be anything.
-    (handle: number, address: string, port: number, body: Uint8Array) => {
-      const who = str(address);
-      const head = new Uint8Array(12 + who.length + body.length);
-      head.set(i32le(handle), 0);
-      head.set(i32le(port), 4);
-      head.set(i32le(who.length), 8);
-      head.set(who, 12);
-      head.set(body, 12 + who.length);
-      return T.ok(send(OP.SEND_TO, head));
-    },
-
-    /*= spawn */
-    (
-      // **Bytes, because a program is not text.** This was `string` and every caller reached it
-      // through `string.fromBytes`, which is lossless only while a program happens to be a UTF-8
-      // JavaScript bundle. A wasm module is not, and a module that describes itself is what `spawn`
-      // is meant to take.
-      source: Uint8Array,
-      args: Uint8Array[],
-      grants: number,
-      cwd: string,
-      // **Flags, not a bool** — `INHERIT_IN | INHERIT_OUT`. One `i32` because a capability may not
-      // have seven parameters (`issues/lang/0291c`), and because `grants` is already one.
-      inherit: number,
-      serveFs: boolean,
-    ) =>
-      // The grant flags, then the source length-prefixed, then the arguments length-prefixed and
-      // NUL-separated — the same shape `readDir` answers with, for the same reason: a filename or an
-      // argument may contain anything but a NUL — and then the child's directory.
-      T.child(
-        send(OP.SPAWN,
-          headed(
-            i32le(grants),
-            prefixed(
-              source,
-              headed(
-                argvBytes(args),
-                prefixed(str(cwd), headed(i32le(inherit), flag(serveFs))),
-              ),
-            ),
-          ),
-        ),
-      ),
-    /*= spawnSelf */
-    // No source: the host has this program's own bundle, because it is what started it. The payload
-    // is the grants and the arguments, in the shape `spawn` uses minus the part that is already here.
-    (
-      args: Uint8Array[],
-      grants: number,
-      cwd: string,
-      // The `INHERIT_*` mask, as `spawn` takes: `DETACHED` (4) is the program's own business — std
-      // keeps the ticket from stopping the child — so the input and output bits are the host's, in one byte.
-      inherit: number,
-      serveFs: boolean,
-    ) =>
-      T.child(
-        send(OP.SPAWN_SELF,
-          headed(
-            i32le(grants),
-            headed(argvBytes(args), prefixed(str(cwd), headed(new Uint8Array([inherit & 3]), flag(serveFs)))),
-          ),
-        ),
-      ),
-    /*= closeFeed */
-    (handle: number) => { hostCall(b, OP.CLOSE_FEED, i32le(handle)); },
-    /*= exitCode */
-    (handle: number) => T.i32(send(OP.EXIT_CODE, i32le(handle))),
-    /*= cwd */
-    () => T.text(send(OP.CWD, EMPTY)),
-
-    /*= pushChild */
-    // Everything the child's world is, in one payload, so a push is one round trip.
-    (argv: string[], stdin: Uint8Array, cwd: string, inheritInput: boolean) =>
-      T.ok(send(OP.PUSH_CHILD,
-        headed(
-          i32le(argv.length),
-          headed(i32le(inheritInput ? 1 : 0), prefixed(str(argv.join("\u0000")), prefixed(str(cwd), stdin))),
-        ),
-      )),
-    /*= popChild */
-    () => T.captured(send(OP.POP_CHILD, EMPTY)),
-    /*= execWithIn */
-    // Path, then the argument *vector* joined by NULs — which is why it is a vector and not a shell
-    // line: a NUL cannot appear in an argument, so nothing here can be re-split by accident. The
-    // environment travels the same way, as `NAME=value` strings, and `inherit` leads as one byte,
-    // because a host has to know what to do with the child's streams before it has a child.
-    (
-      path: string,
-      args: string[],
-      stdin: Uint8Array,
-      env: string[],
-      clearEnv: boolean,
-      inherit: boolean,
-      cwd: string,
-    ) =>
-      T.exec(send(OP.EXEC_WITH_IN,
-        headed(
-          flag(clearEnv),
-          headed(
-            flag(inherit),
-            prefixed(
-              str(path),
-              prefixed(
-                str(args.join("\u0000")),
-                // The directory sits between the environment and the input, which is where
-                // `child.ts`'s `unpackExec` reads it. `issues/system/0290b`.
-                prefixed(str(env.join("\u0000")), prefixed(str(cwd), stdin)),
-              ),
-            ),
-          ),
-        ),
-      )),
-    /*= load */
-    // **No opcode: the module is instantiated right here.** Its `Core` and `Cli` are built by
-    // `worldFor` against *this* bridge, so the launcher serves the loaded module exactly as it serves
-    // the program that loaded it and cannot tell them apart. That is what makes this small — the
-    // alternative, loading in the launcher, would need a second implementation of the whole world with
-    // no bridge under it. `issues/system/0240c`.
-    (module: Uint8Array, asked: number) => {
-      try {
-        const manifest = manifestIn(module);
-        if (manifest === null) {
-          return cls.LoadedModule.of(-1, "this module carries no wac.manifest section");
-        }
-        const driven = drive(module, manifest);
-        const app = asAppModule(driven);
-        const handle = nextLoaded++;
-        loadedModules.set(handle, {
-          driven,
-          app,
-          // Built once per module rather than per call: `Core` and `Cli` register one wasm function
-          // per host function in the *module's* funcref table, and only sixteen per signature can be
-          // live — so a world rebuilt per call fails on the seventeenth, a long way from the cause.
-          // `entry.ts` learnt this about `main` being called more than once.
-          // **Narrowed to what was asked for** — `issues/system/0242c`. Without this a loaded module
-          // got the loader's whole world: `wac test --allow-read` handed a test the *command's* write
-          // capability and a test wrote a file, where the native host failed it. The launcher cannot
-          // do the narrowing because it cannot tell this module's calls from its loader's, so the
-          // world it is handed is where it lives.
-          world: worldFor(b, app, asked),
-          exports: new Map(manifest.exports.map((e) => [e.name, e])),
-        });
-        return cls.LoadedModule.of(handle, "");
-      } catch (e) {
-        // A module that will not compile or instantiate is a value the caller acts on, exactly as a
-        // child that would not start is. `Child` has the same shape for the same reason.
-        return cls.LoadedModule.of(-1, e instanceof Error ? e.message : String(e));
-      }
-    },
-    /*= call */
-    // The signature comes from the **manifest**, not from the caller: a module says what its exports
-    // take and answer, so nothing has to describe it twice. The set is closed — see `CallResult`.
-    (handle: number, name: string, arg: number) => {
-      const m = loadedModules.get(handle);
-      if (m === undefined) return cls.CallResult.of(2, "no module on handle " + handle, 0);
-      const sig = m.exports.get(name);
-      const f = m.app[name];
-      if (sig === undefined || typeof f !== "function") {
-        return cls.CallResult.of(2, "no export named " + name, 0);
-      }
-      // What to hand it. `Core`/`Cli` in that order, or one `i32`, or nothing — and anything else is
-      // refused rather than guessed at, which is what keeps `status == 3` meaningful.
-      const world = m.world;
-      let args: unknown[];
-      if (sig.params.length === 0) args = [];
-      else if (sig.params.length === 1 && sig.params[0] === "i32") args = [arg];
-      else if (
-        sig.params.length <= 2 &&
-        sig.params.every((t: string, i: number) => t === ["Core", "Cli"][i])
-      ) {
-        args = world.slice(0, sig.params.length);
-        // A module whose `main` named no capabilities has no `Core` class, so `worldFor` gave nothing
-        // — and calling an export that wants one with `undefined` would trap inside the module rather
-        // than say why. `issues/lang/0107` is the rule this reads.
-        if (args.length < sig.params.length) {
-          return cls.CallResult.of(3, "this module was built without " + sig.params.join(" and "), 0);
-        }
-      } else return cls.CallResult.of(3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0);
-      if (sig.ret !== "" && sig.ret !== "void" && sig.ret !== "i32" && sig.ret !== "string") {
-        return cls.CallResult.of(3, name + " answers " + sig.ret, 0);
-      }
-      try {
-        const out = (f as CallableFunction)(...args);
-        if (sig.ret === "string") {
-          return cls.CallResult.of(0, String(m.driven.fromWasm("string", out) ?? ""), 0);
-        }
-        if (sig.ret === "i32") return cls.CallResult.of(0, "", Number(out) | 0);
-        return cls.CallResult.of(0, "", 0);
-      } catch (e) {
-        // **The whole point.** A `test_traps_*` export passes by trapping, and 389 of this
-        // repository's test exports are one. The handle stays usable: wac has no module-level state
-        // for a trap to leave behind, which is the same reason those tests have always been able to
-        // run beside their neighbours.
-        //
-        // **What the program said, not what the engine said.** `trap "…"` leaves its sentence in a
-        // global and `$trap$message` reads it once the trap has unwound (`issues/lang/0147`); a bare
-        // throw from here reported `unreachable` instead, which is the engine describing the
-        // instruction rather than the program describing the moment. `wacInstance.ts:121` and
-        // `wacBindgen.ts`'s `TRAP_GUARD` have always done this — `Cli.call` reaches an export
-        // directly, with no glue around it, so it was the one caller with nowhere for the message to
-        // come from. `commandparity_test.wac` has the row; before this the native said "trapped: the
-        // reason it stopped" and Deno and Node said "trapped: unreachable" for one file.
-        //
-        // Empty when there is none, which is an engine trap — a bounds check, a null dereference —
-        // and is what the native host reports for one. That drops the engine's own words on this
-        // side; they are worth having, and adding them is a change to both hosts rather than a
-        // reason for these two to differ.
-        //
-        // The value read is stale if an earlier trap in this module said something and this one did
-        // not: nothing clears the global. `issues/lang/0254c`, which is not this bug and is now
-        // reachable from here too.
-        let said = "";
-        try {
-          const read = m.driven.exports.$trap$message;
-          const s = typeof read === "function" ? (read as CallableFunction)() : null;
-          if (s !== null && s !== undefined) said = String(m.driven.fromWasm("string", s) ?? "");
-        } catch { /* asking a module that has just trapped is itself allowed to fail */ }
-        return cls.CallResult.of(1, said, 0);
-      }
-    },
-    /*= unload */
-    // Forgiving of a handle that is not one: a caller tidying up after a failure should not have to
-    // know how far it got.
-    (handle: number) => { loadedModules.delete(handle); },
-    /*= validated */
-    // **No opcode, like `load`: the engine is in this realm.** `WebAssembly.validate` answers the
-    // question directly and is the API the wac field is named after, but it answers a bare boolean —
-    // so a rejection is compiled a second time to get the engine's sentence out of the exception. Only
-    // on the failing path, where the module is already known to be small enough to be wrong.
-    (module: Uint8Array) => {
-      // `as BufferSource`, which the repository spells the same way in four other places: a
-      // `Uint8Array` over an `ArrayBufferLike` is not an `ArrayBufferView<ArrayBuffer>` to
-      // TypeScript, because the buffer *could* be shared. This one never is — it came from a wac
-      // `u8[]` through `marshal` — and copying it to prove that would copy a module per call.
-      const bytes = module as BufferSource;
-      if (WebAssembly.validate(bytes)) return "";
-      try {
-        new WebAssembly.Module(bytes);
-        // Validate said no and compile said yes. Nothing should reach here; saying so beats "" ,
-        // which would report the module as accepted by the field whose whole job is the answer.
-        return "the engine disagreed with itself about this module";
-      } catch (e) {
-        return e instanceof Error ? e.message : String(e);
-      }
-    },
-    /*= sched */
-    // The scheduler this world dispatches on — the same object `Core` was given, so a `Cli`
-    // ticket's continuation lands where `core.drain()` will find it rather than nowhere.
-    sched ?? cls.Sched.create(),
-  );
+  }
 }
 
+// ── Replies, in the one shape ─────────────────────────────────────────────────────────────────
+
+/** A reply whose payload is a socket: its handle, its own port, then the peer. */
+const socketOf = (out: Uint8Array): Flat =>
+  flat({ n: BigInt(readI32le(out)), m: BigInt(readI32le(out, 4)), text: unstr(out.subarray(8)) });
+
+/** A `Change` reply: empty when it worked, else the fault category then the host's message. */
+const changeOf = (out: Uint8Array): Flat =>
+  out.length === 0 || out[0] === FAULT_NONE ? flat({ flags: 1 }) : flat({ fault: out[0], text: unstr(out.subarray(1)) });
+
+/** A `Read` reply, whose first byte is the state: 0 data, 1 end, 2 failed. */
+const readOf = (out: Uint8Array): Flat => {
+  if (out.length === 0 || out[0] === 1) return flat({ flags: 1 });
+  if (out[0] === 2) return flat({ fault: FAULT_OTHER, text: unstr(out.subarray(1)) });
+  return flat({ bytes: out.slice(1) });
+};
+
+/** The launcher's reply to `op`, flattened as design 0013's answer table says. */
+function answerOf(op: number, out: Uint8Array): Flat {
+  switch (op) {
+    case OP.NOW_MILLIS: case OP.MONOTONIC_NANOS: case OP.SLEEP_MILLIS:
+      return flat({ n: readI64le(out) });
+    case OP.ARG_COUNT: case OP.EXIT_CODE:
+      return flat({ n: BigInt(readI32le(out)) });
+    case OP.RANDOM_BYTES: case OP.ARG: case OP.READ_STDIN: case OP.READ_FILE:
+      return flat({ bytes: out, flags: 1 });
+    case OP.ENV:
+      // One byte of presence in front: an unset variable and an empty one are different.
+      return out[0] === 1 ? flat({ bytes: out.slice(1), flags: 1 }) : flat({});
+    case OP.CWD:
+      return flat({ text: unstr(out) });
+    case OP.READ_CHUNK: case OP.RECV:
+      return readOf(out);
+    case OP.WRITE_FILE: case OP.MKDIR: case OP.REMOVE: case OP.RENAME: case OP.SET_EXECUTABLE: case OP.CHMOD:
+      return changeOf(out);
+    case OP.WRITE_STDOUT: case OP.WRITE_STDERR: case OP.SEND: case OP.SEND_TO: case OP.CLOSE_FILE:
+    case OP.CLOSE_OUTPUT:
+      return flat({ flags: 1 });
+    case OP.STAT: case OP.LINK_STAT: {
+      // exists, isFile, isDir as bytes, size and mtime as little-endian i64s, isSymlink, the fault,
+      // isExecutable, then the mode.
+      const fault = out[STAT_FAULT] ?? 0;
+      if (fault !== FAULT_NONE) return flat({ fault });
+      const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+      const kind = (out[0] === 1 ? 1 : 0) | (out[1] === 1 ? 2 : 0) | (out[2] === 1 ? 4 : 0) |
+        (out[19] === 1 ? 8 : 0) | (out[STAT_EXEC] === 1 ? 16 : 0);
+      const mode = out.length >= STAT_MODE + 4 ? dv.getUint32(STAT_MODE, true) & 0xffff : 0;
+      return flat({ n: dv.getBigInt64(3, true), m: dv.getBigInt64(11, true), flags: kind | (mode << 16) });
+    }
+    case OP.READ_DIR: {
+      // NUL-separated from the launcher; std reads each name followed by a NUL.
+      const names = out.length === 0 ? [] : unstr(out).split("\u0000");
+      return flat({ bytes: str(names.map((n) => n + "\u0000").join("")), flags: 1 });
+    }
+    case OP.CONNECT: case OP.LISTEN: case OP.ACCEPT: case OP.BIND_DATAGRAM: case OP.OPEN_FILE:
+      return socketOf(out);
+    case OP.RECEIVE_FROM: {
+      // The peer's port, the peer's address length-prefixed, then the payload — in one answer.
+      const peerLen = readI32le(out, 4);
+      return flat({ bytes: out.slice(8 + peerLen), text: unstr(out.subarray(8, 8 + peerLen)), n: BigInt(readI32le(out)) });
+    }
+    case OP.SPAWN: case OP.SPAWN_SELF: {
+      // Three handles, then — when the first is negative — why there is no child: -2 is a host that
+      // cannot start programs at all.
+      const handle = readI32le(out);
+      if (handle < 0) {
+        return flat({ fault: handle === -2 ? FAULT_UNSUPPORTED : FAULT_OTHER, text: unstr(out.subarray(12)) });
+      }
+      const err = BigInt.asUintN(32, BigInt(readI32le(out, 4)));
+      const fs = BigInt(readI32le(out, 8));
+      return flat({ n: BigInt(handle), m: BigInt.asIntN(64, err | (fs << 32n)) });
+    }
+    case OP.EXEC: {
+      // Status, two lengths, the streams, then why it could not be started.
+      const nOut = readI32le(out, 4);
+      const nErr = readI32le(out, 8);
+      const why = unstr(out.subarray(12 + nOut + nErr));
+      if (why !== "") return flat({ fault: FAULT_OTHER, text: why });
+      return flat({ n: BigInt(readI32le(out) | 0), bytes: out.slice(12, 12 + nOut + nErr), m: BigInt(nOut) });
+    }
+    default:
+      return flat({});
+  }
+}
+
+/** A request whose answer, if it is dropped before it is read, still holds something to close. */
+const closerOf = (op: number): number | null => {
+  switch (op) {
+    case OP.CONNECT: case OP.LISTEN: case OP.ACCEPT: case OP.BIND_DATAGRAM: case OP.SPAWN: case OP.SPAWN_SELF:
+      return OP.CLOSE_SOCKET;
+    case OP.OPEN_FILE:
+      return OP.CLOSE_FILE;
+    default:
+      return null;
+  }
+};
+
 /**
- * The capabilities this module actually asked for, in `main`'s order.
- *
- * **A program gets what it declared and nothing else.** `main(Core)` is handed a `Core`; building a
- * `Cli` for it would be handing over a capability the program never named, and the module has no
- * `Cli` class to build one from — the compiler binds a capability's type only when a signature
- * reaches it. The host used to build both and pass both, which worked only because every module
- * exported constructors for every capability whether its program mentioned them or not.
- * `issues/lang/0107`.
+ * Requests answered by a round trip this worker blocks on, inside `request` — a clock, an argument,
+ * a write to a stream, a close. A write stays in order this way, and `Module.call`'s `wait` on an
+ * argument cannot find the answer missing.
  */
+const AT_ONCE = new Set<number>([
+  OP.NOW_MILLIS, OP.MONOTONIC_NANOS, OP.RANDOM_BYTES, OP.ARG_COUNT, OP.ARG, OP.ENV, OP.CWD,
+  OP.WRITE_STDOUT, OP.WRITE_STDERR, OP.CLOSE_OUTPUT, OP.CLOSE_SOCKET, OP.CLOSE_SEND, OP.CLOSE_FEED,
+]);
+
+// ── Modules loaded into this realm ────────────────────────────────────────────────────────────
+
 /**
  * The modules this program has loaded, by handle — `issues/system/0240c`.
  *
- * **Module-scope rather than per `Cli`**, because nothing ties a handle to the `Cli` that took it: a
- * frame used to forward `load`/`call`/`unload` unchanged, so one taken through one `Cli` was used
- * through another, and the table should not care which.
  * One program is one realm here: a worker runs one program at a time, and a spawned child is a
  * different worker with its own copy of this module.
  */
 type LoadedModule = {
   driven: Driven;
   app: Record<string, unknown>;
-  /** `[Core]`, `[Core, Cli]` or `[]` — built once, because funcref slots are finite. See `load`. */
-  world: unknown[];
+  /** The host value its tests are handed, built once at load: funcref slots are finite. */
+  host: unknown;
   exports: Map<string, ExportSig>;
 };
 const loadedModules = new Map<number, LoadedModule>();
 /** From 1, so that 0 is never a valid handle and a zeroed field cannot name a module. */
 let nextLoaded = 1;
 
-export function worldFor(
-  b: Bridge,
-  app: Record<string, unknown>,
-  /** A grant mask for a *loaded* module; absent for a program, whose grants the launcher enforces. */
-  grants?: number,
-): unknown[] {
-  // **A `main` that declared nothing gets nothing**, which is the same rule one step further: the classes
-  // are in the module because the program named the *types*, so a program that named none has no `Core`
-  // to build from and `Core.of` is `undefined.of`. The two Rust hosts read `main`'s parameter list for
-  // this; here the absent class is the same signal, and it is the one this side has.
-  if (app.Core === undefined) return [];
-  // **One scheduler for both.** `Core` and `Cli` are two faces of one world, and a `Cli` ticket
-  // registered on a scheduler `core.drain()` does not run is a continuation that never fires.
-  const sched = (app as unknown as { Sched: PlatformClasses["Sched"] }).Sched.create();
-  const out: unknown[] = [coreOf(b, app as unknown as Parameters<typeof coreOf>[1], sched)];
-  if (app.Cli !== undefined) {
-    out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1], grants, sched));
+/** `load`: drive the module in this realm, its requests served over this same bridge. */
+function load(b: Bridge, module: Uint8Array, asked: number): Flat {
+  try {
+    const manifest = manifestIn(module);
+    if (manifest === null) return flat({ fault: FAULT_OTHER, text: "this module carries no wac.manifest section" });
+    const driven = drive(module, manifest);
+    const app = asAppModule(driven, manifest);
+    const handle = nextLoaded++;
+    loadedModules.set(handle, {
+      driven,
+      app,
+      // **Narrowed to what was asked for** — `issues/system/0242c`. The launcher cannot tell this
+      // module's calls from its loader's, so the narrowing is in the host it is handed.
+      host: hostFor(b, app, asked),
+      exports: new Map(manifest.exports.map((e) => [e.name, e])),
+    });
+    return flat({ n: BigInt(handle) });
+  } catch (e) {
+    // A module that will not compile or instantiate is a value the caller acts on.
+    return flat({ fault: FAULT_OTHER, text: e instanceof Error ? e.message : String(e) });
   }
-  return out;
+}
+
+/** `call`: `flags` the status — 0 returned, 1 trapped, 2 no such export, 3 not callable — `n` the value. */
+function call(handle: number, name: string, arg: number): Flat {
+  const m = loadedModules.get(handle);
+  if (m === undefined) return flat({ flags: 2, text: "no module on handle " + handle });
+  const sig = m.exports.get(name);
+  const f = m.app[name];
+  if (sig === undefined || typeof f !== "function") return flat({ flags: 2, text: "no export named " + name });
+  let args: unknown[];
+  if (sig.params.length === 0) args = [];
+  else if (sig.params.length === 1 && sig.params[0] === "i32") args = [arg];
+  else if (sig.params.length === 1 && sig.params[0] === "__WacHost") {
+    if (m.host === undefined) return flat({ flags: 3, text: "this module was built without __WacHost" });
+    args = [m.host];
+  } else return flat({ flags: 3, text: "cannot call " + name + "(" + sig.params.join(", ") + ")" });
+  if (sig.ret !== "" && sig.ret !== "void" && sig.ret !== "i32" && sig.ret !== "string") {
+    return flat({ flags: 3, text: name + " answers " + sig.ret });
+  }
+  try {
+    const out = (f as CallableFunction)(...args);
+    if (sig.ret === "string") return flat({ text: String(out ?? "") });
+    if (sig.ret === "i32") return flat({ n: BigInt(Number(out) | 0) });
+    return flat({});
+  } catch {
+    // **What the program said, not what the engine said.** `trap "…"` leaves its sentence in a global
+    // `$trap$message` reads once the trap has unwound (`issues/lang/0147`). Empty for an engine trap —
+    // a bounds check, a null dereference — as the native host reports one.
+    let said = "";
+    try {
+      const read = m.driven.exports.$trap$message;
+      const s = typeof read === "function" ? (read as CallableFunction)() : null;
+      if (s !== null && s !== undefined) said = String(m.driven.fromWasm("string", s) ?? "");
+    } catch { /* asking a module that has just trapped is itself allowed to fail */ }
+    return flat({ flags: 1, text: said });
+  }
+}
+
+/** `validate`: the engine is in this realm. A rejection is compiled again to get its sentence. */
+function validate(module: Uint8Array): Flat {
+  const bytes = module as BufferSource;
+  if (WebAssembly.validate(bytes)) return flat({});
+  try {
+    new WebAssembly.Module(bytes);
+    return flat({ fault: FAULT_OTHER, text: "the engine disagreed with itself about this module" });
+  } catch (e) {
+    return flat({ fault: FAULT_OTHER, text: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+// ── The host ──────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The value a program's `main` and its tests are handed, or `undefined` for a module that exports no
+ * `__wacHost` — a `main` that declared nothing gets nothing.
+ *
+ * `grants` narrows a *loaded* module (`issues/system/0242c`); a program's own grants are the
+ * launcher's, which refuses what the build did not ask for.
+ */
+export function hostFor(b: Bridge, app: Record<string, unknown>, grants?: number): unknown {
+  const make = app.__wacHost;
+  const answered = app.__wacAnswered;
+  if (typeof make !== "function" || typeof answered !== "function") return undefined;
+
+  /** Each request in flight on the bridge: what was asked, and its slot. */
+  const flights = new Map<number, { op: number; t: Ticket }>();
+  /** Dropped before they were answered, holding something to close when they are. */
+  let dropped: { op: number; t: Ticket }[] = [];
+  let h: unknown = undefined;
+
+  const deliver = (id: number, f: Flat) => {
+    if (id === 0) return;
+    (answered as CallableFunction)(h, id, f.fault, f.text, f.bytes, f.n, f.m, f.flags);
+  };
+  const reply = (op: number, t: Ticket): Flat => {
+    try {
+      return answerOf(op, collect(b, t));
+    } catch (e) {
+      return failure(e);
+    }
+  };
+  /** Close what a dropped request's answer opened, once it has one. */
+  const reap = () => {
+    if (dropped.length === 0) return;
+    const still: typeof dropped = [];
+    for (const d of dropped) {
+      if (!isDone(b, d.t)) { still.push(d); continue; }
+      const f = reply(d.op, d.t);
+      const close = closerOf(d.op);
+      if (f.fault === FAULT_NONE && close !== null) {
+        try { hostCall(b, close, i32le(Number(f.n))); } catch { /* it closed itself */ }
+      }
+    }
+    dropped = still;
+  };
+  /**
+   * Every one of `ids` whose answer has landed, delivered. A snapshot: delivering may ask again.
+   *
+   * **Only those asked about.** An answer nobody waits for stays the host's (design/system/0013, settled before
+   * step 6), so a request abandoned without being waited for can still be dropped and what it opened closed.
+   */
+  const deliverReady = (ids: number[]) => {
+    for (const id of ids) {
+      const f = flights.get(id);
+      if (f === undefined || !isDone(b, f.t)) continue;
+      flights.delete(id);
+      deliver(id, reply(f.op, f.t));
+    }
+  };
+
+  const request = (op: number, id: number, a64: bigint, b64: bigint, text: string, bytes: Uint8Array) => {
+    reap();
+    const a = Number(a64);
+    const bb = Number(b64);
+    if (op === 0) {
+      // **An answer nobody has read is still the host's** (design 0013): in flight, its slot is given up,
+      // and what it opens is closed when it lands.
+      const f = flights.get(id);
+      if (f === undefined) return;
+      flights.delete(id);
+      if (closerOf(f.op) === null) cancel(b, f.t);
+      else dropped.push(f);
+      return;
+    }
+    let need = NEEDS[op];
+    if (op === OP.OPEN_FILE) need = a === 0 ? GRANT_READ : GRANT_WRITE;
+    if (need !== undefined && grants !== undefined && (grants & need) === 0) {
+      return deliver(id, flat({ fault: FAULT_NOT_GRANTED, text: REFUSED }));
+    }
+    switch (op) {
+      case OP.LOAD: return deliver(id, load(b, bytes, a));
+      case OP.CALL: return deliver(id, call(a, text, bb));
+      case OP.UNLOAD: loadedModules.delete(a); return deliver(id, flat({}));
+      case OP.VALIDATE: return deliver(id, validate(bytes));
+    }
+    const payload = payloadOf(op, a, bb, text, bytes);
+    if (payload === null) {
+      return deliver(id, flat({ fault: FAULT_UNSUPPORTED, text: `this host serves no request ${op}` }));
+    }
+    if (AT_ONCE.has(op)) {
+      let f: Flat;
+      try {
+        f = answerOf(op, hostCall(b, op, payload));
+      } catch (e) {
+        f = failure(e);
+      }
+      return deliver(id, f);
+    }
+    let t: Ticket;
+    try {
+      t = submit(b, op, payload);
+    } catch (e) {
+      return deliver(id, failure(e));
+    }
+    flights.set(id, { op, t });
+  };
+
+  /**
+   * Park until one of `ids` is answered, delivering every answer that has landed, and say which by its
+   * **index** in `ids`; -1 when nothing did in time. The wait is on the completion counter in this
+   * worker's own memory, and the deadline is `Atomics.wait`'s own timeout, so the host is not involved.
+   */
+  const waitAny = (ids: ArrayLike<number>, millis: number): number => {
+    reap();
+    const want = Array.from(ids);
+    // Answered already — delivered by an earlier wait or inside `request`.
+    const gone = want.findIndex((id) => !flights.has(id));
+    if (gone >= 0) return gone;
+    const tickets = want.map((id) => flights.get(id)!.t);
+    const woke = waitOn(b, tickets, millis);
+    deliverReady(want);
+    if (woke === null) return -1;
+    return tickets.findIndex((t) => t.slot === woke.slot && t.gen === woke.gen);
+  };
+
+  // Thrown, not acted on: the throw unwinds the program's wasm frames to whoever called `main`.
+  const exitWith = (code: number) => { throw new WacExit(code); };
+
+  // **A round trip per ask, and that is also why it works.** While the worker is parked the page's main
+  // thread runs, and in a page that is where a keydown arrives — so parking is what lets the host have
+  // seen the `^C`.
+  const interrupted = (): boolean => readI32le(hostCall(b, OP.ASK_INTERRUPT, EMPTY)) !== 0;
+
+  h = (make as CallableFunction)(request, waitAny, exitWith, interrupted);
+  return h;
+}
+
+/** `main`'s arguments: the host value when it takes one, nothing when it declared nothing. */
+export function mainArgs(b: Bridge, app: Record<string, unknown>): unknown[] {
+  const h = hostFor(b, app);
+  return h === undefined ? [] : [h];
 }
 
 export { HostCallError };

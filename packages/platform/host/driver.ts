@@ -10,13 +10,11 @@
 //
 // ## Why this is smaller than it sounds
 //
-// 211 distinct type strings cross the boundary across this repository, and they are seven shapes.
-// Everything named — `Stat`, `Change`, `Pending<i64>`, `Cli` — is an **opaque reference the host
-// passes straight back**; it never looks inside one it did not build, and the ones it does build
-// have named constructors in the manifest. So what needs conversion is: the scalars, `string`,
-// `u8[]`, `string[]`, `i32[]`, and `u8[][]`.
+// Everything named — `__WacHost`, or a struct an export answers — is an **opaque reference the host
+// passes straight back**; it never looks inside one. So what needs conversion is the scalars,
+// `string`, the arrays, and a function, which becomes a funcref through the module's own helper.
 
-import type { Manifest, StructSpec } from "../native.ts";
+import type { Manifest } from "../native.ts";
 import {
   type Bound,
   fromWasm as marshalFrom,
@@ -24,37 +22,14 @@ import {
   toWasm as marshalTo,
 } from "./marshal.ts";
 
-/** What a host holds: the module's exports, plus the constructors it builds capabilities with. */
+/** What a host holds: the module's exports, and the conversions across its boundary. */
 export type Driven = {
   exports: Record<string, unknown>;
-  /**
-   * `Core.of(...)`, `Pending_i64.of(...)` — the shape `entry.ts` expects of a bundle.
-   *
-   * **And an enum's variants, which are constructors too**: `Read.Failed(why)` is how a host answers
-   * with one. They are indexed here beside `of` and `create` rather than in a table of their own,
-   * because a caller reaching for `cls.Read.Failed` does not care which kind of type it was.
-   */
-  classes: Record<
-    string,
-    { of?(...a: unknown[]): unknown; create?(): unknown } & Record<
-      string,
-      ((...a: unknown[]) => unknown) | undefined
-    >
-  >;
   /** Convert a value the module returned into something JavaScript can read. */
   fromWasm(type: string, v: unknown): unknown;
-  /** And the other way, for what a capability answers with. */
+  /** And the other way, for what a host hands it. */
   toWasm(type: string, v: unknown): unknown;
 };
-
-/** `Pending<i64>` is `Pending_i64` to a host — bindgen's name for it (spec ch48). */
-export function hostName(wac: string): string {
-  return wac
-    .replace(/\?/g, "Opt")
-    .replace(/\[\]/g, "Arr")
-    .replace(/[^A-Za-z0-9_]+/g, "_")
-    .replace(/_+$/g, "");
-}
 
 /** Everything the module exports, by name — the one place a `$bind$` name is looked up. */
 function fn(exports: Record<string, unknown>, name: string): CallableFunction {
@@ -68,9 +43,9 @@ function fn(exports: Record<string, unknown>, name: string): CallableFunction {
 /**
  * Instantiate `wasm` and present it the way a bundle does.
  *
- * **The slot registry lives here**, as it does in generated glue. A capability struct is built by
- * handing it JavaScript functions, and a module cannot hold one: each is registered in a slot of
- * its signature and becomes a funcref through `$bind$fnref_<j>`. When the module calls back through
+ * **The slot registry lives here**, as it does in generated glue. A host's calls are JavaScript
+ * functions, and a module cannot hold one: each is registered in a slot of its signature and becomes
+ * a funcref through `$bind$fnref_<j>`. When the module calls back through
  * `wac.cb<j>(slot, …)` the function in that slot is what answers, with its arguments converted by
  * the types the manifest gives them.
  */
@@ -114,7 +89,6 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
 
   const driven: Driven = {
     exports,
-    classes: {},
     fromWasm(type, v) {
       if (v === null || v === undefined) return null;
       return marshalFrom(bound, shapeOf(type), v);
@@ -151,49 +125,30 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
     },
   };
 
-  // The constructors, named as a host names them: `Pending<i64>` is `Pending_i64`.
-  //
-  // **`create` as well as `of`**, because a capability field is not always something a host
-  // implements: `Core.sched` is a value the module makes for itself, and a host's whole part in it is
-  // calling that. A struct with neither is one nobody can build and is skipped as before.
-  for (const s of manifest.structs) {
-    const ctor = s.methods.find((m) => m.name === "of" && m.isStatic);
-    const make = s.methods.find((m) => m.name === "create" && m.isStatic);
-    // **An enum has neither `of` nor `create` and is still constructible.** Skipping on that pair
-    // alone left `cls.Read` undefined, and `provider.ts` answering a read with `cls.Read.Failed(…)`
-    // died on *Cannot read properties of undefined*. `wac app-run` on a JavaScript host could not
-    // start `packages/box`'s shell for this reason — the manifest had the variants all along, with a
-    // `make` export each, and nothing read them. `issues/system/0276c`.
-    if (ctor === undefined && make === undefined && s.variants.length === 0) continue;
-    const entry: Driven["classes"][string] = {};
-    if (ctor !== undefined) {
-      entry.of = (...a: unknown[]) =>
-        fn(exports, ctor.export)(...ctor.params.map((t, i) => driven.toWasm(t, a[i])));
-    }
-    if (make !== undefined) entry.create = () => fn(exports, make.export)();
-    for (const v of s.variants) {
-      // The payload's types come from the manifest too, so a variant carrying a string is marshalled
-      // the same way a method parameter of that type would be. A variant with no payload is a call
-      // with no arguments, which falls out of the same line.
-      entry[v.name] = (...a: unknown[]) =>
-        fn(exports, v.make)(...v.fields.map((f, i) => driven.toWasm(f.type, a[i])));
-    }
-    driven.classes[hostName(s.name)] = entry;
-  }
   return driven;
 }
 
 /**
  * The driven module in the shape a bundle presents — which is all `runAsWorkerEntry` wants.
  *
- * A bundle exports `main` and one class per capability struct; this is the same thing built from
- * the manifest, so the worker half of the runtime does not know or care which it was handed.
+ * A bundle's exports convert their arguments and their answer by the types the manifest gives them,
+ * so `__wacHost` can be handed JavaScript functions and `__wacAnswered` a string; this is the same
+ * thing built from the manifest, so the worker half of the runtime does not know or care which it was
+ * handed. An export the manifest does not describe is passed through as it is.
  */
-export function asAppModule(driven: Driven): Record<string, unknown> {
-  const app: Record<string, unknown> = { ...driven.classes };
+export function asAppModule(driven: Driven, manifest: Manifest): Record<string, unknown> {
+  const app: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(driven.exports)) {
     // The `$bind$` family is the boundary's own machinery, not the program's interface.
     if (!name.startsWith("$bind$")) app[name] = value;
+  }
+  for (const sig of manifest.exports) {
+    const raw = driven.exports[sig.name];
+    if (typeof raw !== "function") continue;
+    app[sig.name] = (...a: unknown[]) => {
+      const out = (raw as CallableFunction)(...sig.params.map((t, i) => driven.toWasm(t, a[i])));
+      return sig.ret === "" || sig.ret === "void" ? undefined : driven.fromWasm(sig.ret, out);
+    };
   }
   return app;
 }
@@ -208,5 +163,3 @@ export function manifestIn(wasm: Uint8Array): Manifest | null {
   return JSON.parse(new TextDecoder().decode(sections[0])) as Manifest;
 }
 
-/** Named here so `StructSpec` is not imported for its own sake. */
-export type { StructSpec };

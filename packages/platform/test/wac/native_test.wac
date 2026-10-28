@@ -263,25 +263,6 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
   return t.report();
 }
 
-string[] namesOf(JsonArray items) {
-  string[] out = string[].filled(items.len(), "");
-  for (i32 i = 0; i < items.len(); i++) {
-    match (items.get(i)) {
-      Object(members): {
-        JsonValue? n = members.getStr("name");
-        if (n is not null) {
-          match (n!) {
-            Str(bytes): { out[i] = string.fromBytes(bytes); }
-            default: { }
-          }
-        }
-      }
-      default: { }
-    }
-  }
-  return out;
-}
-
 JsonObject? structNamed(JsonArray structs, string want) {
   for (i32 i = 0; i < structs.len(); i++) {
     match (structs.get(i)) {
@@ -318,13 +299,14 @@ string stringIn(JsonObject o, string key) {
   }
 }
 
-export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(Sys sys) {
+export string test_the_manifest_carries_the_host_calls_in_their_order(Sys sys) {
   Env env = sys.env();
   Files fs = sys.files();
   Procs procs = sys.procs();
-  // The failure this guards is silent and expensive: insert a capability in the middle of `Core` in
-  // `platform.wac`, and a runtime with its own idea of the order builds a `Core` whose `log` is the
-  // previous field's function. Every call would go somewhere plausible.
+  // The failure this guards is silent and expensive: a host binds `__wacHost`'s four calls **by position**, reading
+  // each one's type from the manifest. Reorder them in `program.wac`'s adapter and a host hands `waitAny` where
+  // `request` belongs, and every call goes somewhere plausible. It was `Core`'s field order until design/system/0013
+  // step 6, for the same reason.
   T t = T.create();
   string dir = freshScratch(t, env, fs, "order");
   string why = buildOne(env, procs, ENTRY, true, "\{dir}/order", string[].filled(0, ""));
@@ -341,36 +323,19 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   if (text.len() == 0) { fs.remove(dir, true).wait(); return t.report(); }
   fs.writeFile("\{dir}/order.manifest.json", text.toBytes()).wait();
   JsonObject m = jsonFile(fs, "\{dir}/order.manifest.json");
-  JsonArray structs = arrayIn(m, "structs");
-  JsonObject? core0 = structNamed(structs, "Core");
-  t.isTrue(core0 is not null, "no Core in the manifest");
-  if (core0 is null) { fs.remove(dir, true).wait(); return t.report(); }
+  JsonObject? make = structNamed(arrayIn(m, "exports"), "__wacHost");
+  t.isTrue(make is not null, "no `__wacHost` export in the manifest");
+  if (make is null) { fs.remove(dir, true).wait(); return t.report(); }
 
-  JsonArray fields = arrayIn(core0!, "fields");
-  t.eqStrArray(namesOf(fields), [
-    "nowMillis",
-    "monotonicNanos",
-    "sleepMillis",
-    "randomBytes",
-    "log",
-    "warn",
-    "waitAny",
-    // Appended, not inserted, and that is the whole discipline this test enforces: a capability added
-    // in the *middle* of `Core` shifts every field after it, and a runtime with its own idea of the
-    // order would build a `Core` whose `log` is the previous field's function.
-    "askInterrupt",
-    // `Sys.exit`'s capability, appended for the same reason.
-    "exit",
-    // The scheduler, and the one field here a host does not *implement* — it builds it by calling the
-    // module's own `Sched.create` and hands it back, which is how a program is given somewhere for
-    // its continuations to wait without any host knowing what a continuation is.
-    "sched"
-  ], "Core's field order");
+  string[] params = stringsOf(arrayIn(make!, "params"));
+  t.eqStrArray(params, [
+    "fn[void(i32,i32,i64,i64,string,u8[])]",
+    "fn[i32(i32[],i32)]",
+    "fn[void(i32)]",
+    "fn[bool()]"
+  ], "`__wacHost`'s parameters: request, waitAny, exitWith, interrupted");
 
-  // Every *funcref* field names a signature that is in the callback table — the lookup the runtime
-  // does when it wires one. A field that is not a funcref is not wired at all: the runtime builds it
-  // by calling the module's own `create` and hands it straight back, which is what `Core.sched` is.
-  // Checked rather than skipped, because a field that is neither is a manifest nobody can build from.
+  // Each is bound by looking its type up in the callback table, so each must be there.
   JsonArray callbacks = arrayIn(m, "callbacks");
   string[] callbackTypes = string[].filled(callbacks.len(), "");
   for (i32 i = 0; i < callbacks.len(); i++) {
@@ -379,32 +344,25 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
       default: { }
     }
   }
-  for (i32 i = 0; i < fields.len(); i++) {
-    match (fields.get(i)) {
-      Object(f): {
-        string name = stringIn(f, "name");
-        string ty = stringIn(f, "type");
-        if (ty.len() >= 3 && ty.slice(0, 3) == "fn[") {
-          bool wired = false;
-          for (i32 k = 0; k < callbackTypes.len(); k++) { if (callbackTypes[k] == ty) { wired = true; } }
-          t.isTrue(wired, "Core.\{name} wants \{ty}, which is in no callback");
-          continue;
-        }
-        JsonObject? spec = structNamed(structs, ty);
-        bool makeable = false;
-        if (spec is not null) {
-          string[] methods = namesOf(arrayIn(spec!, "methods"));
-          for (string method in methods) { if (method == "create") { makeable = true; } }
-        }
-        t.isTrue(makeable,
-                 "Core.\{name} is \{ty}" +
-                 ", which is neither a callback nor a struct the module can make");
-      }
-      default: { }
-    }
+  for (string ty in params) {
+    bool wired = false;
+    for (i32 k = 0; k < callbackTypes.len(); k++) { if (callbackTypes[k] == ty) { wired = true; } }
+    t.isTrue(wired, "`__wacHost` wants \{ty}, which is in no callback");
   }
   fs.remove(dir, true).wait();
   return t.report();
+}
+
+/** The strings of a JSON array, in order; anything else is "". */
+string[] stringsOf(JsonArray items) {
+  string[] out = string[].filled(items.len(), "");
+  for (i32 i = 0; i < items.len(); i++) {
+    match (items.get(i)) {
+      Str(bytes): { out[i] = string.fromBytes(bytes); }
+      default: { }
+    }
+  }
+  return out;
 }
 
 /**

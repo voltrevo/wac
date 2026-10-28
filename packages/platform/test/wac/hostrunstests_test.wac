@@ -69,10 +69,12 @@ export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Sys sys) 
  * it: through `wac run` the seed fails first, and the case would only repeat the test above.
  */
 static string AWAITS_CLI =
-  "import { Sys, FileResult } from \"std\";\n" +
+  "import { Sys } from \"std\";\n" +
   "export async i32 main(Sys sys) {\n" +
-  "  FileResult f = await sys.cli.readFile(\"awaited.txt\").ticket();\n" +
-  "  sys.core.log(f.ok ? \"read: \" + string.fromBytes(f.bytes) : \"read failed\");\n" +
+  "  match (await sys.files().readFile(\"awaited.txt\")) {\n" +
+  "    Ok(b): { sys.log(\"read: \" + string.fromBytes(b)); }\n" +
+  "    Err(e): { sys.log(\"read failed\"); }\n" +
+  "  }\n" +
   "  return 0;\n" +
   "}\n";
 

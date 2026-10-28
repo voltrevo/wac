@@ -24,7 +24,7 @@
 // are ordinary calls.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Exec, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { Vec, flatten } from "core";
 import { Kind, nameOf } from "../../src/object.wac";
 import { Pack, Opened, Raw, Got, Indexed, openPack, openIndexed, rawAt, applyDelta,

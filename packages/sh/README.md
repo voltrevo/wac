@@ -117,7 +117,7 @@ told apart without reading the message's words.
 Every external command goes through **one seam**, and there are now two things on the other side
 of it.
 
-A **spawned worker** first, if `$WACPATH` names one. `Cli.spawn` arrived after this package did,
+A **spawned worker** first, if `$WACPATH` names one. `spawn` arrived after this package did,
 and the shell uses it: a program on `$WACPATH` is started as a real child, fed the pipeline's
 input, and its output and exit status are the command's.
 
@@ -160,8 +160,8 @@ sh.external = boxRun;              // from packages/box/src/shrun.wac
 With that, `sort`, `sha256sum`, `gzip`, `cut`, `diff`, `shuf`, `tar` and the rest are commands you
 can type, running the same code `box` runs on a command line. They are *spawned* where the world can
 spawn, including in a browser tab — `Shell.externalSpawnable` below is what says they are applets of
-this very bundle — and called through `platform`'s `pushChild`/`popChild` where it cannot, which gives
-a function its own argv, standard input and working directory and keeps what it wrote. Only the second
+this very bundle — and run in process where it cannot, handed handles of its own: its argv, standard
+input and working directory, and an output the shell keeps. Only the second
 of those has no isolation from the shell, and it is now the fallback rather than the only route:
 [0030](../../issues/system/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
 
@@ -719,12 +719,9 @@ what a shell script looks like anyway.
 ## Coverage
 
 `wac task coverage:sh` drives about 380 scripts through the lexer, parser and executor
-with the capabilities faked inside wac — `test/wac/probe.wac` builds a `Core` and a `Cli` out of
-pure functions, since wac has no mutable module-level state. A fixed answer per path is enough to
-reach both sides of every branch that asks, so nothing there has wanted state. (The second reason
-given was "a funcref cannot close over anything", which a bare funcref still cannot and a lambda has
-been able to since 2026-08-16 — `spec/cases/0193` fakes a capability with one. So a fake that
-*accumulates* is writable now, and this suite has not needed one.)
+over the caller's own handles and a `MemoryStore` standing in for the disk — `test/wac/probe.wac`, which
+was a fake `Core` and `Cli` of three hundred lines until design/system/0013 step 5 deleted both. A store
+holds state, which the fake could not, so nothing a script does reaches the machine.
 
 **It stands at 97.2%**, not the 100% the rest of this repo holds to, and the shape of what is left
 is worth stating rather than leaving as a number.

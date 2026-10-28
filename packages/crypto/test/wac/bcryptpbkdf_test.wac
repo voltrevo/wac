@@ -32,7 +32,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { slice, equal } from "../../../bytes/src/slice.wac";
 import { decode, encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";

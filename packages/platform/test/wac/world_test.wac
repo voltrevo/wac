@@ -14,7 +14,7 @@
 // because those drive `host/layout.ts` and `host/call.ts` rather than any wac program.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, FileResult, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { binaryPath, freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";

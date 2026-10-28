@@ -24,5 +24,5 @@ export function childMainNode(
   }
   // **The capabilities are the runtime's own**, exactly as under Deno: the driver registers each host
   // function in a slot and hands back the funcref, which is what generated glue does for a bundle.
-  runAsWorkerEntryNode(wt, asAppModule(drive(wasm, manifest)) as unknown as AppModule);
+  runAsWorkerEntryNode(wt, asAppModule(drive(wasm, manifest), manifest) as unknown as AppModule);
 }

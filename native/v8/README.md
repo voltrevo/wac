@@ -26,32 +26,23 @@ records the decision: **rusty_v8 is the primary platform.**
 
 ## What runs, and what does not
 
-**Runs.** `packages/platform/example/wc.wac` end to end, and with it the whole shape of a
-capability, which is the same for every one of them:
+**Runs.** `packages/platform/example/wc.wac` end to end, and with it the whole shape of the flat
+host ABI (design/system/0013 step 6), which is the same for every capability:
 
 1. an import object built in Rust — one dispatcher per callback signature, each carrying its index
    as external data, because a V8 callback is a bare `fn` pointer and closes over nothing
 2. `$bind$fnref_<j>(slot)`, the module turning a slot number into a funcref of that signature — the
-   one operation a host cannot do for itself
-3. `$bind$sm_Core_of(…)`, the module building its own capability struct from those funcrefs, in the
-   field order the manifest gives — never an order this host holds a copy of
-4. `wac.cb<j>(slot, …)` arriving back in Rust, and a wac `string` read out of the module's memory
-   through `$bind$str_len` / `$bind$mem_ensure` / `$bind$str_to_mem`
+   one operation a host cannot do for itself — for the four functions `__wacHost` takes: `request`,
+   `waitAny`, `exitWith` and `interrupted`
+3. `main(__WacHost)` called with what `__wacHost` answered, and every capability arriving back in
+   Rust as `request(op, id, a, b, text, bytes)` — std's `OP_*` numbers, the table in the design
+4. each answer handed to `__wacAnswered(h, id, fault, text, bytes, n, m, flags)`, from inside
+   `request` when it is in hand and from inside `waitAny` when a thread finishes it
 
-and the whole of `Pending<T>`, which is how every capability that takes time answers: a ticket
-handed over, three funcrefs the guest calls with it, and a value marshalled back through the
-module's memory. Served so far:
-
-| | |
-| --- | --- |
-| `Core` | `log`, `warn`, `nowMillis`, `monotonicNanos` |
-| `Core` | and `randomBytes` from `/dev/urandom`, `waitAny`, `sleepMillis` |
-| `Cli` | `argCount`, `arg`, `write`, `writeErr`, `env`, `cwd` |
-| `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat`, `readDir` |
-| `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
-| `Cli`, sockets | `listen`, `connect`, `accept`, `recv`, `send`, `closeSocket` |
-| `Cli`, children | `pushChild`, `popChild`, `readStdin`, `spawnSelf`, `exitCode`, `closeFeed` |
-| `Core` | `askInterrupt`, which answers *no*: the terminal belongs to whatever started the program |
+So the only wac values this host builds are a `string` and a `u8[]`, through the module's
+`$bind$` helpers; std decodes the rest. Served: every request in the table but `OP_DROP`'s
+no-op cases — clocks, randomness, arguments, the environment, files and file streams, sockets and
+datagrams, children with their streams and served files, `exec`, and loaded modules.
 
 which is enough for **box's shell**, pipelines and all:
 
@@ -144,31 +135,10 @@ cannot find says nothing here and says `sh: sleep: No such file or directory` on
 not `spawn`: it is that a background child's error stream is a queue its parent never drains, where
 the JavaScript hosts relay it. The foreground form — the one that carries an exit code — agrees
 exactly on both: `sh: sleep: command not found`, and `$?` is 127, which is what the cross-host test
-compares. What box's pipelines need is `pushChild` anyway, which
-is not a process at all: the frame is a stack in the host, the dispatcher re-enters this program
-with the frame's argv, and what it writes is collected instead of printed.
+compares.
 
-Two orderings in that path are wrong-answer bugs rather than missing features, and both bit here
-first:
-
-- **An explicit `openInput` wins over the frame's queue.** An applet that opened a file and then
-  read the frame's input read what its caller had already finished — `sha256sum README.md` inside
-  the shell printed the hash of *nothing*, which is a wrong answer that looks like a right one.
-  `native/src/main.rs` carries the same warning about `cat f`; I ordered them the other way and
-  walked straight into it.
-- **`openInput("")` is standard input**, which is what box means by `-` and by an absent operand.
-  Taken as a path it is a file that does not exist, and a pipeline failed with
-  `grep: : No such file or directory` — an empty name, because there was none. A capability that is reached says which one it was:
-
-```
-$ ./wac /tmp/sha README.md
-wac: packages/box/src/bin/sha256sum.wac trapped
-Uncaught Error: Cli.openInput is not answered by this host yet
-```
-
-and `WACV8_CAPS=1` lists everything unserved on exit — a note for whoever builds the next slice,
-behind a switch because a finished program printing thirty capability names it never reached is
-noise on the stream a program's own diagnostics use.
+A request this host does not have is answered `FAULT_UNSUPPORTED` with its number, a value the
+program reads rather than a trap.
 
 **And waiting is real now.** `readFile` runs on a thread, `sleepMillis` is a thread that sleeps,
 `wait()` blocks on a condition variable, and `waitAny` parks until one of a list of tickets lands.
@@ -496,8 +466,7 @@ tests — they compare against a real implementation, which arrives as a functio
 has nothing to fill. Those are named and skipped rather than dropped, because a runner reporting "4
 passed" for a file whose tests never ran is worse than one that says it cannot.
 
-A test file declares no capabilities, so it has no `Core` in its manifest, and `wac test`
-deliberately does not build a world for one.
+A test file that exports no `__wacHost` wants no host, and `wac test` deliberately binds none for it.
 
 **It rebuilds the file it carries.**
 
@@ -508,8 +477,7 @@ cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
 ```
 
 `build` is `compile` plus the boundary: a native host cannot run a module without knowing which
-`$bind$` export builds `Core` and in what order its funcrefs go, so an application is a module *and*
-a manifest. That derivation was `packages/platform/native.ts` and is now also
+`$bind$` helper makes each funcref `__wacHost` takes, so an application is a module *and* a manifest. That derivation was `packages/platform/native.ts` and is now also
 `packages/wacc/src/manifest.wac` — checked against the TypeScript one byte for byte on three
 programs. So the bundler is in the loop only for producing the
 *first* seed, and this binary can produce every one after it.

@@ -19,7 +19,7 @@
 
 import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles,
          emitFilesSelfDescribing, wireHasErrors } from "../../src/api.wac";
-import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { flatten } from "core";

@@ -6,7 +6,7 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0371a](open/0371a-a-stopped-spawn-self-child-never-exits-on-the-v8-host.md) | `wac run packages/platform/example/stop.wac` hangs on v8: after `kid.stop()` the child's `exit()` never resolves; the pre-port `Cli` version hangs the same way | bug | hang |
-| [0370a](open/0370a-cancelling-a-host-ticket-another-wait-already-settled-leaks-its-resource.md) | Any wait that dispatches settles every registered host ticket, so a `connect` abandoned after its answer arrived holds a `Socket` nobody has and `cancel` does nothing: the peer holds the line. Blocks deleting `Cli` — `lostbytes_test`'s connect arm stays on it | bug | wrong answer |
+| [0370a](closed/0370a-cancelling-a-host-ticket-another-wait-already-settled-leaks-its-resource.md) | Any wait that dispatches settles every registered host ticket, so a `connect` abandoned after its answer arrived holds a `Socket` nobody has and `cancel` does nothing: the peer holds the line. Blocks deleting `Cli` — `lostbytes_test`'s connect arm stays on it | bug | wrong answer |
 | [0369c](open/0369c-a-package-cannot-use-a-sibling-package-in-its-own-repository.md) | Only `web` has a `wac.json5`, so a project outside the repo cannot depend on `gzip`, `zstd`, `crypto`, `json` or `fmt` — the archive explorer vendored 25 files for it. Giving them manifests means rewriting 400 relative imports in 259 files into directory imports, and it leaves `json` with no legal way to use `fmt`: the compiler refuses a package that reaches a sibling package, by file or by directory. Options are a `path:` mapping, a git import of the repo itself, or moving `json`'s two `fmt` functions into `core`. **Operator, 2026-10-28: needs further thought** | design decision | not implemented — packages outside `web` cannot be dependencies |
 | [0368c](open/0368c-a-build-embeds-the-package-caches-absolute-path.md) | The same app with byte-identical cache contents builds to 2,106,808 bytes under one `$WAC_HOME` and 2,110,840 under another: a dependency's symbols are prefixed with its checkout's absolute path in the cache (`…home_two_cache_git_https_3A_2F_2Fgithub_com_…_packages_web_src_page_new`), so builds differ across machines and every page carries its builder's home path. ch46 says the same lock produces the same program | bug | wrong answer — one lock, two programs |
 | [0367c](closed/0367c-the-wasmtime-host-cannot-finish-any-program.md) | The wasmtime host answers *"main cannot finish: nothing that can run will settle what it waits on"* for every program, `export i32 main() { return 0; }` included, and for `wac build`; the v8 binary carrying the byte-identical seed runs them. The seed starts (`wac version` gets its own *unknown command* answer) and stalls at its first host wait. Unseen because the eleven files that drive wasmtime skip when its binary is absent, which is most checkouts; with one present the gate fails 18 cases in 7 files | bug | wrong answer — no program finishes on wasmtime |
@@ -135,7 +135,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-350 issues, 252 closed.
+350 issues, 253 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on

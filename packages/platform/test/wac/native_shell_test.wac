@@ -35,7 +35,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeBinaryPath } from "../../../wactest/src/host.wac";
-import { Change, Core, Cli, Exec, ChildEnv, Launch, Env, Files, Output, Procs, Stat, Sys, NotFound } from "std";
+import { Exec, ChildEnv, Launch, Env, Files, Output, Procs, Stat, Sys, NotFound } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
 import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, DEFAULT_SECONDS } from "./hostfs.wac";

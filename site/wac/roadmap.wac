@@ -22,7 +22,7 @@ static string SEALED = """
 
 static string CORE = """
   import { Read } from "core";        // embedded in the compiler
-  import { Cli } from "std";   // so is std
+  import { Sys } from "std";   // so is std
   import { Thing } from "@/lib/thing.wac";  // the project root, wherever it is""";
 
 /** A step of a direction, and whether it exists. */

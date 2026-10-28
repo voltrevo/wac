@@ -66,14 +66,16 @@ The rest:
 
 - **Values cross as references.** A wac string, a struct and a funcref are all one reference, so the
   function-references and gc proposals are on. `$bind$fnref_N(slot)` hands back a real funcref, which
-  goes straight into `Core.of` untouched.
+  goes straight into `__wacHost` untouched — the host's four calls, `request`, `waitAny`, `exitWith` and
+  `interrupted`; every answer comes back through the `__wacAnswered` export in one shape
+  (design/system/0013 step 6).
 - **Strings marshal through a staging buffer at offset 0** of `$bind$mem`, sized by `$bind$mem_ensure`
   and filled by `$bind$str_to_mem` / read back by `$bind$str_from_mem`. Four helpers, and no layout
   knowledge on this side.
-- **The field order of `Core` and `Cli` comes from the manifest**, not from a copy here. That is the
-  one thing a host must not hold its own opinion about: insert a capability in the middle of
-  `platform.wac`, and a runtime with a hardcoded order builds a `Core` whose `log` is the previous
-  field's function, and every call goes somewhere plausible.
+- **`__wacHost`'s parameter types come from the manifest**, not from a copy here, and each is bound by
+  looking its type up among the callbacks. Their order is the one thing a host must not hold its own
+  opinion about, and `packages/platform/test/wac/native_test.wac` pins it: swap two, and every call goes
+  somewhere plausible.
 
 The `SharedArrayBuffer`, the `Atomics.wait`, the sequence counters and the ring of slots have **no
 counterpart here**, which 0087 predicted and made a criterion: they exist to park a *worker* while an
@@ -110,10 +112,9 @@ differential corpus answer byte-for-byte what the Deno host answers:
 wac task corpus:hosts          # all 817, both hosts, compared
 ```
 
-That took `cwd`, `readStdin`, `readChunk` with the `Read` enum, `env`, `pushChild`/`popChild`, and
-`openInput`/`openOutput`/`outputError`/`closeFeed`. `env` is the first capability with a **grant**
-behind it: without `env` in the manifest it answers *absent* rather than reading the real environment,
-which is not a refusal but the honest answer to "what does this world's environment say".
+That took `cwd`, `readStdin`, `readChunk`, `env` and `closeFeed` (and `pushChild`/`popChild` and
+`openInput`/`openOutput`, which step 6 deleted). `env` was the first capability with a **grant** behind
+it; without the grant it answers `NotGranted`, as every host with an environment does.
 
 **The arrival test passes.** `packages/platform/test/wac/arrival_test.wac`: an image written by the Deno
 host is the same system here and back again, and a session that changes nothing writes a byte-identical

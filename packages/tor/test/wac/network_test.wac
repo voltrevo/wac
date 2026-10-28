@@ -32,7 +32,7 @@
 // their children.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { newestCarried } from "../../../wactest/src/built.wac";

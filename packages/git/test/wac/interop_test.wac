@@ -27,7 +27,7 @@
 // `"blob 99 hello"` — a header that would be refused for a different reason than the one intended.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, FileResult, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Exec, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { Vec, flatten } from "core";
 import { Buf } from "core";
 import { Kind, Object, nameOf, looseFile, readLoose } from "../../src/object.wac";

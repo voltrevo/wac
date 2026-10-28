@@ -21,7 +21,7 @@
 // not constant: 4 KiB of a CSPRNG has a probability of about 2^-32768 of being all one byte, so a
 // false failure here is not the risk. What it catches is a host that allocated and never filled,
 // which is exactly what a chunked implementation gets wrong when a loop bound is off.
-import { Core, Sys, Output, Random } from "std";
+import { Sys, Output, Random } from "std";
 import { flatten } from "core";
 
 /** Web Crypto's per-call cap, which is the boundary this program exists to cross. */

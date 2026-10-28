@@ -24,7 +24,7 @@
 // instead. `covdump` catches one trap per call, and `name:<n>` makes eleven of them one export name
 // (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 
-import { Core, Sys } from "std";
+import { Output, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { test_any_over_host_tickets_asks_the_host_once as ticket__any_over_host_tickets_asks_the_host_once, test_a_lone_host_ticket_is_driven_without_asking as ticket__a_lone_host_ticket_is_driven_without_asking, test_cancel_releases_the_host_slot_and_the_ticket_never_settles as ticket__cancel_releases_the_host_slot_and_the_ticket_never_settles, test_cancel_on_a_ticket_nobody_hosts_does_nothing as ticket__cancel_on_a_ticket_nobody_hosts_does_nothing, test_a_part_settled_by_driving_it_settles_any_once as ticket__a_part_settled_by_driving_it_settles_any_once, test_a_ticket_watched_many_times_settles_without_recursing as ticket__a_ticket_watched_many_times_settles_without_recursing, test_settled_now_asks_the_host_once_and_never_waits as ticket__settled_now_asks_the_host_once_and_never_waits }
   from "./ticket_test.wac";
@@ -45,54 +45,54 @@ import { test_traps_getting_past_the_end as traps__traps_getting_past_the_end, t
  * Named rather than counted: "a test failed" sent the reader to thirty-nine candidates.
  */
 export i32 main(Sys sys) {
-  Core core = sys.core;
+  Output err = sys.stderr();
   i32 bad = 0;
-  if (result__result_basics().len() > 0) { core.warn("error: FAILED result_test test_result_basics"); bad = bad + 1; }
-  if (result__result_error_type_varies().len() > 0) { core.warn("error: FAILED result_test test_result_error_type_varies"); bad = bad + 1; }
-  if (result__result_flatten().len() > 0) { core.warn("error: FAILED result_test test_result_flatten"); bad = bad + 1; }
-  if (ticket__any_over_host_tickets_asks_the_host_once().len() > 0) { core.warn("error: FAILED ticket_test test_any_over_host_tickets_asks_the_host_once"); bad = bad + 1; }
-  if (ticket__a_lone_host_ticket_is_driven_without_asking().len() > 0) { core.warn("error: FAILED ticket_test test_a_lone_host_ticket_is_driven_without_asking"); bad = bad + 1; }
-  if (ticket__cancel_releases_the_host_slot_and_the_ticket_never_settles().len() > 0) { core.warn("error: FAILED ticket_test test_cancel_releases_the_host_slot_and_the_ticket_never_settles"); bad = bad + 1; }
-  if (ticket__cancel_on_a_ticket_nobody_hosts_does_nothing().len() > 0) { core.warn("error: FAILED ticket_test test_cancel_on_a_ticket_nobody_hosts_does_nothing"); bad = bad + 1; }
-  if (ticket__a_part_settled_by_driving_it_settles_any_once().len() > 0) { core.warn("error: FAILED ticket_test test_a_part_settled_by_driving_it_settles_any_once"); bad = bad + 1; }
-  if (ticket__a_ticket_watched_many_times_settles_without_recursing().len() > 0) { core.warn("error: FAILED ticket_test test_a_ticket_watched_many_times_settles_without_recursing"); bad = bad + 1; }
-  if (ticket__settled_now_asks_the_host_once_and_never_waits().len() > 0) { core.warn("error: FAILED ticket_test test_settled_now_asks_the_host_once_and_never_waits"); bad = bad + 1; }
-  if (hash__i32_hash_is_injective_over_a_sample().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_is_injective_over_a_sample"); bad = bad + 1; }
-  if (hash__aligned_keys_spread_across_buckets().len() > 0) { core.warn("error: FAILED hash_test test_aligned_keys_spread_across_buckets"); bad = bad + 1; }
-  if (hash__i32_hash_avalanches().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_avalanches"); bad = bad + 1; }
-  if (hash__i64_hash_is_injective_and_spreads().len() > 0) { core.warn("error: FAILED hash_test test_i64_hash_is_injective_and_spreads"); bad = bad + 1; }
-  if (hash__byte_hash_separates_near_neighbours().len() > 0) { core.warn("error: FAILED hash_test test_byte_hash_separates_near_neighbours"); bad = bad + 1; }
-  if (map__basics().len() > 0) { core.warn("error: FAILED map_test test_basics"); bad = bad + 1; }
-  if (map__growth_keeps_every_entry().len() > 0) { core.warn("error: FAILED map_test test_growth_keeps_every_entry"); bad = bad + 1; }
-  if (map__load_factor_bounds_the_table().len() > 0) { core.warn("error: FAILED map_test test_load_factor_bounds_the_table"); bad = bad + 1; }
-  if (map__collisions().len() > 0) { core.warn("error: FAILED map_test test_collisions"); bad = bad + 1; }
-  if (map__remove().len() > 0) { core.warn("error: FAILED map_test test_remove"); bad = bad + 1; }
-  if (map__remove_keeps_probe_runs_contiguous().len() > 0) { core.warn("error: FAILED map_test test_remove_keeps_probe_runs_contiguous"); bad = bad + 1; }
-  if (map__fill_and_empty_repeatedly().len() > 0) { core.warn("error: FAILED map_test test_fill_and_empty_repeatedly"); bad = bad + 1; }
-  if (map__clear().len() > 0) { core.warn("error: FAILED map_test test_clear"); bad = bad + 1; }
-  if (map__keys_and_values().len() > 0) { core.warn("error: FAILED map_test test_keys_and_values"); bad = bad + 1; }
-  if (map__hash_bytes_and_string_agree().len() > 0) { core.warn("error: FAILED map_test test_hash_bytes_and_string_agree"); bad = bad + 1; }
-  if (map__bytes_keyed_map().len() > 0) { core.warn("error: FAILED map_test test_bytes_keyed_map"); bad = bad + 1; }
-  if (map__key_types().len() > 0) { core.warn("error: FAILED map_test test_key_types"); bad = bad + 1; }
-  if (map__with_capacity().len() > 0) { core.warn("error: FAILED map_test test_with_capacity"); bad = bad + 1; }
-  if (map__differential_good_hash().len() > 0) { core.warn("error: FAILED map_test test_differential_good_hash"); bad = bad + 1; }
-  if (map__differential_all_collide().len() > 0) { core.warn("error: FAILED map_test test_differential_all_collide"); bad = bad + 1; }
-  if (map__differential_weak_hash().len() > 0) { core.warn("error: FAILED map_test test_differential_weak_hash"); bad = bad + 1; }
-  if (vec__growth_from_empty().len() > 0) { core.warn("error: FAILED vec_test test_growth_from_empty"); bad = bad + 1; }
-  if (vec__every_element_survives_growth().len() > 0) { core.warn("error: FAILED vec_test test_every_element_survives_growth"); bad = bad + 1; }
-  if (vec__index_bounds().len() > 0) { core.warn("error: FAILED vec_test test_index_bounds"); bad = bad + 1; }
-  if (vec__pop_and_ends().len() > 0) { core.warn("error: FAILED vec_test test_pop_and_ends"); bad = bad + 1; }
-  if (vec__remove_insert_and_swap().len() > 0) { core.warn("error: FAILED vec_test test_remove_insert_and_swap"); bad = bad + 1; }
-  if (vec__insert_at_capacity_boundary().len() > 0) { core.warn("error: FAILED vec_test test_insert_at_capacity_boundary"); bad = bad + 1; }
-  if (vec__clear_and_reuse().len() > 0) { core.warn("error: FAILED vec_test test_clear_and_reuse"); bad = bad + 1; }
-  if (vec__to_array_and_from_array().len() > 0) { core.warn("error: FAILED vec_test test_to_array_and_from_array"); bad = bad + 1; }
-  if (vec__extend().len() > 0) { core.warn("error: FAILED vec_test test_extend"); bad = bad + 1; }
-  if (vec__extend_with_itself().len() > 0) { core.warn("error: FAILED vec_test test_extend_with_itself"); bad = bad + 1; }
-  if (vec__element_types().len() > 0) { core.warn("error: FAILED vec_test test_element_types"); bad = bad + 1; }
-  if (vec__with_capacity().len() > 0) { core.warn("error: FAILED vec_test test_with_capacity"); bad = bad + 1; }
-  if (vec__fold().len() > 0) { core.warn("error: FAILED vec_test test_fold"); bad = bad + 1; }
+  if (result__result_basics().len() > 0) { err.line("error: FAILED result_test test_result_basics"); bad = bad + 1; }
+  if (result__result_error_type_varies().len() > 0) { err.line("error: FAILED result_test test_result_error_type_varies"); bad = bad + 1; }
+  if (result__result_flatten().len() > 0) { err.line("error: FAILED result_test test_result_flatten"); bad = bad + 1; }
+  if (ticket__any_over_host_tickets_asks_the_host_once().len() > 0) { err.line("error: FAILED ticket_test test_any_over_host_tickets_asks_the_host_once"); bad = bad + 1; }
+  if (ticket__a_lone_host_ticket_is_driven_without_asking().len() > 0) { err.line("error: FAILED ticket_test test_a_lone_host_ticket_is_driven_without_asking"); bad = bad + 1; }
+  if (ticket__cancel_releases_the_host_slot_and_the_ticket_never_settles().len() > 0) { err.line("error: FAILED ticket_test test_cancel_releases_the_host_slot_and_the_ticket_never_settles"); bad = bad + 1; }
+  if (ticket__cancel_on_a_ticket_nobody_hosts_does_nothing().len() > 0) { err.line("error: FAILED ticket_test test_cancel_on_a_ticket_nobody_hosts_does_nothing"); bad = bad + 1; }
+  if (ticket__a_part_settled_by_driving_it_settles_any_once().len() > 0) { err.line("error: FAILED ticket_test test_a_part_settled_by_driving_it_settles_any_once"); bad = bad + 1; }
+  if (ticket__a_ticket_watched_many_times_settles_without_recursing().len() > 0) { err.line("error: FAILED ticket_test test_a_ticket_watched_many_times_settles_without_recursing"); bad = bad + 1; }
+  if (ticket__settled_now_asks_the_host_once_and_never_waits().len() > 0) { err.line("error: FAILED ticket_test test_settled_now_asks_the_host_once_and_never_waits"); bad = bad + 1; }
+  if (hash__i32_hash_is_injective_over_a_sample().len() > 0) { err.line("error: FAILED hash_test test_i32_hash_is_injective_over_a_sample"); bad = bad + 1; }
+  if (hash__aligned_keys_spread_across_buckets().len() > 0) { err.line("error: FAILED hash_test test_aligned_keys_spread_across_buckets"); bad = bad + 1; }
+  if (hash__i32_hash_avalanches().len() > 0) { err.line("error: FAILED hash_test test_i32_hash_avalanches"); bad = bad + 1; }
+  if (hash__i64_hash_is_injective_and_spreads().len() > 0) { err.line("error: FAILED hash_test test_i64_hash_is_injective_and_spreads"); bad = bad + 1; }
+  if (hash__byte_hash_separates_near_neighbours().len() > 0) { err.line("error: FAILED hash_test test_byte_hash_separates_near_neighbours"); bad = bad + 1; }
+  if (map__basics().len() > 0) { err.line("error: FAILED map_test test_basics"); bad = bad + 1; }
+  if (map__growth_keeps_every_entry().len() > 0) { err.line("error: FAILED map_test test_growth_keeps_every_entry"); bad = bad + 1; }
+  if (map__load_factor_bounds_the_table().len() > 0) { err.line("error: FAILED map_test test_load_factor_bounds_the_table"); bad = bad + 1; }
+  if (map__collisions().len() > 0) { err.line("error: FAILED map_test test_collisions"); bad = bad + 1; }
+  if (map__remove().len() > 0) { err.line("error: FAILED map_test test_remove"); bad = bad + 1; }
+  if (map__remove_keeps_probe_runs_contiguous().len() > 0) { err.line("error: FAILED map_test test_remove_keeps_probe_runs_contiguous"); bad = bad + 1; }
+  if (map__fill_and_empty_repeatedly().len() > 0) { err.line("error: FAILED map_test test_fill_and_empty_repeatedly"); bad = bad + 1; }
+  if (map__clear().len() > 0) { err.line("error: FAILED map_test test_clear"); bad = bad + 1; }
+  if (map__keys_and_values().len() > 0) { err.line("error: FAILED map_test test_keys_and_values"); bad = bad + 1; }
+  if (map__hash_bytes_and_string_agree().len() > 0) { err.line("error: FAILED map_test test_hash_bytes_and_string_agree"); bad = bad + 1; }
+  if (map__bytes_keyed_map().len() > 0) { err.line("error: FAILED map_test test_bytes_keyed_map"); bad = bad + 1; }
+  if (map__key_types().len() > 0) { err.line("error: FAILED map_test test_key_types"); bad = bad + 1; }
+  if (map__with_capacity().len() > 0) { err.line("error: FAILED map_test test_with_capacity"); bad = bad + 1; }
+  if (map__differential_good_hash().len() > 0) { err.line("error: FAILED map_test test_differential_good_hash"); bad = bad + 1; }
+  if (map__differential_all_collide().len() > 0) { err.line("error: FAILED map_test test_differential_all_collide"); bad = bad + 1; }
+  if (map__differential_weak_hash().len() > 0) { err.line("error: FAILED map_test test_differential_weak_hash"); bad = bad + 1; }
+  if (vec__growth_from_empty().len() > 0) { err.line("error: FAILED vec_test test_growth_from_empty"); bad = bad + 1; }
+  if (vec__every_element_survives_growth().len() > 0) { err.line("error: FAILED vec_test test_every_element_survives_growth"); bad = bad + 1; }
+  if (vec__index_bounds().len() > 0) { err.line("error: FAILED vec_test test_index_bounds"); bad = bad + 1; }
+  if (vec__pop_and_ends().len() > 0) { err.line("error: FAILED vec_test test_pop_and_ends"); bad = bad + 1; }
+  if (vec__remove_insert_and_swap().len() > 0) { err.line("error: FAILED vec_test test_remove_insert_and_swap"); bad = bad + 1; }
+  if (vec__insert_at_capacity_boundary().len() > 0) { err.line("error: FAILED vec_test test_insert_at_capacity_boundary"); bad = bad + 1; }
+  if (vec__clear_and_reuse().len() > 0) { err.line("error: FAILED vec_test test_clear_and_reuse"); bad = bad + 1; }
+  if (vec__to_array_and_from_array().len() > 0) { err.line("error: FAILED vec_test test_to_array_and_from_array"); bad = bad + 1; }
+  if (vec__extend().len() > 0) { err.line("error: FAILED vec_test test_extend"); bad = bad + 1; }
+  if (vec__extend_with_itself().len() > 0) { err.line("error: FAILED vec_test test_extend_with_itself"); bad = bad + 1; }
+  if (vec__element_types().len() > 0) { err.line("error: FAILED vec_test test_element_types"); bad = bad + 1; }
+  if (vec__with_capacity().len() > 0) { err.line("error: FAILED vec_test test_with_capacity"); bad = bad + 1; }
+  if (vec__fold().len() > 0) { err.line("error: FAILED vec_test test_fold"); bad = bad + 1; }
   if (bad > 0) {
-    core.warn("error: " + itoa(bad) + " test(s) failed, so this measured a broken tree");
+    err.line("error: " + itoa(bad) + " test(s) failed, so this measured a broken tree");
     return 1;
   }
   return 0;

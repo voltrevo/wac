@@ -18,7 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
-import { Change, Cli, Core, Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { isBuiltinSpec } from "../../src/coretext.wac";
 import { flatten } from "core";
@@ -123,8 +123,8 @@ export string test_the_cli_serves_the_tree_from_any_directory(Sys sys) {
     "export i32 main() { Read r = Read.End; return match (r) { End: 0, default: 1 }; }\n",
     "import { Result } from \"core\";\n" +
     "export i32 main() { Result<i32, bool> o = Result.Ok(7); return o.orElse(0); }\n",
-    "import { Core, Cli, Sys } from \"std\";\n" +
-    "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n"
+    "import { Clock, Files, Sys } from \"std\";\n" +
+    "export i32 main(Sys sys) { Clock clock = sys.clock(); Files files = sys.files(); return 0; }\n"
   ];
   for (i32 i = 0; i < names.len(); i++) {
     auto w = flatten(fs.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait());
@@ -302,9 +302,9 @@ export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_t
   t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
   if (made.isErr()) { return t.report(); }
   auto w = flatten(fs.writeFile(dir + "/stale.wac",
-                           ("import { Core, Cli, notInAnyVersionOfPlatform } "
+                           ("import { Clock, Files, notInAnyVersionOfPlatform } "
                             + "from \"std\";\n"
-                            + "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n").toBytes()).wait());
+                            + "export i32 main(Sys sys) { Clock clock = sys.clock(); Files files = sys.files(); return 0; }\n").toBytes()).wait());
   t.isTrue(w.isOk(), "could not write stale.wac — " + "\{w.isErr() ? "\{w.err()!}" : ""}");
   if (w.isOk()) {
     Exec r = checkFrom(env, procs, dir, "stale.wac");

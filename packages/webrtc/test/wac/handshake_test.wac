@@ -25,7 +25,7 @@
 // the notes about its standard input and about readiness live.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Datagram, Exec, Pending, HostSocket, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs, Sys, Datagrams } from "std";
+import { Datagram, Exec, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs, Sys, Datagrams } from "std";
 import { Buf, flatten } from "core";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { alertAt, blockFrom, ckeMessage, cookieAt, curveOfBody, finishedMessage, fingerprintOf,

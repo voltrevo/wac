@@ -222,10 +222,10 @@ No manifest, no configuration, one file:
 
 ```wac
 // main.wac
-import { Cli, Core } from "std";
+import { Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
-  cli.write("hello from wac\n".toBytes());
+export i32 main(Sys sys) {
+  sys.log("hello from wac");
   return 0;
 }
 ```
@@ -235,8 +235,8 @@ $ wac run main.wac
 hello from wac
 ```
 
-`main` may take `()`, `(Core)` or `(Core, Cli)` — the host builds what the signature asks for and
-nothing else. Its `i32` return is the process exit status, which is why the examples below check
+`main` may take `()` or `(Sys)` — a program that takes nothing is handed nothing, and one that takes a
+`Sys` reaches what the command line granted and no more. Its `i32` return is the process exit status, which is why the examples below check
 answers by looking at `$?`.
 
 ## What you get without depending on anything
@@ -247,12 +247,12 @@ your own with these names does not shadow them.
 ```wac
 import { Read } from "core";                 // the pure half — no capability needed
 import { Result } from "core";               // …and its siblings
-import { Cli, Core } from "std";// the capability half
+import { Files, Sys } from "std";            // the capability half
 ```
 
 `core` holds `Read`, `Result`, `Vec`, `Map`, hashing and equality, plus the JSX node types.
-`std/platform.wac` holds the world: `Core`, `Cli`, the filesystem, the network, processes, the
-environment, the terminal, clocks, randomness, the page.
+`std/platform.wac` holds the world: `Sys` and its handles — files, the standard streams, the network,
+processes, modules, the environment, clocks, randomness.
 
 **Every specifier is a quoted path, including these.** `from core` without quotes was the one
 unquoted specifier in the language and is now an error that tells you to add the quotes.
@@ -267,8 +267,15 @@ print a number writes its own `itoa` or fetches one.
 A program can only touch what its `main` was handed, and the command line decides what that is:
 
 ```wac
-FileResult f = cli.readFile("wac.json5").wait();
-cli.write((f.ok ? "read ok\n" : "refused\n").toBytes());
+// src/read.wac
+import { Sys } from "std";
+
+export async i32 main(Sys sys) {
+  match (await sys.files().readFile("wac.json5")) {
+    Ok(bytes): { sys.log("read ok"); return 0; }
+    Err(why): { sys.log("refused"); return 1; }
+  }
+}
 ```
 
 ```sh
@@ -276,8 +283,9 @@ $ wac run src/read.wac                 # refused   (exit 1)
 $ wac run --allow-read src/read.wac    # read ok   (exit 0)
 ```
 
-A refused capability **answers false**; it does not trap. So a program that never got a grant takes
-its own error path rather than dying, and you can write one that degrades instead of failing.
+A refused request **answers an `Err`** — `NotGranted`, with the host's words — and does not trap. So a
+program that never got a grant takes its own error path rather than dying, and you can write one that
+degrades instead of failing.
 
 Writing to stdout needs no grant. `--allow-read`, `--allow-write`, `--allow-net`, `--allow-run` and
 `--allow-env` are the ones you will meet.
@@ -442,17 +450,17 @@ looking for a writer.)*
 
 ### Reading those `[args…]`
 
-The line above passes arguments and does not say how a program gets them, which somebody noticed. Two
-fields on `Cli`, and **argument 0 is the first argument to your program**, not the program's own name:
+The line above passes arguments and does not say how a program gets them, which somebody noticed.
+`sys.args()`, and **argument 0 is the first argument to your program**, not the program's own name:
 
 ```wac
 // greet.wac
-import { Cli, Core } from "std";
+import { Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
-  i32 n = cli.argCount().wait();
-  string who = n > 0 ? string.fromBytes(cli.arg(0).wait()) : "world";
-  cli.write(("hello, " + who + "\n").toBytes());
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  string who = args.len() > 0 ? args[0] : "world";
+  sys.log("hello, " + who);
   return 0;
 }
 ```
@@ -464,18 +472,16 @@ $ wac run greet.wac
 hello, world
 ```
 
-**The `.wait()` is not ceremony and neither is `string.fromBytes`** — they are the two boundaries a
-wac program crosses, and both show up in those five lines:
+**The `await` and the bytes are not ceremony** — they are the two boundaries a wac program crosses:
 
-- **A capability answers a `Pending<T>`, not a `T`.** `argCount` and `arg` are fields holding
-  funcrefs, because what they do is leave the module; `.wait()` is where the answer arrives. Nothing
-  is granted implicitly, so a program that never declared a capability cannot have one — which is why
-  reading an argument looks like work rather than like a variable.
-- **A capability deals in bytes, and `string` is a wac type.** `cli.arg(0)` answers `u8[]`, and
-  `string.fromBytes` interprets those bytes as text; `"…".toBytes()` goes the other way, which is why
-  `cli.write` takes the result of one. The conversion is explicit in both directions because the
-  bytes crossing the boundary are not guaranteed to be text, and a silent decode is how that becomes
-  somebody's corrupted output rather than an error.
+- **A request answers a ticket, not a value.** `sys.files().readFile(p)` leaves the module, so what it
+  hands back is a `Ticket` of a `Result`: `await` it in an `async` function, or `.wait()` for it. Nothing
+  is granted implicitly, so a program that never took a `Sys` cannot ask for anything at all.
+- **Files and streams deal in bytes, and `string` is a wac type.** `readFile` answers `u8[]`, and
+  `string.fromBytes` interprets those bytes as text; `"…".toBytes()` goes the other way, which is what
+  `sys.stdout().write` takes. The conversion is explicit in both directions because the bytes crossing the
+  boundary are not guaranteed to be text, and a silent decode is how that becomes somebody's corrupted
+  output rather than an error. `sys.args()` and `sys.log` decode and encode for you.
 
 A test is an exported function whose name begins with `test`, returning a string — empty for pass,
 the reason for failure:
@@ -493,11 +499,11 @@ $ wac test src/math_test.wac
 1 passed, 0 failed
 ```
 
-Like `main`, a test may take `()`, `(Core)` or `(Core, Cli)`, and `wac test` needs the matching
-`--allow-` flags for whatever the tests actually use.
+Like `main`, a test may take `()` or `(Sys)`, and `wac test` needs the matching `--allow-` flags for
+whatever the tests actually use.
 
-A built program carries its own manifest, so `wac hello.wasm` knows which capabilities to construct.
-`hello.wasm` for the eight-line program above is 232 KB, most of which is the capability layer.
+A built program carries its own manifest, so `wac hello.wasm` knows how to start it. A program that only
+writes a line is about 600 KB, most of it std's handles (598 KB, measured 2026-10-28).
 
 ## Where things live
 

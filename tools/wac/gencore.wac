@@ -25,7 +25,7 @@
 // it was on the build path here, which is the one place it should not be — a generated file whose
 // generator needs a second runtime is a file a fresh checkout cannot regenerate.
 
-import { Core, Cli, Sys, Files, Output } from "std";
+import { Sys, Files, Output } from "std";
 import { joined, splitKeepingEmpty, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { flatten } from "core";

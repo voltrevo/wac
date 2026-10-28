@@ -150,7 +150,7 @@ wac run --allow-read <entry.wac> args               # run a wac application
 wac task app:build <entry.wac> --allow-read -o wc   # ...or build one JavaScript file; ./wc needs Deno
 wac app <entry.wac> --allow-read -o wc               # ...or one executable file; ./wc needs `wac`
 wac task app:build <entry.wac> --target node -o wc  # ...for Node instead of Deno
-wac task app:build <entry.wac> --target browser -o page/index.html  # ...or a program with a Cli, in a browser
+wac task app:build <entry.wac> --target browser -o page/index.html  # ...or a main(Sys) program, in a browser
 wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac <entry.wac> <dir>  # ...or a page: main(Page)
 wac task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
 wac task map             # regenerate MAP.md; the suite fails if it is stale

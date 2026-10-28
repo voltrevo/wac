@@ -10,7 +10,7 @@
 // side owns — there is no listener to speak QUIC back, and none is wanted.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Datagram, Pending, Env, Files, Net, Procs, Datagrams, Clock } from "std";
+import { Datagram, Env, Files, Net, Procs, Datagrams, Clock } from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";

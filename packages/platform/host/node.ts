@@ -14,7 +14,7 @@ import { type Handlers } from "./respond.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
 import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, OP } from "./ops.ts";
 import { randomBytes } from "./entropy.ts";
-import { ChildStack, envRecord, joinPath, packCaptured, unpackExec, unpackPush } from "./child.ts";
+import { envRecord, joinPath, unpackExec } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
 import {
   type Child,
@@ -33,7 +33,6 @@ import {
 import { bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import {
-  CHANGED_OK,
   FAULT_NOT_GRANTED,
   FAULT_OTHER,
   FAULT_REFUSED,
@@ -208,7 +207,7 @@ export type NodeWorldOptions = {
   warn?(line: string): void | Promise<void>;
   fs?: { read?: boolean; write?: boolean };
   net?: boolean;
-  /** Running a host *program* — `Cli.exec`. Left out means every call is refused. */
+  /** Running a host *program* — `exec`. Left out means every call is refused. */
   run?: boolean;
   env?(name: string): string | undefined;
   /** The channel to this program's parent's filesystem, when it is a spawned child — see `deno.ts`. */
@@ -249,12 +248,10 @@ function withPeer(handle: number, peer: string, port = 0): Uint8Array {
   return out;
 }
 
-/** A `warn` payload as a line of a captured error stream: its bytes, then a newline. */
-function lineOf(p: Uint8Array): Uint8Array {
-  const out = new Uint8Array(p.length + 1);
-  out.set(p, 0);
-  out[p.length] = 10;
-  return out;
+/** A failed write to a standard stream, as std reads one — see `readerGone` in `deno.ts`. */
+function readerGone(e: unknown): unknown {
+  const message = e instanceof Error ? e.message : String(e);
+  return /EPIPE|broken pipe/i.test(message) ? new Error("") : e;
 }
 
 /**
@@ -293,12 +290,7 @@ export function nodeWorld(
   opts: NodeWorldOptions = {},
 ): Handlers {
   const args = opts.args ?? proc.argv.slice(2);
-  const log = opts.log ?? ((l: string) => console.log(l));
   const warn = opts.warn ?? ((l: string) => console.error(l));
-
-  // The current streaming input; null means standard input. See the note in platform.wac.
-  let source: { read(): Promise<Uint8Array>; close(): Promise<void> } | null = null;
-  let sink: { write(b: Uint8Array): Promise<void>; close(): Promise<void> } | null = null;
 
   const sockets = new Map<number, NodeSock>();
   const listeners = new Map<number, NodeListener>();
@@ -382,9 +374,6 @@ export function nodeWorld(
         ...(give.net ? { net: true } : {}),
         ...(give.env ? { env: opts.env } : {}),
         ...(give.run ? { run: true } : {}),
-        // A line of output is bytes on the handle, with the newline `log` implies.
-        log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
-        warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
         makeWorker,
         // Its parent's filesystem, on a handle of its own — wac-mono 0116, and see `deno.ts` for
         // why this is passed unconditionally rather than as a grant.
@@ -434,17 +423,12 @@ export function nodeWorld(
     throw new Faulted(FAULT_NOT_GRANTED, `${what} not granted to this application`);
   };
 
-  // A program running inside this one. `P` is the identity when nothing is pushed.
-  const kids = new ChildStack();
-  // `write` answers a bool and cannot carry a reason, so this is recorded for `outputError`. The
-  // reads no longer need an equivalent: `Read` carries theirs.
-  let outputFailure = "";
-  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone.
+  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone, in no words.
   const outClosed = [false, false];
   const refuseClosed = (toErr: boolean) => {
-    if (outClosed[toErr ? 1 : 0]) { outputFailure = ""; throw new Error("the output has been closed"); }
+    if (outClosed[toErr ? 1 : 0]) throw new Error("");
   };
-  const P = (path: string) => joinPath(opts.cwd ?? "", kids.path(path));
+  const P = (path: string) => joinPath(opts.cwd ?? "", path);
 
   return {
     [OP.NOW_MILLIS]: () => i64le(BigInt(Date.now())),
@@ -461,48 +445,26 @@ export function nodeWorld(
         setTimeout(() => ok(i64le(BigInt(Math.round(performance.now() * 1e6)))), readI32le(p))
       ),
     [OP.RANDOM_BYTES]: (p) => randomBytes(readI32le(p)),
-    // `log` is standard output, so a child's lines are kept with the rest of its output rather
-    // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
-    [OP.LOG]: async (p) => {
-      if (kids.active) { kids.write(lineOf(p)); return EMPTY; }
-      await log(unstr(p));
-      return EMPTY;
-    },
     /**
      * Nobody can ask this host to interrupt, so the answer is no — the answer, not a stub.
      *
-     * `Core.askInterrupt` is answered by whoever owns the keyboard. Here the terminal belongs to
+     * `interrupted` is answered by whoever owns the keyboard. Here the terminal belongs to
      * whatever started the process, and over ssh to `sshd`, which is a wac program on the far side of
      * an encrypted socket. A host that cannot be asked truthfully reports that it has not been.
      */
     [OP.ASK_INTERRUPT]: () => i32le(0),
-    [OP.WARN]: async (p) => {
-      if (kids.warn(lineOf(p))) return EMPTY;
-      await warn(unstr(p));
-      return EMPTY;
-    },
 
-    [OP.PUSH_CHILD]: (p) => {
-      const { argv, stdin, cwd, inheritInput } = unpackPush(p);
-      kids.push(argv, stdin, cwd, inheritInput);
-      return EMPTY;
-    },
-    [OP.POP_CHILD]: () => {
-      const { out, err, truncated } = kids.pop();
-      return packCaptured(out, err, truncated);
-    },
-
-    // A child has its own command line: an applet reading `cli.arg(1)` must see what the shell
-    // typed, not what the shell itself was started with.
-    [OP.ARG_COUNT]: () => i32le((kids.args() ?? args).length),
+    [OP.ARG_COUNT]: () => i32le(args.length),
     [OP.ARG]: (p) => {
-      const own = kids.args() ?? args;
       const i = readI32le(p);
       // The bytes, unchanged. A program that wants text says `string.fromBytes` on its own side.
-      return i >= 0 && i < own.length ? argBytes(own[i]) : EMPTY_ARG;
+      return i >= 0 && i < args.length ? argBytes(args[i]) : EMPTY_ARG;
     },
+    // Without the grant, refused rather than unset: a program can tell "you may not ask" from "it is not
+    // there", which the one byte of presence below cannot say.
     [OP.ENV]: (p) => {
-      const v = opts.env?.(unstr(p));
+      if (opts.env === undefined) throw new Faulted(FAULT_NOT_GRANTED, "Not granted to this application");
+      const v = opts.env(unstr(p));
       if (v === undefined) return new Uint8Array([0]);
       const b = str(v);
       const out = new Uint8Array(1 + b.length);
@@ -520,39 +482,26 @@ export function nodeWorld(
 
     // stdin and stdout need no grant: what the user pipes in and what the program prints
     // are the user's own doing, not a reach into something they did not offer.
-    [OP.READ_STDIN]: async () => kids.readAll() ?? await io.readStdin(),
+    [OP.READ_STDIN]: async () => await io.readStdin(),
     [OP.WRITE_STDOUT]: async (p) => {
       refuseClosed(false);
-      if (kids.active) {
-        if (!kids.write(p)) throw new Error("the child's output buffer is full");
-        return EMPTY;
-      }
       try {
-        if (sink === null) { await io.writeStdout(p); return EMPTY; }
-        await sink.write(p);
+        await io.writeStdout(p);
         return EMPTY;
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        outputFailure = /EPIPE|broken pipe/i.test(message) ? "" : message;
-        throw e;
+        throw readerGone(e);
       }
     },
 
-    /**
-     * Standard error as bytes. Not through `sink`, which is standard output's redirection: a `2>`
-     * that followed a `1>` would leave a program no way to separate them.
-     */
+    /** Standard error as bytes. */
     [OP.WRITE_STDERR]: async (p) => {
       refuseClosed(true);
-      if (kids.active) { kids.warn(p); return EMPTY; }
       try {
         if (io.writeStderr === undefined) { warn(unstr(p)); return EMPTY; }
         await io.writeStderr(p);
         return EMPTY;
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        outputFailure = /EPIPE|broken pipe/i.test(message) ? "" : message;
-        throw e;
+        throw readerGone(e);
       }
     },
 
@@ -651,39 +600,15 @@ export function nodeWorld(
       return changed(() => fs.writeFile(P(unstr(p.subarray(4, 4 + n))), p.subarray(4 + n)));
     },
 
-    [OP.OPEN_INPUT]: async (p) => {
-      const path = unstr(p);
-      await source?.close();
-      source = null;
-      if (path === "") return CHANGED_OK;
-      // A category rather than the host's sentence, as `openOutput` above — see `platform.wac`.
-      if (!opts.fs?.read) return changeBytes(FAULT_NOT_GRANTED, "filesystem read not granted to this application");
-      return await changed(async () => {
-        source = await io.openFile(P(path));
-      });
-    },
     [OP.READ_CHUNK]: async () => {
-      const fed = source === null ? kids.readChunk() : null;
-      if (fed !== null) return fed.length === 0 ? END : data(fed);
       try {
-        const got = source === null ? await io.readStdinChunk() : await source.read();
+        const got = await io.readStdinChunk();
         return got.length === 0 ? END : data(got);
       } catch (e) {
         // The category's phrase where there is one; see the same line in `deno.ts`.
         return failed(readFailure(e));
       }
     },
-    [OP.OUTPUT_ERROR]: () => str(outputFailure),
-
-    [OP.OPEN_OUTPUT]: async (p) => {
-      const path = unstr(p);
-      await sink?.close();
-      sink = null;
-      if (path === "") return CHANGED_OK;
-      if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
-      return await changed(async () => { sink = await io.createFile(P(path)); });
-    },
-
     /** A file as a stream of its own — see the note in `deno.ts`. */
     [OP.OPEN_FILE]: async (p) => {
       const how = readI32le(p);
@@ -704,11 +629,9 @@ export function nodeWorld(
     /** The end of this program's output or its diagnostic output — see the note in `deno.ts`. */
     [OP.CLOSE_OUTPUT]: async (p) => {
       const toErr = readI32le(p) !== 0;
-      if (kids.active) throw new Error("a pushed child cannot close its parent's output");
       if (outClosed[toErr ? 1 : 0]) return EMPTY;
       outClosed[toErr ? 1 : 0] = true;
-      if (!toErr && sink !== null) { await sink.close(); sink = null; }
-      else await io.closeOutput?.(toErr);
+      await io.closeOutput?.(toErr);
       return EMPTY;
     },
 
@@ -837,8 +760,8 @@ export function nodeWorld(
         // (0121), and a send into a full queue did not wait, so backpressure did not hold (0120).
         // The runtime with no JavaScript in it has always answered `stream.write` here.
         //
-        // Throwing is how a `Pending<bool>` says false on this side: `provider.ts`'s `ok` is
-        // "collect did not throw", which is the same route `deny` already takes.
+        // Throwing is how a send says it did not go: `provider.ts` answers the error as a fault, which is
+        // the same route `deny` already takes.
         if (!await kid.in.push(p.slice(4))) throw new Error("the child's input has ended");
         return EMPTY;
       }
@@ -889,8 +812,8 @@ export function nodeWorld(
       return EMPTY;
     },
 
-    /** `Cli.exec` — a host program, run to completion. `issues/system/0165`. */
-    [OP.EXEC_WITH_IN]: async (p) => {
+    /** `exec` — a host program, run to completion. `issues/system/0165`. */
+    [OP.EXEC]: async (p) => {
       const { path, args, env, stdin, clearEnv, inherit, cwd } = unpackExec(p);
       if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
       try {

@@ -36,7 +36,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 Deno.test("a wasm module is started as a child, and its output comes back", async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-wasmchild-" });
   try {
-    // `hello.wac` needs only `Core`, so what this proves is the whole path — module, manifest,
+    // `hello.wac` only writes, so what this proves is the whole path — module, manifest,
     // driver, funcref registry, worker loop — without a filesystem or a socket in it.
     await buildNative("native/v8/example/hello.wac", `${dir}/hello`, {});
     const wasm = await Deno.readFile(`${dir}/hello.wasm`);
@@ -46,15 +46,14 @@ Deno.test("a wasm module is started as a child, and its output comes back", asyn
       [],
       // **A world, served.** A child talks to its parent through the bridge and blocks until
       // somebody answers — a stub that serves nothing does not fail, it *hangs*, which is what the
-      // first version of this test did. `hello` only logs, so this world only needs the two output
+      // first version of this test did. `hello` only writes, so this world only needs the two output
       // streams; everything else is absent rather than refused, and absent is what a program with
       // no grants sees.
       (sab, cargs, out, _input, cerr) => {
-        const enc = new TextEncoder();
         return serveHostCalls(bridgeOf(sab), denoWorld({
           args: cargs,
-          log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
-          warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
+          write: async (b: Uint8Array) => { await out.push(b); },
+          writeErr: async (b: Uint8Array) => { await cerr.push(b); },
         }));
       },
       () => newBridge(),

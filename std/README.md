@@ -1,10 +1,11 @@
 # `std` — the capability built-ins
 
-The half of the built-in trees that is entangled with the host: `Core`, `Cli`, filesystem, network,
-processes, environment, terminal, clocks, randomness, page. `design/lang/0009` D4 is the decision,
+The half of the built-in trees that is entangled with the host: `Sys` and the handles it gives out —
+files, the standard streams, network, processes, modules, environment, clocks, randomness — over the
+one host call of design/system/0013 step 6. `design/lang/0009` D4 is the decision,
 and [`../core/README.md`](../core/README.md) is the other half — the part that needs no capability.
 
-    import { Cli, Core } from "std";
+    import { Files, Sys } from "std";
 
 The specifier is the whole of how you reach it, and a path below it is refused. `std` is reserved: a
 project's own `std/` directory does not shadow this one, which is what makes the name mean the same
@@ -21,10 +22,9 @@ compilers carry this tree as *text* — the reference bundles into a browser wit
 keeps it inside a wasm module — so there is no package path to reach at the far end. A
 file here that imports a package cannot be embedded at all.
 
-That limit is what decided the tree's contents. `frame.wac` and `stream.wac` sit beside
-`platform.wac` in `packages/platform` and are *not* here: both import `Buf` from `packages/bytes`,
-so neither could be embedded, and both are library code written over the capabilities rather than
-capabilities. D4's own list names neither.
+That limit is what decided the tree's contents. `packages/platform/src/stream.wac` is *not* here: it
+is library code written over the handles rather than a capability, and D4's own list does not name it.
+(`frame.wac` sat beside it until design/system/0013 step 5 deleted it.)
 
 ## One file, and why the reference has none of it
 

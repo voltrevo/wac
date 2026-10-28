@@ -31,7 +31,7 @@ import {
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Cli, Procs, Sys } from "std";
+import { Procs, Sys } from "std";
 
 static string ORACLE = "packages/tls/test/oracle.mjs";
 

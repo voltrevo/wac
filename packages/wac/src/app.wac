@@ -29,7 +29,7 @@
 // environment variable stays the seam; there is simply no host filling it, and a caller who exports one
 // is passed through — which is how `packages/wac/test/wac/app_test.wac` still exercises the refusal.
 
-import { Change, Cli, Env, Files, Net, Output, Procs, Stat } from "std";
+import { Env, Files, Net, Output, Procs, Stat } from "std";
 import { reason } from "../../fs/src/words.wac";
 import { runBytes } from "./runprog.wac";
 import { flatten } from "core";

@@ -24,7 +24,7 @@
 // generator that dropped a cast it needed would still read like JavaScript.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles, pruneForBuild } from "../../src/api.wac";
 import { Pruned } from "../../src/reach.wac";

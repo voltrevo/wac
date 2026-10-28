@@ -1,4 +1,4 @@
-// `Core.randomBytes`, for every host that has Web Crypto — which is all three of them.
+// `OP.RANDOM_BYTES`, for every host that has Web Crypto — which is all three of them.
 //
 // One function rather than three, because the three had already drifted. Node filled in 64 KiB
 // chunks with a comment saying why; Deno and the browser each called `getRandomValues` once with
@@ -12,7 +12,7 @@
 /** Web Crypto's per-call ceiling, fixed by the specification rather than by an engine. */
 const PER_CALL = 65536;
 
-/** The most `Core.randomBytes` will answer, stated in `platform.wac` beside the capability. */
+/** The most `OP.RANDOM_BYTES` will answer, stated in `platform.wac` beside the capability. */
 export const MOST = 1 << 20;
 
 /**

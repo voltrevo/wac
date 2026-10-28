@@ -5,13 +5,19 @@
 //   runner runprobe.worker.js "" run      ->  ok, if the runner itself may run programs
 //
 // The child half of `test/wac/spawn_test.wac`'s run-grant case. `probe.wac` reports the other grants
-// by their fault; `Exec` carries no fault, only its message, so this reports the one distinction that
-// does not depend on how a host words a refusal — whether the program ran.
+// by their fault; this reports the one distinction that does not depend on how a host words a refusal —
+// whether the program ran.
 
-import { Exec, Sys } from "std";
+import { ChildEnv, Exec, Launch, Sys } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Exec e = sys.cli.exec("/bin/sh", ["-c", "true"], u8[]()).wait();
-  sys.core.log(e.error == "" && e.status == 0 ? "run=ok" : "run=no: " + e.error);
+  auto ran = flatten(sys.procs().exec("/bin/sh", ["-c", "true"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  if (ran.isErr()) {
+    sys.log("run=no: \{ran.err()!}");
+    return 0;
+  }
+  Exec e = ran.unwrap();
+  sys.log(e.status == 0 ? "run=ok" : "run=no: exited \{e.status}");
   return 0;
 }

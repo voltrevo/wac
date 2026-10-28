@@ -24,7 +24,7 @@
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Clock, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";

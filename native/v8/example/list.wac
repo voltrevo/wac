@@ -1,21 +1,21 @@
-// A directory's names, sorted — the smallest thing that needs an array of references to cross.
+// A directory's names, sorted.
 //
-// `readDir` answers `string[]?`, and the `?` is the difference between a directory with nothing in
-// it and no directory at all. Both are printed here rather than collapsed, because a host that
+// A directory with nothing in it and no directory at all are different answers — an empty list, and
+// a `LookFault` saying which failure — and both are printed rather than collapsed, because a host that
 // cannot tell them apart makes every program that asks take the wrong branch.
 
-import { Cli, Core, Sys } from "std";
+import { flatten } from "core";
+import { Sys } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  string where = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
-  string[]? names = cli.readDir(where).wait();
-  if (names is null) {
-    core.warn("list: cannot read " + where);
+  string[] argv = sys.args();
+  string where = argv.len() > 0 ? argv[0] : ".";
+  auto names = flatten(sys.files().readDir(where).wait());
+  if (names.isErr()) {
+    sys.warn("list: cannot read " + where + ": \{names.err()!}");
     return 1;
   }
-  string[] found = names!;
-  for (i32 i = 0; i < found.len(); i++) { core.log(found[i]); }
+  string[] found = names.unwrap();
+  for (i32 i = 0; i < found.len(); i++) { sys.log(found[i]); }
   return 0;
 }

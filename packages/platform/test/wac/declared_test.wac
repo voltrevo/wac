@@ -1,7 +1,7 @@
 // A program is bound for what it declared, and not for what its imports mention.
 //
 // This is a security property before it is a size one. `native/v8/example/hello.wac` logs one line
-// and takes `main(Core)`; before `issues/lang/0107` it was described by a manifest of 31 structs and
+// and takes `main(Sys)`; before `issues/lang/0107` it was described by a manifest of 31 structs and
 // 51 callback signatures, including `Socket`, `Child`, `Page`, `Picked` and `Event` — a hello-world
 // handed a socket, a child-spawner and a window system because `packages/platform` mentions them.
 //
@@ -22,11 +22,10 @@
 // assertions loudly rather than agreeing with a mistake.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { customSection } from "./section.wac";
-import { has } from "../../../wactest/src/strings.wac";
 import { flatten } from "core";
 
 /** The struct names and callback count a built program's manifest declares. */
@@ -108,51 +107,36 @@ export string test_a_program_handed_sys_is_described_by_the_world(Sys sys) {
   t.eqStr(m.error, "", "the manifest was read");
   if (m.error != "") { return t.report(); }
 
-  // `main(Sys)` — the one authority a program is handed (spec ch07), which is `Core` and `Cli`
-  // and the ticket shapes their methods answer with, and the `Sched` and continuation queue a world
-  // carries — and the watcher list each ticket keeps (`Vec<fn[void()]>`), since `TicketBase` is on the
-  // boundary. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
-  // today's capabilities says nothing about the one added next week.
-  //
-  // It was `main(Core)` and a third of this until `Sys`: a program could ask for less than the world,
-  // and the boundary was what it asked for. With one `Sys` there is nothing smaller to ask for; what
-  // stays smaller is a program that takes nothing, which is handed nothing.
+  // `main(Sys)` — the one authority a program is handed (spec ch07). Since design/system/0013 step 6 a host builds no
+  // wac value, so the boundary is the host's own: the value `__wacHost` answers, the one shape every answer takes,
+  // and what that value holds — the requests in flight and the continuations nobody awaited. Asserted as the
+  // *whole* list rather than as an absence, because a rule that only forbids today's capabilities says nothing
+  // about the one added next week. It was 36 structs, every `Pending<T>` a capability answered with among them.
   t.eqStr(joinedWith(sorted(m.structs), ", "),
-          "CallResult, Captured, Change, Cli, Continuation, Core, Datagram, Exec, FileResult, HostChild, "
-            + "HostSocket, LoadedModule, Pending<Captured>, Pending<Change>, Pending<Datagram>, Pending<Exec>, "
-            + "Pending<FileResult>, Pending<HostChild>, Pending<HostSocket>, Pending<Read>, Pending<Stat>, "
-            + "Pending<bool>, Pending<i32>, Pending<i64>, Pending<string>, Pending<string[]>, "
-            + "Pending<string[]?>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Read, Sched, "
-            + "Stat, TicketBase, Vec<Continuation>, Vec<fn[void()]>",
+          "Answer, Continuation, Map<i32,fn[void(Answer)]>, MapEntry<i32,fn[void(Answer)]>, Queue<Continuation>, "
+            + "TicketBase, Vec<Continuation>, Vec<fn[void()]>, __WacHost",
           "hello.wac's declared boundary");
 
-  // The callback signatures are the other half of the same boundary: each is a dispatcher the host
-  // may call into — every capability `Core` and `Cli` declare, against 51 when every imported file's
-  // exports were roots and fifteen when a program could take `Core` alone.
-  t.isTrue(m.callbacks >= 0 && m.callbacks <= 80,
+  // The callback signatures are the other half of the same boundary: each is a dispatcher the host may call
+  // into — the four calls `__wacHost` takes, and what the module's own closures need — against 51 when every
+  // imported file's exports were roots.
+  t.isTrue(m.callbacks >= 0 && m.callbacks <= 12,
            "\{m.callbacks} callback signatures");
   return t.report();
 }
 
-export string test_and_one_that_asks_for_two_is_described_by_two(Sys sys) {
+export string test_and_a_program_that_takes_nothing_is_handed_nothing(Sys sys) {
   Env env = sys.env();
   Files fs = sys.files();
   Procs procs = sys.procs();
-  // The canary. A rule that bound nothing would pass the test above and fail here, and this is also
-  // where a `Cli` is *supposed* to arrive: the program said so in its signature.
+  // The canary. A rule that bound nothing would pass the test above only if hello's list were empty, and a rule
+  // that bound everything would hand this program the host: `main()` asked for no authority, so there is no
+  // `__WacHost`, no callback and no struct to describe.
   T t = T.create();
-  Boundary m = manifestOf(env, fs, procs, "packages/platform/example/wc.wac", "wc");
+  Boundary m = manifestOf(env, fs, procs, "packages/platform/size/none.wac", "none");
   t.eqStr(m.error, "", "the manifest was read");
   if (m.error != "") { return t.report(); }
-
-  t.isTrue(has(m.structs, "Core"), "wc takes a Core");
-  t.isTrue(has(m.structs, "Cli"), "and a Cli, which its main declares");
-
-  // What it does not take. `wc` reads standard input and prints three numbers; it never draws, never
-  // picks a file, and never names core's JSX tree.
-  string[] absent = ["Page", "Event", "Picked", "Node", "Attr"];
-  for (i32 i = 0; i < absent.len(); i++) {
-    t.isTrue(!has(m.structs, absent[i]), "wc was handed \{absent[i]}");
-  }
+  t.eqStr(joinedWith(sorted(m.structs), ", "), "", "a program that takes nothing describes no struct");
+  t.eqI32(m.callbacks, 0, "and no callback");
   return t.report();
 }

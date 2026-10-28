@@ -22,7 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { flatten } from "core";
 
 string LIB() {

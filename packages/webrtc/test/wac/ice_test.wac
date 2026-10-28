@@ -26,8 +26,7 @@
 // all import it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, FileResult, Pending, HostSocket }
-  from "std";
+import { Datagram, Exec } from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

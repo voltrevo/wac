@@ -11,7 +11,7 @@
 // file and feeds the bytes in, exactly as `bootstrap/drivers/` already does. This is the same
 // `strip` behind a command line, for the machines that have one.
 
-import { Change, Cli, Sys, Files, Output } from "std";
+import { Sys, Files, Output } from "std";
 import { Stripped, strip } from "./strip.wac";
 import { Bundled, Import, bundle, importsIn, resolve } from "./bundle.wac";
 import { Vec, flatten } from "core";

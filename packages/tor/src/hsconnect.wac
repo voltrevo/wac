@@ -32,7 +32,7 @@
 // **Any padding or timing defence.** The two circuits are built back to back on demand, which is a
 // recognisable shape.
 
-import { FileResult, Sys, Clock, Files, Net, Output, Random } from "std";
+import { Sys, Clock, Files, Net, Output, Random } from "std";
 import {
   Awaited, Network, Session, awaitCommand, bootstrap, buildCircuit, buildCircuitTo, relayByEd25519,
 } from "./bootstrap.wac";

@@ -35,7 +35,7 @@ import { CHUNK } from "./layout.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
 import { GRANT_READ, GRANT_WRITE, OP } from "./ops.ts";
 import { randomBytes } from "./entropy.ts";
-import { ChildStack, joinPath, packCaptured, unpackPush } from "./child.ts";
+import { joinPath } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
 import {
   type Child,
@@ -52,7 +52,6 @@ import {
 import { bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import {
-  CHANGED_OK,
   FAULT_EXISTS,
   FAULT_NOT_GRANTED,
   Faulted,
@@ -82,14 +81,6 @@ function failed(why: string): Uint8Array {
   const out = new Uint8Array(message.length + 1);
   out[0] = 2;
   out.set(message, 1);
-  return out;
-}
-
-/** A `warn` payload as a line of a captured error stream: its bytes, then a newline. */
-function lineOf(p: Uint8Array): Uint8Array {
-  const out = new Uint8Array(p.length + 1);
-  out.set(p, 0);
-  out[p.length] = 10;
   return out;
 }
 
@@ -139,7 +130,6 @@ export type BrowserWorldOptions = {
    * because the guest was released before the first had finished. A spawned child's output goes
    * through here, and pushing to a queue is asynchronous exactly when the queue is full.
    */
-  log?(line: string): void | Promise<void>;
   warn?(line: string): void | Promise<void>;
   /** Where `write` goes — exact bytes, no newline. Defaults to the console, as text. */
   write?(bytes: Uint8Array): void | Promise<void>;
@@ -193,7 +183,7 @@ export type BrowserWorldOptions = {
   /** Whether writes are allowed, when a root is granted at all. */
   writable?: boolean;
   /**
-   * How this world answers `Core.askInterrupt`. A child is handed its parent's answer, so the one
+   * How this world answers `interrupted`. A child is handed its parent's answer, so the one
    * that has to stop learns that the user asked. Absent answers no.
    *
    * There was a `dom` beside it until design/system/0011 step 7: std's `Page`, served over this
@@ -223,7 +213,6 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   const asked = (): boolean => opts.askInterrupt !== undefined && opts.askInterrupt();
 
   const args = opts.args ?? [];
-  const log = opts.log ?? ((l: string) => console.log(l));
   const warn = opts.warn ?? ((l: string) => console.warn(l));
   const write = opts.write ?? ((b: Uint8Array) => console.log(new TextDecoder().decode(b)));
   const readIn = opts.readStdin;
@@ -286,15 +275,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         // `/proc` and `/bin` live in the shell's memory, and until this a spawned applet could not
         // see them.
         parentFs,
-        // A line of output is bytes on the handle, with the newline `log` implies. The parent cannot
-        // tell `log` from `write`, and neither can a pipe — which is the point.
-        log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
-        // ...and its error output goes to the *other* stream, which `recv(errHandle)` reads. A
-        // program has two, and merging them made a shell count an error message in `cat x | wc -c`.
+        // Its error output goes to the *other* stream, which `recv(errHandle)` reads. A program has two, and merging them made a shell count an error message in `cat x | wc -c`.
         warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
         // A full queue has to *fail* the write, or a program written to stop when the other end
-        // goes away never learns: `box yes` is `while (cli.write(block)) {}`. Throwing is how the
-        // host says false — the same shape `pushChild`'s cap uses.
+        // goes away never learns: `box yes` writes until a write fails. Throwing is how the host
+        // says it failed.
         write: async (b: Uint8Array) => {
           // Awaited: a full queue *waits* for the parent to read, and only a queue that has ended
           // refuses. The two were one answer, and a producer told to stop when it should have waited
@@ -375,17 +360,10 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
 
   /** A length-prefixed string followed by the rest, which is how two strings cross. */
 
-  // A program running inside this one. Both path walkers above go through `kids.path`, so a
-  // child's relative paths resolve from where the shell put it; with nothing pushed it is the
-  // identity and every path means exactly what it did before.
-  const kids = new ChildStack();
-  // `write` answers a bool and cannot carry a reason, so this is recorded for `outputError`. The
-  // reads no longer need an equivalent: `Read` carries theirs.
-  let outputFailure = "";
-  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone.
+  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone, in no words.
   const outClosed = [false, false];
   const refuseClosed = (toErr: boolean) => {
-    if (outClosed[toErr ? 1 : 0]) { outputFailure = ""; throw new Error("the output has been closed"); }
+    if (outClosed[toErr ? 1 : 0]) throw new Error("");
   };
 
   const canWrite = (): void => {
@@ -411,7 +389,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
    * Run a read, and say a failure the way a change says it.
    *
    * A read reports by *throwing*: the bridge turns that into an error reply and the worker decodes it
-   * into `FileResult.error` or `openInput`'s message. So the rephrasing has to happen here, and without
+   * into the answer's words. So the rephrasing has to happen here, and without
    * it a page spoke with two voices — `rm nosuchfile` said "no such file or directory" while
    * `cat nosuchfile` said "A requested file or directory could not be found at the time an operation was
    * processed.", which is the same failure in the same tab. Found by driving the browser terminal after
@@ -450,7 +428,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
    * for them to be absolute about.
    */
   const resolve = async (path: string, create: boolean): Promise<Resolved> => {
-    const parts = joinPath(opts.cwd ?? "", kids.path(path)).split("/").filter((p) => p !== "" && p !== ".");
+    const parts = joinPath(opts.cwd ?? "", path).split("/").filter((p) => p !== "" && p !== ".");
     if (parts.length === 0) throw new Error("empty path");
     let dir = root();
     for (let i = 0; i < parts.length - 1; i++) {
@@ -479,7 +457,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
    * listing, so portable code asked the obvious question and silently got nothing.
    */
   const dirOf = async (path: string, create: boolean): Promise<DirHandle> => {
-    const parts = joinPath(opts.cwd ?? "", kids.path(path)).split("/").filter((x) => x !== "" && x !== ".");
+    const parts = joinPath(opts.cwd ?? "", path).split("/").filter((x) => x !== "" && x !== ".");
     let dir = root();
     for (const part of parts) dir = await dir.getDirectoryHandle(part, { create });
     return dir;
@@ -511,11 +489,6 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     return out;
   };
 
-  // The current streaming input and output: the same one-at-a-time model the other worlds
-  // use, for the reason given in platform.wac — a handle cannot be carried into a funcref.
-  let source: { blob: Blob; at: number } | null = null;
-  let sink: WritableFile | null = null;
-
   return {
     [OP.NOW_MILLIS]: () => i64le(BigInt(Date.now())),
     [OP.MONOTONIC_NANOS]: () => i64le(BigInt(Math.round(performance.now() * 1e6))),
@@ -530,69 +503,34 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         setTimeout(() => ok(i64le(BigInt(Math.round(performance.now() * 1e6)))), readI32le(p))
       ),
     [OP.RANDOM_BYTES]: (p) => randomBytes(readI32le(p)),
-    // `log` is standard output, so a child's lines are kept with the rest of its output rather
-    // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
-    [OP.LOG]: async (p) => {
-      if (kids.active) { kids.write(lineOf(p)); return EMPTY; }
-      await log(unstr(p));
-      return EMPTY;
-    },
     /**
      * **The one host that can answer yes**, because in a page the keydown listener and the code
      * servicing this bridge are the same thread — so while the worker is parked here, the page has
      * already had its chance to see the keystroke.
      *
      * This is what makes design/system/0001 step 5's criterion reachable: a running applet is inside
-     * `dispatch`, so the shell's own check points are not executing, and an applet holds `Core` and
+     * `dispatch`, so the shell's own check points are not executing, and an applet holds a `Sys` and
      * never a `Page`.
      */
     [OP.ASK_INTERRUPT]: () => i32le(asked() ? 1 : 0),
-    [OP.WARN]: async (p) => {
-      if (kids.warn(lineOf(p))) return EMPTY;
-      await warn(unstr(p));
-      return EMPTY;
-    },
 
-    [OP.PUSH_CHILD]: (p) => {
-      const { argv, stdin, cwd, inheritInput } = unpackPush(p);
-      kids.push(argv, stdin, cwd, inheritInput);
-      return EMPTY;
-    },
-    [OP.POP_CHILD]: () => {
-      const { out, err, truncated } = kids.pop();
-      return packCaptured(out, err, truncated);
-    },
-
-    // A child has its own command line: an applet reading `cli.arg(1)` must see what the shell
-    // typed, not what the shell itself was started with.
-    [OP.ARG_COUNT]: () => i32le((kids.args() ?? args).length),
+    [OP.ARG_COUNT]: () => i32le(args.length),
     [OP.ARG]: (p) => {
-      const own = kids.args() ?? args;
       const i = readI32le(p);
       // The bytes, unchanged. A program that wants text says `string.fromBytes` on its own side.
-      return i >= 0 && i < own.length ? argBytes(own[i]) : EMPTY_ARG;
+      return i >= 0 && i < args.length ? argBytes(args[i]) : EMPTY_ARG;
     },
-    // Unset, always. One byte of presence says so, as it does everywhere else.
+    // **Unset, always**: a page has no environment to withhold, so there is nothing to refuse. One byte of
+    // presence says so, as it does everywhere else.
     [OP.ENV]: () => new Uint8Array([0]),
 
     // A page has no standard input of its own; a child running inside it does.
-    [OP.READ_STDIN]: async () => kids.readAll() ?? (readIn === undefined ? EMPTY : await readIn()),
+    [OP.READ_STDIN]: async () => readIn === undefined ? EMPTY : await readIn(),
+    // A page has no pipe to break, so a failure here is a real one and keeps its words.
     [OP.WRITE_STDOUT]: async (p) => {
       refuseClosed(false);
-      if (kids.active) {
-        if (!kids.write(p)) throw new Error("the child's output buffer is full");
-        return EMPTY;
-      }
-      try {
-        if (sink === null) { await write(p); return EMPTY; }
-        await sink.write(p);
-        return EMPTY;
-      } catch (e) {
-        // A page has no pipe to break, so any failure here is a real one — a quota exceeded, or a
-        // handle the browser took back. Recorded so `outputError` can say which.
-        outputFailure = e instanceof Error ? e.message : String(e);
-        throw e;
-      }
+      await write(p);
+      return EMPTY;
     },
 
     /**
@@ -602,7 +540,6 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      */
     [OP.WRITE_STDERR]: async (p) => {
       refuseClosed(true);
-      if (kids.active) { kids.warn(p); return EMPTY; }
       await writeErr(p);
       return EMPTY;
     },
@@ -695,13 +632,13 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     },
 
     /**
-     * `Cli.exec` — **always refused here, and there is no option that turns it on.**
+     * `exec` — **always refused here, and there is no option that turns it on.**
      *
      * A page has no host to run a program on. This is the capability the browser must be able to
      * say no to while still saying yes to `spawn`, which starts a confined wasm module in a worker
      * — the reason the two are separate capabilities rather than one. `issues/system/0165`.
      */
-    [OP.EXEC_WITH_IN]: () => execBytes(0, EMPTY, EMPTY, "a page cannot run a host program"),
+    [OP.EXEC]: () => execBytes(0, EMPTY, EMPTY, "a page cannot run a host program"),
     [OP.MKDIR]: (p) => {
       const no = writeRefused();
       if (no !== null) return no;
@@ -763,7 +700,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       if (no !== null) return no;
       return changeBytes(FAULT_UNSUPPORTED, "a page's filesystem has no mode bits");
     },
-    // The same answer for the whole mode, and for the same reason. `Cli.setExecutable`'s note gives
+    // The same answer for the whole mode, and for the same reason. `Files.setExecutable`'s note gives
     // "a browser's OPFS has no mode bits at all" as one of three reasons it was one bit rather than a
     // mode — the point being that `FAULT_UNSUPPORTED` says *the backing refuses* rather than *nobody
     // implemented this*. That distinction is what lets the wider call exist here at all.
@@ -773,49 +710,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       return changeBytes(FAULT_UNSUPPORTED, "a page's filesystem has no mode bits");
     },
 
-    [OP.OPEN_INPUT]: async (p) => {
-      const path = unstr(p);
-      source = null;
-      if (path === "") return CHANGED_OK;          // "standard input", which is empty here
-      // `changed` rather than `readOrPhrase`: this answers a `Change` now, so a failure is a category
-      // in the reply instead of an exception in the envelope — the same shape `OPEN_OUTPUT` uses, with
-      // the same phrase policy for a browser's boilerplate messages (issue 0025).
-      return await changed(async () => {
-        source = { blob: await fileOf(path), at: 0 };
-      }, describeAsPhrase);
-    },
+    // A spawned child's standard input is a queue its parent fills; a page has none of its own.
     [OP.READ_CHUNK]: async () => {
-      const fed = source === null ? kids.readChunk() : null;
-      if (fed !== null) return fed.length === 0 ? END : data(fed);
-      // A spawned child's standard input is a queue its parent fills, which is the same shape a
-      // fed child has and a different source: `pushChild` hands over a buffer, `send` arrives over
-      // time. Both end, and the end is what `readChunk` has to be able to say.
-      if (source === null && readChunkIn !== undefined) {
-        const piped = await readChunkIn();
-        return piped.length === 0 ? END : data(piped);
-      }
-      if (source === null) return END;
-      try {
-        const end = Math.min(source.at + CHUNK, source.blob.size);
-        if (end <= source.at) return END;
-        const slice = source.blob.slice(source.at, end);
-        source.at = end;
-        return data(new Uint8Array(await slice.arrayBuffer()));
-      } catch (e) {
-        return failed(e instanceof Error ? e.message : String(e));
-      }
-    },
-    // Why the last read gave nothing — see `inputError` in platform.wac.
-    [OP.OUTPUT_ERROR]: () => str(outputFailure),
-    [OP.OPEN_OUTPUT]: async (p) => {
-      const path = unstr(p);
-      if (sink !== null) { await sink.close(); sink = null; }
-      if (path === "") return CHANGED_OK;
-      canWrite();
-      return await changed(async () => {
-        const { dir, name } = await resolve(path, true);
-        sink = await (await dir.getFileHandle(name, { create: true })).createWritable();
-      });
+      if (readChunkIn === undefined) return END;
+      const piped = await readChunkIn();
+      return piped.length === 0 ? END : data(piped);
     },
 
     /** A file as a stream of its own — see the note in `deno.ts`. */
@@ -841,13 +740,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * The end of this program's output or its diagnostic output — see the note in `deno.ts`. A page's own
      * console has no end to give, so there it only refuses later writes.
      */
-    [OP.CLOSE_OUTPUT]: async (p) => {
+    [OP.CLOSE_OUTPUT]: (p) => {
       const toErr = readI32le(p) !== 0;
-      if (kids.active) throw new Error("a pushed child cannot close its parent's output");
       if (outClosed[toErr ? 1 : 0]) return EMPTY;
       outClosed[toErr ? 1 : 0] = true;
-      if (!toErr && sink !== null) { await sink.close(); sink = null; }
-      else opts.closeOutput?.(toErr);
+      opts.closeOutput?.(toErr);
       return EMPTY;
     },
     /**
@@ -938,8 +835,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         // (0121), and a send into a full queue did not wait, so backpressure did not hold (0120).
         // The runtime with no JavaScript in it has always answered `stream.write` here.
         //
-        // Throwing is how a `Pending<bool>` says false on this side: `provider.ts`'s `ok` is
-        // "collect did not throw", which is the same route `deny` already takes.
+        // Throwing is how a send says it did not go: `provider.ts` answers the error as a fault, which is
+        // the same route `deny` already takes.
         if (!await kid.in.push(p.slice(4))) throw new Error("the child's input has ended");
         return EMPTY;
       }

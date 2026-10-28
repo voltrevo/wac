@@ -160,7 +160,7 @@ function shebangFor(g: Grants, target: Target, coverage = false): string {
   // losing packets, which is the right direction to fail in. design/system 0007.
   if (g.net) flags.push("--allow-net", "--unstable-net");
   if (g.env) flags.push("--allow-env");
-  // The *host's* permission for `Cli.exec`, which is a separate thing from the application's grant:
+  // The *host's* permission for `exec`, which is a separate thing from the application's grant:
   // without it the program is entitled to run a host binary and the runtime underneath is not, and
   // the failure arrives from Deno rather than from the capability.
   if (g.run) flags.push("--allow-run");
@@ -173,7 +173,7 @@ function shebangFor(g: Grants, target: Target, coverage = false): string {
   return `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run${flags.length ? " " + flags.join(" ") : ""}\n`;
 }
 
-/** `run` is `Cli.exec` — a host program, which `spawn` is not. `issues/system/0165`. */
+/** `run` is `exec` — a host program, which `spawn` is not. `issues/system/0165`. */
 export type Grants = {
   read?: boolean;
   write?: boolean;
@@ -704,7 +704,6 @@ async function produceApp(
           `  const code = await runInPage({\n` +
           `    workerSource: ${JSON.stringify(workerSource)},\n` +
           `    args: argsFromLocation(location.search),\n` +
-          `    log: (l) => line(l),\n` +
           `    warn: (l) => line(l, "warn"),\n` +
           `    write: raw,\n` +
           `    root,\n` +
@@ -751,7 +750,7 @@ async function produceApp(
       );
 
     if (target === "browser") {
-      // A program with a `Cli`, run in a page that shows its output. An interactive page is
+      // A program with a `Sys`, run in a page that shows its output. An interactive page is
       // `packages/web`'s `main(Page)`, built by `packages/web/tools/build.wac`.
       const title = entry.split("/").pop() ?? "wac";
       return PAGE_CLI.replaceAll("%TITLE%", title).replace("%LAUNCHER%", launcher);
@@ -794,7 +793,7 @@ if (import.meta.main) {
     write: argv.includes("--allow-write"),
     net: argv.includes("--allow-net"),
     env: argv.includes("--allow-env"),
-  // **`--allow-run` was missing from every launcher but `binary.ts`**, so `Cli.exec` could not be
+  // **`--allow-run` was missing from every launcher but `binary.ts`**, so `exec` could not be
   // granted through this path at all: the wasmtime host's implementation of it had never executed
   // once, and the Deno host's only ever ran under `wac test`. A capability the build cannot grant is
   // a capability nothing measures. `issues/system/0165`.

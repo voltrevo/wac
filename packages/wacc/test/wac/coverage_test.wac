@@ -24,7 +24,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, trimmed } from "../../../wactest/src/strings.wac";
-import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { emitFilesCovered, covTableFiles } from "../../src/api.wac";
 import { scratchDir } from "./artifacts_probe.wac";
 import { flatten } from "core";

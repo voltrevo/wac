@@ -53,8 +53,8 @@ directory, reached only by a relative path; `"core"` names the built-in whatever
 **This section was packages/std/README.md, and the package it described is gone.** D4 says `core`
 holds "the whole of today's packages/std" — `Result`, `Vec`, `Map`, hashing, equality —
 and it does now, so the argument moves here rather than being deleted with the directory. What D4
-means by `std` from here on is the *capability* half: `Core`, `Cli`, filesystem, network, processes.
-That tree does not exist yet.
+means by `std` from here on is the *capability* half: `Sys` and its handles — files, network, processes —
+which is [`../std/`](../std/README.md).
 
 Containers, and the sum type every program ends up wanting.
 

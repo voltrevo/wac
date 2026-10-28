@@ -50,7 +50,7 @@ import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { Buf, flatten } from "core";
 import { literalOf, chunkedLiteral } from "./source_probe.wac";
-import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { emitFilesSelfDescribing } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";

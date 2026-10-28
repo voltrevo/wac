@@ -27,7 +27,7 @@
 // accept. That is the harmless direction and naming it here is cheaper than a second scan.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Exec, FAULT_NONE, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, FAULT_NONE, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { flatten } from "core";

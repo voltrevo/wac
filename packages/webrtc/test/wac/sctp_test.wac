@@ -24,7 +24,7 @@
 // accessors bindgen needed.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Procs, Sys } from "std";
+import { Procs, Sys } from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Association, chunkAbort, chunkShutdown, chunkShutdownAck, chunkShutdownComplete,

@@ -2,8 +2,10 @@
 //
 // To the language `main` is an ordinary name. Building a *program* is what gives it a contract: no
 // parameters or one `Sys`, answering `void`, `never`, `i32` or a `Result` of `void` or `i32`, any of them
-// `async`. The hosts start a program by calling `main(Core, Cli)` and reading an `i32`, so a `main` in any
-// other permitted shape is renamed and the entry gains an adapter in the host's: it makes the `Sys`,
+// `async`. A host starts a program by handing its four calls to `__wacHost`, calling `main` with what that
+// answers, and reading an `i32` — delivering each answer through `__wacAnswered` meanwhile (design/system/0013
+// step 6). So a `main` in any other permitted shape is renamed and the entry gains an adapter in the host's: it
+// makes the `Sys`,
 // settles an `async` answer with the program's unawaited work running alongside, and turns a `Result`
 // into a status.
 //
@@ -40,8 +42,7 @@ export ProgramEntry programEntry(string text) {
   // A file that does not parse is the checker's to report, and one with no `main` is a library: a
   // named export is what `wac run` calls in it.
   if (p.errorCount > 0) { return ProgramEntry("", text); }
-  bool haveCore = false;
-  bool haveCli = false;
+  bool haveHost = false;
   bool haveSys = false;
   bool haveTicket = false;
   for (i32 di = 0; di < prog.decls.len(); di++) {
@@ -50,8 +51,7 @@ export ProgramEntry programEntry(string text) {
         for (i32 ii = 0; ii < items.len(); ii++) {
           ImportItem it = items[ii];
           string local = progText(src, lexed, it.aliasTok);
-          if (local == "Core") { haveCore = true; }
-          if (local == "Cli") { haveCli = true; }
+          if (local == "__WacHost") { haveHost = true; }
           if (local == "Sys") { haveSys = true; }
           if (local == "Ticket") { haveTicket = true; }
         }
@@ -64,7 +64,7 @@ export ProgramEntry programEntry(string text) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (!exported || progText(src, lexed, nameTok) != "main") { continue; }
         return shaped(text, src, lexed, nameTok, returnType, params, isAsync,
-                      haveCore, haveCli, haveSys, haveTicket);
+                      haveHost, haveSys, haveTicket);
       }
       default: { }
     }
@@ -73,14 +73,13 @@ export ProgramEntry programEntry(string text) {
 }
 
 ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnType, Param[] params,
-                    bool isAsync, bool haveCore, bool haveCli, bool haveSys, bool haveTicket) {
+                    bool isAsync, bool haveHost, bool haveSys, bool haveTicket) {
   string[] pts = string[].defaulted(params.len());
   for (i32 i = 0; i < params.len(); i++) { pts[i] = spell(src, lexed, params[i].type); }
   bool takesSys = pts.len() == 1 && pts[0] == "Sys";
-  // **The adapter's own `main`** is the one shape left that names `Core` and `Cli` — this entry was
-  // already adapted, and adapting is idempotent. The parameter names are ones no program writes.
-  if (pts.len() == 2 && pts[0] == "Core" && pts[1] == "Cli"
-      && progText(src, lexed, params[0].nameTok) == "__wacCore") {
+  // **The adapter's own `main`** is the one shape left that takes `__WacHost` — this entry was already
+  // adapted, and adapting is idempotent. The parameter name is one no program writes.
+  if (pts.len() == 1 && pts[0] == "__WacHost" && progText(src, lexed, params[0].nameTok) == "__wacH") {
     return ProgramEntry("", text);
   }
   if (pts.len() > 0 && !takesSys) {
@@ -136,9 +135,7 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
     yielding = asyncAdapter(ret, call, finish);
   }
 
-  string imports = "";
-  string names = (haveCore ? "" : "Core, ") + (haveCli ? "" : "Cli, ") + (haveSys ? "" : "Sys, ");
-  if (names != "") { imports = imports + "import { " + names.slice(0, names.len() - 2) + " } from \"std\";\n"; }
+  string imports = hostImports(haveHost, haveSys);
   if (isAsync && !haveTicket) { imports = imports + "import { Ticket } from \"core\";\n"; }
   // `OutputClosed` by its own name unless the entry declares one of its own — a second spelling of std's would be
   // a second type wherever std's `type` aliases are expanded (`issues/lang/0397a`).
@@ -152,10 +149,34 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
     }
   }
   out = out + "\n\n// wac:program — the entry as a host starts it (packages/wacc/src/program.wac).\n" + imports
-      + yielding
-      + "export i32 main(Core __wacCore, Cli __wacCli) {\n"
-      + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n" + body + "}\n";
+      + hostEntries() + yielding
+      + "export i32 main(__WacHost __wacH) {\n"
+      + "  Sys __wacSys = Sys.__wacOn(__wacH);\n" + body + "}\n";
   return ProgramEntry("", out);
+}
+
+/** What an adapted entry imports from `std`: the host's value and `Sys` unless the entry has them, and `answered` always. */
+export string hostImports(bool haveHost, bool haveSys) {
+  string names = (haveHost ? "" : "__WacHost, ") + (haveSys ? "" : "Sys, ");
+  string out = "import { answered as @\"$wacAnswered\" } from \"std\";\n";
+  if (names != "") { out = out + "import { " + names.slice(0, names.len() - 2) + " } from \"std\";\n"; }
+  return out;
+}
+
+/**
+ * **The two ways a host reaches an adapted module** (design/system/0013 step 6): `__wacHost` takes the host's
+ * four calls and answers the value `main` and the tests are handed, and `__wacAnswered` delivers an answer to a
+ * request — called by the host only from inside its own `request` or `waitAny`. Plain values cross both ways, so
+ * a host builds no wac value and needs no constructor from the module.
+ */
+export string hostEntries() {
+  return "export __WacHost __wacHost(fn<void(i32, i32, i64, i64, string, u8[])> request, fn<i32(i32[], i32)> waitAny,\n"
+       + "                           fn<void(i32)> exitWith, fn<bool()> interrupted) {\n"
+       + "  return __WacHost.of(request, waitAny, exitWith, interrupted);\n"
+       + "}\n"
+       + "export void __wacAnswered(__WacHost __wacH, i32 id, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
+       + "  @\"$wacAnswered\"(__wacH, id, fault, text, bytes, n, m, flags);\n"
+       + "}\n";
 }
 
 /**
@@ -178,8 +199,8 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
  */
 string asyncAdapter(string ret, string call, string finish) {
   return "struct __WacRun { fn<bool()> advance; bool done; i32 status; }\n"
-       + "export __WacRun __wacStart(Core __wacCore, Cli __wacCli) {\n"
-       + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n"
+       + "export __WacRun __wacStart(__WacHost __wacH) {\n"
+       + "  Sys __wacSys = Sys.__wacOn(__wacH);\n"
        // The greeting first, then `main` — started once the greeting has settled, since `main` may ask for the
        // files the greeting decides.
        + "  Ticket<void> __wacG = __wacSys.__wacGreet();\n"
@@ -412,10 +433,10 @@ string asParsed(string text) {
 
 /**
  * A test file as a test build compiles it: every exported `test*` that takes a `Sys` or is `async` is
- * renamed and given an adapter taking `(Core, Cli)`, which the runner can call, that makes the `Sys`
- * and settles an `async` answer — "a test may take the capabilities it needs as parameters, as `main`
- * does" (ch47). The `Sys` is made from the run's own `Core` and `Cli`, so it holds only what the run
- * granted. Idempotent: the adapters take `Core` and `Cli`, which this leaves alone.
+ * renamed and given an adapter taking the `__WacHost` the runner made with `__wacHost`, which makes the
+ * `Sys` and settles an `async` answer — "a test may take the capabilities it needs as parameters, as
+ * `main` does" (ch47). The `Sys` is made over the run's own host, so it holds only what the run granted.
+ * Idempotent: the adapters take `__WacHost`, which this leaves alone.
  */
 export string testEntry(string text0) {
   if (text0.indexOf("Sys") < 0 && text0.indexOf("async") < 0) { return text0; }
@@ -425,8 +446,7 @@ export string testEntry(string text0) {
   P p = P.create(src, lexed);
   Program prog = parseProgram(p);
   if (p.errorCount > 0) { return text; }
-  bool haveCore = false;
-  bool haveCli = false;
+  bool haveHost = false;
   bool haveSys = false;
   bool haveTicket = false;
   for (i32 di = 0; di < prog.decls.len(); di++) {
@@ -434,8 +454,7 @@ export string testEntry(string text0) {
       Import(pathTok, prefixTok, items): {
         for (i32 ii = 0; ii < items.len(); ii++) {
           string local = progText(src, lexed, items[ii].aliasTok);
-          if (local == "Core") { haveCore = true; }
-          if (local == "Cli") { haveCli = true; }
+          if (local == "__WacHost") { haveHost = true; }
           if (local == "Sys") { haveSys = true; }
           if (local == "Ticket") { haveTicket = true; }
         }
@@ -465,7 +484,7 @@ export string testEntry(string text0) {
         out = (ex >= 0 ? out.slice(0, ex) + "      " + out.slice(ex + 6, at) : out.slice(0, at))
             + impl + out.slice(at + len, out.len());
         string call = impl + "(" + (takesSys ? "__wacSys" : "") + ")";
-        string bodyText = "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n";
+        string bodyText = "  Sys __wacSys = Sys.__wacOn(__wacH);\n";
         if (isAsync) {
           anyAsync = true;
           bodyText = bodyText + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
@@ -473,7 +492,7 @@ export string testEntry(string text0) {
           call = "__wacT.value()";
         }
         bodyText = bodyText + (ret == "void" ? "  " + call + ";\n" : "  return " + call + ";\n");
-        adapters = "export " + ret + " " + written(name) + "(Core __wacCore, Cli __wacCli) {\n" + bodyText + "}\n"
+        adapters = "export " + ret + " " + written(name) + "(__WacHost __wacH) {\n" + bodyText + "}\n"
                  + adapters;
         n++;
       }
@@ -481,12 +500,10 @@ export string testEntry(string text0) {
     }
   }
   if (n == 0) { return text; }
-  string imports = "";
-  string names = (haveCore ? "" : "Core, ") + (haveCli ? "" : "Cli, ") + (haveSys ? "" : "Sys, ");
-  if (names != "") { imports = imports + "import { " + names.slice(0, names.len() - 2) + " } from \"std\";\n"; }
+  string imports = hostImports(haveHost, haveSys);
   if (anyAsync && !haveTicket) { imports = imports + "import { Ticket } from \"core\";\n"; }
   return out + "\n\n// wac:test — each test as the runner calls it (packages/wacc/src/program.wac).\n"
-       + imports + adapters;
+       + imports + hostEntries() + adapters;
 }
 
 /** A name as source spells it: itself, or `@"…"` when it is a verbatim name the lexer unquoted. */

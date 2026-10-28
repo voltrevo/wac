@@ -18,9 +18,9 @@ export async function childMain(wasm: Uint8Array): Promise<void> {
   if (manifest === null) {
     throw new Error("this module carries no wac.manifest section, so nothing can describe it");
   }
-  // **The capabilities are the runtime's own.** `runAsWorkerEntry` builds `Core` and `Cli` by
-  // handing this module JavaScript functions that talk to the bridge; the driver registers each in
-  // a slot and gives back the funcref, which is exactly what generated glue does for a bundle.
+  // **The host is the runtime's own.** `runAsWorkerEntry` hands this module's `__wacHost` JavaScript
+  // functions that talk to the bridge; the driver registers each in a slot and gives back the funcref,
+  // which is exactly what generated glue does for a bundle.
   const driven = drive(wasm, manifest);
-  await runAsWorkerEntry(asAppModule(driven) as unknown as AppModule);
+  await runAsWorkerEntry(asAppModule(driven, manifest) as unknown as AppModule);
 }

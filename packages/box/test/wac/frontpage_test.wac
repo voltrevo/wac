@@ -20,7 +20,7 @@
 // would make this the slowest check in the tree for no gain.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { flatten } from "core";
 
 static string SITE = "site/wac/home.wac";

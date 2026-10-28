@@ -27,7 +27,7 @@
 // both must reproduce the committed `test/data/hspublish.json`.
 // `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
-import { Exec, Change, Stat, Sys, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
+import { Exec, Stat, Sys, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../json/src/value.wac";
 import { decoded } from "../../codec/src/hex.wac";

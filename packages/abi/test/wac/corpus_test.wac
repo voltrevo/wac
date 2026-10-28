@@ -26,7 +26,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Files, Output, Sys } from "std";
+import { Files, Output, Sys } from "std";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decodeRender, roundTrip, encodeMismatch, tags } from "./probe.wac";

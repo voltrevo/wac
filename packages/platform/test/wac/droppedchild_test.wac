@@ -2,10 +2,10 @@
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/platform/test/wac/droppedchild_test.wac
 //
-// `issues/system/0312b`, ruled 2026-10-22. Dropping the only `Pending<Child>` left a process nothing
-// could reach, wait for or stop — the shape an abandoned `connect` had before `0310b` closed it. The
-// rule now lives in `std/platform.wac`'s `Cli.of`, where every host's `Cli` is built, so no host has to
-// know: a cancelled spawn ticket still holding its child closes the handle, as `closeSocket` does.
+// `issues/system/0312b`, ruled 2026-10-22. Dropping the only ticket for a child left a process nothing
+// could reach, wait for or stop — the shape an abandoned `connect` had before `0310b` closed it. Under the
+// flat host ABI the rule is each host's: `OP_DROP` on a spawn the program never collected stops the child,
+// as `closeSocket` does (design/system/0013).
 //
 // ## The shape of the case
 //
@@ -19,35 +19,39 @@
 // never started — and the stopped arm would pass for that reason.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { flatten } from "core";
 
-// **Still on `Cli`**: through std the spawn ticket is settled by the first wait after the child starts, and
-// `cancel` on a settled ticket does nothing — `issues/system/0370a`, as for `lostbytes_test`'s connect arm.
+// **An answer nobody has read is still the host's** (design/system/0013, settled before step 6): the spawn is never
+// waited for — the sleeps wait for themselves alone — so its answer is the host's when `cancel` drops it, and the
+// host stops the child unless it was started detached. `issues/system/0370a`.
 static string PROGRAM =
-  "import { Core, Cli, HostChild, Pending, FileResult, GRANT_ALL, DETACHED, Sys } from \"std\";\n" +
+  "import { Authority, Launch, Output, Sys } from \"std\";\n" +
+  "import { flatten } from \"core\";\n" +
   "\n" +
-  "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
-  "  string mode = string.fromBytes(cli.arg(0).wait());\n" +
-  "  string marker = string.fromBytes(cli.arg(1).wait());\n" +
+  "export i32 main(Sys sys) {\n" +
+  "  string[] args = sys.args();\n" +
+  "  string mode = args[0];\n" +
+  "  string marker = args[1];\n" +
   "  if (mode == \"child\") {\n" +
+  "    Output out = sys.stdout();\n" +
   "    for (i32 i = 0; i < 40; i++) {\n" +
-  "      if (!cli.write(\"tick\\n\".toBytes())) { return 0; }\n" +
-  "      core.delay(25).wait();\n" +
+  "      if (flatten(out.write(\"tick\\n\".toBytes()).wait()).isErr()) { return 0; }\n" +
+  "      sys.clock().sleepMillis(25).wait();\n" +
   "    }\n" +
-  "    cli.writeFile(marker, \"ran on\".toBytes()).wait();\n" +
+  "    sys.files().writeFile(marker, \"ran on\".toBytes()).wait();\n" +
   "    return 0;\n" +
   "  }\n" +
-  "  i32 flags = mode == \"detached\" ? DETACHED : 0;\n" +
-  "  Pending<HostChild> p = cli.spawnSelf([\"child\".toBytes(), marker.toBytes()], GRANT_ALL(), \".\", flags, false);\n" +
-  "  core.delay(100).wait();\n" +
+  "  Authority all = Authority(sys.files(), sys.net(), sys.env(), sys.procs());\n" +
+  "  auto p = sys.procs().spawnSelf([\"child\", marker], all, Launch(\"\", false, false, mode == \"detached\"));\n" +
+  "  sys.clock().sleepMillis(100).wait();\n" +
   "  p.cancel();\n" +
-  "  core.delay(2000).wait();\n" +
-  "  FileResult f = cli.readFile(marker).wait();\n" +
-  "  core.log(f.ok ? \"VERDICT ran-on\" : \"VERDICT stopped\");\n" +
+  "  sys.clock().sleepMillis(2000).wait();\n" +
+  "  auto f = flatten(sys.files().readFile(marker).wait());\n" +
+  "  sys.log(f.isOk() ? \"VERDICT ran-on\" : \"VERDICT stopped\");\n" +
   "  return 0;\n" +
   "}\n";
 

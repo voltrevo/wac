@@ -34,7 +34,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { flatten } from "core";
 
 /** The binary under test, with whatever arguments, and its output as one string. */
@@ -174,9 +174,9 @@ export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Sys 
   string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   auto a = flatten(fs.writeFile("\{dir}/y_test.wac",
-    ("import { Cli, Core } from \"std\";\n" +
+    ("import { Sys } from \"std\";\n" +
      "export string test_needs_nothing() { return \"\"; }\n" +
-     "export string test_wants_a_capability(Core core, Cli cli) { return \"\"; }\n").toBytes()).wait());
+     "export string test_wants_a_capability(Sys sys) { return \"\"; }\n").toBytes()).wait());
   auto b = flatten(fs.writeFile("\{dir}/z_test.wac",
     "export string test_also_passes() { return \"\"; }\n".toBytes()).wait());
   t.isTrue(a.isOk() && b.isOk(), "could not write the two test files");

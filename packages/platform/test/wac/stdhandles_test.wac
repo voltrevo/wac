@@ -463,8 +463,8 @@ async bool statted(Files fs) { return (await fs.stat(".")).isOk(); }
  */
 export string test_a_wait_that_finished_an_async_call_leaves_nothing_outstanding(Sys sys) {
   T t = T.create();
-  i32 before = sys.core.outstanding();
+  i32 before = sys.host.outstanding();
   t.isTrue(statted(sys.files()).wait().unwrap(), "the stat answered");
-  t.eqI32(sys.core.outstanding() - before, 0, "what the wait finished is still counted as outstanding");
+  t.eqI32(sys.host.outstanding() - before, 0, "what the wait finished is still counted as outstanding");
   return t.report();
 }

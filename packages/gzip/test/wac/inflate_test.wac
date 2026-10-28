@@ -18,7 +18,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Exec, Change, ChildEnv, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs, Sys } from "std";
 import { gunzipBytes, inflate } from "../../src/inflate.wac";
 import { gzipStored, gzipFixed, gzipDynamic, gzipBest } from "../../src/gzip.wac";
 import { External, pythonGzip, pythonZlib, firstDifference } from "./external.wac";

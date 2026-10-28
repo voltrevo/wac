@@ -19,7 +19,7 @@
 
 import { T } from "../../src/assert.wac";
 import { contains } from "../../src/strings.wac";
-import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { madeDir } from "../../src/host.wac";
 import { flatten } from "core";
 

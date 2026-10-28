@@ -6,7 +6,7 @@
 //
 // `emit.wac` counts the array helper functions — `$bind$arr_<el>_new/get/set/len` and, for a numeric
 // element, `_to_mem`/`_from_mem` — into `arrHelpers`, and every function index after them is that
-// count plus an offset. `Pending<i64[]>` introduces `i64[]`, and in a program that names it nowhere
+// count plus an offset. `Pending<i64[]>` (std's, since deleted) introduced `i64[]`, and in a program that names it nowhere
 // else the type was registered while the *second* instantiation walk emitted the monomorphised
 // bodies — long after the count was taken.
 //
@@ -38,10 +38,13 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string ENTRY = "/t/main.wac";
 
-/** The reproduction, parameterised by the array element `Pending` is instantiated at. */
+/**
+ * The reproduction, parameterised by the array element a generic is instantiated at. It was std's `Pending`, which
+ * is gone; a generic of the program's own is the same instantiation, without a dependency on what std declares.
+ */
 string program(string elem) {
-  return "import { Pending } from \"std\";\n" +
-         "export struct C { fn<Pending<" + elem + "[]>(string)] f0; }\n" +
+  return "export struct Held<T> { T value; }\n" +
+         "export struct C { fn<Held<" + elem + "[]>(string)> f0; }\n" +
          "export i32 main(C c) { return 0; }\n";
 }
 
@@ -67,11 +70,11 @@ export string test_a_pending_of_an_array_emits_for_every_element_type() {
   string[] els = ["u8", "i8", "i32", "u32", "i64", "u64", "f32", "f64", "bool", "string"];
   for (i32 i = 0; i < els.len(); i++) {
     string said = why(els[i]);
-    t.eqStr(said, "", "the emitter declined `Pending<" + els[i] + "[]>`");
+    t.eqStr(said, "", "the emitter declined `Held<" + els[i] + "[]>`");
     // **A module, not merely no complaint.** `emitDeclineFiles` answering "" and the build producing
     // nothing are different failures, and the second is the one `issues/lang/0170a` is about.
     t.isTrue(built(els[i]) > 8,
-             "`Pending<" + els[i] + "[]>` emitted " + itoa(built(els[i])) + " bytes");
+             "`Held<" + els[i] + "[]>` emitted " + itoa(built(els[i])) + " bytes");
   }
   return t.report();
 }
@@ -86,7 +89,7 @@ export string test_a_pending_of_an_array_emits_for_every_element_type() {
 export string test_the_element_that_always_worked_still_does() {
   T t = T.create();
   t.eqStr(why("i32"), "", "declined a program that has always built");
-  t.isTrue(built("i32") > 8, "`Pending<i32[]>` emitted nothing");
+  t.isTrue(built("i32") > 8, "`Held<i32[]>` emitted nothing");
   return t.report();
 }
 

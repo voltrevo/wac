@@ -16,7 +16,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryDir, binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, FileResult, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { flatten } from "core";
 
 /**

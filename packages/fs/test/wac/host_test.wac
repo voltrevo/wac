@@ -21,7 +21,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";

@@ -30,15 +30,11 @@ import {
   arrSuffix,
   bindName,
   type Bound,
-  buildWorld,
-  buildWorldWith,
   type Callback,
   callbackBridge,
   fromWasm,
   type Shape,
   shapeOf,
-  type Struct,
-  structBridge,
   toWasm,
 } from "./marshal.ts";
 
@@ -128,7 +124,11 @@ Deno.test("every array helper this marshaller would name is one the compiler emi
       for (const p of c.params ?? []) types.add(p);
       types.add(c.ret);
     }
-    assertEquals(types.size > 20, true, `only ${types.size} type strings — did the manifest change?`);
+    // The host's four calls (design/system/0013 step 6) bring these whatever else the program binds — and the two
+    // arrays among them are the helpers below exist for, so a manifest missing one of them proves nothing.
+    for (const t of ["i32", "i64", "string", "u8[]", "i32[]", "bool"]) {
+      assertEquals(types.has(t), true, `the boundary does not mention ${t} — did the manifest change? ${[...types]}`);
+    }
 
     const missing: string[] = [];
     let checked = 0;
@@ -362,167 +362,16 @@ Deno.test("slots are deduplicated, and the module's limit is the limit", async (
   }
 });
 
-Deno.test("a struct is built and read through the manifest, not through generated classes", async () => {
-  const stem = await boxsh();
-  {
-    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
-      structs: Struct[];
-      callbacks: Callback[];
-    };
-    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
-    const { invoke, invokeOn } = structBridge(b, manifest.structs);
-
-    // `Stat.of(bool, bool, bool, i64, i64, bool, bool, i32, i32)` — a static constructor whose arguments
-    // span three shapes, so a conversion mistake in any of them shows up in what comes back out.
-    //
-    // The **fault** argument is what is read back: `answered()` returns whether `fault` is `NONE` (0)
-    // or `NOT_A_DIR` (10), not anything about the leading booleans. I asserted the first field first
-    // and it failed — the bridge was right and my guess about the method was not, which is why the
-    // two calls below differ only in that argument.
-    const mk = (fault: number) =>
-      invoke("Stat", "of", true, false, true, 1234n, 5678n, false, true, fault, 0o644);
-
-    const ok = mk(0);
-    assertEquals(ok !== null && ok !== undefined, true, "Stat.of built nothing");
-    assertEquals(invokeOn("Stat", "answered", ok), true, "fault 0 should be answered");
-    assertEquals(invokeOn("Stat", "answered", mk(10)), true, "fault 10 is NOT_A_DIR, also answered");
-    // **And a fault that is not one of those**, so the argument is proved to arrive rather than the
-    // method merely returning true. Both calls build the same struct apart from this number.
-    assertEquals(invokeOn("Stat", "answered", mk(1)), false, "fault 1 is NOT_FOUND, not answered");
-    const stat = ok;
-
-    // A method taking and returning a string, which goes through the staging buffer on both legs.
-    assertEquals(
-      typeof invokeOn("Stat", "words", stat, "a phrase"),
-      "string",
-      "a string-returning method did not come back as a string",
-    );
-
-    // **The capability structs are the point of all this**: `Core.of` takes eight funcrefs, which is
-    // what a driver hands a program's `main`. Built here from the manifest and the bridge together,
-    // which is the whole of what the generated glue does for these two.
-    const { register } = callbackBridge(b, manifest.callbacks);
-    const core = manifest.structs.find((s) => s.name === "Core");
-    assertEquals(core !== undefined, true, "no Core in the manifest");
-    const of = core!.methods.find((m) => m.name === "of");
-    assertEquals(of !== undefined && of!.isStatic === true, true, "Core.of is not a static method");
-    // **Not every parameter is a funcref.** `Core.sched` is a value the module builds for itself —
-    // wac state with wac logic on it, where a host's whole part is calling `create` once — so a
-    // parameter no callback describes is constructed rather than registered. `buildWorldWith` in
-    // `marshal.ts` follows the same rule, and this is the manifest-only version of it.
-    let made = 0;
-    const refs = (of!.params ?? []).map((p) => {
-      const n = manifest.callbacks.findIndex((c) => c.type === p);
-      if (n < 0) {
-        const spec = manifest.structs.find((s) => s.name === p);
-        assertEquals(spec !== undefined, true, `${p} is neither a callback nor a struct in the manifest`);
-        assertEquals(
-          spec!.methods.some((m) => m.name === "create" && m.isStatic),
-          true,
-          `${p} is not a callback and offers no static create, so Core cannot be built`,
-        );
-        made++;
-        return invoke(p, "create");
-      }
-      return register(n, () => null);
-    });
-    const built = invoke("Core", "of", ...refs);
-    assertEquals(built !== null && built !== undefined, true, "Core.of returned nothing");
-    console.log(
-      `  Core built from ${refs.length - made} funcrefs and ${made} value(s) it made itself, ` +
-        "through the manifest alone",
-    );
-
-    // Arity is caught here, where the method still has a name.
-    let threw = "";
-    try {
-      invoke("Stat", "of", true);
-    } catch (e) {
-      threw = e instanceof Error ? e.message : String(e);
-    }
-    assertEquals(threw.includes("takes 9 argument(s), not 1"), true, `wrong arity was not named: ${threw}`);
-  }
-});
-
-Deno.test("a capability world is built from names, not from argument order", async () => {
-  const stem = await boxsh();
-  {
-    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
-      structs: Struct[];
-      callbacks: Callback[];
-    };
-    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
-    const core = manifest.structs.find((s) => s.name === "Core")!;
-    const fields = core.fields ?? [];
-    assertEquals(fields.length > 0, true, "Core has no fields in the manifest");
-
-    // A host supplies its capabilities by name. Which position each takes is the manifest's business,
-    // and getting it wrong is how `sleepMillis` becomes `randomBytes` with nothing to say so.
-    const called: string[] = [];
-    const impls: Record<string, CallableFunction> = {};
-    for (const f of fields) impls[f.name] = () => { called.push(f.name); return null; };
-
-    const world = buildWorld(b, core, manifest.callbacks, impls, manifest.structs);
-    assertEquals(world !== null && world !== undefined, true, "Core was not built");
-    console.log(`  Core from ${fields.length} named capabilities: ${fields.slice(0, 3).map((f) => f.name).join(", ")}, …`);
-
-    // **A missing one is named.** Positional funcrefs are exactly where a gap survives silently: pass
-    // one fewer than wanted and that capability is simply absent, which a program meets much later
-    // as a call into nothing.
-    const short = { ...impls };
-    delete short[fields[0].name];
-    let threw = "";
-    try {
-      buildWorld(b, core, manifest.callbacks, short, manifest.structs);
-    } catch (e) {
-      threw = e instanceof Error ? e.message : String(e);
-    }
-    assertEquals(
-      threw.includes(fields[0].name) && threw.includes("were not given"),
-      true,
-      `a missing capability must be named: ${threw}`,
-    );
-  }
-});
-
-Deno.test("two worlds for one instance share a slot table", async () => {
-  const stem = await boxsh();
-  {
-    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
-      structs: Struct[];
-      callbacks: Callback[];
-    };
-    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
-    // **`Core` *and* `Cli`, which is what a driver actually needs.** A bridge per struct gives each
-    // its own slot table, so the second world's funcrefs point into a table the module's imports
-    // never consult — every capability on it would dispatch to whatever the first world put in that
-    // slot. A wrong answer with no error, which is why the shared form exists.
-    const { imports, register } = callbackBridge(b, manifest.callbacks);
-    const built: string[] = [];
-    for (const name of ["Core", "Cli"]) {
-      const s = manifest.structs.find((x) => x.name === name)!;
-      const impls: Record<string, CallableFunction> = {};
-      for (const f of s.fields ?? []) impls[f.name] = () => null;
-      const w = buildWorldWith(b, s, manifest.callbacks, impls, register, manifest.structs);
-      assertEquals(w !== null && w !== undefined, true, `${name} was not built`);
-      built.push(`${name}(${(s.fields ?? []).length})`);
-    }
-    assertEquals(Object.keys(imports).length > 0, true, "the shared bridge built no imports");
-    console.log(`  ${built.join(" and ")} from one slot table`);
-  }
-});
-
-Deno.test("a real program runs: built, worlds made, `main` called, answer converted", async () => {
+Deno.test("a real program runs: built, its host made, `main` called, answer converted", async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-driver-" });
   try {
-    // `packages/platform/test/wac/driver_probe.wac` calls nothing, which is what makes it runnable
-    // without the asynchronous bridge — every capability answers `Pending<T>`, and waiting on one is
-    // the host's ticket machinery rather than anything this module does. Everything else a driver
-    // must get right is still required: 45 signatures, two worlds, and an export read from a string.
+    // `packages/platform/test/wac/driver_probe.wac` asks the host nothing, which is what makes it
+    // runnable without the bridge. Everything else a driver must get right is still required: four
+    // funcrefs registered by the signatures `__wacHost` declares, the host value handed to `main`, and
+    // an export read from a string.
     const stem = `${dir}/probe`;
     await buildNative("packages/platform/test/wac/driver_probe.wac", stem, {});
     const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
-      structs: Struct[];
       callbacks: Callback[];
       exports: { name: string; params?: string[]; ret: string }[];
     };
@@ -539,28 +388,25 @@ Deno.test("a real program runs: built, worlds made, `main` called, answer conver
     bound = { exports, memory: () => mem.buffer };
     lazy.exports = exports;
 
-    // Both worlds, from their manifest fields, sharing the one slot table.
-    const worlds: unknown[] = [];
-    for (const name of ["Core", "Cli"]) {
-      const s = manifest.structs.find((x) => x.name === name)!;
-      const impls: Record<string, CallableFunction> = {};
-      for (const f of s.fields ?? []) {
-        impls[f.name] = () => {
-          throw new Error(`the probe called ${name}.${f.name}, which it is written not to`);
-        };
-      }
-      worlds.push(buildWorldWith(bound, s, manifest.callbacks, impls, register, manifest.structs));
-    }
+    // The host's four calls, by the signatures the manifest gives `__wacHost`; none may be reached.
+    const make = manifest.exports.find((e) => e.name === "__wacHost");
+    assertEquals(make !== undefined, true, "the probe exports no __wacHost");
+    const refs = (make!.params ?? []).map((p, i) => {
+      const n = manifest.callbacks.findIndex((c) => c.type === p);
+      assertEquals(n >= 0, true, `${p} has no dispatcher in the manifest`);
+      return register(n, () => {
+        throw new Error(`the probe reached host call ${i}, which it is written not to`);
+      });
+    });
+    const host = (exports["__wacHost"] as CallableFunction)(...refs);
 
     // And `main`, whose signature is read from the manifest like everything else.
     const entry = manifest.exports.find((e) => e.name === "main")!;
-    assertEquals(entry.params, ["Core", "Cli"], "main's signature is not what a driver expects");
-    const args = (entry.params ?? []).map((p, i) => toWasm(bound, shapeOf(p), worlds[i]));
-    const code = fromWasm(bound, shapeOf(entry.ret), (exports["main"] as CallableFunction)(...args));
+    assertEquals(entry.params, ["__WacHost"], "main's signature is not what a driver expects");
+    const code = fromWasm(bound, shapeOf(entry.ret), (exports["main"] as CallableFunction)(host));
 
-    // **21, not 0.** The arithmetic is in the probe so that calling the wrong export, or building a
-    // world that traps, cannot produce the answer by accident — 0 is what a program that did nothing
-    // returns, and what a driver that silently failed would report.
+    // **21, not 0.** The arithmetic is in the probe so that calling the wrong export, or a host that
+    // traps, cannot produce the answer by accident.
     assertEquals(code, 21, "the program did not run, or its answer did not come back");
     console.log(`  driver_probe returned ${code}, through the manifest alone`);
   } finally {

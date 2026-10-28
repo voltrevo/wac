@@ -163,7 +163,7 @@ bundle into the `[start, end)`-indexed DER `verifyPath` wants, measured against
 could only be built in TypeScript, and the only wac client that verified anything —
 `box`'s `gets` applet — took a single pre-converted `.der` on its command line. Reading
 the file is still the caller's: `roots.wac` takes bytes, so what supplies them is a
-`Cli.readFile` in the program. `design/system/0005` step 6 is why it exists.
+`Files.readFile` in the program. `design/system/0005` step 6 is why it exists.
 
 **No backtracking in path building, and no revocation.** `tlsClientInit` takes a trust
 store and the client builds a path from the leaf up through whatever intermediates the

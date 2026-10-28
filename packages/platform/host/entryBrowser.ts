@@ -13,7 +13,7 @@
 import { bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { browserWorld, type BrowserWorldOptions } from "./browser.ts";
-import { WacExit, worldFor } from "./provider.ts";
+import { mainArgs, WacExit } from "./provider.ts";
 import type { AppModule } from "./entry.ts";
 
 type Start = { sab: SharedArrayBuffer; child?: boolean };
@@ -45,7 +45,7 @@ export function runAsWorkerBrowser(load: () => Promise<AppModule>): void {
       const b = bridgeOf(start.sab);
       try {
         const app = await load();
-        const code = app.main(...worldFor(b, app as unknown as Record<string, unknown>));
+        const code = app.main(...mainArgs(b, app as unknown as Record<string, unknown>));
         scope.postMessage({ ok: true, code });
       } catch (e) {
         if (e instanceof WacExit) { scope.postMessage({ ok: true, code: e.code }); return; }

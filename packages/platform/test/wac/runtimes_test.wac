@@ -17,7 +17,7 @@
 // they are used.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { flatten } from "core";

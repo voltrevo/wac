@@ -28,7 +28,7 @@
 // last case asserts the same string against the same artefact as before.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { freshDir } from "../../../wactest/src/host.wac";

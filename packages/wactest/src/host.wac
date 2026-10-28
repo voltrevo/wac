@@ -11,7 +11,7 @@
 // mismatch in whatever it was actually testing. That is the worst kind of red — a true failure
 // message about the wrong thing.
 
-import { Change, Core, Exec, Env, Files, NotFound, Output } from "std";
+import { Exec, Env, Files, NotFound, Output } from "std";
 import { nativeHost, nativeHostWhyNot, requireNativeHost } from "./built.wac";
 import { T } from "./assert.wac";
 import { flatten } from "core";

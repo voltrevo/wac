@@ -36,7 +36,7 @@
 //     kind, and for the rule that means something specific: **driven by a test this driver must not
 //     run.** That is where the measurement stops, not where the testing does.
 
-import { Core, Cli, Sys, Env, Files, Modules, Output, Procs } from "std";
+import { Sys, Env, Files, Modules, Output, Procs } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/ssh/test/cov_exercise.wac";

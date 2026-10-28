@@ -45,7 +45,7 @@
 // own so neither route sees the other's files; and a way to build a runnable artefact
 // (`builtApp`), which is `harness/buildApp.ts` in wac.
 
-import { Cli, Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
+import { Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";

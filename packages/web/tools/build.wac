@@ -337,15 +337,9 @@ export string systemSide() {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
         let rootP = null;
-        // The file `openInput` selected, served a chunk at a time by `readChunk`; null is standard input.
-        let input = null;
-        const chunkOf = (req) => {
-          if (input.at >= input.bytes.length) return answer(req, 0, "", NONE, 0n, 0n, 1);
-          const end = Math.min(input.at + 65536, input.bytes.length);
-          const bytes = input.bytes.slice(input.at, end);
-          input.at = end;
-          answer(req, 0, "", bytes, 0n, 0n, 0);
-        };
+        // Requests withdrawn before they were answered (`OP_DROP`): what their answer would have held is closed
+        // instead of handed to a program that no longer wants it.
+        const dropped = new Set();
         const root = () => (rootP ??= navigator.storage.getDirectory());
         // Handles below 2 are reserved, as on every host: 0 is standard input, 1 the parent's files.
         const handles = new Map();
@@ -393,132 +387,157 @@ export string systemSide() {
           const [dir, name] = await parentOf(path, false);
           return await (await dir.getFileHandle(name)).getFile();
         };
-        return System.of(
-          (req, path) => run(req, true, async () => ok(req, new Uint8Array(await (await fileOf(path)).arrayBuffer()))),
-          (req, path, bytes) => run(req, true, async () => {
-            const [dir, name] = await parentOf(path, false);
-            await writeTo(dir, name, bytes);
-            ok(req);
-          }),
-          (req, path) => run(req, false, async () => {
-            try {
-              const f = await fileOf(path);
-              return ok(req, NONE, BigInt(f.size), BigInt(f.lastModified), 1 | 2);
-            } catch (e) {
-              if (e?.name !== "TypeMismatchError" && e?.name !== "NotFoundError") throw e;
-            }
-            try {
-              await dirAt(parts(path), false);
-              return ok(req, NONE, 0n, 0n, 1 | 4);
-            } catch (e) {
-              if (e?.name !== "TypeMismatchError" && e?.name !== "NotFoundError") throw e;
-            }
-            ok(req);
-          }),
-          (req, path) => run(req, false, async () => {
-            const d = await dirAt(parts(path), false);
-            const names = [];
-            for await (const k of d.keys()) names.push(k);
-            ok(req, enc.encode(names.sort().map((n) => n + String.fromCharCode(0)).join("")));
-          }),
-          (req, path, parentsToo) => run(req, false, async () => {
-            const [dir, name] = await parentOf(path, parentsToo);
-            if (!parentsToo) {
-              let there = true;
-              try { await dir.getDirectoryHandle(name); } catch { there = false; }
-              if (there) return answer(req, 3, "", NONE, 0n, 0n, 0);
-            }
-            await dir.getDirectoryHandle(name, { create: true });
-            ok(req);
-          }),
-          (req, path, recursive) => run(req, false, async () => {
-            const [dir, name] = await parentOf(path, false);
-            await dir.removeEntry(name, { recursive });
-            ok(req);
-          }),
-          // No rename in the Origin Private File System: a copy and a delete, which is not atomic.
-          (req, from, to) => run(req, true, async () => {
-            const bytes = new Uint8Array(await (await fileOf(from)).arrayBuffer());
-            const [dir, name] = await parentOf(to, false);
-            await writeTo(dir, name, bytes);
-            const [fdir, fname] = await parentOf(from, false);
-            await fdir.removeEntry(fname);
-            ok(req);
-          }),
-          (req, ms) => { setTimeout(() => ok(req, NONE, BigInt(Math.round(performance.now() * 1e6))), ms); },
-          () => BigInt(Date.now()),
-          () => BigInt(Math.round(performance.now() * 1e6)),
-          (n) => crypto.getRandomValues(new Uint8Array(n)),
-          (line) => { if (me.child) me.post(["out", enc.encode(line + "\\n")]); else console.log(line); },
-          (line) => { if (me.child) me.post(["err", enc.encode(line + "\\n")]); else console.warn(line); },
-          (bytes) => { if (me.child) me.post(["out", bytes], wacOwn(bytes)); else console.log(new TextDecoder().decode(bytes)); },
-          (bytes) => { if (me.child) me.post(["err", bytes], wacOwn(bytes)); else console.warn(new TextDecoder().decode(bytes)); },
-          (code) => {
-            if (!me.child) throw new Error("the program exited with " + code);
-            me.post(["exit", code]);
-            close();
-          },
-          () => me.args.length,
-          (i) => me.args[i] ?? NONE,
-          () => me.cwd,
-          (req) => input === null ? read(req, me.stdin) : chunkOf(req),
-          (req, argBytes, grants, cwd, serveFs) => spawn(req, argBytes, grants, cwd, serveFs),
-          (req, h) => read(req, h === 1 && me.served ? me.fsIn : handles.get(h)?.q),
-          (req, h, bytes) => {
-            const to = handles.get(h);
-            // The line to a parent exists only when the parent serves this child files: anything else is a
-            // send that did not go, as on every other host, so a child that asks is told at once.
-            if (h === 1 && me.served) me.post(["fs", bytes], wacOwn(bytes));
-            else if (to !== undefined && to.kind === "write") {
-              return to.w.write(bytes).then(() => ok(req, NONE, 0n, 0n, 1), () => ok(req));
-            }
-            else if (to === undefined || to.child === undefined || to.child.gone) return answer(req, 0, "", NONE, 0n, 0n, 0);
-            else if (to.kind === "out") to.child.worker.postMessage(["stdin", bytes], wacOwn(bytes));
-            else if (to.kind === "fs") to.child.worker.postMessage(["fs", bytes], wacOwn(bytes));
-            answer(req, 0, "", NONE, 0n, 0n, 1);
-          },
-          (h) => { const c = handles.get(h)?.child; if (c && !c.gone) c.worker.postMessage(["stdinEnd"]); },
-          (h) => { const to = handles.get(h); if (to && to.kind === "out") stop(to.child, 143); },
-          (req, h) => {
-            const c = handles.get(h)?.child;
-            if (c === undefined) return answer(req, 1, "not a child", NONE, 0n, 0n, 0);
-            c.exit.then((code) => ok(req, NONE, BigInt(code)));
-          },
-          (req, path) => {
-            if (path === "") { input = null; return ok(req); }
-            run(req, false, async () => {
-              input = { bytes: new Uint8Array(await (await fileOf(path)).arrayBuffer()), at: 0 };
-              ok(req);
+        // Standard output and error: the console for a page, the parent for a child.
+        const emit = (toErr, bytes) => {
+          if (me.child) me.post([toErr ? "err" : "out", bytes], wacOwn(bytes));
+          else if (toErr) console.warn(new TextDecoder().decode(bytes));
+          else console.log(new TextDecoder().decode(bytes));
+        };
+        // `OP_SPAWN_SELF`'s bytes: the module (empty: this program), then the arguments, each length-prefixed.
+        const partsOf = (b) => {
+          const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+          let at = 4 + v.getUint32(0, true);
+          const n = v.getUint32(at, true);
+          at += 4;
+          const out = [];
+          for (let i = 0; i < n; i++) {
+            const len = v.getUint32(at, true);
+            out.push(b.slice(at + 4, at + 4 + len));
+            at += 4 + len;
+          }
+          return out;
+        };
+        // **One request at a time, by number** — design/system/0013 step 6's table, the same one every host serves.
+        // What a page refuses, and in which words, `system.wac` has already decided; what reaches here is done.
+        const request = (op, id, a, b, text, bytes) => {
+          const n = Number(a);
+          switch (op) {
+            case 0: dropped.add(id); return;
+            case 1: return ok(id, NONE, BigInt(Date.now()));
+            case 2: return ok(id, NONE, BigInt(Math.round(performance.now() * 1e6)));
+            case 3: return ok(id, crypto.getRandomValues(new Uint8Array(n)));
+            case 6: return ok(id, NONE, BigInt(me.args.length));
+            case 7: return ok(id, me.args[n] ?? NONE);
+            case 41: return answer(id, 0, me.cwd, NONE, 0n, 0n, 0);
+            case 9: return run(id, true, async () => ok(id, new Uint8Array(await (await fileOf(text)).arrayBuffer())));
+            case 10: return run(id, true, async () => {
+              const [dir, name] = await parentOf(text, false);
+              await writeTo(dir, name, bytes);
+              ok(id);
             });
-          },
-          // A file as a handle of its own. A read takes the whole file at once and queues it in pieces, so
-          // `recv` serves it as it serves a child; a write goes to the browser's writable stream, which keeps
-          // nothing until it is closed — so a file half-written by a program that stopped is not left behind.
-          (req, path, how) => run(req, true, async () => {
-            const h = nextHandle++;
-            if (how === 0) {
-              const bytes = new Uint8Array(await (await fileOf(path)).arrayBuffer());
-              const q = wacQueue();
-              for (let at = 0; at < bytes.length; at += 65536) q.push(bytes.slice(at, at + 65536));
-              q.end();
-              handles.set(h, { kind: "file", q });
-            } else {
-              const [dir, name] = await parentOf(path, false);
-              const fh = await dir.getFileHandle(name, { create: true });
-              const w = await fh.createWritable({ keepExistingData: how === 2 });
-              if (how === 2) await w.seek((await fh.getFile()).size);
-              handles.set(h, { kind: "write", w });
+            // No links in the Origin Private File System, so a stat and a link stat are one question.
+            case 13: case 47: return run(id, false, async () => {
+              try {
+                const f = await fileOf(text);
+                return ok(id, NONE, BigInt(f.size), BigInt(f.lastModified), 1 | 2);
+              } catch (e) {
+                if (e?.name !== "TypeMismatchError" && e?.name !== "NotFoundError") throw e;
+              }
+              try {
+                await dirAt(parts(text), false);
+                return ok(id, NONE, 0n, 0n, 1 | 4);
+              } catch (e) {
+                if (e?.name !== "TypeMismatchError" && e?.name !== "NotFoundError") throw e;
+              }
+              ok(id);
+            });
+            case 14: return run(id, false, async () => {
+              const d = await dirAt(parts(text), false);
+              const names = [];
+              for await (const k of d.keys()) names.push(k);
+              ok(id, enc.encode(names.sort().map((x) => x + String.fromCharCode(0)).join("")), 0n, 0n, 1);
+            });
+            case 15: return run(id, false, async () => {
+              const parentsToo = n !== 0;
+              const [dir, name] = await parentOf(text, parentsToo);
+              if (!parentsToo) {
+                let there = true;
+                try { await dir.getDirectoryHandle(name); } catch { there = false; }
+                if (there) return answer(id, 3, "", NONE, 0n, 0n, 0);
+              }
+              await dir.getDirectoryHandle(name, { create: true });
+              ok(id);
+            });
+            case 16: return run(id, false, async () => {
+              const [dir, name] = await parentOf(text, false);
+              await dir.removeEntry(name, { recursive: n !== 0 });
+              ok(id);
+            });
+            // No rename in the Origin Private File System: a copy and a delete, which is not atomic.
+            case 17: return run(id, true, async () => {
+              const to = new TextDecoder().decode(bytes);
+              const content = new Uint8Array(await (await fileOf(text)).arrayBuffer());
+              const [dir, name] = await parentOf(to, false);
+              await writeTo(dir, name, content);
+              const [fdir, fname] = await parentOf(text, false);
+              await fdir.removeEntry(fname);
+              ok(id);
+            });
+            case 12: case 48: emit(op === 48, bytes); return ok(id, NONE, 0n, 0n, 1);
+            case 19: return read(id, me.stdin);
+            case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(performance.now() * 1e6))), n); return;
+            case 49: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0);
+            case 24: return read(id, n === 1 && me.served ? me.fsIn : handles.get(n)?.q);
+            case 25: {
+              const to = handles.get(n);
+              // The line to a parent exists only when the parent serves this child files: anything else is a
+              // send that did not go, as on every other host, so a child that asks is told at once.
+              if (n === 1 && me.served) me.post(["fs", bytes], wacOwn(bytes));
+              else if (to !== undefined && to.kind === "write") {
+                return to.w.write(bytes).then(() => ok(id, NONE, 0n, 0n, 1), () => answer(id, 5, "", NONE, 0n, 0n, 0));
+              }
+              else if (to === undefined || to.child === undefined || to.child.gone) return answer(id, 5, "", NONE, 0n, 0n, 0);
+              else if (to.kind === "out") to.child.worker.postMessage(["stdin", bytes], wacOwn(bytes));
+              else if (to.kind === "fs") to.child.worker.postMessage(["fs", bytes], wacOwn(bytes));
+              return ok(id, NONE, 0n, 0n, 1);
             }
-            ok(req, NONE, BigInt(h));
-          }),
-          (req, h) => {
-            const f = handles.get(h);
-            if (f === undefined || (f.kind !== "file" && f.kind !== "write")) return ok(req);
-            handles.delete(h);
-            if (f.kind === "file") return ok(req, NONE, 0n, 0n, 1);
-            f.w.close().then(() => ok(req, NONE, 0n, 0n, 1), (e) => fail(req, e, true));
-          },
-        );
+            case 29: { const c = handles.get(n)?.child; if (c && !c.gone) c.worker.postMessage(["stdinEnd"]); return; }
+            case 26: { const to = handles.get(n); if (to && to.kind === "out") stop(to.child, 143); return; }
+            case 28: {
+              const c = handles.get(n)?.child;
+              if (c === undefined) return answer(id, 5, "not a child", NONE, 0n, 0n, 0);
+              c.exit.then((code) => ok(id, NONE, BigInt(code)));
+              return;
+            }
+            // A file as a handle of its own. A read takes the whole file at once and queues it in pieces, so
+            // `recv` serves it as it serves a child; a write goes to the browser's writable stream, which keeps
+            // nothing until it is closed — so a file half-written by a program that stopped is not left behind.
+            case 61: return run(id, true, async () => {
+              let held;
+              if (n === 0) {
+                const content = new Uint8Array(await (await fileOf(text)).arrayBuffer());
+                const q = wacQueue();
+                for (let at = 0; at < content.length; at += 65536) q.push(content.slice(at, at + 65536));
+                q.end();
+                held = { kind: "file", q };
+              } else {
+                const [dir, name] = await parentOf(text, false);
+                const fh = await dir.getFileHandle(name, { create: true });
+                const w = await fh.createWritable({ keepExistingData: n === 2 });
+                if (n === 2) await w.seek((await fh.getFile()).size);
+                held = { kind: "write", w };
+              }
+              if (dropped.delete(id)) { if (held.kind === "write") await held.w.abort(); return; }
+              const h = nextHandle++;
+              handles.set(h, held);
+              ok(id, NONE, BigInt(h));
+            });
+            case 62: {
+              const f = handles.get(n);
+              if (f === undefined || (f.kind !== "file" && f.kind !== "write")) return answer(id, 5, "", NONE, 0n, 0n, 0);
+              handles.delete(n);
+              if (f.kind === "file") return ok(id, NONE, 0n, 0n, 1);
+              f.w.close().then(() => ok(id, NONE, 0n, 0n, 1), (e) => fail(id, e, true));
+              return;
+            }
+            default: return answer(id, 9, "a page does not serve request " + op, NONE, 0n, 0n, 0);
+          }
+        };
+        return System.of(request, (code) => {
+          if (!me.child) throw new Error("the program exited with " + code);
+          me.post(["exit", code]);
+          close();
+        });
 
         // ── Programs started from this one ───────────────────────────────────────────────────────
         // A child is a worker on this very script, told who it is by its first message. Its output,
@@ -535,15 +554,9 @@ export string systemSide() {
           c.out.end(); c.err.end(); c.fs.end();
           c.settle(code);
         }
-        function spawn(req, argBytes, grants, cwd, serveFs) {
+        function spawn(req, args, grants, cwd, serveFs) {
           if (typeof WorkerGlobalScope === "undefined") {
             return answer(req, 9, "a page built --in-page cannot start programs", NONE, 0n, 0n, 0);
-          }
-          const args = [];
-          for (let at = 0; at < argBytes.length;) {
-            const end = argBytes.indexOf(0, at);
-            args.push(argBytes.slice(at, end));
-            at = end + 1;
           }
           const worker = new Worker(self.location.href);
           let settle;
@@ -567,7 +580,9 @@ export string systemSide() {
             stop(c, 134);
           };
           worker.postMessage(["init", { args, grants, cwd, serveFs }]);
-          ok(req, NONE, BigInt(h), BigInt(eh), fh);
+          if (dropped.delete(req)) return stop(c, 143);
+          // `m` packs the error stream's handle (low 32 bits) and the served-files channel's (high 32).
+          ok(req, NONE, BigInt(h), (BigInt(eh) & 0xffffffffn) | (BigInt(fh) << 32n));
         }
       };
       """;

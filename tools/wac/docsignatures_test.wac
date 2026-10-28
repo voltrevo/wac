@@ -39,7 +39,7 @@
 // declaration structure; the tokens give the exact text.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, Files, Output, Procs, Sys } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Vec, flatten } from "core";
 import { contains } from "../../packages/wactest/src/strings.wac";

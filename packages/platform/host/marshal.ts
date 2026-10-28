@@ -17,10 +17,9 @@
 //
 //   void · scalars (`i32`, `i64`, `bool`, …) · `string` · arrays · a named reference
 //
-// Everything named is **opaque**: a `Stat` or a `Pending<u8[]>` is a reference the host receives and
-// hands straight back, never looks inside, and could not usefully look inside — the fields it would
-// want have named constructors in the manifest instead. That is why a boundary with hundreds of type
-// strings needs a handful of conversions, and it is the observation the whole issue rests on.
+// Everything named is **opaque**: a `__WacHost`, or a struct an export answers, is a reference the host
+// receives and hands straight back and never looks inside. That is why a boundary with hundreds of
+// type strings needs a handful of conversions, and it is the observation the whole issue rests on.
 //
 // ## The one detail that must match the compiler exactly
 //
@@ -36,7 +35,7 @@ export type Shape =
   | { kind: "scalar"; name: string }
   | { kind: "string" }
   | { kind: "array"; elem: Shape; suffix: string }
-  /** A struct, an enum, a `Pending<T>` — anything the host passes through untouched. */
+  /** A struct, an enum — anything the host passes through untouched. */
   | { kind: "ref"; name: string };
 
 /**
@@ -99,7 +98,7 @@ export function shapeOf(type: string): Shape {
     const elem = shapeOf(t.slice(0, -2));
     return { kind: "array", elem, suffix: arrSuffix(elem) };
   }
-  // `Pending<u8[]>`, `Stat`, `fn[...]` — all opaque here. A funcref is not converted by this module
+  // `__WacHost`, a struct, `fn[...]` — all opaque here. A funcref is not converted by this module
   // at all: it is the callback machinery, which is the driver's job and not a value conversion.
   return { kind: "ref", name: t };
 }
@@ -251,7 +250,7 @@ export type Callback = {
 /**
  * The callback bridge, built from the manifest instead of generated per program.
  *
- * A wac program that takes `fn[Pending<u8[]>(i32)]` imports **one** function per *signature*, not per
+ * A wac program that takes `fn[u8[](i32)]` imports **one** function per *signature*, not per
  * callback — `wac.cb0` — and the first argument is a **slot**: which of the functions of that shape
  * is meant. The host keeps a table per signature, hands wasm a funcref by calling the module's own
  * `$bind$fnref_N(slot)`, and wasm calls back with that slot in front of the real arguments.
@@ -311,156 +310,4 @@ export function callbackBridge(b: Bound, callbacks: Callback[]): {
   };
 
   return { imports, register };
-}
-
-/** One field of a capability struct: the name a host implements, and the signature it must have. */
-export type Field = { name: string; type: string };
-
-/** One method on a struct, as the manifest describes it. */
-export type Method = {
-  name: string;
-  isStatic?: boolean;
-  /** The export, when the manifest names it. Derived from the struct's bind name when it does not. */
-  export_name?: string | null;
-  params?: string[];
-  ret: string;
-};
-
-/** One struct the boundary can reach. */
-export type Struct = { name: string; bind: string; methods: Method[]; fields?: Field[] };
-
-/**
- * The structs a host has to build, from the manifest instead of from a generated class per type.
- *
- * This is what presents `Core.of(…)` and `Cli.of(…)` — the capability objects a program's `main`
- * takes, whose arguments are the funcrefs `callbackBridge` hands out. Everything else a driver needs
- * is here already: the arguments convert with `toWasm`, the answer with `fromWasm`, and a returned
- * struct is a reference the host holds and passes back.
- *
- * **The export name is derived when the manifest does not give one**, which is the usual case:
- * `$bind$sm_<bind>_<name>` for a static method and `$bind$m_<bind>_<name>` for an instance one, from
- * compiler/wacBindgen.ts. The *bind* name, not the declared one — two modules may each declare an
- * `S` and the core keeps them apart, which is the whole reason the manifest carries both.
- */
-export function structBridge(b: Bound, structs: Struct[]): {
-  /** Call a static method: `invoke("Core", "of", …)`. */
-  invoke: (struct: string, method: string, ...args: unknown[]) => unknown;
-  /** Call an instance method on a reference the host is holding. */
-  invokeOn: (struct: string, method: string, self: unknown, ...args: unknown[]) => unknown;
-} {
-  const byName = new Map(structs.map((s) => [s.name, s]));
-
-  const find = (struct: string, method: string): { s: Struct; m: Method; exp: string } => {
-    const s = byName.get(struct);
-    if (s === undefined) throw new Error(`marshal: the manifest has no struct ${struct}`);
-    const m = s.methods.find((x) => x.name === method);
-    if (m === undefined) throw new Error(`marshal: ${struct} has no method ${method}`);
-    const exp = m.export_name ?? `$bind$${m.isStatic ? "sm" : "m"}_${s.bind}_${m.name}`;
-    return { s, m, exp };
-  };
-
-  const run = (struct: string, method: string, self: unknown[], args: unknown[]): unknown => {
-    const { m, exp } = find(struct, method);
-    const params = (m.params ?? []).map(shapeOf);
-    if (args.length !== params.length) {
-      // **Arity checked here rather than trapping in wasm.** A wrong count reaches the engine as a
-      // link error about a function nobody can name, and this is the layer that still knows both
-      // the method and what it wanted.
-      throw new Error(
-        `marshal: ${struct}.${method} takes ${params.length} argument(s), not ${args.length}`,
-      );
-    }
-    const given = params.map((p, i) => toWasm(b, p, args[i]));
-    return fromWasm(b, shapeOf(m.ret), call(b, exp, ...self, ...given));
-  };
-
-  return {
-    invoke: (struct, method, ...args) => run(struct, method, [], args),
-    invokeOn: (struct, method, self, ...args) => run(struct, method, [self], args),
-  };
-}
-
-/**
- * Build a capability struct — `Core`, `Cli` — from implementations named the way its fields are.
- *
- * This is the join between the three layers above and something a host can actually call.
- * `Core.of(…)` takes its funcrefs **positionally**, and nothing in the argument list says which is
- * `nowMillis` and which is `sleepMillis`; the manifest's `fields` do, in declaration order. So a
- * host supplies `{ nowMillis, monotonicNanos, … }` by name and this puts them in the right order —
- * which is the same mapping `native/v8/src/main.rs` makes with its `("Core", "nowMillis")` pairs,
- * except read from the manifest rather than compiled in.
- *
- * **A missing implementation is named, not left as an empty slot.** Positional funcrefs are exactly
- * where a silent gap survives: pass fifteen where sixteen were wanted and the sixteenth capability
- * is simply absent, which a program discovers much later as a call into nothing.
- */
-export function buildWorld(
-  b: Bound,
-  struct: Struct,
-  callbacks: Callback[],
-  impls: Record<string, CallableFunction>,
-  structs?: Struct[],
-): unknown {
-  const { register } = callbackBridge(b, callbacks);
-  return buildWorldWith(b, struct, callbacks, impls, register, structs);
-}
-
-/**
- * The same, against a bridge the caller already made.
- *
- * A driver builds `Core` *and* `Cli` for one instance, and they have to share one slot table — a
- * bridge per struct would give each its own, so the second would hand wasm funcrefs from a table the
- * imports do not consult. That is a wrong answer with no error, so the shared-bridge form is the one
- * a real driver uses and `buildWorld` above is the convenience for a single struct.
- */
-export function buildWorldWith(
-  b: Bound,
-  struct: Struct,
-  callbacks: Callback[],
-  impls: Record<string, CallableFunction>,
-  register: (n: number, f: CallableFunction) => unknown,
-  /**
-   * Every struct the manifest describes, needed only when a field is one the module **builds**.
-   *
-   * `Core.sched` is that field: no host implements a scheduler, it calls the module\'s own
-   * `Sched.create` and hands the result back. Optional because a world of pure funcrefs — which is
-   * every world before this one — needs nothing extra to be built from.
-   */
-  structs?: Struct[],
-): unknown {
-  const fields = struct.fields ?? [];
-  if (fields.length === 0) throw new Error(`marshal: ${struct.name} has no fields to build from`);
-
-  // **A field that is not a callback is a value the module makes for itself**, so nobody has to
-  // supply it. `Core.sched` is the case: wac state with wac logic on it, where this side's whole part
-  // is calling its `create` once. Excluded from the "who is missing" count below for the same reason
-  // — asking a host to implement it would be asking it to implement a scheduler.
-  const isMade = (f: { type: string }) => !callbacks.some((c) => c.type === f.type);
-  const missing = fields.filter((f) => !isMade(f) && typeof impls[f.name] !== "function")
-    .map((f) => f.name);
-  if (missing.length > 0) {
-    throw new Error(
-      `marshal: ${struct.name} needs ${fields.length} capabilities and ${missing.length} were not ` +
-        `given: ${missing.join(", ")}`,
-    );
-  }
-
-  const bridge = structBridge(b, [struct]);
-  const refs = fields.map((f) => {
-    const n = callbacks.findIndex((c) => c.type === f.type);
-    if (n < 0) {
-      // Built by the module, not implemented by us — see `isMade`. A struct that offers no `create`
-      // is the manifest disagreeing with itself, and says so rather than being passed as undefined.
-      const spec = (structs ?? []).find((x) => x.name === f.type);
-      if (spec === undefined) {
-        throw new Error(
-          `marshal: ${struct.name}.${f.name} is ${f.type}, which no callback declares and which ` +
-            "was not described to this builder — pass the manifest's structs",
-        );
-      }
-      return structBridge(b, [spec]).invoke(f.type, "create");
-    }
-    return register(n, impls[f.name]);
-  });
-  return bridge.invoke(struct.name, "of", ...refs);
 }

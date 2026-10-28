@@ -148,19 +148,20 @@ the case its old fixture said no wac test could tell apart. `issues/system/0161`
 
 ## A test that needs a capability
 
-A test declares one the way a program does — by naming it:
+A test declares one the way a program does — by taking a `Sys`:
 
-    export string test_reads_a_file(Core core, Cli cli) {
-      FileResult r = cli.readFile("README.md").wait();
-      if (!r.ok) { return "readFile refused: " + r.error; }
-      return r.bytes.len() > 0 ? "" : "read as empty";
+    export async string test_reads_a_file(Sys sys) {
+      match (await sys.files().readFile("README.md")) {
+        Ok(bytes): { return bytes.len() > 0 ? "" : "read as empty"; }
+        Err(why): { return "readFile refused: \{why}"; }
+      }
     }
 
 `wac test --allow-read …` runs it. With no grant it is **skipped**, named, and the flag is printed:
 
     1 test(s) want a capability this run was not granted: test_reads_a_file — try `wac test --allow-read …`
 
-**Skipped rather than failed**, because a `Cli` exists either way and its capabilities refuse
+**Skipped rather than failed**, because a `Sys` exists either way and its requests are refused
 individually — so running it anyway would turn `wac test packages/` red for every file that declares
 a capability, which is the opposite of what declaring one should cost. Not a pass either: nothing
 was checked, and that is the same answer an oracle-taking test gets, because it is the same
@@ -171,7 +172,7 @@ same rule `main` follows. A parameter list this host does not build — a `fn<�
 named and skipped, as before.
 
 **In the Deno lane it is registered *ignored*, with the flag in its name.** That lane binds plain
-wasm with no imports, so it has no `Cli` to give — and until 2026-08-16 it *threw* on a test with
+wasm with no imports, so it has no host to give — and until 2026-08-16 it *threw* on a test with
 more parameters than oracles, which failed the whole wrapper and took every other test in the file
 with it. The two lanes now say the same thing about which tests exist: the native runner names it and
 carries on, Deno shows it ignored.
@@ -181,7 +182,7 @@ the 260 files that bind or register wac, 77 read a file and 42 spawn a process.
 
 ## Running a program, or asking an oracle, more than once
 
-A wac test's only way out is `Cli.exec`, so anything outside the module is a
+A wac test's only way out is `Procs.exec`, so anything outside the module is a
 process — and that is the cost that keeps surprising people. Measured
 2026-08-19, on this machine:
 

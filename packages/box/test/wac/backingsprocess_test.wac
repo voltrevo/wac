@@ -24,7 +24,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Cli, Exec, execReason, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, execReason, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { madeDir } from "../../../wactest/src/host.wac";
 import { flatten } from "core";
 

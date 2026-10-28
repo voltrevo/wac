@@ -29,7 +29,7 @@ import { binaryPath, freshDir, madeDir, scratch } from "../../../wactest/src/hos
 import { onlyEnv } from "../../../wactest/src/childenv.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Exec, Env, Files, Procs, Sys } from "std";
+import { Exec, Env, Files, Procs, Sys } from "std";
 import { flatten } from "core";
 
 /** `$WAC_HOME` as `tools/install.test.ts`'s `fakeInstall` leaves it, plus a profile that sources it. */

@@ -33,7 +33,7 @@
 // timing is not.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Stat, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs } from "std";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs } from "std";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
@@ -57,7 +57,7 @@ export struct Wacsshd {
 }
 
 /**
- * `packages/ssh/src/sshd.wac`, built once and cached.
+ * `packages/ssh/src/sshd.wac`, built through `wac build`'s cache.
  *
  * `writable` adds `--allow-write`, which is a different binary and deliberately so — see the header.
  * Empty on failure, with `t` already told why.
@@ -68,14 +68,10 @@ export string buildServer(T t, Env env, Files fs, Procs procs, bool writable) {
   t.isTrue(whyDir1 == "", whyDir1);
   string stem = dir + (writable ? "/sshd-writable" : "/sshd");
 
-  // Reused when it is already there and no older than its own source. `wac build` rewrites it, so a
-  // stale one cannot survive a rebuild — but it can survive *not* rebuilding, which is what the
-  // mtime comparison is for.
-  Stat? built = flatten(fs.stat("\{stem}.wasm").wait()).ok();
-  Stat? source = flatten(fs.stat("packages/ssh/src/sshd.wac").wait()).ok();
-  if ((built is not null && built!.isFile) && (source is not null && source!.isFile) && built!.modifiedMillis > source!.modifiedMillis) {
-    return "\{stem}.wasm";
-  }
+  // **Built every time, and `wac build`'s own cache makes that cheap** (`issues/system/0204`): it is keyed on the
+  // compiler, every source and the grants. This compared the module's mtime with `sshd.wac`'s alone, so a module
+  // built by an older compiler — or before a change to anything sshd imports — was served as current, and when the
+  // host's entry changed (design/system/0013 step 6) every case here failed with "exports no `-p`".
 
   string[] args = writable
     ? [
@@ -263,7 +259,7 @@ export Said rawSsh(Procs procs, Wacsshd s, string[] args) {
 }
 
 /**
- * `packages/ssh/src/ssh.wac`, built once and cached — our own client.
+ * `packages/ssh/src/ssh.wac`, built through `wac build`'s cache — our own client.
  *
  * The built program rather than a launcher that spawns it: a launcher forwards no signals, so each
  * call left an orphan behind. wac-mono 0017.
@@ -273,11 +269,7 @@ export string buildClient(T t, Env env, Files fs, Procs procs, bool writable) {
   string whyDir3 = madeDir(fs, dir);
   t.isTrue(whyDir3 == "", whyDir3);
   string stem = dir + (writable ? "/ssh-writable" : "/ssh");
-  Stat? built = flatten(fs.stat("\{stem}.wasm").wait()).ok();
-  Stat? source = flatten(fs.stat("packages/ssh/src/ssh.wac").wait()).ok();
-  if ((built is not null && built!.isFile) && (source is not null && source!.isFile) && built!.modifiedMillis > source!.modifiedMillis) {
-    return "\{stem}.wasm";
-  }
+  // Built every time, for `buildServer`'s reason: `wac build`'s cache knows the compiler and every source.
   // **Two binaries, because the grants are the point of one of the tests.** They are baked in at
   // build time, so a single permissive binary would quietly pass the case that checks `-k` is
   // refused *without* `--allow-write` — the test would still be green and would no longer be

@@ -14,7 +14,7 @@
 //
 // All eight tests take `(Core, Cli)`: every one of them opens a pty or asks a recorded oracle.
 
-import { Core, Cli, Sys, Files, Output, Procs } from "std";
+import { Sys, Files, Output, Procs } from "std";
 import {
   test_the_oracle_is_the_configuration_this_module_implements as ln__the_oracle_is_the_configuration_this_module_implements,
   test_every_editing_rule_answers_what_the_kernel_answers as ln__every_editing_rule_answers_what_the_kernel_answers,

@@ -20,7 +20,7 @@
 // an ordinary array and the cursor is checked directly.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Exec, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { Vec, flatten } from "core";
 import { Pkt, readPkt, writePkt, writeText, flushPkt } from "../../src/pktline.wac";
 import { Ad, AdRef, Advertised, Reply, parseAdvertisement, offers, wantRequest,

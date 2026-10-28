@@ -22,7 +22,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { flatten } from "core";
 
 /**
@@ -71,8 +71,8 @@ export string test_a_std_specifier_resolves_out_of_the_compiler(Sys sys) {
 
   // No manifest and no `std/` directory: nothing on disk answers for this specifier, which is the
   // point — the text comes out of the compiler the way `core`'s does.
-  t.isTrue(put(fs, dir + "/main.wac", "import { Cli, Core, Sys } from \"std\";\n" +
-               "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 7; }\n"), "wrote main");
+  t.isTrue(put(fs, dir + "/main.wac", "import { Clock, Files, Sys } from \"std\";\n" +
+               "export i32 main(Sys sys) { Clock clock = sys.clock(); Files files = sys.files(); return 7; }\n"), "wrote main");
 
   Exec w = wacc(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
@@ -95,9 +95,9 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Sys 
   t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
   if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(fs, dir + "/main.wac", "import { Cli, Core, Sys } from \"std\";\n" +
-               "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 7; }\n"), "wrote main");
-  // **A decoy at exactly the specifier's path.** It declares neither `Cli` nor `Core`, so if the
+  t.isTrue(put(fs, dir + "/main.wac", "import { Clock, Files, Sys } from \"std\";\n" +
+               "export i32 main(Sys sys) { Clock clock = sys.clock(); Files files = sys.files(); return 7; }\n"), "wrote main");
+  // **A decoy at exactly the specifier's path.** It declares neither `Clock` nor `Files`, so if the
   // resolver preferred the file the program would not compile at all — which is what makes 7 an
   // answer about *which* module was reached rather than about arithmetic that happened to agree.
   t.isTrue(put(fs, dir + "/std/platform.wac", "export i32 decoy() { return 999; }\n"), "wrote the decoy");
@@ -129,16 +129,16 @@ export string test_std_is_named_whole(Sys sys) {
   t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
   if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(fs, dir + "/main.wac", "import { Core, Sys } from \"std\";\n" +
-               "export i32 main(Sys sys) { Core core = sys.core; return 7; }\n"), "wrote main");
+  t.isTrue(put(fs, dir + "/main.wac", "import { Clock, Sys } from \"std\";\n" +
+               "export i32 main(Sys sys) { Clock clock = sys.clock(); return 7; }\n"), "wrote main");
   Exec w = wacc(env, procs, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "a program importing \"std\" did not run — " + string.fromBytes(w.stderr));
   }
 
-  t.isTrue(put(fs, dir + "/path.wac", "import { Core } from \"std/platform.wac\";\n" +
-               "export i32 main(Sys sys) { Core core = sys.core; return 7; }\n"), "wrote path");
+  t.isTrue(put(fs, dir + "/path.wac", "import { Clock } from \"std/platform.wac\";\n" +
+               "export i32 main(Sys sys) { Clock clock = sys.clock(); return 7; }\n"), "wrote path");
   Exec p = wacc(env, procs, dir, "run", ["path.wac"]);
   t.isTrue(p.ran(), "wac did not run — " + p.error);
   if (p.ran()) {

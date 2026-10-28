@@ -12,8 +12,7 @@
 // only file that needed it; six more do.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, FileResult, Pending, HostSocket }
-  from "std";
+import { Datagram } from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { clientFinishedPacket, flight } from "./hello_probe.wac";

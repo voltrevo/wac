@@ -17,7 +17,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
-import { Change, Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { flatten } from "core";
 
 /**

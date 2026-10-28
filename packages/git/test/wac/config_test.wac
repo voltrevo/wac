@@ -17,7 +17,7 @@
 // another's fixture.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { Vec, flatten } from "core";
 import { Setting, parseConfig, configOf, hasConfig } from "../../src/config.wac";
 import { agentDir } from "../../../wactest/src/host.wac";

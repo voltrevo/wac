@@ -28,7 +28,7 @@
 
 import { Continuation, Queue, Ticket, TicketBase, Vec } from "core";
 import { Sys } from "std";
-import { Answer, System, World } from "./system.wac";
+import { System, World } from "./system.wac";
 import { Node, htmlOf } from "./html.wac";
 import { Element, ElementOps, Elements } from "./element.wac";
 import { Ui, View } from "./view.wac";
@@ -42,8 +42,7 @@ export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 
 // A page's system — `page.sys` — is `system.wac`, exported from here because a package is one module.
-export { Answer, Answers, Process, READ_DATA, READ_END, READ_FAILED, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World,
-         processAnswered } from "./system.wac";
+export { Process, READ_DATA, READ_END, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World, processAnswered } from "./system.wac";
 
 /** `ElementEvent.mods`: which modifier keys were held. */
 export static i32 MOD_SHIFT = 1;
@@ -315,12 +314,13 @@ export void valueArrived(Page page, i32 req, string value) {
 
 /**
  * The browser answered request `req` of the program's system — a file read, a directory listing, a
- * sleep. Settles the ticket the request was handed out as, and runs on whatever was waiting for it.
+ * sleep. Settles the ticket the request was handed out as, and runs on whatever was waiting for it — unless the
+ * answer came from inside the request that asked, which is still running.
  */
 export void answered(Page page, World world, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m,
                      i32 flags) {
   schedule page.take;
-  world.answers.arrive(req, Answer(fault, text, bytes, n, m, flags));
+  if (!world.deliver(req, fault, text, bytes, n, m, flags)) { return; }
   page.drain();
   page.turn();
 }

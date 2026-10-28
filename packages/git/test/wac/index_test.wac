@@ -31,7 +31,7 @@
 // `Cli.exec` passes no environment; the fixed `GIT_*_DATE` values it used to set were never read.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Exec, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { Staged, GitIndex, IndexEntry, parseIndex, writeIndex } from "../../src/index.wac";
 import { Vec, flatten } from "core";
 import { sha1 } from "../../../crypto/src/sha1.wac";

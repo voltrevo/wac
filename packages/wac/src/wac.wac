@@ -31,7 +31,7 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { Cli, Core, Exec, GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, Pending, Stat, Sys, Clock, Env, Files, Input, Modules, Net, Output, Procs, Random, Authority, ChildEnv, Launch } from "std";
+import { Exec, GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, Stat, Sys, Clock, Env, Files, Input, Modules, Net, Output, Procs, Random, Authority, ChildEnv, Launch } from "std";
 import { Read, Vec, flatten } from "core";
 import { atoi } from "../../fmt/src/itoa.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,

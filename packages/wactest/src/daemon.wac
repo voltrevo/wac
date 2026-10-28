@@ -30,7 +30,7 @@
 // **A caller must check `waitForPort`'s answer.** A server that never came up leaves every later
 // assertion measuring a refused connection, which is a different failure wearing the same clothes.
 
-import { Cli, Exec, ChildEnv, Clock, Files, Launch, Listener, Net, Procs, Socket } from "std";
+import { Exec, ChildEnv, Clock, Files, Launch, Listener, Net, Procs, Socket } from "std";
 import { quoted } from "./childenv.wac";
 import { flatten } from "core";
 

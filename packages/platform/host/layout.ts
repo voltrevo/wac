@@ -252,7 +252,7 @@ export type Bridge = {
    * what issue 0076 is about. A second run needs a second bridge, and the obvious way — build a new
    * `Bridge` and new capabilities over it — dies at the *fifth* run with "at most 16 distinct
    * fn[void(i32)] functions can be passed to this module": bindgen registers one wasm function per
-   * host function, sixteen live per signature, and each rebuild of `Core` and `Cli` burns another
+   * host function, sixteen live per signature, and each rebuild of the host burns another
    * batch.
    *
    * So the object outlives the buffer. Nothing captures what this replaces — `call.ts` reads

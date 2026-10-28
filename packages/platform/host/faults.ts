@@ -253,7 +253,7 @@ export function changeBytes(fault: number, message: string): Uint8Array {
 }
 
 /**
- * `Cli.exec`'s answer on the wire: status, then the two stream lengths, then the streams, then why
+ * `exec`'s answer on the wire: status, then the two stream lengths, then the streams, then why
  * it could not be started.
  *
  * Three little-endian i32s and not a fault byte, because `status` is an exit code with the full
@@ -382,7 +382,7 @@ function isInstance(e: unknown, ctor: unknown): boolean {
  * **`isExecutable` was appended, not inserted**, which is the rule this comment already implies and the
  * reason `STAT_FAULT` is still 20: a field placed in the middle would move the fault byte for every host
  * that writes it, and the two that write it in a different language would not fail to compile. It answers
- * the owner-execute bit and nothing else — see `Cli.setExecutable` for why one bit rather than a mode.
+ * the owner-execute bit and nothing else — see `Files.setExecutable` for why one bit rather than a mode.
  */
 export const STAT_BYTES = 26;
 export const STAT_FAULT = 20;

@@ -27,7 +27,7 @@
 // letter added there is honoured here the next time this runs. It is the same gain as `corpus:through`
 // importing the corpus instead of a derivation of it.
 
-import { Cli, Exec, Stat, Sys, ChildEnv, Env, Files, Output, Procs, Launch } from "std";
+import { Exec, Stat, Sys, ChildEnv, Env, Files, Output, Procs, Launch } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, joined, splitLines } from "../../packages/wactest/src/strings.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";

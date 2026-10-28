@@ -119,18 +119,138 @@ Each step is its own commit through the gate, with its breaking-change entry.
    alias faults — one fixed (case 0847), one filed (`issues/lang/0397a`). **Every handle in std**, with ch44 written whole beside it: `Sys`'s accessors, the fault types and their
    mapping, `Output`/`Input`, `Clock`, `Random`, `Env`, `Files` (from closures, `packages/fs` folded in), `Net`,
    `Procs` with `self` spawning, `Modules`. Built over `Core` and `Cli` for as long as step 5 runs.
-5. **Callers, package by package** — each package's functions take the handles they use instead of `Core` and
+5. **Done 2026-10-28.** **Callers, package by package** — each package's functions take the handles they use instead of `Core` and
    `Cli`, in one edit per function. `async` where a function reasonably can be, `flatten(….wait())` where not
    (operator, 2026-10-24). Frames go here: tests that ran a program in-process over `frame.wac` fake its
    handles with closures instead, and the shell always spawns. Also here: dead-code elimination over the built
    module (`issues/lang/0398a`), because `Sys` retained whole carries every handle into every program — a
    hello-world went from 392 KB to 727 KB. Reachability stays as chapter 5 has it; what a build checks and what it
    emits are separate (operator, 2026-10-24).
-6. **Delete** `Core`, `Cli`, `Pending`, `Grant`, the old answer structs and the exported `FAULT_*`; the hosts build
-   the handles' imports directly and lose `pushChild`, `popChild`, `capture`, `log` and `warn`.
+   Left on `Core`/`Cli` on purpose until step 6: the tests of `Core`'s own scheduler, three test arms waiting on
+   the cancel rule below (`issues/system/0370a`), compiler tests whose subject is a program written against them,
+   and `packages/web`'s `system.wac`, which builds a `Cli` for a page over its flat calls.
+6. **A flat host ABI, and delete** `Core`, `Cli`, `Pending`, `Grant`, the old answer structs and the exported
+   `FAULT_*` (operator, 2026-10-28 — replacing "the hosts build the handles' imports directly"). A host serves
+   numbered requests whose arguments are ints, strings and bytes, and answers each in one shape — the shape
+   `packages/web`'s `System` already has (`answered(req, fault, text, bytes, n, m, flags)`). `Sys` and every handle
+   are ordinary std over those calls, compiled into each module, so a host builds no wac value and a host answering
+   one module can answer another: what a page spawning a module from its disk needs (design/system/0015, whose
+   decisions 1–2 this supersedes; 3–4 stand). Measured on today's boundary, most of what touching `Sys` costs a
+   module is the boundary itself — the constructors and bind helpers a host needs to build `Core`, `Cli` and
+   their answers, all exported — so modules are expected to shrink; measure on the first prototype. **An exported
+   type that holds `Sys` costs the whole of `Sys`** (found adding the program adapter's `__WacRun`), so the
+   adapter's exports hold closures, not handles.
 
 **Spawning needs the `procs` grant, yourself included** (operator, 2026-10-24) — so a sealed session, `sshd` and
 the browser terminal are granted it to run applets, and without it an applet is `NotGranted`.
+
+### Step 6's ABI (agent-a, 2026-10-28; as built)
+
+**The requests already exist.** The native hosts' `enum Cap` is a flat opcode table — `ReadFile`, `Stat`, `Connect`,
+`Spawn` and the rest — and the JavaScript hosts' bridge (`host/layout.ts`, `ops.ts`) carries the same opcodes over
+shared memory. What builds wac values is the *answer* side: `Resolve(Kind)`'s sixteen answer kinds, each turned
+into `FileResult.of`, `Stat.of`, `Pending<T>.of` and the `Read` variants by host glue. So the step is: keep the
+requests, replace the sixteen answer constructors with one answer shape, and move the decoding into std.
+
+**One import to ask, one export to be answered**, both of plain values:
+
+    request(op: i32, id: i32, a: i64, b: i64, text: string, bytes: u8[])
+    answered(id: i32, fault: i32, text: string, bytes: u8[], n: i64, m: i64, flags: i32)
+
+`id` is std's, so cancel is `request(OP_DROP, id, …)` — the host closes whatever request `id` answered if the
+program has not read it (the ruling below). `answered` is `packages/web`'s `System` shape unchanged.
+
+**`answered` is the only way an answer arrives, on every host** (agreed with agent-c, 2026-10-28):
+
+- A request the host can answer at once — a clock, `randomBytes`, an argument, the working directory — is answered
+  by calling `answered` *from inside* `request`, before it returns. So those are requests like any other, not a list
+  of synchronous calls.
+- A blocking host's `waitAny(ids, millis)` calls `answered` for each id that is ready and answers the **index** in
+  `ids` of one of them, or -1, as `Core.waitAny` did. **It delivers only the ids it was asked about**: an answer nobody
+  waits for stays the host's, which is what lets `OP_DROP` close it (the ruling below); a
+  non-blocking one (a page) delivers `answered` for whatever has arrived and then calls `__wacAdvance`, while its
+  `waitAny` answers `HOST_CANNOT_WAIT` as it does now.
+- **A host calls `answered` only from inside one of its own imports** (`request` or `waitAny`), never while the module
+  is running anything else. Single-threaded that is free; it is written down because it is what makes re-entry safe.
+
+What stays a plain synchronous call: `waitAny`, `exit`, `interrupted`, and `load`, `call`, `validated` for modules.
+A request with two strings (`rename`) carries the second in `bytes`. `log`, `warn`, `write` and `writeErr` are
+requests nobody answers. The program adapter loses its parameters — `main()` and `__wacStart()`, since std builds
+`Sys` from the imports itself (`packages/wacc/src/program.wac`, which agent-c has offered to change when std is
+ready). A page's module broker (design/system/0015 decision 3) does not speak this: each worker runs one server
+of it, the same for the page's program and for a module it spawns.
+
+How each answer kind maps onto it:
+
+| answer kind | `fault` | `text` | `bytes` | `n` | `m` | `flags` |
+|---|---|---|---|---|---|---|
+| a time, a count, an exit code | category | | | the value | | |
+| bytes (`arg`, `randomBytes`, `readStdin`) | category | | the bytes | | | 1 = present |
+| `FileResult` | category | host's words | the file | | | |
+| `Change` | category | host's words | | | | |
+| `Stat` | category | owner | | size | modified ms | kind bits, mode in the high 16 |
+| `string[]?` (`readDir`) | category | | names, NUL-joined | | | 1 = listed |
+| `Read` (a chunk, a `recv`) | category | why it failed | the bytes | | | 0 data, 1 end |
+| `HostSocket` (`connect`, `accept`, `listen`, `openFile`) | category | peer, or the words | | handle | port | |
+| `Datagram` | category | peer | the bytes | port | | |
+| `HostChild` | category | host's words | | handle | err and served-files handles, packed | |
+| `Exec` | category | host's words | stdout then stderr | status | where stderr starts | |
+
+`log` and `warn` are writes to the two streams; `pushChild`, `popChild`, `openInput` and `openOutput` are gone (below).
+
+And what each request carries — the contract a host implements, read off std (`std/platform.wac`, the `OP_*` table
+and every `hostAsk`). Blank is zero or empty. A `bool` is `a` = 1. **A write, send or close that did not go is a fault** (`FAULT_OTHER`
+with empty text when the host has no words), since std's decoders read `fault`; one that went sets `flags` 1 as well. Paths are as the program wrote them; the host
+resolves a relative one against its working directory.
+
+| op | request | `a` | `b` | `text` | `bytes` | answered as |
+|---|---|---|---|---|---|---|
+| 0 | drop: close what request `id` answered, unless it was read | | | | | nothing |
+| 1, 2 | `nowMillis`, `monotonicNanos` | | | | | a time |
+| 3 | `randomBytes` | count | | | | bytes |
+| 6, 7 | `argCount`, `arg` | | | | | a count; bytes |
+| 8, 41 | `env`, `cwd` | | | name | | bytes, `flags` 1 if set, `NotGranted` without the grant; `text` the directory |
+| 9, 10 | `readFile`, `writeFile` | | | path | the file (write) | `FileResult`; `Change` |
+| 11, 19 | `readStdin` (all), `readChunk` (a piece) | | | | | bytes; `Read` |
+| 12, 48 | write standard output, standard error | | | | the bytes | `Change` |
+| 13, 47 | `stat`, `linkStat` | | | path | | `Stat` |
+| 14 | `readDir` | | | path | | names |
+| 15, 16 | `mkdir`, `remove` | parents, recursive | | path | | `Change` |
+| 17 | `rename` | | | from | to, as UTF-8 | `Change` |
+| 52, 60 | `setExecutable`, `chmod` | on; mode | | path | | `Change` |
+| 61 | open a file as a stream | 0 read, 1 write, 2 append | | path | | `HostSocket` |
+| 62, 63 | close a file stream; close standard output (`a` 0) or error (1) | handle | | | | `Change`, `flags` 1 if kept |
+| 21, 22 | `connect`, `listen` | port | | host; address | | `HostSocket` |
+| 23 | `accept` | handle | | | | `HostSocket` |
+| 24, 25 | `recv`, `send` (sockets, file streams, a child's streams, `PARENT_FS` 1) | handle | | | the bytes (send) | `Read`; sent, or a fault |
+| 26, 29, 57 | close a socket or stop a child; end a child's input; half-close | handle | | | | nothing |
+| 53, 54, 55 | `bindDatagram`, `receiveFrom`, `sendTo` | port; handle; handle | ; ; port | address; ; host | ; ; the datagram | `HostSocket`; `Datagram`; sent, or a fault |
+| 27, 49 | `spawn`, `spawnSelf` | grants | `Launch.flags()`, 256 if served | cwd | module (empty for self) then args, below | `HostChild` |
+| 28 | `exitCode` | handle | | | | a count |
+| 59 | `exec` | 1 clean env, 2 inherit output | | cwd | program, args, input, `NAME=value` pairs, below | `Exec` |
+| 30 | `sleepMillis` | millis | | | | a time |
+| 64, 65, 66, 67 | `load`, `call`, `unload`, `validate` | grants; handle; handle | ; the argument | ; export name | the module; ; ; the module | at once: `n` the handle; `flags` status, `n` value, `text` trap |
+
+**Packed `bytes`** are length-prefixed parts, each a little-endian `u32` length then the bytes, and a list is a
+`u32` count then its parts: `spawn` is the module, then the arguments as a list; `exec` is the program, the
+arguments as a list, the input, then the pairs as a list.
+**Measured once built:** a program that writes one line (`packages/platform/size/core_only.wac`) went from 860 KB to
+598 KB, and its boundary from 36 structs to 9 — the host's value, `Answer`, and what holds the requests in flight.
+A program that takes nothing still describes nothing.
+
+**Done 2026-10-28**, with one item of the list above left: std still exports `FAULT_*`, because a host written in
+wac — `packages/web`'s page, and the fake hosts its tests build — answers with those numbers.
+
+### Settled before step 6 (operator, 2026-10-28)
+
+- **The flat ABI**, as step 6 above says.
+- **An answer nobody has read is still the host's.** `cancel` on a request the host has answered but the program
+  has not read closes what it answered — the socket, the child, the bytes go back — which under the flat ABI is
+  "drop request N". An answer the program has read is the program's, and it closes it itself. This settles
+  `issues/system/0370a`: a connect or a spawn abandoned after another wait dispatched its answer no longer leaks.
+- **`openInput`, `openOutput`, `pushChild` and `popChild` go with `Cli`**, with no std equivalent: a program writes a
+  file through `files.openWrite`/`openAppend`, and nothing else called them. `bootstrap_test`'s probe of the hosts'
+  redirect goes with them.
 
 ### Settled before step 5 (operator, 2026-10-24)
 

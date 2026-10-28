@@ -39,7 +39,7 @@
 // system one as covered because the code names it is exactly the reasoning that makes a green suite mean
 // less than it appears to.
 
-import { Cli, Env, Files } from "std";
+import { Env, Files } from "std";
 import { Setting, parseConfig } from "./config.wac";
 import { Vec, flatten } from "core";
 

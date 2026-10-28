@@ -41,7 +41,7 @@
 // hands control back. A test that wants to *talk to* the proxy while it is up cannot use it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Exec, Pending, HostSocket, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Random, Sys, Listener, Socket } from "std";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Random, Sys, Listener, Socket } from "std";
 import { Read, flatten } from "core";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir } from "../../../wactest/src/host.wac";

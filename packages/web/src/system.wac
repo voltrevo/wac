@@ -1,490 +1,169 @@
 // A program's system, in a page: `page.sys`.
 //
-// **The same `Sys` a program on a command line is handed**, built here from what a browser offers: the
-// Origin Private File System for files, the clock, randomness, and the console for output. A page asks
-// for it by being built with grants — `--grant read,write` — as `wac run` is asked with `--allow-…`, and
-// what it was not granted its `Cli` refuses, saying which grant would allow it, so `sys.cli` is no way
-// around `sys`'s own checks.
+// **The same `Sys` a program on a command line is handed**, over the same host call: the page serves the
+// numbered requests of design/system/0013 step 6 from what a browser offers -- the Origin Private File System for
+// files, the clock, randomness, and the console for output. A page asks for it by being built with grants --
+// `--grant read,write` -- as `wac run` is asked with `--allow-...`, and what it was not granted is refused here,
+// saying which grant would allow it.
 //
-// **Nothing here waits.** A browser answers a file read later, and neither a worker without shared
-// memory nor the page's own thread may block until it does. So every call that reaches the browser
-// hands it a request number and returns a ticket at once; the browser calls `answered` with the
-// request's number when the work is done, and that settles the ticket and runs whatever was waiting
-// on it. A program writes `await sys.readFile(p)`, or `await cli.readFile(p).ticket()`, and the same
-// line works on a command line, where the host is waited for instead.
+// **Nothing here waits.** A browser answers a file read later, and neither a worker without shared memory nor the
+// page's own thread may block until it does. So the browser answers each request through `answered` with the
+// request's number when the work is done, and that settles the ticket and runs whatever was waiting on it. A
+// program writes `await sys.files().readFile(p)`, and the same line works on a command line, where the host is
+// waited for instead. A wait that would block answers `HOST_CANNOT_WAIT` rather than blocking.
 //
-// **What `.wait()` cannot do here, it says.** On a command line a host ticket's `wait` blocks, and in
-// a page it cannot — so `wait` on an answer that has not arrived traps with a sentence saying to
-// `await` it, rather than returning a default. An answer that has already arrived, and everything this
-// side answers by itself (the arguments, the clock, randomness), waits as it always did.
-//
-// **The browser's side is small and decides nothing.** It does the file operation it was asked for and
-// answers in one shape, `Answer`; which fields mean what for which call, and which words describe a
-// fault, are decided here, where they are tested without a browser.
+// **The browser's side is small and decides nothing.** It does the operation it was asked for and answers in one
+// shape; which requests a page refuses, and in which words, are decided here, where they are tested without a
+// browser.
 
-import { CallResult, Captured, Change, HostChild, Cli, Core, Datagram, Exec, FAULT_NONE, FAULT_NOT_GRANTED,
-         FAULT_UNSUPPORTED, FileResult, GRANT_READ, GRANT_WRITE, LoadedModule, Pending, Sched, HostSocket,
-         Stat, Sys, faultWords } from "std";
-import { Map, Read, Ticket } from "core";
+import { FAULT_NOT_GRANTED, FAULT_UNSUPPORTED, GRANT_READ, GRANT_WRITE, HOST_CANNOT_WAIT, OP_BIND_DATAGRAM, OP_CALL,
+         OP_CHMOD, OP_CLOSE_OUTPUT, OP_CONNECT, OP_ACCEPT, OP_ENV, OP_EXEC, OP_LINK_STAT, OP_LISTEN, OP_LOAD,
+         OP_MKDIR, OP_OPEN_FILE, OP_READ_DIR, OP_READ_FILE, OP_READ_STDIN, OP_RECEIVE_FROM, OP_REMOVE, OP_RENAME,
+         OP_SEND_TO, OP_SET_EXECUTABLE, OP_SPAWN, OP_SPAWN_SELF, OP_STAT, OP_UNLOAD, OP_VALIDATE, OP_WRITE_FILE,
+         OP_WRITE_STDERR, OP_WRITE_STDOUT, Sys, __WacHost, answered, faultWords } from "std";
+import { Ticket } from "core";
 import { Runner } from "./page.wac";
 
 /**
- * What the browser does for a program's system, supplied by the host.
- *
- * The first argument of each call that takes time is a request number: the browser starts the work
- * and answers with `answered(…, req, …)` when it is done. The rest answer at once.
+ * What the browser does for a program's system, supplied by the host: `request` as std's `__WacHost` takes it,
+ * answered through `answered(..., id, ...)` -- at once for what the browser knows (the clock, the arguments, the
+ * working directory), later for what it has to go and do.
  */
 export struct System {
-  /** A file's bytes. Answers `bytes`, or a `fault`. */
-  fn<void(i32, string)> readFile;
-  /** Replace a file with these bytes, creating it. Answers a `fault`, or none. */
-  fn<void(i32, string, u8[])> writeFile;
-  /** What a path is. Answers `flags` (`STAT_*`), `n` the size, `m` when it last changed; or a `fault`. */
-  fn<void(i32, string)> stat;
-  /** A directory's names, sorted, each followed by a NUL, in `bytes`; or a `fault`. */
-  fn<void(i32, string)> readDir;
-  /** Make a directory — and every missing parent, when the flag is set. */
-  fn<void(i32, string, bool)> mkdir;
-  /** Remove a file or an empty directory — or a whole tree, when the flag is set. */
-  fn<void(i32, string, bool)> remove;
-  /** Move a file. */
-  fn<void(i32, string, string)> rename;
-  /** Answer after this many milliseconds, with `n` the monotonic clock in nanoseconds. */
-  fn<void(i32, i32)> sleep;
-  /** Wall-clock milliseconds since the epoch. */
-  fn<i64()> nowMillis;
-  /** Nanoseconds from a clock that only goes forward. */
-  fn<i64()> monotonicNanos;
-  /** This many random bytes, from the browser's cryptographic generator. */
-  fn<u8[](i32)> randomBytes;
-  /** A line of output, and a line of diagnostic output. */
-  fn<void(string)> log;
-  fn<void(string)> warn;
-  /** Bytes of output and of diagnostic output, exactly. */
-  fn<void(u8[])> write;
-  fn<void(u8[])> writeErr;
-  /** End the program now, with this status. */
+  /** `request(op, id, a, b, text, bytes)`, `OP_*` numbered; `id` 0 wants no answer. */
+  fn<void(i32, i32, i64, i64, string, u8[])> request;
+  /** The program ended with this status. */
   fn<void(i32)> exit;
-  /** How many arguments the program was started with, and each one's bytes — none, for a page. */
-  fn<i32()> argCount;
-  fn<u8[](i32)> arg;
-  /** Where relative paths land: the file system's root, or what a parent said when it spawned this. */
-  fn<string()> cwd;
-  /** The next piece of standard input. Answers `flags` `READ_*` — with `bytes`, or with `text` for a failure. */
-  fn<void(i32)> readChunk;
-  /**
-   * This program again, in a worker of its own: the arguments, each followed by a NUL; the grants it
-   * may hold; its directory; and whether it reaches its files through this one. Answers `n` its
-   * handle, `m` its error stream's, and `flags` its file system channel's (-1 for none) — or a `fault`.
-   */
-  fn<void(i32, u8[], i32, string, bool)> spawnSelf;
-  /** The next piece of what a handle carries — a child's output, its errors, or its questions — as `readChunk` answers. */
-  fn<void(i32, i32)> recv;
-  /** Send bytes on a handle: to a child's input, or an answer on its file system channel. Answers `flags` 1 if sent. */
-  fn<void(i32, i32, u8[])> send;
-  /** End a child's input. */
-  fn<void(i32)> closeFeed;
-  /** Stop a child, and stop reading what it says. */
-  fn<void(i32)> closeSocket;
-  /** A child's exit status, when it has one. Answers `n`. */
-  fn<void(i32, i32)> exitCode;
-  /**
-   * Select a file as the input `readChunk` streams from, or standard input again for `""`. A stage
-   * that may read a path itself streams it rather than asking its parent for every byte, which is
-   * what `packages/box`'s `openStream` does with a host path.
-   */
-  fn<void(i32, string)> openInput;
-  /**
-   * A file as a stream of its own, `how` being std's `OPEN_*` (read 0, write 1, append 2). Answers `n`
-   * a handle, which `recv` reads or `send` writes — or a `fault`.
-   */
-  fn<void(i32, string, i32)> openFile;
-  /** Finish with a handle `openFile` answered: what was sent to it becomes the file's. Answers `flags` 1 if it did. */
-  fn<void(i32, i32)> closeFile;
 
-  /**
-   * A browser that does nothing: no request is ever answered, the clocks stand at zero, output is
-   * dropped. For a test, which replaces what it wants to watch and answers requests itself.
-   */
+  /** A browser that does nothing: no request is ever answered. For a test, which replaces what it watches. */
   System inert() {
-    return System(
-      (i32 req, string p) => { }, (i32 req, string p, u8[] b) => { }, (i32 req, string p) => { },
-      (i32 req, string p) => { }, (i32 req, string p, bool f) => { }, (i32 req, string p, bool f) => { },
-      (i32 req, string a, string b) => { }, (i32 req, i32 ms) => { }, () => 0 as i64, () => 0 as i64,
-      (i32 n) => u8[].filled(n, 0), (string l) => { }, (string l) => { }, (u8[] b) => { },
-      (u8[] b) => { }, (i32 code) => { }, () => 0, (i32 i) => u8[](), () => "/", (i32 req) => { },
-      (i32 req, u8[] args, i32 grants, string cwd, bool serveFs) => { }, (i32 req, i32 h) => { },
-      (i32 req, i32 h, u8[] b) => { }, (i32 h) => { }, (i32 h) => { }, (i32 req, i32 h) => { },
-      (i32 req, string p) => { }, (i32 req, string p, i32 how) => { }, (i32 req, i32 h) => { }
-    );
+    return System((i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => { }, (i32 code) => { });
   }
 }
 
-/** `Answer.flags` for a read: what arrived. */
+/** `flags` for a read: what arrived. */
 export static i32 READ_DATA = 0;
 export static i32 READ_END = 1;
-export static i32 READ_FAILED = 2;
 
-/** `Answer.flags` for a `stat`: which of these the path is. */
+/** `flags` for a `stat`: which of these the path is. */
 export static i32 STAT_EXISTS = 1;
 export static i32 STAT_FILE = 2;
 export static i32 STAT_DIR = 4;
 
-/**
- * Every answer the browser gives, in one shape: which fields a call fills is that call's business, and
- * `System` says it for each.
- */
-export struct Answer {
-  i32 fault;
-  /** The browser's own words for a fault, used when the fault has none of its own. */
-  string text;
-  u8[] bytes;
-  i64 n;
-  i64 m;
-  i32 flags;
-}
-
-/** Requests the browser has been handed, and the answers that have arrived and not been taken. */
-export struct Answers {
-  i32 next;
-  Map<i32, Answer> arrived;
-  /** Requests whose tickets were abandoned, so a late answer is dropped rather than kept for ever. */
-  Map<i32, bool> abandoned;
-  Sched sched;
-
-  Answers create(Sched sched) {
-    return Answers(1, Map.create((i32 k) => k, (i32 a, i32 b) => a == b),
-                   Map.create((i32 k) => k, (i32 a, i32 b) => a == b), sched);
-  }
-
-  /** A fresh request number. Never reused, so a late answer can never settle someone else's ticket. */
-  i32 ask(this) {
-    i32 id = this.next;
-    this.next = id + 1;
-    return id;
-  }
-
-  /** The answer to `req` arrived: keep it, and run whatever is waiting on it. */
-  void arrive(this, i32 req, Answer a) {
-    // A number never handed out is nobody's: kept, it would wait for a taker that cannot exist.
-    if (req <= 0 || req >= this.next) { return; }
-    if (this.abandoned.remove(req)) { return; }
-    this.arrived.set(req, a);
-    this.sched.fire(req);
-  }
-
-  bool has(const this, i32 req) { return this.arrived.has(req); }
-
-  /** The answer to `req`, which is then spent. */
-  Answer take(this, i32 req) {
-    Answer? a = this.arrived.get(req);
-    if (a is null) {
-      trap "a page cannot wait for the browser: `await` this ticket (`await p.ticket()`) rather than calling `.wait()`";
-    }
-    this.arrived.remove(req);
-    return a!;
-  }
-
-  void abandon(this, i32 req) {
-    if (!this.arrived.remove(req)) { this.abandoned.set(req, true); }
-  }
-
-  /** A ticket for request `req`, whose answer `read` turns into what the caller is owed. */
-  Pending<T> pending<T>(this, i32 req, fn<T(Answer)> read) {
-    return Pending.of(req, (i32 id) => read(this.take(id)), (i32 id) => this.has(id),
-                      (i32 id) => { this.abandon(id); });
-  }
-}
-
-/** A ticket that has its answer already — for what this side knows without asking anybody. */
-Pending<T> ready<T>(T value) {
-  return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
-}
-
-/** What a fault is called: its own words where it has them, and the browser's where it does not. */
-string wordsFor(Answer a) {
-  string own = faultWords(a.fault);
-  return own == "" ? a.text : own;
-}
-
-FileResult fileOf(Answer a) { return FileResult.of(a.fault == FAULT_NONE(), a.bytes, a.fault == FAULT_NONE() ? "" : wordsFor(a), a.fault); }
-
-Change changeOf(Answer a) { return Change.of(a.fault, a.fault == FAULT_NONE() ? "" : wordsFor(a)); }
-
-Stat statOf(Answer a) {
-  return Stat.of((a.flags & STAT_EXISTS) != 0, (a.flags & STAT_FILE) != 0, (a.flags & STAT_DIR) != 0, a.n, a.m,
-                 false, false, a.fault, 0);
-}
-
-/** A read's answer as the `Read` it is. */
-Read readOf(Answer a) {
-  if (a.flags == READ_DATA && a.bytes.len() > 0) { return Read.Data(a.bytes); }
-  if (a.flags == READ_FAILED) { return Read.Failed(a.text); }
-  return Read.End;
-}
-
-/** The bytes `spawnSelf` takes for its arguments: each one, then a NUL. */
-u8[] argBytesOf(u8[][] args) {
-  i32 n = 0;
-  for (u8[] a in args) { n = n + a.len() + 1; }
-  u8[] out = u8[].filled(n, 0);
-  i32 at = 0;
-  for (u8[] a in args) {
-    out.copyFrom(a, 0, at, a.len());
-    at = at + a.len() + 1;
-  }
-  return out;
-}
-
-/** The names in a `readDir` answer — each followed by a NUL — or null when it failed. */
-string[]? namesOf(Answer a) {
-  if (a.fault != FAULT_NONE()) { return null; }
-  i32 count = 0;
-  for (u8 b in a.bytes) {
-    if (b == 0) { count++; }
-  }
-  string[] names = string[].filled(count, "");
-  i32 k = 0;
-  i32 from = 0;
-  for (i32 i = 0; i < a.bytes.len(); i++) {
-    if (a.bytes[i] == 0) {
-      names[k] = string.fromBytes(bytesBetween(a.bytes, from, i));
-      k++;
-      from = i + 1;
-    }
-  }
-  return names;
-}
-
-u8[] bytesBetween(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[].filled(to - from, 0);
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
-
-static string NOT_HERE = "a page cannot do this";
-
 /** What a refusal says: the fault's own words, and the grant the page was built without. */
 string notGranted(string grant) { return faultWords(FAULT_NOT_GRANTED()) + ": the page was built without `--grant " + grant + "`"; }
 
-Pending<FileResult> refusedRead(string p) {
-  return ready(FileResult.of(false, u8[](), notGranted("read"), FAULT_NOT_GRANTED()));
-}
-Pending<Change> refusedChange(string grant) { return ready(Change.of(FAULT_NOT_GRANTED(), notGranted(grant))); }
-/**
- * What the browser's storage cannot do at all — saying what, because `FAULT_UNSUPPORTED` has no words
- * of its own on purpose: `cat: f: ` with nothing after it was this, for a file opened as a stream.
- */
-Pending<Change> unsupported(string what) { return ready(Change.of(FAULT_UNSUPPORTED(), what)); }
-Pending<HostSocket> noSocket() { return ready(HostSocket.of(0 - 1, "a page has no sockets", "", 0, FAULT_UNSUPPORTED())); }
-/** What `openFile` answered: the handle, or the browser's fault and its words. */
-HostSocket fileOpenedOf(Answer a) {
-  if (a.fault != FAULT_NONE()) { return HostSocket.of(0 - 1, a.text, "", 0, a.fault); }
-  return HostSocket.of(a.n as! i32, "", "", 0, FAULT_NONE());
+/** Why a page will not do `op`, or `""` when it will: a grant it was built without, or a thing a browser cannot do. */
+string refusal(i32 op, i64 a, i32 grants) {
+  bool read = (grants & GRANT_READ) != 0;
+  bool write = (grants & GRANT_WRITE) != 0;
+  if (op == OP_READ_FILE() || op == OP_STAT() || op == OP_LINK_STAT() || op == OP_READ_DIR()
+      || (op == OP_OPEN_FILE() && a == 0 as i64)) {
+    return read ? "" : notGranted("read");
+  }
+  if (op == OP_WRITE_FILE() || op == OP_MKDIR() || op == OP_REMOVE() || op == OP_RENAME() || op == OP_OPEN_FILE()
+      || op == OP_SET_EXECUTABLE() || op == OP_CHMOD()) {
+    return write ? "" : notGranted("write");
+  }
+  return "";
 }
 
-/** A program's world in a page: the answers it waits for, and the `Sys` its `main` is handed. */
+/** What a browser cannot do at all, granted or not -- saying what, because `FAULT_UNSUPPORTED` has no words of its own. */
+string unsupported(i32 op) {
+  if (op == OP_SET_EXECUTABLE()) { return "the browser's storage has no executable bit"; }
+  if (op == OP_CHMOD()) { return "the browser's storage has no mode bits"; }
+  if (op == OP_CONNECT() || op == OP_LISTEN() || op == OP_ACCEPT() || op == OP_BIND_DATAGRAM()
+      || op == OP_RECEIVE_FROM() || op == OP_SEND_TO()) {
+    return "a page has no sockets";
+  }
+  if (op == OP_SPAWN()) { return "this page cannot start programs"; }
+  if (op == OP_EXEC()) { return "a page cannot run a host program"; }
+  if (op == OP_LOAD() || op == OP_CALL() || op == OP_UNLOAD() || op == OP_VALIDATE()) { return "a page cannot do this"; }
+  return "";
+}
+
+/** What `World`'s request hands the browser, and what it answers itself. */
+struct PageLine {
+  System system;
+  i32 grants;
+  /** Inside `request`: an answer arriving now is the call's own, and runs nothing on. */
+  bool asking;
+  /** `closeOutput` ends a stream for this program: a page's console has no end to give, so later writes are refused. */
+  bool[] closed;
+  __WacHost? host;
+}
+
+void pageRequest(PageLine line, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+  __WacHost h = line.host!;
+  string why = refusal(op, a, line.grants);
+  if (why != "") {
+    answered(h, id, FAULT_NOT_GRANTED(), why, u8[](), 0 as i64, 0 as i64, 0);
+    return;
+  }
+  string cannot = unsupported(op);
+  if (cannot != "") {
+    answered(h, id, FAULT_UNSUPPORTED(), cannot, u8[](), 0 as i64, 0 as i64, 0);
+    return;
+  }
+  // No environment and no standard input to read whole: a page has neither, and says so as "unset" and "empty".
+  if (op == OP_ENV()) {
+    answered(h, id, 0, "", u8[](), 0 as i64, 0 as i64, 0);
+    return;
+  }
+  if (op == OP_READ_STDIN()) {
+    answered(h, id, 0, "", u8[](), 0 as i64, 0 as i64, 0);
+    return;
+  }
+  if (op == OP_CLOSE_OUTPUT()) {
+    line.closed[a == 0 as i64 ? 0 : 1] = true;
+    answered(h, id, 0, "", u8[](), 0 as i64, 0 as i64, 0);
+    return;
+  }
+  if ((op == OP_WRITE_STDOUT() && line.closed[0]) || (op == OP_WRITE_STDERR() && line.closed[1])) {
+    answered(h, id, 5, "", u8[](), 0 as i64, 0 as i64, 0);
+    return;
+  }
+  // **No grant, and none kept**, as on a command line: what is started is this program again, so it reaches
+  // nothing new, and what it may do is what it is given -- never more than this holds.
+  i64 asked = op == OP_SPAWN_SELF() ? a & (line.grants as i64) : a;
+  line.asking = true;
+  line.system.request(op, id, asked, b, text, bytes);
+  line.asking = false;
+}
+
+/** A program's world in a page: the host its requests go to, and the `Sys` its `main` is handed. */
 export struct World {
-  Answers answers;
+  __WacHost host;
   Sys sys;
+  PageLine line;
+
+  /** The world `system` provides, holding `grants` (`GRANT_*` bits) and nothing more. */
+  World create(System system, i32 grants) {
+    PageLine line = PageLine(system, grants, false, bool[].filled(2, false), null);
+    __WacHost h = __WacHost.of(
+      (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => { pageRequest(line, op, id, a, b, text, bytes); },
+      // **Which of these has answered, never waiting for one to**: an answer reaches the program the moment the
+      // browser gives it, so nothing is ever waiting to be collected, and a wait that would block cannot.
+      (i32[] ids, i32 millis) => millis == 0 ? 0 - 1 : HOST_CANNOT_WAIT(),
+      system.exit,
+      () => false);
+    line.host = h;
+    return World(h, Sys.__wacOn(h), line);
+  }
 
   /**
-   * The world `system` provides, holding `grants` (`GRANT_*` bits) and nothing more — what the page
-   * was not built with, its `Cli` refuses.
+   * The browser answered request `req`: settle it. Whether to run on is the caller's -- `false` when the answer
+   * came from inside the request that asked, which has not returned yet.
    */
-  World create(System system, i32 grants) {
-    Sched sched = Sched.create();
-    Answers answers = Answers.create(sched);
-    Core core = coreOf(system, answers, sched);
-    Cli cli = cliOf(system, answers, sched, grants);
-    return World(answers, Sys.__wacOf(core, cli));
+  bool deliver(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
+    answered(this.host, req, fault, text, bytes, n, m, flags);
+    return !this.line.asking;
   }
 }
 
-Core coreOf(System system, Answers answers, Sched sched) {
-  return Core.of(
-    () => ready(system.nowMillis()),
-    () => ready(system.monotonicNanos()),
-    (i32 ms) => {
-      i32 req = answers.ask();
-      system.sleep(req, ms);
-      return answers.pending<i64>(req, (Answer a) => a.n);
-    },
-    (i32 n) => ready(system.randomBytes(n)),
-    system.log,
-    system.warn,
-    // **Which of these has answered, never waiting for one to.** A page learns that an answer arrived
-    // because the browser calls in, so there is nothing to wait in; asking to is the mistake `take`
-    // describes, and saying so is better than answering "none" for ever.
-    (i32[] ids, i32 millis) => {
-      for (i32 i = 0; i < ids.len(); i++) {
-        if (answers.has(ids[i])) { return i; }
-      }
-      if (millis == 0) { return 0 - 1; }
-      trap "a page cannot wait for the browser: `await` the work rather than draining it";
-    },
-    () => 0,
-    system.exit,
-    sched
-  );
-}
-
-Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
-  bool read = (grants & GRANT_READ) != 0;
-  bool write = (grants & GRANT_WRITE) != 0;
-  // `closeOutput` ends a stream for this program: a page's console has no end to give, so later writes are refused.
-  bool[] closed = bool[].filled(2, false);
-  return Cli.of(
-    () => ready(system.argCount()),
-    (i32 i) => ready(system.arg(i)),
-    (string name) => ready(null as u8[]?),
-    () => ready(u8[]()),
-    (u8[] bytes) => {
-      if (closed[0]) { return false; }
-      system.write(bytes);
-      return true;
-    },
-    (u8[] bytes) => {
-      if (closed[1]) { return false; }
-      system.writeErr(bytes);
-      return true;
-    },
-    (string p) => {
-      if (!read) { return refusedRead(p); }
-      i32 req = answers.ask();
-      system.readFile(req, p);
-      return answers.pending<FileResult>(req, fileOf);
-    },
-    (string p, u8[] bytes) => {
-      if (!write) { return refusedChange("write"); }
-      i32 req = answers.ask();
-      system.writeFile(req, p, bytes);
-      return answers.pending<Change>(req, changeOf);
-    },
-    (string p) => statFor(system, answers, read, p),
-    // No symbolic links in the Origin Private File System, so a path's own `stat` is its link's.
-    (string p) => statFor(system, answers, read, p),
-    (string p) => {
-      if (!read) { return ready(null as string[]?); }
-      i32 req = answers.ask();
-      system.readDir(req, p);
-      return answers.pending<string[]?>(req, namesOf);
-    },
-    (string p, bool parents) => {
-      if (!write) { return refusedChange("write"); }
-      i32 req = answers.ask();
-      system.mkdir(req, p, parents);
-      return answers.pending<Change>(req, changeOf);
-    },
-    (string p, bool recursive) => {
-      if (!write) { return refusedChange("write"); }
-      i32 req = answers.ask();
-      system.remove(req, p, recursive);
-      return answers.pending<Change>(req, changeOf);
-    },
-    (string from, string to) => {
-      if (!write) { return refusedChange("write"); }
-      i32 req = answers.ask();
-      system.rename(req, from, to);
-      return answers.pending<Change>(req, changeOf);
-    },
-    // No mode bits in the Origin Private File System: the backing refuses, which is not a missing grant.
-    (string p, bool on) => write ? unsupported("the browser's storage has no executable bit") : refusedChange("write"),
-    (string p, i32 mode) => write ? unsupported("the browser's storage has no mode bits") : refusedChange("write"),
-    // A file as a stream: read, then served a chunk at a time. Standard input is the empty path.
-    (string p) => {
-      if (p != "" && !read) { return refusedChange("read"); }
-      i32 req = answers.ask();
-      system.openInput(req, p);
-      return answers.pending<Change>(req, changeOf);
-    },
-    () => {
-      i32 req = answers.ask();
-      system.readChunk(req);
-      return answers.pending<Read>(req, readOf);
-    },
-    () => ready(""),
-    (string p) => p == "" ? ready(Change.of(FAULT_NONE(), "")) : unsupported("a page cannot write a file as a stream yet"),
-    (string host, i32 port) => noSocket(),
-    (string host, i32 port) => noSocket(),
-    (i32 h) => noSocket(),
-    (i32 h) => {
-      i32 req = answers.ask();
-      system.recv(req, h);
-      return answers.pending<Read>(req, readOf);
-    },
-    (i32 h, u8[] bytes) => {
-      i32 req = answers.ask();
-      system.send(req, h, bytes);
-      return answers.pending<bool>(req, (Answer a) => a.flags == 1);
-    },
-    system.closeSocket,
-    // Half-closing a child's input is `closeFeed`; a page has no sockets to half-close.
-    (i32 h) => { },
-    // A file as a stream: `how` 0 is a read and anything else a write, each needing its grant.
-    (string path, i32 how) => {
-      if (!(how == 0 ? read : write)) { return ready(HostSocket.of(0 - 1, notGranted(how == 0 ? "read" : "write"), "", 0, FAULT_NOT_GRANTED())); }
-      i32 req = answers.ask();
-      system.openFile(req, path, how);
-      return answers.pending<HostSocket>(req, fileOpenedOf);
-    },
-    (i32 h) => {
-      if (h < 2) { return ready(false); }
-      i32 req = answers.ask();
-      system.closeFile(req, h);
-      return answers.pending<bool>(req, (Answer a) => a.fault == FAULT_NONE() && a.flags == 1);
-    },
-    (bool toErr) => {
-      closed[toErr ? 1 : 0] = true;
-      return ready(true);
-    },
-    (string host, i32 port) => noSocket(),
-    (i32 h) => ready(Datagram.of(u8[](), "", 0, "a page has no sockets")),
-    (i32 h, string host, i32 port, u8[] bytes) => ready(false),
-    (u8[] wasm, u8[][] args, i32 want, string cwd, i32 inherit, bool serveFs) =>
-      ready(HostChild.of(0 - 2, 0 - 2, 0 - 2, "this page cannot start programs")),
-    // **No grant, and none kept**, as on a command line: what is started is this program again, so
-    // it reaches nothing new, and what it may do is what it is given — never more than this holds.
-    (u8[][] args, i32 want, string cwd, i32 inherit, bool serveFs) => {
-      i32 req = answers.ask();
-      system.spawnSelf(req, argBytesOf(args), want & grants, cwd, serveFs);
-      return answers.pending<HostChild>(req, childOf);
-    },
-    system.closeFeed,
-    (i32 h) => {
-      i32 req = answers.ask();
-      system.exitCode(req, h);
-      return answers.pending<i32>(req, (Answer a) => a.n as! i32);
-    },
-    () => ready(system.cwd()),
-    (string[] argv, u8[] stdin, string cwd, bool inheritIn) => ready(false),
-    () => ready(Captured.of(u8[](), u8[](), false)),
-    (string path, string[] args, u8[] stdin, string[] env, bool clearEnv, bool inherit, string cwd) =>
-      ready(Exec.of(0, u8[](), u8[](), "a page cannot run a host program")),
-    (u8[] wasm, i32 want) => LoadedModule.of(0 - 2, NOT_HERE),
-    (i32 h, string name, i32 arg) => CallResult.of(2, NOT_HERE, 0),
-    (i32 h) => { },
-    (u8[] bytes) => faultWords(FAULT_UNSUPPORTED()),
-    sched
-  );
-}
-
-/** A spawn's answer as the `Child` it is — or one that says why it did not start. */
-HostChild childOf(Answer a) {
-  if (a.fault != FAULT_NONE()) { return HostChild.of(0 - 1, 0 - 1, 0 - 1, wordsFor(a)); }
-  return HostChild.of(a.n as! i32, a.m as! i32, a.flags, "");
-}
-
-Pending<Stat> statFor(System system, Answers answers, bool read, string p) {
-  if (!read) { return ready(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_GRANTED(), 0)); }
-  i32 req = answers.ask();
-  system.stat(req, p);
-  return answers.pending<Stat>(req, statOf);
-}
-
 /**
- * A copy of a page started by `spawnSelf`: no document, a `Sys`, and an exit status once its program
- * is done — which is what the copy is, a process, run by the same means as a page.
+ * A copy of a page started by `spawnSelf`: no document, a `Sys`, and an exit status once its program is done --
+ * which is what the copy is, a process, run by the same means as a page.
  */
 export struct Process {
   Runner runner;
@@ -520,7 +199,7 @@ export struct Process {
 /** The browser answered request `req` of a process's system: settle it, run on, and end if that was the last of it. */
 export void processAnswered(Process p, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
   schedule p.runner.take;
-  p.world.answers.arrive(req, Answer(fault, text, bytes, n, m, flags));
+  if (!p.world.deliver(req, fault, text, bytes, n, m, flags)) { return; }
   p.runner.drain();
   p.settle();
 }

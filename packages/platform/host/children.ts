@@ -152,8 +152,7 @@ export type Child = {
    * What it wrote to standard error, in order — a stream of its own.
    *
    * Kept apart because a shell must be able to keep them apart: merged, `cat nosuch | wc -c` counts
-   * the error message. `pushChild`/`popChild` have always answered with both, and a spawned child had
-   * one stream until this existed.
+   * the error message. A spawned child had one stream until this existed.
    */
   err: ByteQueue;
   /** What the parent sent, which the child reads as its standard input. */

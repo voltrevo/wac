@@ -25,7 +25,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { verifyPath, parseCert, Cert, certVerifySignature, certMatchesHost, keyP256, keyP384, keyRsa,
          sigEcdsaSha256, sigEcdsaSha384 } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
-import { Cli, Files, Sys } from "std";
+import { Files, Sys } from "std";
 import { slice } from "../../../bytes/src/slice.wac";
 import { flatten } from "core";
 

@@ -19,7 +19,7 @@
 // caller wants and is still what is tested, but it is now a convenience rather than a workaround.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { Vec, flatten } from "core";
 import { Report, RefReport, readReport, noRefsIn, oldFor } from "../../src/receive.wac";

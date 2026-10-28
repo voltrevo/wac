@@ -16,7 +16,7 @@
 // The sizes are the *only* difference between the two callers. Everything a caller asserts is a field
 // below, so a sweep that quietly stopped running cases cannot pass either of them.
 
-import { Change, Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { gzipBest } from "../../src/gzip.wac";
 import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";

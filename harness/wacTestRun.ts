@@ -121,13 +121,13 @@ export async function wacTestRun(
       `${entry} exports no tests. A test is an export named test* returning string.`);
   }
   // **A test may name a capability instead of an oracle**, and this lane has none to give: a bound
-  // module is plain wasm with no imports, where `wac test --allow-…` hands the real `Cli` over.
+  // module is plain wasm with no imports, where `wac test --allow-…` hands a real host over.
   // Those are registered *ignored* rather than skipped silently or — as they were until 2026-08-16 —
   // thrown on, which failed the whole wrapper and took every other test in the file with it. The
   // native runner names them and carries on; this is the same answer in Deno's vocabulary, so the
   // two lanes agree about which tests exist. `issues/system/0161` step 4.
   const wantsCapability = (t: { params: { type: string }[] }) =>
-    t.params.some(p => p.type === "Core" || p.type === "Cli" || p.type === "Sys");
+    t.params.some(p => p.type === "__WacHost" || p.type === "Sys");
   const capability = tests.filter(wantsCapability);
   tests = tests.filter(t => !wantsCapability(t));
 

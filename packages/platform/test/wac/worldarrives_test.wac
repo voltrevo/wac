@@ -14,7 +14,7 @@
 // So this asserts the two things a refused world cannot fake: that it arrived, and that a capability
 // on it answers.
 
-import { Core, Cli, Env, Sys } from "std";
+import { Env, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { flatten } from "core";
 

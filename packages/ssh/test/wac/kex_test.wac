@@ -12,7 +12,7 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Procs, Sys } from "std";
+import { Procs, Sys } from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { deriveKey, ephemeralPublic, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
 import { cat, str, strOf, ramp, filled } from "./build.wac";

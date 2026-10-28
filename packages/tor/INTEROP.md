@@ -99,7 +99,7 @@ which tells anyone who fetches a descriptor when the service last published.
 
 ## The limit that remains
 
-`network.wac` **cannot start a C tor** — `Cli.spawn` takes a worker bundle and this world has no
+`network.wac` **cannot start a C tor** — `Procs.spawn` takes a wasm module and this world has no
 capability for running an arbitrary binary. That is why a live row can rot without anything going
 red, and it was true of **every** one of them until 2026-08-07.
 

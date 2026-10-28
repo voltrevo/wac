@@ -40,7 +40,7 @@
 // substituted file — because those do not survive any hash, and `packages/crypto/test` compares this
 // implementation against published vectors before anything here runs.
 
-import { Change, Exec, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs } from "std";
 import { Parser, parseDocument } from "../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../json/src/value.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";

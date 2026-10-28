@@ -53,7 +53,7 @@ Deno.test("appRun: the worker and the executable agree, argument for argument", 
 
 Deno.test("appRun: one worker runs a program more often than the funcref table has room", async () => {
   // **Twelve runs, because it used to die at the fifth.** A worker serves repeated runs now
-  // (wac-mono 0076), and the trap on the way there was that rebuilding `Core` and `Cli` for each run
+  // (wac-mono 0076), and the trap on the way there was that rebuilding the capabilities for each run
   // registers wasm functions that are never released: bindgen allows sixteen live per signature, a
   // world costs three of `fn[void(i32)]`, and the fifth run failed with
   //

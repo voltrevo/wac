@@ -18,7 +18,7 @@
 // would each have to check fails the ones that remembered.
 
 import { T } from "../../src/assert.wac";
-import { Core, Cli, Exec, Stat, ChildEnv, Env, Files, Output, Procs, Sys, Launch } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Output, Procs, Sys, Launch } from "std";
 import { Sources, builtApp, builtProgram, sourcesOf } from "../../src/built.wac";
 import { freshDir, putFile } from "../../src/host.wac";
 import { contains, startsWith } from "../../src/strings.wac";

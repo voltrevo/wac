@@ -10,7 +10,7 @@
 //
 // Keys are derived from fixed seeds, so a change in the output is a change in the generator.
 
-import { Change, Sys, Files, Output } from "std";
+import { Sys, Files, Output } from "std";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import { ed25519PublicKey } from "../../crypto/src/ed25519.wac";
 import { decode as hexDecode } from "../../codec/src/hex.wac";

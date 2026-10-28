@@ -45,9 +45,9 @@ pub enum Answer {
     /// `Change(fault, message)`.
     Change(i32, String),
     Stat(Box<StatAnswer>),
-    /// `string[]?` — `None` is a directory that is not there, which `readDir` answers with rather
-    /// than an empty listing, because "no entries" and "no directory" are different facts.
-    Names(Option<Vec<String>>),
+    /// A directory's names. A directory that is not there is a `Change` with its fault, because
+    /// "no entries" and "no directory" are different facts.
+    Names(Vec<String>),
     /// `Socket(handle, error, peer, port, fault)`.
     ///
     /// `fault` is one of the `FAULT_*` codes and `FAULT_NONE` on success: a refusal for want of a
@@ -64,14 +64,15 @@ pub enum Answer {
     Bool(bool),
     /// `Child(handle, errHandle, fsHandle, error)`.
     Child(i32, i32, i32, String),
-    /// `Captured(out, err, truncated)` — what a pushed frame produced.
-    Captured(Vec<u8>, Vec<u8>, bool),
     /// `Exec(status, stdout, stderr, error)` — a host program run to completion.
     ///
     /// `status` is an exit code and `error` is why it could not be started; they are separate
     /// because a program that ran and exited non-zero is the case every differential oracle here
     /// cares about most, and folding it into a fault would make it unreachable.
     Exec(i32, Vec<u8>, Vec<u8>, String),
+    /// `(status, text, value)` — a loaded module's export called: 0 returned, 1 trapped with `text`
+    /// what it said, 2 no such export, 3 not callable.
+    Called(i32, String, i32),
 }
 
 /// What a `recv` produced, in the three shapes `enum Read` has.
@@ -123,15 +124,6 @@ impl Tickets {
         let id = inner.next_id;
         inner.next_id += 1;
         inner.live.insert(id);
-        id
-    }
-
-    /// A ticket whose answer is already in hand — `argCount` has nothing to wait for.
-    pub fn settled_now(&self, answer: Answer) -> i32 {
-        let mut inner = self.inner.lock().unwrap();
-        let id = inner.next_id;
-        inner.next_id += 1;
-        inner.done.insert(id, answer);
         id
     }
 

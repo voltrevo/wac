@@ -1,20 +1,17 @@
-// What a program does with the arguments it was given — the smallest thing that needs `Cli`.
+// What a program does with the arguments it was given.
 //
-// Every capability here goes out as a `Pending<T>` and comes back through `.wait()`, which is the
-// path the host has to serve: a ticket handed over, a resolver funcref the guest calls with it, and
-// a value marshalled back through the module's own memory.
+// `sys.args()` asks the host for the count and then each argument — requests answered at once, from
+// inside `request`, so nothing here waits.
 
-import { Cli, Core, Sys } from "std";
+import { Sys } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
-  core.log("argc " + itoa(n));
-  for (i32 i = 0; i < n; i++) {
-    core.log("arg " + itoa(i) + ": " + string.fromBytes(cli.arg(i).wait()));
+  string[] argv = sys.args();
+  sys.log("argc " + itoa(argv.len()));
+  for (i32 i = 0; i < argv.len(); i++) {
+    sys.log("arg " + itoa(i) + ": " + argv[i]);
   }
-  cli.write("and this went to stdout directly\n".toBytes());
+  sys.stdout().write("and this went to stdout directly\n".toBytes());
   return 0;
 }
 

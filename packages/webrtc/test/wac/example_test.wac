@@ -19,8 +19,7 @@
 // reader `src/sdp.wac` uses, which ignores anything that is not an `a=` line.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, FileResult, Pending, HostSocket }
-  from "std";
+import { Datagram, Exec } from "std";
 import { Lines, check } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

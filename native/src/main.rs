@@ -48,10 +48,8 @@ use wasmtime::{
     Caller, Config, Engine, Extern, ExternType, Instance, Linker, Module, Store, UpdateDeadline, Val,
 };
 
-/// Which `Pending<T>` a capability answers with.
-///
-/// One per shape the runtime can complete. A capability whose kind is not here cannot be implemented
-/// without adding one, which is the point: the compiler names the gap.
+/// What shape a ticket's outcome has, so it can be flattened into the one answer every request gets —
+/// design/system/0013 step 6. The same `Outcome::Bytes` is a `Read` from `recv` and plain bytes from `arg`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Kind {
     I32,
@@ -60,8 +58,6 @@ enum Kind {
     Str,
     BytesOpt,
     Bool,
-    Captured,
-    /// `Cli.exec`'s answer.
     Exec,
     Change,
     FileResult,
@@ -73,113 +69,17 @@ enum Kind {
     Read,
 }
 
-/// The three shared functions and the constructor that make one `Pending<T>`.
+/// What a registered funcref does when the guest calls it: one of the four calls `__wacHost` is handed.
 ///
-/// Created once per kind, never per call. The JavaScript host has the same rule for a harder reason —
-/// bindgen registers each distinct function identity in a fixed table and never frees a slot — and the
-/// rule is worth keeping here anyway: a ticket carries an id, and the functions that read it are the
-/// same three every time.
-#[derive(Clone)]
-struct PendingHooks {
-    ctor: String,
-    resolve: Val,
-    settled: Val,
-    drop: Val,
-}
-
-/// What a registered funcref does when the guest calls it.
-///
-/// A plain enum rather than a boxed closure: the dispatcher is one function that matches, so a
-/// capability that is not implemented is a *variant* rather than a closure that happens to trap, and
-/// the exhaustiveness check names every one that is missing when a capability is added.
-#[derive(Clone, Debug)]
+/// Everything a program asks of this host is a numbered `request` — design/system/0013 step 6 — so the
+/// capabilities are arms of `serve` rather than functions the module holds.
+#[derive(Clone, Debug, PartialEq)]
 enum Cap {
-    /// `Core.askInterrupt` — nothing here owns a keyboard, so it is always "no". See below.
-    Interrupted,
-    Exit,
-    /// `Cli.load`, `Cli.call`, `Cli.unload` — a loaded module. `issues/system/0240c`.
-    Load,
-    Call,
-    Unload,
-    Validated,
-    Log,
-    Warn,
-    Write,
-    WriteErr,
-    ArgCount,
-    Arg,
-    NowMillis,
-    MonotonicNanos,
-    SleepMillis,
-    RandomBytes,
-    ExitCode,
+    Request,
     WaitAny,
-    Cwd,
-    ReadStdin,
-    ReadChunk,
-    Env,
-    PushChild,
-    PopChild,
-    Connect,
-    Listen,
-    Accept,
-    Recv,
-    Send,
-    CloseSocket,
-    CloseSend,
-    OpenFile,
-    CloseFile,
-    CloseOutput,
-    BindDatagram,
-    ReceiveFrom,
-    SendTo,
-    Spawn,
-    SpawnSelf,
-    ReadFile,
-    WriteFile,
-    Stat,
-    LinkStat,
-    ReadDir,
-    Mkdir,
-    Remove,
-    Rename,
-    SetExecutable,
-    Chmod,
-    /// `Cli.exec` — a host program, run to completion.
-    Exec,
-    OpenInput,
-    OpenOutput,
-    OutputError,
-    CloseFeed,
-    /// `Pending<T>.resolve`: collect the outcome, once.
-    Resolve(Kind),
-    /// `Pending<T>.settled`, shared by every kind because the question does not depend on `T`.
-    Settled,
-    /// `Pending<T>.drop` and `cancel`, likewise.
-    Discard,
-    /// Registered, callable, and refuses — carrying the wac name so the message says what was wanted.
-    NotImplemented(String),
-}
-
-/// One `pushChild` frame: the world a program run *inside* this one sees.
-///
-/// Not isolation and it does not pretend to be — `platform.wac` says so, and it is the same wasm
-/// instance with the same authority. What the frame changes is four things: what `argCount`/`arg`
-/// answer, where `readChunk` and `readStdin` read from, where `log`/`warn`/`write`/`writeErr` go, and
-/// what `cwd` reports.
-struct Frame {
-    argv: Vec<Vec<u8>>,
-    stdin: Vec<u8>,
-    stdin_at: usize,
-    cwd: Vec<u8>,
-    /// The child reads the *process's* real input rather than the bytes handed over.
-    ///
-    /// Without this a shell that runs a command in process has to read its own input to the end to
-    /// have bytes to give it, and at a terminal that end never comes — wac-mono 0110, which is a hang
-    /// rather than a wrong answer. The output is still captured, which is what the frame is for.
-    inherit_input: bool,
-    out: Vec<u8>,
-    err: Vec<u8>,
+    Exit,
+    /// `interrupted` — nothing here owns a keyboard, so it is always "no". See below.
+    Interrupted,
 }
 
 /// The three queues and the status of one spawned child, as the *parent* holds them.
@@ -388,16 +288,10 @@ struct Host {
     /// What the manifest says this program may reach. A capability outside them is not silently
     /// weaker: it answers what "you may not" *means* for that capability, which differs by capability.
     grants: manifest::Grants,
-    pendings: HashMap<Kind, PendingHooks>,
-    /// `Read`'s variant constructors, taken from the manifest at instantiation — the same way
-    /// `pendings` is, and for the same reason: a host reads the mangling rather than holding a copy.
-    read_ctors: HashMap<String, String>,
-    /// Where `readChunk` reads when `openInput` has named a file. None is the process's own input,
-    /// which is what `openInput("")` means and what a program that never asked gets.
-    input: Option<std::fs::File>,
-    /// Where `write` goes when `openOutput` has named a file, and the reason it could not be opened.
-    output: Option<std::fs::File>,
-    output_error: String,
+    /// What `__wacHost` answered: the value every answer is delivered to, through `__wacAnswered`.
+    wac_host: Option<Val>,
+    /// Each request in flight, by the program's id: the ticket doing the work, and the shape it answers.
+    inflight: HashMap<i32, (i32, Kind)>,
     /// Standard output and standard error, once `closeOutput` has ended them: a write after it is refused.
     out_closed: [bool; 2],
     /// Children this program spawned, and the handles that name their streams.
@@ -409,6 +303,9 @@ struct Host {
     /// this map for `receiveFrom` since `issues/system/0207`; this is the same thing for reads.
     /// `issues/system/0308b`.
     reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
+    /// The spawn tickets not yet collected, and whether each child was started detached: a dropped one stops its
+    /// child unless it was (spec ch44 `§wac-std-child-drop-n2r5vxe`).
+    spawned: HashMap<i32, bool>,
     /// A connection a *dropped* accept had already taken, waiting for the next accept on that
     /// listener.
     ///
@@ -447,13 +344,9 @@ struct Host {
     as_child: Option<AsChild>,
     /// Everything a child thread needs to make another instance of this same module.
     world: Option<Arc<World>>,
-    /// `pushChild` frames, innermost last. A stack, so a program that runs a program that runs a
-    /// program is fine.
-    frames: Vec<Frame>,
     /// Monotonic zero, so `monotonicNanos` measures from this program's start rather than the epoch.
     started: std::time::Instant,
-    exit: i32,
-    /// The status `Core.exit` asked for, set before it unwinds the program to `main`'s call.
+    /// The status `exitWith` asked for, set before it unwinds the program to `main`'s call.
     exit_request: Option<i32>,
 }
 
@@ -464,38 +357,28 @@ impl Host {
             args,
             tickets: Arc::new(Tickets::default()),
             grants,
-            pendings: HashMap::new(),
-            read_ctors: HashMap::new(),
-            input: None,
-            output: None,
-            output_error: String::new(),
+            wac_host: None,
+            inflight: HashMap::new(),
             out_closed: [false, false],
             handles: Arc::new(std::sync::Mutex::new(Handles::default())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            spawned: HashMap::new(),
             parked_accepts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             as_child: None,
             cwd: Vec::new(),
             world: None,
-            frames: Vec::new(),
             started: std::time::Instant::now(),
-            exit: 0,
             exit_request: None,
         }
     }
 
     /// Register `cap` under signature `sig` and answer its slot, reusing one it already has.
     ///
-    /// **The same capability through the same signature is the same function.** `Pending<T>`'s
-    /// `settled` and `drop` hooks do not depend on `T`, so every instantiation registered another
-    /// copy of `Cap::Settled` and `Cap::Discard`: `wc` has 15 `Pending<T>` types, which put both of
-    /// those signature classes at 15 of the module's 16 slots. One more capability answering through
-    /// a new `Pending<T>` filled them — and then *every* program on this host refused at startup,
-    /// including every program that never touches the new capability. `issues/lang/0109`.
-    ///
-    /// Reuse rather than a bigger limit: 32 slots costs +19% of module on `wc`, measured, and buys
-    /// one generation before the same thing happens again.
+    /// **The same capability through the same signature is the same function**, so a module loaded
+    /// twice into one store, or a signature shared by two of the four calls, never burns a second slot
+    /// of a table whose size was fixed at compile time. `issues/lang/0109` is the day it did.
     fn register(&mut self, sig: usize, cap: Cap, limit: u32) -> Result<u32, String> {
         if let Some(i) = self.caps[sig].iter().position(|c| same_cap(c, &cap)) {
             return Ok(i as u32);
@@ -998,9 +881,6 @@ struct HeldModule {
     store: Store<Host>,
     instance: Instance,
     manifest: Arc<Manifest>,
-    /// `Core` and `Cli` for this module, in `main`'s order — built once, because they are `Val`s in
-    /// this store and rebuilding per call would register a fresh funcref every time.
-    world: Vec<Val>,
 }
 
 thread_local! {
@@ -1040,15 +920,14 @@ fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8], asked: i32) -> Result
     let mut store = Store::new(&world.engine, host);
     run_until_stopped(&mut store, None);
     let linker = wire(&world.engine, &world.module, &m).map_err(|e| format!("{e}"))?;
-    let (instance, built) =
-        prepare(&mut store, &world.module, &linker, &m).map_err(|e| format!("{e}"))?;
+    let instance = prepare(&mut store, &world.module, &linker, &m).map_err(|e| format!("{e}"))?;
     let handle = NEXT_LOADED.with(|n| {
         let h = n.get();
         n.set(h + 1);
         h
     });
     LOADED.with(|t| {
-        t.borrow_mut().insert(handle, HeldModule { store, instance, manifest: m, world: built })
+        t.borrow_mut().insert(handle, HeldModule { store, instance, manifest: m })
     });
     Ok(handle)
 }
@@ -1068,20 +947,14 @@ fn call_loaded(handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
             return (2, format!("no export named {name}"), 0);
         };
         let takes_int = sig.params.len() == 1 && sig.params[0] == "i32";
-        let world_arity = if !sig.params.is_empty()
-            && sig.params.len() <= 2
-            && sig.params[0] == "Core"
-            && (sig.params.len() == 1 || sig.params[1] == "Cli")
-        {
-            sig.params.len()
-        } else {
-            0
-        };
-        if !sig.params.is_empty() && !takes_int && world_arity == 0 {
+        // A test that takes the host is handed the one `__wacHost` answered when the module was loaded.
+        let takes_host = sig.params.len() == 1 && sig.params[0] == "__WacHost";
+        if !sig.params.is_empty() && !takes_int && !takes_host {
             return (3, format!("cannot call {name}({})", sig.params.join(", ")), 0);
         }
-        if world_arity > lm.world.len() {
-            return (3, format!("this module was built without {}", sig.params.join(" and ")), 0);
+        let host = lm.store.data().wac_host.clone();
+        if takes_host && host.is_none() {
+            return (3, format!("this module exports no __wacHost for {name}"), 0);
         }
         if !sig.ret.is_empty() && sig.ret != "void" && sig.ret != "i32" && sig.ret != "string" {
             return (3, format!("{name} answers {}", sig.ret), 0);
@@ -1093,8 +966,8 @@ fn call_loaded(handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
         if takes_int {
             args.push(Val::I32(arg));
         }
-        for v in lm.world.iter().take(world_arity) {
-            args.push(v.clone());
+        if takes_host {
+            args.extend(host);
         }
         let wants = if sig.ret.is_empty() || sig.ret == "void" { 0 } else { 1 };
         let mut out = vec![Val::I32(0); wants];
@@ -1124,78 +997,41 @@ fn call_loaded(handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
     })
 }
 
-/// Instantiate, register the `Pending<T>` hooks and `Read`'s constructors, and build the world.
+/// Instantiate, and hand the module this host's four calls through its `__wacHost`.
 ///
 /// **Split out of `enter` so that `Cli.load` can reuse it** — `issues/system/0240c`. A loaded module
 /// needs everything here and none of what follows it: `enter` goes on to call `main`, and a loaded
-/// module is called export by export instead. The world is built to the arity `main` declared, which
-/// is also the arity a `test*` export declares, so the same list serves both.
+/// module is called export by export instead.
+///
+/// A module with no `__wacHost` takes nothing from a host — a `main` with no parameters, a test file of
+/// pure functions — and that is not an error. The value `__wacHost` answers is kept in the store, so
+/// every answer can be delivered to it and every caller handed it.
 fn prepare(
     store: &mut Store<Host>,
     module: &Module,
     linker: &Linker<Host>,
     m: &Manifest,
-) -> Result<(Instance, Vec<Val>), wasmtime::Error> {
+) -> Result<Instance, wasmtime::Error> {
     let instance = linker.instantiate(&mut *store, module)?;
-
-    // The `Pending<T>` hooks first: a capability cannot answer one until the three shared functions
-    // exist, and they are registered once for the whole run.
-    for (kind, wac_name) in [
-        (Kind::I32, "Pending<i32>"),
-        (Kind::I64, "Pending<i64>"),
-        (Kind::Bytes, "Pending<u8[]>"),
-        (Kind::Str, "Pending<string>"),
-        (Kind::BytesOpt, "Pending<u8[]?>"),
-        (Kind::Bool, "Pending<bool>"),
-        (Kind::Captured, "Pending<Captured>"),
-        (Kind::Exec, "Pending<Exec>"),
-        (Kind::Change, "Pending<Change>"),
-        (Kind::FileResult, "Pending<FileResult>"),
-        (Kind::Stat, "Pending<Stat>"),
-        (Kind::Names, "Pending<string[]?>"),
-        (Kind::Socket, "Pending<HostSocket>"),
-        (Kind::Datagram, "Pending<Datagram>"),
-        (Kind::Child, "Pending<HostChild>"),
-        (Kind::Read, "Pending<Read>"),
-    ] {
-        if let Some(hooks) = pending_hooks(&mut *store, &instance, m, kind, wac_name)? {
-            store.data_mut().pendings.insert(kind, hooks);
-        }
+    let Some(entry) = m.exports.iter().find(|e| e.name == "__wacHost") else { return Ok(instance) };
+    if entry.params.len() != 4 {
+        return Err(wasmtime::Error::msg(format!(
+            "{}: __wacHost takes ({}), and this host hands it four calls",
+            m.entry,
+            entry.params.join(", ")
+        )));
     }
-    for variant in ["Data", "End", "Failed"] {
-        if let Some(ctor) = m.variant_ctor("Read", variant) {
-            store.data_mut().read_ctors.insert(variant.to_string(), ctor.to_string());
-        }
+    let mut calls = Vec::with_capacity(4);
+    for (ty, cap) in entry.params.iter().zip([Cap::Request, Cap::WaitAny, Cap::Exit, Cap::Interrupted]) {
+        calls.push(funcref_for(&mut *store, &instance, m, ty, cap)?);
     }
-
-    // **A world is built to what the *module* offers, and each caller takes the arity it asked with.**
-    // Neither is required and neither is an error to be without: a `main` declaring no capabilities has
-    // no `Core` in its manifest, so building one unconditionally refused it with *no struct Core in the
-    // manifest* — the host's bookkeeping, about the smallest program that demonstrates the language's
-    // central claim.
-    //
-    // **It was sized from `main`'s parameters until 2026-09-01, and that is not a property of the
-    // module.** `enter` has a `main` and `load` does not: a test file compiles to a module whose
-    // exports are all `test_*(Core, Cli)` and which has no `main` at all, so the lookup found nothing,
-    // the world was built empty, and `call_loaded` refused every single export with *this module was
-    // built without Core and Cli*. That is the whole of `wac test` on this host — every file, not one
-    // package — while `wac run` stayed fine throughout, because a program is exactly the case that has
-    // the export this was keyed on. `issues/system/0316b`.
-    //
-    // The V8 host builds it this way and its comment says why in the same words; it also warns that
-    // "the same mistake is available here", which it was. `call_loaded` already takes `world_arity`
-    // from the export being called, and `enter` truncates to `main`'s own signature below, so building
-    // what is there and letting each caller take its share is the arrangement both need.
-    let mut args: Vec<Val> = Vec::new();
-    let mut shared: Vec<(String, Val)> = Vec::new();
-    if let Ok(core) = build(&mut *store, &instance, m, "Core", &mut shared) {
-        args.push(core);
-        if let Ok(cli) = build(&mut *store, &instance, m, "Cli", &mut shared) {
-            args.push(cli);
-        }
-    }
-
-    Ok((instance, args))
+    let make = instance
+        .get_func(&mut *store, "__wacHost")
+        .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported __wacHost", m.entry)))?;
+    let mut made = [Val::I32(0)];
+    make.call(&mut *store, &calls, &mut made)?;
+    store.data_mut().wac_host = Some(made[0].clone());
+    Ok(instance)
 }
 
 /// Instantiate and run `main`, answering its status.
@@ -1205,22 +1041,20 @@ fn enter(
     linker: &Linker<Host>,
     m: &Manifest,
 ) -> Result<i32, wasmtime::Error> {
-    let (instance, mut args) = prepare(store, module, linker, m)?;
+    let instance = prepare(store, module, linker, m)?;
     let main = instance
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
-    // **Sized from `main`'s own signature, not assumed to be one.** `export void main(Core)` is a
-    // legal program and the whole of many of them — `wac app`'s own example is one — and a fixed
-    // single slot made wasmtime refuse it with *expected 0 results, got 1*: a sentence about this
-    // host's bookkeeping, in answer to a program that was right, before any of it ran. The V8 host
-    // reads the signature and has always taken either.
-    //
-    // The same signature now decides how much of the world `main` is handed. `prepare` builds what the
-    // *module* offers, which is the only question a module can answer — `load` has no `main` to ask —
-    // so a program whose `main` takes fewer than it built takes its own arity here. Read from the
-    // instantiated function rather than from the manifest, which is the copy that could disagree.
-    let params = main.ty(&mut *store).params().len();
-    args.truncate(params);
+    // **Sized from `main`'s own signature**: `main()` is handed nothing and `main(__WacHost)` the value
+    // `__wacHost` answered. Read from the instantiated function rather than from the manifest, which is
+    // the copy that could disagree.
+    let mut args: Vec<Val> = Vec::new();
+    if main.ty(&mut *store).params().len() == 1 {
+        let host = store.data().wac_host.clone().ok_or_else(|| {
+            wasmtime::Error::msg(format!("{}: main takes the host, and there is no __wacHost", m.entry))
+        })?;
+        args.push(host);
+    }
     let results = main.ty(&mut *store).results().len();
     let mut out = vec![Val::I32(0); results];
     // **What the program said, if it said anything.** A `trap "…"` puts its message in a global before
@@ -1242,8 +1076,7 @@ fn enter(
         Some(Val::I32(n)) => *n,
         _ => 0,
     };
-    let host_exit = store.data().exit;
-    Ok(if status != 0 { status } else { host_exit })
+    Ok(status)
 }
 
 /// Every dispatcher import the module asks for, wired to `dispatch`.
@@ -1300,9 +1133,8 @@ fn run_child(
     let stderr = streams.stderr.clone();
     let fsreq = streams.fsreq.clone();
     host.as_child = Some(streams);
-    // A child's relative paths resolve from where its parent said, which is the same rule `pushChild`
-    // keeps for an in-process one — and the thing `spawn` got wrong in the JavaScript hosts, where a
-    // spawned program inherited the *host's* directory instead of the shell's.
+    // A child's relative paths resolve from where its parent said — the thing `spawn` got wrong in the
+    // JavaScript hosts, where a spawned program inherited the *host's* directory instead of the shell's.
     host.cwd = cwd;
     let mut store = Store::new(&world.engine, host);
     run_until_stopped(&mut store, Some(stop.clone()));
@@ -1331,52 +1163,9 @@ fn run_child(
     code
 }
 
-/// Register `resolve`, `settled` and `drop` for one `Pending<T>`, or None if the program has no such
-/// `Pending` — which is ordinary: a program that never reads a file has no `Pending<FileResult>`.
-fn pending_hooks(
-    store: &mut Store<Host>,
-    instance: &wasmtime::Instance,
-    m: &Manifest,
-    kind: Kind,
-    wac_name: &str,
-) -> Result<Option<PendingHooks>, wasmtime::Error> {
-    let Some(spec) = m.find_struct(wac_name) else { return Ok(None) };
-    let Some(ctor) = spec.constructor() else { return Ok(None) };
-    let mut hooks = [Val::I32(0), Val::I32(0), Val::I32(0)];
-    for (i, (field, cap)) in [
-        ("resolve", Cap::Resolve(kind)),
-        ("settled", Cap::Settled),
-        ("drop", Cap::Discard),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let f = spec
-            .fields
-            .iter()
-            .find(|f| f.name == field)
-            .ok_or_else(|| wasmtime::Error::msg(format!("{wac_name} has no {field}")))?;
-        hooks[i] = funcref_for(store, instance, m, &f.ty, cap)?;
-    }
-    Ok(Some(PendingHooks {
-        ctor: ctor.export_name.clone(),
-        resolve: hooks[0].clone(),
-        settled: hooks[1].clone(),
-        drop: hooks[2].clone(),
-    }))
-}
-
 /// Whether two capabilities are the same behaviour, and so may share a slot.
-///
-/// `Cap` carries data for some variants — `Resolve(kind)` names which `Pending<T>` it answers — so
-/// this compares the discriminant *and* that data rather than deriving `PartialEq` on a type whose
-/// other variants hold handles. Two `Settled`s are one function; two `Resolve`s are one only when
-/// they resolve the same shape.
 fn same_cap(a: &Cap, b: &Cap) -> bool {
-    match (a, b) {
-        (Cap::Resolve(x), Cap::Resolve(y)) => x == y,
-        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
-    }
+    a == b
 }
 
 /// Register `cap` under the signature spelled `ty` and answer the funcref to pass into wasm.
@@ -1400,143 +1189,9 @@ fn funcref_for(
     Ok(fr[0].clone())
 }
 
-/// Build one capability struct — `Core` or `Cli` — from the manifest's field order.
-///
-/// **`shared` is what the module made for itself, by type, across every struct of one world.** `Core`
-/// and `Cli` each have a `Sched` field and must be handed the *same* one: built per struct, `Cli`'s
-/// tickets were linked to a scheduler `Core.drainUntil` never looks at, so an `async` `main` awaiting
-/// `cli.readFile(…)` was told *"main cannot finish"* — and the seed's own `main` is one, so nothing
-/// ran on this host at all. The V8 host's builder carries the same list for the same reason.
-/// `issues/system/0367c`.
-fn build(
-    store: &mut Store<Host>,
-    instance: &wasmtime::Instance,
-    m: &Manifest,
-    name: &str,
-    shared: &mut Vec<(String, Val)>,
-) -> Result<Val, wasmtime::Error> {
-    let spec = m
-        .find_struct(name)
-        .ok_or_else(|| wasmtime::Error::msg(format!("{}: no struct {name} in the manifest", m.entry)))?;
-    let ctor_name = spec
-        .constructor()
-        .ok_or_else(|| wasmtime::Error::msg(format!("{name} has no `of`")))?
-        .export_name
-        .clone();
-
-    let mut caps: Vec<Val> = Vec::with_capacity(spec.fields.len());
-    for field in &spec.fields {
-        // **A field no callback describes is a value the module builds for itself.** `Core.sched` is
-        // that: wac state with wac logic on it, where this host's whole part is calling `create` once,
-        // so a program is *handed* somewhere for its continuations to wait without this host knowing
-        // what a continuation is.
-        if m.callback_index(&field.ty).is_none() {
-            if let Some((_, v)) = shared.iter().find(|(ty, _)| *ty == field.ty) {
-                caps.push(v.clone());
-                continue;
-            }
-            let made = m
-                .find_struct(&field.ty)
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "create"))
-                .ok_or_else(|| {
-                    wasmtime::Error::msg(format!(
-                        "{name}.{} is {}, which no callback describes and which has no `create`",
-                        field.name, field.ty
-                    ))
-                })?
-                .export_name
-                .clone();
-            let ctor = instance
-                .get_func(&mut *store, &made)
-                .ok_or_else(|| wasmtime::Error::msg(format!("no {made}")))?;
-            let mut out = [Val::I32(0)];
-            ctor.call(&mut *store, &[], &mut out)?;
-            shared.push((field.ty.clone(), out[0].clone()));
-            caps.push(out[0].clone());
-            continue;
-        }
-        let cap = capability_for(name, &field.name);
-        caps.push(funcref_for(store, instance, m, &field.ty, cap)?);
-    }
-
-    let ctor = instance
-        .get_func(&mut *store, &ctor_name)
-        .ok_or_else(|| wasmtime::Error::msg(format!("no {ctor_name}")))?;
-    let mut built = [Val::I32(0)];
-    ctor.call(&mut *store, &caps, &mut built)?;
-    Ok(built[0].clone())
-}
-
-/// Which capability a named field of `Core` or `Cli` is.
-///
-/// By name rather than by position, so a capability inserted in the middle of `platform.wac` moves a
-/// row here instead of silently shifting every one after it.
-fn capability_for(owner: &str, field: &str) -> Cap {
-    match (owner, field) {
-        ("Core", "log") => Cap::Log,
-        ("Core", "warn") => Cap::Warn,
-        ("Core", "nowMillis") => Cap::NowMillis,
-        ("Core", "monotonicNanos") => Cap::MonotonicNanos,
-        ("Core", "sleepMillis") => Cap::SleepMillis,
-        ("Core", "randomBytes") => Cap::RandomBytes,
-        ("Core", "waitAny") => Cap::WaitAny,
-        ("Cli", "argCount") => Cap::ArgCount,
-        ("Cli", "arg") => Cap::Arg,
-        ("Cli", "write") => Cap::Write,
-        ("Cli", "writeErr") => Cap::WriteErr,
-        ("Cli", "exitCode") => Cap::ExitCode,
-        ("Cli", "cwd") => Cap::Cwd,
-        ("Cli", "readStdin") => Cap::ReadStdin,
-        ("Cli", "readChunk") => Cap::ReadChunk,
-        ("Cli", "env") => Cap::Env,
-        ("Cli", "pushChild") => Cap::PushChild,
-        ("Cli", "popChild") => Cap::PopChild,
-        ("Cli", "connect") => Cap::Connect,
-        ("Cli", "listen") => Cap::Listen,
-        ("Cli", "accept") => Cap::Accept,
-        ("Cli", "recv") => Cap::Recv,
-        ("Cli", "send") => Cap::Send,
-        ("Core", "askInterrupt") => Cap::Interrupted,
-        ("Core", "exit") => Cap::Exit,
-        ("Cli", "closeSocket") => Cap::CloseSocket,
-        ("Cli", "closeSend") => Cap::CloseSend,
-        ("Cli", "openFile") => Cap::OpenFile,
-        ("Cli", "closeFile") => Cap::CloseFile,
-        ("Cli", "closeOutput") => Cap::CloseOutput,
-        ("Cli", "bindDatagram") => Cap::BindDatagram,
-        ("Cli", "receiveFrom") => Cap::ReceiveFrom,
-        ("Cli", "sendTo") => Cap::SendTo,
-        ("Cli", "spawn") => Cap::Spawn,
-        ("Cli", "spawnSelf") => Cap::SpawnSelf,
-        ("Cli", "readFile") => Cap::ReadFile,
-        ("Cli", "writeFile") => Cap::WriteFile,
-        ("Cli", "stat") => Cap::Stat,
-        ("Cli", "linkStat") => Cap::LinkStat,
-        ("Cli", "readDir") => Cap::ReadDir,
-        ("Cli", "mkdir") => Cap::Mkdir,
-        ("Cli", "remove") => Cap::Remove,
-        ("Cli", "rename") => Cap::Rename,
-        ("Cli", "setExecutable") => Cap::SetExecutable,
-        ("Cli", "chmod") => Cap::Chmod,
-        ("Cli", "execWithIn") => Cap::Exec,
-        // A **module** rather than a program: its exports called, in a store of its own that shares
-        // this one's authority. `issues/system/0240c`.
-        ("Cli", "load") => Cap::Load,
-        ("Cli", "call") => Cap::Call,
-        ("Cli", "unload") => Cap::Unload,
-        // Compile and stop — `Cli.validated`. wasmtime answers it directly, where the V8 host has to
-        // guard the isolate against the exception a rejection leaves behind.
-        ("Cli", "validated") => Cap::Validated,
-        ("Cli", "openInput") => Cap::OpenInput,
-        ("Cli", "openOutput") => Cap::OpenOutput,
-        ("Cli", "outputError") => Cap::OutputError,
-        ("Cli", "closeFeed") => Cap::CloseFeed,
-        _ => Cap::NotImplemented(format!("{owner}.{field}")),
-    }
-}
-
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
+/// A funcref the guest called: one of the four `__wacHost` was handed.
 fn dispatch(
     caller: &mut Caller<'_, Host>,
     sig: usize,
@@ -1554,7 +1209,13 @@ fn dispatch(
         .and_then(|s| s.get(slot))
         .cloned()
         .ok_or_else(|| wasmtime::Error::msg(format!("no function in slot {slot} of signature {sig}")))?;
-    let arg = |i: usize| -> Val { params.get(i).cloned().unwrap_or(Val::I32(0)) };
+    let int = |i: usize| -> i64 {
+        match params.get(i) {
+            Some(Val::I32(n)) => *n as i64,
+            Some(Val::I64(n)) => *n,
+            _ => 0,
+        }
+    };
 
     match cap {
         // **End the program now** (spec ch07 `sys.exit`): an error unwinds its frames to the call
@@ -1567,61 +1228,400 @@ fn dispatch(
             caller.data_mut().exit_request = Some(code);
             return Err(wasmtime::Error::msg("the program exited"));
         }
-        Cap::Log => {
-            let mut bytes = read_string(caller, &params[1])?;
-            // The newline `log` adds. Added here rather than at the terminal so that a captured frame
-            // gets it too: `log` is where thirty of `packages/box`'s applets send their output, and a
-            // capture that dropped their line endings would join every line of `ls` into one.
-            bytes.push(b'\n');
-            emit(caller, &bytes, false);
+        Cap::Interrupted => {
+            // **Nobody can ask this host to interrupt, so the answer is no** — and that is the answer
+            // rather than a stub. `interrupted` is answered by whoever owns the keyboard; here
+            // the terminal belongs to whatever started the program, and over ssh to `sshd`, which is a
+            // wac program on the far side of an encrypted socket. Only a page can say yes, because
+            // there the keydown listener and the code servicing this bridge are the same thread.
+            // Direct, not a request: `interrupted` is one of the four calls `__wacHost` is handed.
+            results[0] = Val::I32(0);
         }
-        Cap::Warn => {
-            let mut bytes = read_string(caller, &params[1])?;
-            bytes.push(b'\n');
-            emit(caller, &bytes, true);
+        Cap::WaitAny => {
+            let ids = read_i32_array(caller, &params[1])?;
+            let millis = int(2) as i32;
+            results[0] = Val::I32(wait_any(caller, &ids, millis)?);
         }
-        Cap::Write | Cap::WriteErr => {
-            let bytes = read_u8_array(caller, &params[1])?;
-            let to_stderr = matches!(cap, Cap::WriteErr);
-            // The answer is whether the write landed, which is what the wac side reads to notice a
-            // closed pipe. Into a frame it always lands.
-            let ok = emit(caller, &bytes, to_stderr);
-            results[0] = Val::I32(if ok { 1 } else { 0 });
+        Cap::Request => {
+            let (op, id, a, b) = (int(1) as i32, int(2) as i32, int(3), int(4));
+            let text = read_string(caller, &params[5])?;
+            let bytes = read_u8_array(caller, &params[6])?;
+            if op == OP_DROP {
+                return drop_request(caller, id);
+            }
+            match serve(caller, op, a, b, text, bytes)? {
+                // **What a request takes stays the host's until somebody waits for it** (design/system/0013,
+                // settled before step 6): a connection, a child, a file opened, bytes off a stream. Answered at
+                // once, it was the program's before the call returned, and a `cancel` that never waited could not
+                // give it back. So it waits in a settled ticket, which `waitAny` delivers and `OP_DROP` undoes.
+                Reply::Now(kind, outcome) if id != 0 && takes(op) => {
+                    let ticket = caller.data().tickets.submit();
+                    let _ = caller.data().tickets.complete(ticket, outcome);
+                    match op {
+                        OP_READ_STDIN | OP_READ_CHUNK => { caller.data().reading.lock().unwrap().insert(ticket, STDIN_HANDLE); }
+                        OP_RECV | OP_ACCEPT => { caller.data().reading.lock().unwrap().insert(ticket, a as i32); }
+                        OP_SPAWN | OP_SPAWN_SELF => { caller.data_mut().spawned.insert(ticket, (b & DETACHED) != 0); }
+                        _ => {}
+                    }
+                    caller.data_mut().inflight.insert(id, (ticket, kind));
+                }
+                Reply::Now(kind, outcome) => answer(caller, id, flatten(kind, outcome))?,
+                Reply::Flat(flat) => answer(caller, id, flat)?,
+                Reply::Later(kind, ticket) if id != 0 => {
+                    caller.data_mut().inflight.insert(id, (ticket, kind));
+                }
+                // Nobody will ask for it, so nothing is kept for it.
+                Reply::Later(_, ticket) => {
+                    let _ = caller.data().tickets.discard(ticket);
+                }
+                Reply::Nothing => {}
+            }
         }
-        Cap::ArgCount => {
-            let h = caller.data();
-            let n = h.frames.last().map(|f| f.argv.len()).unwrap_or(h.args.len()) as i32;
-            return settle_now(caller, Kind::I32, Outcome::I32(n), results);
+    }
+    Ok(())
+}
+
+/// What one request comes to: an answer now, the ticket that will produce one, or nothing to say.
+enum Reply {
+    Now(Kind, Outcome),
+    Flat(Flat),
+    Later(Kind, i32),
+    Nothing,
+}
+
+/// An answer in the one shape every request gets — `__wacAnswered`'s arguments after the id.
+#[derive(Default)]
+struct Flat {
+    fault: i32,
+    text: Vec<u8>,
+    bytes: Vec<u8>,
+    n: i64,
+    m: i64,
+    flags: i32,
+}
+
+fn now(kind: Kind, outcome: Outcome) -> Result<Reply, wasmtime::Error> {
+    Ok(Reply::Now(kind, outcome))
+}
+
+fn later(kind: Kind, ticket: i32) -> Result<Reply, wasmtime::Error> {
+    Ok(Reply::Later(kind, ticket))
+}
+
+/// A refusal or a failure: the category, and the host's words for it (empty lets std supply its own).
+fn fault(code: i32, words: &str) -> Reply {
+    Reply::Flat(Flat { fault: code, text: words.as_bytes().to_vec(), ..Flat::default() })
+}
+
+/// Whether bytes went where they were sent. A send that did not land is a fault with no words, which
+/// std turns into the sentence for that stream.
+fn landed(ok: bool) -> Reply {
+    if ok { Reply::Flat(Flat { flags: 1, ..Flat::default() }) } else { fault(FAULT_OTHER, "") }
+}
+
+/// An outcome in the one shape — design/system/0013's answer table, read by std's decoders.
+fn flatten(kind: Kind, outcome: Outcome) -> Flat {
+    let failed = |code: i32, words: String| Flat {
+        fault: if code == FAULT_NONE { FAULT_OTHER } else { code },
+        text: words.into_bytes(),
+        ..Flat::default()
+    };
+    match (kind, outcome) {
+        // An empty read is the end of the stream, and a string is why it stopped — `streams.rs`'s rule.
+        (Kind::Read, Outcome::Bytes(b)) if b.is_empty() => Flat { flags: 1, ..Flat::default() },
+        (Kind::Read, Outcome::Bytes(b)) => Flat { bytes: b, ..Flat::default() },
+        (Kind::Read, Outcome::Str(why)) => failed(FAULT_OTHER, String::from_utf8_lossy(&why).into_owned()),
+        (_, Outcome::I32(v)) => Flat { n: v as i64, ..Flat::default() },
+        (_, Outcome::I64(v)) => Flat { n: v, ..Flat::default() },
+        (_, Outcome::Bytes(b)) => Flat { bytes: b, flags: 1, ..Flat::default() },
+        (_, Outcome::Str(t)) => Flat { text: t, ..Flat::default() },
+        (_, Outcome::BytesOpt(None)) => Flat::default(),
+        (_, Outcome::BytesOpt(Some(b))) => Flat { bytes: b, flags: 1, ..Flat::default() },
+        (_, Outcome::Bool(ok)) => match landed(ok) {
+            Reply::Flat(f) => f,
+            _ => Flat::default(),
+        },
+        (_, Outcome::Change(code, words)) => Flat { fault: code, text: words.into_bytes(), ..Flat::default() },
+        (_, Outcome::FileResult(true, b, _, _)) => Flat { bytes: b, ..Flat::default() },
+        (_, Outcome::FileResult(false, _, words, code)) => failed(code, words),
+        (_, Outcome::Stat(exists, file, dir, size, modified, link, exec, code, mode)) => {
+            if code != FAULT_NONE {
+                return Flat { fault: code, ..Flat::default() };
+            }
+            let kind = exists as i32 | (file as i32) << 1 | (dir as i32) << 2 | (link as i32) << 3 | (exec as i32) << 4;
+            Flat { n: size, m: modified, flags: kind | (mode & 0xffff) << 16, ..Flat::default() }
         }
-        Cap::Arg => {
-            let i = match arg(1) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let h = caller.data();
-            let from = h.frames.last().map(|f| &f.argv).unwrap_or(&h.args);
-            let bytes = from.get(i as usize).cloned().unwrap_or_default();
-            return settle_now(caller, Kind::Bytes, Outcome::Bytes(bytes), results);
+        (_, Outcome::Names(None)) => failed(FAULT_OTHER, String::new()),
+        (_, Outcome::Names(Some(names))) => {
+            let mut joined = Vec::new();
+            for name in names {
+                joined.extend_from_slice(&name);
+                joined.push(0);
+            }
+            Flat { bytes: joined, flags: 1, ..Flat::default() }
         }
-        Cap::NowMillis => {
+        (_, Outcome::Socket(h, words, peer, port, code)) => {
+            if h < 0 {
+                return failed(code, words);
+            }
+            Flat { text: peer.into_bytes(), n: h as i64, m: port as i64, ..Flat::default() }
+        }
+        (_, Outcome::Datagram(b, peer, port, words)) => {
+            if !words.is_empty() {
+                return failed(FAULT_OTHER, words);
+            }
+            Flat { bytes: b, text: peer.into_bytes(), n: port as i64, ..Flat::default() }
+        }
+        // -2 is "this world has no `spawn` at all", which std reads as `Unsupported`.
+        (_, Outcome::Child(-2, ..)) => failed(FAULT_UNSUPPORTED, "this host cannot start programs".into()),
+        (_, Outcome::Child(h, _, _, words)) if h < 0 => failed(FAULT_OTHER, words),
+        (_, Outcome::Child(h, err, fs, _)) => Flat {
+            n: h as i64,
+            m: (err as u32 as i64) | ((fs as i64) << 32),
+            ..Flat::default()
+        },
+        (_, Outcome::Exec(status, out, err, words)) => {
+            if !words.is_empty() {
+                let code = if words == NOT_GRANTED { FAULT_NOT_GRANTED } else { FAULT_OTHER };
+                return failed(code, words);
+            }
+            let split = out.len() as i64;
+            let mut both = out;
+            both.extend_from_slice(&err);
+            Flat { bytes: both, n: status as i64, m: split, ..Flat::default() }
+        }
+    }
+}
+
+/// Deliver an answer to request `id` through the module's `__wacAnswered`. Only ever called from
+/// inside `request` or `waitAny`, which is what makes re-entering the module safe.
+fn answer(caller: &mut Caller<'_, Host>, id: i32, flat: Flat) -> Result<(), wasmtime::Error> {
+    if id == 0 {
+        return Ok(());
+    }
+    let host = caller
+        .data()
+        .wac_host
+        .clone()
+        .ok_or_else(|| wasmtime::Error::msg("an answer arrived for a module with no __wacHost"))?;
+    // Each of these uses the staging buffer, so each value is made before the next is copied in.
+    let text = make_string(caller, &flat.text)?;
+    let bytes = make_u8_array(caller, &flat.bytes)?;
+    let f = export_func(caller, "__wacAnswered")?;
+    call_dyn(
+        caller,
+        &f,
+        &[
+            host,
+            Val::I32(id),
+            Val::I32(flat.fault),
+            text,
+            bytes,
+            Val::I64(flat.n),
+            Val::I64(flat.m),
+            Val::I32(flat.flags),
+        ],
+    )?;
+    Ok(())
+}
+
+/// `waitAny`: until one of `ids` is answered or `millis` pass, then deliver every one of them that is
+/// ready. Answers the index of one that was, or -1.
+fn wait_any(caller: &mut Caller<'_, Host>, ids: &[i32], millis: i32) -> Result<i32, wasmtime::Error> {
+    // An id with no ticket was answered already, or never asked; -1 is a ticket that never settles.
+    let tickets: Vec<i32> =
+        ids.iter().map(|id| caller.data().inflight.get(id).map(|(t, _)| *t).unwrap_or(-1)).collect();
+    let table = caller.data().tickets.clone();
+    let which = table.wait_any(&tickets, millis);
+    for (&id, &ticket) in ids.iter().zip(&tickets) {
+        if ticket < 0 || !table.is_done(ticket) {
+            continue;
+        }
+        let Some((_, kind)) = caller.data_mut().inflight.remove(&id) else { continue };
+        // Collected, so nothing can be given up on any more and the handle note goes.
+        caller.data().reading.lock().unwrap().remove(&ticket);
+        if let Some(outcome) = table.take(ticket) {
+            answer(caller, id, flatten(kind, outcome))?;
+        }
+    }
+    Ok(which)
+}
+
+/// Close handle `h`: stop a child, shut a connection, drop a listener or a bound socket, forget what was parked for
+/// it — what `closeSocket` does, and what dropping an uncollected spawn does too.
+fn close_socket(caller: &mut Caller<'_, Host>, h: i32) {
+    // **Parked bytes die with the handle.** A handle is reused the instant it closes — that
+    // is `issues/system/0306b`'s other finding — so anything `0307b` put aside for this one
+    // would otherwise be served to whoever gets the number next, as if their peer had sent
+    // it. The v8 host says the same beside its parked datagrams.
+    caller.data().pushback.lock().unwrap().remove(&h);
+    if let Some(c) = child_of(caller, h) {
+        c.stop.store(true, Ordering::Relaxed);
+        c.stdin.finish();
+        c.stdout.finish();
+        c.stderr.finish();
+    }
+    // **All three kinds, and it matched only one until 2026-09-01.** `Sock` is `Listening`,
+    // `Open` and `Datagram`; this arm read `Some(Sock::Open(s))`, so closing a *listener* or a
+    // bound UDP socket fell through and did nothing at all — the handle stayed in the table and
+    // the port stayed bound. Measured: listen on port 0, `closeSocket` the listener, dial the
+    // port again, and this host answered `handle=4 fault=0` where the V8 host answers
+    // `FAULT_REFUSED`. So a readiness probe built on "can I connect yet?" is satisfied by the
+    // listener the test just closed, and `packages/wactest/test/wac/daemon_test.wac` fails two
+    // tests and hangs a third on it. `issues/system/0317b`.
+    //
+    // Only a stream has a `shutdown`: it is the two directions of an established connection,
+    // and a peer blocked on a read must find out rather than wait for a process that has
+    // finished with it. A listener and a datagram socket have no peer to tell — dropping the
+    // last handle is the whole of closing them, which is what `close(h)` does.
+    match socket_at(caller, h) {
+        Some(Sock::Open(s)) => {
+            let _ = s.shutdown(std::net::Shutdown::Both);
+            caller.data().handles.lock().unwrap().close(h);
+        }
+        Some(Sock::Listening(_)) | Some(Sock::Datagram(_)) => {
+            caller.data().handles.lock().unwrap().close(h);
+        }
+        None => {}
+    }
+    // **A child's handle stays.** Its status is still a question worth asking — a parent that
+    // stops a service and wants to know it is gone asks `exitCode` next — and the JavaScript
+    // hosts keep theirs for exactly that. Clearing the slot here made `exitCode` on a stopped
+    // child fall through to the *other* meaning of that capability, which is "set this
+    // program's own exit status", so a supervisor asking after its child silently set its own.
+}
+
+/// Whether request `op` takes something — a connection, a child, a file, bytes off a stream — that a dropped request
+/// has to give back. Its answer is never delivered inside the request.
+fn takes(op: i32) -> bool {
+    matches!(
+        op,
+        OP_READ_STDIN | OP_READ_CHUNK | OP_RECV | OP_RECEIVE_FROM | OP_CONNECT | OP_LISTEN | OP_ACCEPT
+            | OP_BIND_DATAGRAM | OP_SPAWN | OP_SPAWN_SELF | OP_OPEN_FILE
+    )
+}
+
+/// `OP_DROP`: the program has given up on request `id`. **An answer nobody has read is still the
+/// host's** (design/system/0013, operator 2026-10-28), so whatever it holds goes back or is closed.
+/// One already delivered is the program's, and there is nothing here to do for it.
+fn drop_request(caller: &mut Caller<'_, Host>, id: i32) -> Result<(), wasmtime::Error> {
+    let Some((ticket, _)) = caller.data_mut().inflight.remove(&id) else { return Ok(()) };
+    let id = ticket;
+    // **What the ticket already held goes back where it came from.** `drop` is what a
+    // guest's `OP_DROP` reaches, and an answer that landed between the caller giving
+    // up and this call has come off a stream once — discarding it lost the bytes every time,
+    // 0 of 10 on both hosts. `issues/system/0308b`.
+    //
+    // Which handle it was reading is the thing an id does not say, and `reading` is why this
+    // can ask. Into the **queue** for a child's stream, because another reader may be parked
+    // on it and a side table is somewhere it would never look; into the per-handle table for
+    // a socket, which has no queue to go back to. That is `0307b`'s rule, unchanged.
+    let held = caller.data().tickets.discard(id);
+    let whose = caller.data().reading.lock().unwrap().remove(&id);
+    // **An accepted connection is handed on, not put down.** There is nowhere to put a
+    // socket back — it is already in the table with a client attached — so it goes to the
+    // next accept still waiting on that listener, exactly as the accept thread does when it
+    // finds its own ticket gone. `issues/system/0310b`.
+    if let (Some(Outcome::Socket(slot, _, _, _, _)), Some(listener)) = (&held, whose) {
+        if *slot >= 0 {
+            let next = caller.data().accepting.lock().unwrap()
+                .get_mut(&listener).and_then(|q| q.pop_front());
+            match (next, held.clone()) {
+                (Some(other), Some(answer)) => {
+                    let _ = caller.data().tickets.complete(other, answer);
+                    return Ok(());
+                }
+                // Nobody waiting yet — the retry comes *after* the give-up in this
+                // ordering, so it waits here for it rather than being dropped.
+                (None, Some(answer)) => {
+                    caller.data().parked_accepts.lock().unwrap()
+                        .entry(listener).or_default().push_back(answer);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }
+    // **A child nobody collected is stopped**, unless it was started detached: the ticket owned it, and no one else
+    // can reach it now (spec ch44 `§wac-std-child-drop-n2r5vxe`).
+    if let Some(Outcome::Child(handle, _, _, _)) = &held {
+        let detached = caller.data_mut().spawned.remove(&id);
+        if *handle >= 0 && detached != Some(true) {
+            close_socket(caller, *handle);
+        }
+        return Ok(());
+    }
+    // **An abandoned `connect` is closed, not handed on.** The other capabilities here take
+    // something a *later* call wants — bytes, a connection off the backlog — so the answer
+    // is to pass it along. Nothing else wants this one: it is a line this program dialled
+    // and then stopped caring about. Left alone the handle never leaves the table and the
+    // peer holds an open connection to nobody, which the probe sees as a read that never
+    // ends. Told rather than left guessing. `issues/system/0310b`.
+    //
+    // An accept is distinguished by having a listener noted against it, and was handled
+    // above; a socket answer with no note is a dial.
+    if let (Some(Outcome::Socket(slot, _, _, _, _)), None) = (&held, whose) {
+        if *slot >= 0 {
+            if let Some(Sock::Open(s)) = socket_at(caller, *slot) {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+            caller.data().handles.lock().unwrap().close(*slot);
+        }
+    }
+    if let (Some(Outcome::Bytes(bytes)), Some(h)) = (held, whose) {
+        if !bytes.is_empty() {
+            if let Some(q) = child_stream(caller, h) {
+                q.unread(bytes);
+            } else {
+                caller.data().pushback.lock().unwrap().entry(h).or_default().extend(bytes);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One request, by number — design/system/0013's request table, which `std/platform.wac`'s `OP_*`
+/// numbers. `a`, `b`, `text` and `bytes` are what that table says each one carries.
+fn serve(
+    caller: &mut Caller<'_, Host>,
+    op: i32,
+    a: i64,
+    b: i64,
+    text: Vec<u8>,
+    bytes: Vec<u8>,
+) -> Result<Reply, wasmtime::Error> {
+    match op {
+        OP_WRITE_STDOUT | OP_WRITE_STDERR => {
+            let to_stderr = op == OP_WRITE_STDERR;
+            // Answered before `request` returns, so a program learns at once that its reader has gone:
+            // a fault with no words, which std reads as `OutputClosed`.
+            return Ok(landed(emit(caller, &bytes, to_stderr)));
+        }
+        OP_ARG_COUNT => {
+            let n = caller.data().args.len() as i32;
+            return now(Kind::I32, Outcome::I32(n));
+        }
+        OP_ARG => {
+            let i = a as i32;
+            let bytes = caller.data().args.get(i as usize).cloned().unwrap_or_default();
+            return now(Kind::Bytes, Outcome::Bytes(bytes));
+        }
+        OP_NOW_MILLIS => {
             let ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            return settle_now(caller, Kind::I64, Outcome::I64(ms), results);
+            return now(Kind::I64, Outcome::I64(ms));
         }
-        Cap::MonotonicNanos => {
+        OP_MONOTONIC_NANOS => {
             let ns = caller.data().started.elapsed().as_nanos() as i64;
-            return settle_now(caller, Kind::I64, Outcome::I64(ns), results);
+            return now(Kind::I64, Outcome::I64(ns));
         }
-        Cap::SleepMillis => {
+        OP_SLEEP_MILLIS => {
             // **The first capability that genuinely takes time**, and the reason 0087's first
             // criterion is testable: two sleeps of different lengths complete out of the order they
             // were asked for, on the runtime's own threads, with nothing waiting in between.
-            let ms = match arg(1) {
-                Val::I32(n) => n.max(0) as u64,
-                _ => 0,
-            };
+            let ms = (a as i32).max(0) as u64;
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             // **It resolves to the monotonic nanoseconds at which it settled, not to the millis asked
@@ -1634,46 +1634,38 @@ fn dispatch(
                 // Nothing was consumed to make this, so there is nothing to hand back.
                 let _ = table.complete(id, Outcome::I64(origin.elapsed().as_nanos() as i64));
             });
-            return pending_for(caller, Kind::I64, id, results);
+            return later(Kind::I64, id);
         }
-        Cap::RandomBytes => {
-            let n = match arg(1) {
-                Val::I32(n) => n.max(0) as usize,
-                _ => 0,
-            };
-            return settle_now(caller, Kind::Bytes, Outcome::Bytes(random_bytes(n)?), results);
+        OP_RANDOM_BYTES => {
+            let n = (a as i32).max(0) as usize;
+            return now(Kind::Bytes, Outcome::Bytes(random_bytes(n)?));
         }
-        Cap::ExitCode => {
+        OP_EXIT_CODE => {
             // Two meanings on one capability, and the handle says which: a child's handle asks for
             // *its* status, anything else sets this program's own. `platform.wac` gives them one
             // name, so the runtime has to tell them apart by what it was handed.
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
+            let h = a as i32;
             if let Some(c) = child_of(caller, h) {
                 let exit = c.exit.clone();
                 let id = caller.data().tickets.submit();
                 let table = caller.data().tickets.clone();
                 std::thread::spawn(move || table.complete(id, Outcome::I32(exit.wait())));
-                return pending_for(caller, Kind::I32, id, results);
+                return later(Kind::I32, id);
             }
-            caller.data_mut().exit = h;
-            return settle_now(caller, Kind::I32, Outcome::I32(h), results);
+            return Ok(fault(FAULT_OTHER, "not a child"));
         }
-        Cap::Cwd => {
+        OP_CWD => {
             // The *process's* directory, which is the one thing here that is a fact about the host
             // rather than a capability over it. A sealed session immediately replaces it with its own.
-            let dir = match caller.data().frames.last() {
-                Some(f) if !f.cwd.is_empty() => f.cwd.clone(),
+            let dir = match () {
                 _ if !caller.data().cwd.is_empty() => caller.data().cwd.clone(),
                 _ => std::env::current_dir()
                     .map(|p| p.as_os_str().as_encoded_bytes().to_vec())
                     .unwrap_or_else(|_| b"/".to_vec()),
             };
-            return settle_now(caller, Kind::Str, Outcome::Str(dir), results);
+            return now(Kind::Str, Outcome::Str(dir));
         }
-        Cap::ReadStdin => {
+        OP_READ_STDIN => {
             // **What an abandoned read already took, first and in front of the rest.** This
             // capability means "everything", so a retry after one was given up on has to see the
             // bytes the first one drained — 1 run in 8 kept them before this. `issues/system/0310b`.
@@ -1684,22 +1676,6 @@ fn dispatch(
                 .unwrap()
                 .remove(&STDIN_HANDLE)
                 .unwrap_or_default();
-            // Inside a frame that was handed bytes, this is those bytes and nothing blocks.
-            if let Some(f) = caller.data_mut().frames.last_mut() {
-                if !f.inherit_input {
-                    let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
-                    f.stdin_at = f.stdin.len();
-                    return settle_now(caller, Kind::Bytes, Outcome::Bytes(rest), results);
-                }
-            }
-            // The same ranking as `readChunk`: a file this program redirected its input to beats the
-            // queue its parent feeds.
-            if caller.data().input.is_some() {
-                use std::io::Read;
-                let mut all = Vec::new();
-                let _ = caller.data_mut().input.as_mut().unwrap().read_to_end(&mut all);
-                return settle_now(caller, Kind::Bytes, Outcome::Bytes(all), results);
-            }
             // A spawned child: everything its parent sends, until the feed ends — unless it was told
             // to inherit, in which case the queue is empty by construction and the process's own
             // input is the answer. See `AsChild::inherits`.
@@ -1736,7 +1712,7 @@ fn dispatch(
                         back.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(unclaimed);
                     }
                 });
-                return pending_for(caller, Kind::Bytes, id, results);
+                return later(Kind::Bytes, id);
             }
             // Everything, which is what this capability means — `readChunk` is the bounded one. On a
             // thread, because a pipe with nothing in it yet must not stop the program from doing
@@ -1760,114 +1736,41 @@ fn dispatch(
                     back.lock().unwrap().entry(STDIN_HANDLE).or_default().extend(unclaimed);
                 }
             });
-            return pending_for(caller, Kind::Bytes, id, results);
+            return later(Kind::Bytes, id);
         }
-        Cap::ReadChunk => {
-            // Inside a frame: the bytes it was given, then end of input. One chunk rather than a
-            // trickle, because the frame has all of them already and splitting would only invent a
-            // boundary the caller then has to reassemble.
-            let framed = {
-                let h = caller.data_mut();
-                match h.frames.last_mut() {
-                    Some(f) if !f.inherit_input => {
-                        let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
-                        f.stdin_at = f.stdin.len();
-                        Some(rest)
-                    }
-                    _ => None,
-                }
-            };
-            if let Some(bytes) = framed {
-                return settle_now(caller, Kind::Read, Outcome::Bytes(bytes), results);
-            }
-            // **An explicit `openInput` wins over the parent's queue**, and the order is the whole
-            // of the bug it fixes: `openInput` *redirects this process's standard input to a file*,
-            // so a spawned `cat f` that had opened the file went on reading the queue its parent had
-            // already finished, and printed nothing. It ran, exited 0, and said nothing — which is
-            // the shape this runtime keeps producing when two sources of input are ranked wrongly.
-            if caller.data().input.is_some() {
-                let mut buf = [0u8; 65536];
-                let n = {
-                    use std::io::Read;
-                    caller.data_mut().input.as_mut().unwrap().read(&mut buf)
-                };
-                let outcome = match n {
-                    Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
-                    Err(e) => Outcome::Str(e.to_string().into_bytes()),
-                };
-                return settle_now(caller, Kind::Read, outcome, results);
-            }
+        OP_READ_CHUNK => {
             // A spawned child reads what its parent sends — unless it inherits, when the queue is
             // finished at spawn and the process's own input is what it meant. See `AsChild::inherits`.
             if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
                 let stdin = streams.stdin.clone();
                 let bytes = stdin.read();
-                return settle_now(caller, Kind::Read, Outcome::Bytes(bytes), results);
+                return now(Kind::Read, Outcome::Bytes(bytes));
             }
-            // `fn[Pending<Read>()]` — the *bounded* read: it answers with whatever is there, or that
-            // the input has ended, as a ticket that is settled by the time it is handed back. A ticket
-            // because a world that cannot block (a page) answers it later, and the program awaits it.
+            // The *bounded* read: whatever is there, or that the input has ended, answered before
+            // `request` returns.
             let mut buf = [0u8; 65536];
             let n = {
                 use std::io::Read;
-                match caller.data_mut().input.as_mut() {
-                    Some(f) => f.read(&mut buf),
-                    None => std::io::stdin().read(&mut buf),
-                }
+                std::io::stdin().read(&mut buf)
             };
             let outcome = match n {
                 Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
                 Err(e) => Outcome::Str(e.to_string().into_bytes()),
             };
-            return settle_now(caller, Kind::Read, outcome, results);
+            return now(Kind::Read, outcome);
         }
-        Cap::Env => {
-            // **A grant, and the only capability here that has one so far.** Without `env` in the
-            // manifest this answers *absent* rather than reading the real environment — which is not
-            // a refusal but the honest answer to "what does this world's environment say", and it is
-            // what the Deno host does by handing the provider no reader at all.
-            let name = read_string(caller, &params[1])?;
-            let value = if caller.data().grants.env {
-                String::from_utf8(name.clone())
-                    .ok()
-                    .and_then(|n| std::env::var_os(n))
-                    .map(|v| v.as_encoded_bytes().to_vec())
-            } else {
-                None
-            };
-            return settle_now(caller, Kind::BytesOpt, Outcome::BytesOpt(value), results);
-        }
-        Cap::PushChild => {
-            let argv = read_string_array(caller, &params[1])?;
-            let stdin = read_u8_array(caller, &params[2])?;
-            let cwd = read_string(caller, &params[3])?;
-            let inherit_input = matches!(arg(4), Val::I32(n) if n != 0);
-            caller.data_mut().frames.push(Frame {
-                argv,
-                stdin,
-                stdin_at: 0,
-                cwd,
-                inherit_input,
-                out: Vec::new(),
-                err: Vec::new(),
-            });
-            return settle_now(caller, Kind::Bool, Outcome::Bool(true), results);
-        }
-        Cap::PopChild => {
-            // A pop with nothing pushed answers two empty arrays rather than failing: `platform.wac`
-            // says so, and the reason is that the caller has nothing to clean up either way.
-            let (out, err) = match caller.data_mut().frames.pop() {
-                Some(f) => (f.out, f.err),
-                None => (Vec::new(), Vec::new()),
-            };
-            // **Never truncated here, and that is a difference rather than a simplification.** The
-            // JavaScript hosts hold a frame's output in a capped buffer — 8 MiB — because the
-            // program deciding how much to produce is not the one holding it, and at the cap `write`
-            // answers false, which a producer like `box yes` stops on. This runtime's frame is a
-            // `Vec` that simply grows, so the same applet run in process here answers in full and
-            // uses whatever memory that takes. `Captured.truncated` is the field that lets a caller
-            // tell the two apart; on this host it is always false because nothing is ever cut short.
-            return settle_now(caller, Kind::Captured, Outcome::Captured(out, err, false), results);
+        OP_ENV => {
+            // **A grant.** Without `env` in the manifest this is refused as `NotGranted`, as every
+            // handle a host withholds is (design/system/0013) — not answered as absent, which a program
+            // could not tell from a variable nobody set.
+            if !caller.data().grants.env {
+                return Ok(fault(FAULT_NOT_GRANTED, NOT_GRANTED));
+            }
+            let value = String::from_utf8(text.clone())
+                .ok()
+                .and_then(|n| std::env::var_os(n))
+                .map(|v| v.as_encoded_bytes().to_vec());
+            return now(Kind::BytesOpt, Outcome::BytesOpt(value));
         }
         // ── The network and `spawn`: not implemented, and *said in the type* ─────
         //
@@ -1880,130 +1783,103 @@ fn dispatch(
         // So where the interface has a value for "not here", answering it is more honest than a trap,
         // not less: the trap is what a caller cannot act on. `Socket` has the same shape with a
         // negative handle and a reason, and a shell falls back to its in-process applets on both.
-        Cap::SpawnSelf => {
-            // `spawnSelf(argv, grants, cwd, inheritInput)` — another instance of *this* module, which
-            // is how `packages/box` runs an applet as a real program: `main` dispatches on argv[0].
-            let argv = read_bytes_array(caller, &params[1])?;
-            let want = match arg(2) {
-                Val::I32(n) => n,
-                _ => 0,
+        OP_SPAWN_SELF => {
+            // Another instance of *this* module, which is how `packages/box` runs an applet as a real
+            // program: `main` dispatches on argv[0]. `bytes` is an empty module, then the arguments.
+            let Some((_, argv)) = spawn_parts(&bytes) else {
+                return Ok(fault(FAULT_OTHER, "the request's arguments do not parse"));
             };
-            let cwd = read_string(caller, &params[3])?;
+            let want = a as i32;
+            let cwd = text.clone();
             // The `INHERIT_*` mask: the input and output bits are the host's — `DETACHED` (4) is std's
             // business. `issues/system/0312b`.
-            let inherit_bits = match arg(4) { Val::I32(n) => n, _ => 0 };
+            let inherit_bits = b as i32;
             let inherit = inherit_bits & 1 != 0;
             let inherit_out = inherit_bits & 2 != 0;
             // Whether this program promises to answer the child's filesystem questions — see
             // `spawnSelf` in platform.wac. Not a grant: it widens nothing.
-            let serve_fs = matches!(arg(5), Val::I32(n) if n != 0);
+            let serve_fs = (b & 256) != 0;
             let Some(world) = caller.data().world.clone() else {
-                return no_spawn_here(caller, results);
+                return no_spawn_here();
             };
-            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out, results);
+            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out);
         }
         // **Synchronous, unlike almost everything here.** Nothing is submitted and no ticket comes
         // back: instantiating a module and calling one of its exports both finish before the host call
         // returns, so `load` and `call` answer a struct directly. `issues/system/0240c`.
-        Cap::Load => {
-            let prog = read_u8_array(caller, &params[1])?;
-            let asked = match arg(2) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
+        OP_LOAD => {
+            let prog = bytes.clone();
+            let asked = a as i32;
             let (handle, why) = match load_module(caller, &prog, asked) {
                 Ok(h) => (h, String::new()),
                 Err(e) => (-1, e),
             };
-            let msg = make_string(caller, why.as_bytes())?;
-            let f = export_func(caller, "$bind$sm_LoadedModule_of")?;
-            let built = call_dyn(caller, &f, &[Val::I32(handle), msg])?;
-            results[0] = built
-                .into_iter()
-                .next()
-                .ok_or_else(|| wasmtime::Error::msg("LoadedModule.of answered nothing"))?;
-            return Ok(());
-        }
-        Cap::Call => {
-            let handle = match arg(1) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let name = String::from_utf8_lossy(&read_string(caller, &params[2])?).into_owned();
-            let n = match arg(3) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let (status, text, value) = call_loaded(handle, &name, n);
-            let msg = make_string(caller, text.as_bytes())?;
-            let f = export_func(caller, "$bind$sm_CallResult_of")?;
-            let built = call_dyn(caller, &f, &[Val::I32(status), msg, Val::I32(value)])?;
-            results[0] = built
-                .into_iter()
-                .next()
-                .ok_or_else(|| wasmtime::Error::msg("CallResult.of answered nothing"))?;
-            return Ok(());
-        }
-        Cap::Unload => {
-            if let Val::I32(n) = arg(1) {
-                LOADED.with(|t| t.borrow_mut().remove(&n));
+            if handle < 0 {
+                return Ok(fault(FAULT_OTHER, &why));
             }
-            return Ok(());
+            return Ok(Reply::Flat(Flat { n: handle as i64, ..Flat::default() }));
+        }
+        OP_CALL => {
+            let handle = a as i32;
+            let name = String::from_utf8_lossy(&text.clone()).into_owned();
+            let n = b as i32;
+            let (status, said, value) = call_loaded(handle, &name, n);
+            return Ok(Reply::Flat(Flat { flags: status, text: said.into_bytes(), n: value as i64, ..Flat::default() }));
+        }
+        OP_UNLOAD => {
+            LOADED.with(|t| t.borrow_mut().remove(&(a as i32)));
+            return Ok(Reply::Nothing);
         }
         // **Compiled, not instantiated**, which is `Cli.validated`'s whole contract: whether the
         // engine accepts the bytes, asked without a manifest, a world, or anything running. wasmtime
         // hands back the reason as an ordinary error, so unlike the V8 host there is no exception
         // left on anything and no guard needed around a second call.
-        Cap::Validated => {
-            let prog = read_u8_array(caller, &params[1])?;
+        OP_VALIDATE => {
+            let prog = bytes.clone();
             let why = match wasmtime::Module::validate(caller.engine(), &prog) {
                 Ok(()) => String::new(),
                 Err(e) => format!("{e}"),
             };
-            results[0] = make_string(caller, why.as_bytes())?;
-            return Ok(());
+            if why.is_empty() {
+                return Ok(Reply::Flat(Flat::default()));
+            }
+            return Ok(fault(FAULT_OTHER, &why));
         }
-        Cap::Spawn => {
+        OP_SPAWN => {
             // `spawn(prog, argv, grants, cwd, inheritInput, serveFs)` — **a module carrying its own
             // manifest**, which is what `wac build` writes and what `native/v8` has always started.
             // Until 2026-08-21 this answered "not implemented in the native runtime; spawnSelf
             // works", and the gap was not the confinement or the streams — `spawnSelf` already had
             // all of that — but simply that nothing here built a `World` from bytes it was given.
             // `issues/system/0144`.
-            let prog = read_u8_array(caller, &params[1])?;
-            let argv = read_bytes_array(caller, &params[2])?;
-            let want = match arg(3) {
-                Val::I32(n) => n,
-                _ => 0,
+            let Some((prog, argv)) = spawn_parts(&bytes) else {
+                return Ok(fault(FAULT_OTHER, "the request's arguments do not parse"));
             };
-            let cwd = read_string(caller, &params[4])?;
+            let want = a as i32;
+            let cwd = text.clone();
             // **Flags rather than a bool** — `platform.wac`'s `INHERIT_IN`/`INHERIT_OUT`, one `i32`
             // because a capability may not have seven parameters (`issues/lang/0291c`).
-            let inherit_bits = match arg(5) { Val::I32(n) => n, _ => 0 };
+            let inherit_bits = b as i32;
             let inherit = inherit_bits & 1 != 0;
             let inherit_out = inherit_bits & 2 != 0;
-            let serve_fs = matches!(arg(6), Val::I32(n) if n != 0);
+            let serve_fs = (b & 256) != 0;
             // **-2 still means what it means**: a world with no `spawn` at all says so, and it says
             // the same thing to both spawns rather than refusing one and serving the other.
             if caller.data().world.is_none() {
-                return no_spawn_here(caller, results);
+                return no_spawn_here();
             }
             // The parent's engine, so a child shares its configuration and its compile cache — and a
             // module spawned in a loop is compiled once. Nothing else of the parent's crosses.
             let engine = caller.engine().clone();
             return match world_from(&engine, &prog) {
                 Ok(world) => {
-                    spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out, results)
+                    spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out)
                 }
                 // **A failed child rather than a trap.** A parent handed a file that is not a wac
                 // program has done nothing wrong, and `Child.error` is the field that says so —
                 // `packages/sh` turns a negative handle into 126 and carries the reason.
-                Err(why) => settle_now(
-                    caller,
-                    Kind::Child,
-                    Outcome::Child(-1, -1, -1, why),
-                    results,
-                ),
+                Err(why) => now(Kind::Child,
+                    Outcome::Child(-1, -1, -1, why)),
             };
         }
         // ── The network ──────────────────────────────────────────────────────
@@ -2013,15 +1889,12 @@ fn dispatch(
         // instead is both irrelevant and misleading, and `example/probe.wac` reads the difference —
         // it looks for the words "not granted" and reports `denied` rather than `failed`. The Deno
         // host says "network access not granted to this application", so this says the same thing.
-        Cap::Connect => {
+        OP_CONNECT => {
             if !caller.data().grants.net {
-                return settle_now(caller, Kind::Socket, denied_net(), results);
+                return now(Kind::Socket, denied_net());
             }
-            let port = match arg(2) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let host = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            let port = a as i32;
+            let host = String::from_utf8_lossy(&text.clone()).into_owned();
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             let table_handles = caller.data().handles.clone();
@@ -2043,19 +1916,16 @@ fn dispatch(
                 // on is meaningless and closing it is the only sensible remedy. `issues/system/0310b`.
                 let _ = table.complete(id, outcome);
             });
-            return pending_for(caller, Kind::Socket, id, results);
+            return later(Kind::Socket, id);
         }
-        Cap::BindDatagram => {
+        OP_BIND_DATAGRAM => {
             // One grant for every transport: the authority is "speak to something that is not this
             // process", which `platform.wac` spells as a single flag and UDP does not change.
             if !caller.data().grants.net {
-                return settle_now(caller, Kind::Socket, denied_net(), results);
+                return now(Kind::Socket, denied_net());
             }
-            let port = match arg(2) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let addr = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            let port = a as i32;
+            let addr = String::from_utf8_lossy(&text.clone()).into_owned();
             let bind = if addr.is_empty() { "0.0.0.0".to_string() } else { addr };
             let outcome = match std::net::UdpSocket::bind((bind.as_str(), port as u16)) {
                 Ok(sk) => {
@@ -2065,17 +1935,14 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
             };
-            return settle_now(caller, Kind::Socket, outcome, results);
+            return now(Kind::Socket, outcome);
         }
-        Cap::ReceiveFrom => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
+        OP_RECEIVE_FROM => {
+            let h = a as i32;
             let Some(Sock::Datagram(sk)) = socket_at(caller, h) else {
                 let why = "not an open datagram socket".to_string();
                 let out = Outcome::Datagram(Vec::new(), String::new(), 0, why);
-                return settle_now(caller, Kind::Datagram, out, results);
+                return now(Kind::Datagram, out);
             };
             // 65535 is the largest a UDP payload can be, so this cannot truncate one — and a
             // truncation here would arrive looking exactly like a peer that sent less.
@@ -2087,34 +1954,25 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Datagram(Vec::new(), String::new(), 0, e.to_string()),
             };
-            return settle_now(caller, Kind::Datagram, outcome, results);
+            return now(Kind::Datagram, outcome);
         }
-        Cap::SendTo => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
-            let port = match arg(3) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let addr = String::from_utf8_lossy(&read_string(caller, &params[2])?).into_owned();
-            let bytes = read_u8_array(caller, &params[4])?;
+        OP_SEND_TO => {
+            let h = a as i32;
+            let port = b as i32;
+            let addr = String::from_utf8_lossy(&text.clone()).into_owned();
+            let bytes = bytes.clone();
             let landed = match socket_at(caller, h) {
                 Some(Sock::Datagram(sk)) => sk.send_to(&bytes, (addr.as_str(), port as u16)).is_ok(),
                 _ => false,
             };
-            return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
+            return now(Kind::Bool, Outcome::Bool(landed));
         }
-        Cap::Listen => {
+        OP_LISTEN => {
             if !caller.data().grants.net {
-                return settle_now(caller, Kind::Socket, denied_net(), results);
+                return now(Kind::Socket, denied_net());
             }
-            let port = match arg(2) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let addr = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            let port = a as i32;
+            let addr = String::from_utf8_lossy(&text.clone()).into_owned();
             // The empty string is **every interface**, which is what `platform.wac` says and what a
             // daemon nobody can reach is not. `0.0.0.0` spells the same thing explicitly.
             let bind = if addr.is_empty() { "0.0.0.0".to_string() } else { addr };
@@ -2128,31 +1986,24 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
             };
-            return settle_now(caller, Kind::Socket, outcome, results);
+            return now(Kind::Socket, outcome);
         }
-        Cap::Accept => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
+        OP_ACCEPT => {
+            let h = a as i32;
             // A connection a dropped accept already took is answered before waiting for another.
             let already = caller.data().parked_accepts.lock().unwrap()
                 .get_mut(&h).and_then(|q| q.pop_front());
             if let Some(outcome) = already {
-                return settle_now(caller, Kind::Socket, outcome, results);
+                return now(Kind::Socket, outcome);
             }
             let listen_handle = h;
             let waiting = caller.data().accepting.clone();
             let Some(Sock::Listening(listener)) = socket_at(caller, h) else {
                 if !caller.data().grants.net {
-                    return settle_now(caller, Kind::Socket, denied_net(), results);
+                    return now(Kind::Socket, denied_net());
                 }
-                return settle_now(
-                    caller,
-                    Kind::Socket,
-                    Outcome::Socket(-1, "not a listening socket".into(), String::new(), 0, FAULT_OTHER),
-                    results,
-                );
+                return now(Kind::Socket,
+                    Outcome::Socket(-1, "not a listening socket".into(), String::new(), 0, FAULT_OTHER));
             };
             let id = caller.data().tickets.submit();
             // Registered so a connection taken for a ticket nobody wants can be handed to this one
@@ -2214,21 +2065,17 @@ fn dispatch(
                     }
                 }
             });
-            return pending_for(caller, Kind::Socket, id, results);
+            return later(Kind::Socket, id);
         }
-        Cap::Recv => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
+        OP_RECV => {
+            let h = a as i32;
             // **What an abandoned reader already took, before asking the source for more.** Order is
             // the whole of a stream's meaning, so these come first and whole; a second `recv` then
             // continues where the abandoned one would have. `issues/system/0307b`.
             let waiting = caller.data().pushback.lock().unwrap().remove(&h);
             if let Some(bytes) = waiting {
                 if !bytes.is_empty() {
-                    results[0] = make_read_data(caller, &bytes)?;
-                    return Ok(());
+                    return now(Kind::Read, Outcome::Bytes(bytes));
                 }
             }
             // On a thread either way: a child or a peer that has not written yet must not stop this
@@ -2245,7 +2092,7 @@ fn dispatch(
             if let Some(stream) = child_stream(caller, h) {
                 let noted = caller.data().reading.clone();
                 std::thread::spawn(move || deliver(&stream, &table, id, &noted));
-                return pending_for(caller, Kind::Read, id, results);
+                return later(Kind::Read, id);
             }
             // **The child's own end of its filesystem channel**: what its parent answered. Reserved,
             // so the lookup above cannot have claimed it, and available only to a program something
@@ -2256,7 +2103,7 @@ fn dispatch(
                     let answers = streams.fsrep.clone();
                     let noted = caller.data().reading.clone();
                     std::thread::spawn(move || deliver(&answers, &table, id, &noted));
-                    return pending_for(caller, Kind::Read, id, results);
+                    return later(Kind::Read, id);
                 }
             }
             // **Standard input has a handle so `waitAny` can watch it beside a socket**, which is
@@ -2270,15 +2117,12 @@ fn dispatch(
                     let fed = streams.stdin.clone();
                     let noted = caller.data().reading.clone();
                     std::thread::spawn(move || deliver(&fed, &table, id, &noted));
-                    return pending_for(caller, Kind::Read, id, results);
+                    return later(Kind::Read, id);
                 }
                 let mut buf = [0u8; 65536];
                 let n = {
                     use std::io::Read;
-                    match caller.data_mut().input.as_mut() {
-                        Some(f) => f.read(&mut buf),
-                        None => std::io::stdin().read(&mut buf),
-                    }
+                    std::io::stdin().read(&mut buf)
                 };
                 // Nothing was consumed to make this, so there is nothing to hand back.
                 // Forget which handle this was reading: it is finished with, and the note is
@@ -2289,12 +2133,10 @@ fn dispatch(
             // ticket, so nothing should be left pointing at a handle. `issues/system/0308b`.
             let _ = caller.data().tickets.discard(id);
             caller.data().reading.lock().unwrap().remove(&id);
-                results[0] = match n {
-                    Ok(0) => make_read_end(caller)?,
-                    Ok(n) => make_read_data(caller, &buf[..n])?,
-                    Err(e) => make_read_failed(caller, &e.to_string())?,
-                };
-                return Ok(());
+                return now(Kind::Read, match n {
+                    Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
+                    Err(e) => Outcome::Str(e.to_string().into_bytes()),
+                });
             }
             let file = match caller.data().handles.lock().unwrap().get(h) {
                 Some(Handle::File(f)) => Some(f.clone()),
@@ -2311,7 +2153,7 @@ fn dispatch(
                     };
                     park_unclaimed(&back, h, table.complete(id, outcome));
                 });
-                return pending_for(caller, Kind::Read, id, results);
+                return later(Kind::Read, id);
             }
             if let Some(Sock::Open(s)) = socket_at(caller, h) {
                 let back = caller.data().pushback.clone();
@@ -2324,7 +2166,7 @@ fn dispatch(
                     };
                     park_unclaimed(&back, h, table.complete(id, outcome));
                 });
-                return pending_for(caller, Kind::Read, id, results);
+                return later(Kind::Read, id);
             }
             // Nothing was consumed to make this, so there is nothing to hand back.
             let _ = caller.data().tickets.discard(id);
@@ -2335,20 +2177,17 @@ fn dispatch(
             } else {
                 b"network access not granted to this application"
             };
-            return settle_now(caller, Kind::Read, Outcome::Str(why.to_vec()), results);
+            return now(Kind::Read, Outcome::Str(why.to_vec()));
         }
-        Cap::Send => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
-            let bytes = read_u8_array(caller, &params[2])?;
+        OP_SEND => {
+            let h = a as i32;
+            let bytes = bytes.clone();
             // **The child's own end of its filesystem channel**: a request for its parent. Before
             // the table lookup only because the handle is reserved and the table cannot hold it.
             if h == PARENT_FS_HANDLE {
                 if let Some(streams) = caller.data().as_child.as_ref() {
                     let landed = streams.fsreq.write(&bytes);
-                    return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
+                    return now(Kind::Bool, Outcome::Bool(landed));
                 }
             }
             // The parent's end: the answer to one.
@@ -2358,7 +2197,7 @@ fn dispatch(
             };
             if let Some(replies) = answering {
                 let landed = replies.write(&bytes);
-                return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
+                return now(Kind::Bool, Outcome::Bool(landed));
             }
             // Only a child's *main* handle takes bytes: there is nothing to write to its error
             // stream, and answering false for that is truer than pretending.
@@ -2378,7 +2217,7 @@ fn dispatch(
                 // False is "it did not land", which is what a caller checks.
                 false
             };
-            return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
+            return now(Kind::Bool, Outcome::Bool(landed));
         }
         // **End the outbound direction and keep reading** — `issues/system/0215`.
         //
@@ -2386,17 +2225,14 @@ fn dispatch(
         // the table: `recv` on it afterwards is the whole point of the call. Only a connected stream
         // has two directions, so a listener, a datagram socket and a child are not touched — a child
         // that wants its input ended has `closeFeed`, which is the same distinction one layer up.
-        Cap::CloseSend => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
+        OP_CLOSE_SEND => {
+            let h = a as i32;
             if let Some(Sock::Open(s)) = socket_at(caller, h) {
                 let _ = s.shutdown(std::net::Shutdown::Write);
             }
         }
 
-        Cap::CloseSocket => {
+        OP_CLOSE_SOCKET => {
             // **Stops the child outright**, which is what `closeSocket` means and what `closeFeed`
             // deliberately does not: `head -1` ending `seq` is the ordinary case.
             //
@@ -2406,49 +2242,7 @@ fn dispatch(
             // reader parked on its output has to find out, and it must find out whether the child
             // was stopped here or had already exited on its own. Ending the queues alone was this
             // runtime's whole answer, and issue 0123 is the difference it left.
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
-            // **Parked bytes die with the handle.** A handle is reused the instant it closes — that
-            // is `issues/system/0306b`'s other finding — so anything `0307b` put aside for this one
-            // would otherwise be served to whoever gets the number next, as if their peer had sent
-            // it. The v8 host says the same beside its parked datagrams.
-            caller.data().pushback.lock().unwrap().remove(&h);
-            if let Some(c) = child_of(caller, h) {
-                c.stop.store(true, Ordering::Relaxed);
-                c.stdin.finish();
-                c.stdout.finish();
-                c.stderr.finish();
-            }
-            // **All three kinds, and it matched only one until 2026-09-01.** `Sock` is `Listening`,
-            // `Open` and `Datagram`; this arm read `Some(Sock::Open(s))`, so closing a *listener* or a
-            // bound UDP socket fell through and did nothing at all — the handle stayed in the table and
-            // the port stayed bound. Measured: listen on port 0, `closeSocket` the listener, dial the
-            // port again, and this host answered `handle=4 fault=0` where the V8 host answers
-            // `FAULT_REFUSED`. So a readiness probe built on "can I connect yet?" is satisfied by the
-            // listener the test just closed, and `packages/wactest/test/wac/daemon_test.wac` fails two
-            // tests and hangs a third on it. `issues/system/0317b`.
-            //
-            // Only a stream has a `shutdown`: it is the two directions of an established connection,
-            // and a peer blocked on a read must find out rather than wait for a process that has
-            // finished with it. A listener and a datagram socket have no peer to tell — dropping the
-            // last handle is the whole of closing them, which is what `close(h)` does.
-            match socket_at(caller, h) {
-                Some(Sock::Open(s)) => {
-                    let _ = s.shutdown(std::net::Shutdown::Both);
-                    caller.data().handles.lock().unwrap().close(h);
-                }
-                Some(Sock::Listening(_)) | Some(Sock::Datagram(_)) => {
-                    caller.data().handles.lock().unwrap().close(h);
-                }
-                None => {}
-            }
-            // **A child's handle stays.** Its status is still a question worth asking — a parent that
-            // stops a service and wants to know it is gone asks `exitCode` next — and the JavaScript
-            // hosts keep theirs for exactly that. Clearing the slot here made `exitCode` on a stopped
-            // child fall through to the *other* meaning of that capability, which is "set this
-            // program's own exit status", so a supervisor asking after its child silently set its own.
+            close_socket(caller, a as i32);
         }
 
         // ── The filesystem ───────────────────────────────────────────────────
@@ -2464,16 +2258,13 @@ fn dispatch(
         // **A file as a stream of its own** — `Cli.openFile`. `how` is 0 to read, 1 to create or truncate,
         // 2 to create or append; the grant is the one `readFile` or `writeFile` would need. Opening is quick,
         // so it is answered at once; the reads and writes that follow are where a slow disk shows.
-        Cap::OpenFile => {
-            let path = read_string(caller, &params[1])?;
-            let how = match arg(2) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
+        OP_OPEN_FILE => {
+            let path = text.clone();
+            let how = a as i32;
             let granted = if how == 0 { caller.data().grants.read } else { caller.data().grants.write };
             if !granted {
                 let o = Outcome::Socket(-1, "Not granted to this application".into(), String::new(), 0, FAULT_NOT_GRANTED);
-                return settle_now(caller, Kind::Socket, o, results);
+                return now(Kind::Socket, o);
             }
             let here = resolve(caller, &path);
             let mut o = std::fs::OpenOptions::new();
@@ -2490,47 +2281,40 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
             };
-            return settle_now(caller, Kind::Socket, outcome, results);
+            return now(Kind::Socket, outcome);
         }
         // The end of a file `openFile` opened. `File` does not buffer, so every `send` already reached the
         // system and dropping it is the whole of closing.
-        Cap::CloseFile => {
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
+        OP_CLOSE_FILE => {
+            let h = a as i32;
             caller.data().pushback.lock().unwrap().remove(&h);
             let is_file = matches!(caller.data().handles.lock().unwrap().get(h), Some(Handle::File(_)));
             if is_file {
                 caller.data().handles.lock().unwrap().close(h);
             }
-            return settle_now(caller, Kind::Bool, Outcome::Bool(is_file), results);
+            return now(Kind::Bool, Outcome::Bool(is_file));
         }
-        // The end of this program's output or its diagnostic output — see the V8 host. Not under a frame.
-        Cap::CloseOutput => {
-            let to_err = matches!(arg(1), Val::I32(n) if n != 0);
+        // The end of this program's output or its diagnostic output — see the V8 host.
+        OP_CLOSE_OUTPUT => {
+            let to_err = a != 0;
             let h = caller.data_mut();
-            let ok = if !h.frames.is_empty() {
-                false
-            } else if h.out_closed[to_err as usize] {
+            let ok = if h.out_closed[to_err as usize] {
                 true
             } else {
                 h.out_closed[to_err as usize] = true;
-                if !to_err && h.output.take().is_some() {
-                    true
-                } else if let Some(streams) = h.as_child.as_ref().filter(|c| !c.inherit_out) {
+                if let Some(streams) = h.as_child.as_ref().filter(|c| !c.inherit_out) {
                     if to_err { streams.stderr.finish() } else { streams.stdout.finish() }
                     true
                 } else {
                     close_std_stream(if to_err { 2 } else { 1 })
                 }
             };
-            return settle_now(caller, Kind::Bool, Outcome::Bool(ok), results);
+            return now(Kind::Bool, Outcome::Bool(ok));
         }
-        Cap::ReadFile => {
-            let path = read_string(caller, &params[1])?;
+        OP_READ_FILE => {
+            let path = text.clone();
             if !caller.data().grants.read {
-                return settle_now(caller, Kind::FileResult, denied_read(), results);
+                return now(Kind::FileResult, denied_read());
             }
             let here = resolve(caller, &path);
             let id = caller.data().tickets.submit();
@@ -2543,13 +2327,13 @@ fn dispatch(
                 // Nothing was consumed to make this, so there is nothing to hand back.
                 let _ = table.complete(id, outcome);
             });
-            return pending_for(caller, Kind::FileResult, id, results);
+            return later(Kind::FileResult, id);
         }
-        Cap::WriteFile => {
-            let path = read_string(caller, &params[1])?;
-            let data = read_u8_array(caller, &params[2])?;
+        OP_WRITE_FILE => {
+            let path = text.clone();
+            let data = bytes.clone();
             if !caller.data().grants.write {
-                return settle_now(caller, Kind::Change, denied_write_change(), results);
+                return now(Kind::Change, denied_write_change());
             }
             let here = resolve(caller, &path);
             let id = caller.data().tickets.submit();
@@ -2562,22 +2346,18 @@ fn dispatch(
                 // Nothing was consumed to make this, so there is nothing to hand back.
                 let _ = table.complete(id, outcome);
             });
-            return pending_for(caller, Kind::Change, id, results);
+            return later(Kind::Change, id);
         }
-        Cap::Stat | Cap::LinkStat => {
-            let path = read_string(caller, &params[1])?;
+        OP_STAT | OP_LINK_STAT => {
+            let path = text.clone();
             if !caller.data().grants.read {
-                return settle_now(
-                    caller,
-                    Kind::Stat,
-                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED, 0),
-                    results,
-                );
+                return now(Kind::Stat,
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED, 0));
             }
             // `linkStat` does not follow a symbolic link, which is the whole difference between the
             // two and the reason `Stat` carries `isSymlink` at all.
             let here = resolve(caller, &path);
-            let follow = matches!(cap, Cap::Stat);
+            let follow = op == OP_STAT;
             let md = if follow {
                 std::fs::metadata(&here)
             } else {
@@ -2618,12 +2398,12 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Stat(false, false, false, 0, 0, false, false, stat_fault(&e), 0),
             };
-            return settle_now(caller, Kind::Stat, outcome, results);
+            return now(Kind::Stat, outcome);
         }
-        Cap::ReadDir => {
-            let path = read_string(caller, &params[1])?;
+        OP_READ_DIR => {
+            let path = text.clone();
             if !caller.data().grants.read {
-                return settle_now(caller, Kind::Names, Outcome::Names(None), results);
+                return Ok(fault(FAULT_NOT_GRANTED, "Not granted to this application"));
             }
             let here = resolve(caller, &path);
             let outcome = match std::fs::read_dir(here) {
@@ -2638,15 +2418,17 @@ fn dispatch(
                     names.sort();
                     Outcome::Names(Some(names))
                 }
-                Err(_) => Outcome::Names(None),
+                // No words, so std names the path: "no such directory" and "not a directory" are
+                // the fault's to say.
+                Err(e) => return Ok(fault(fault_of(&e), "")),
             };
-            return settle_now(caller, Kind::Names, outcome, results);
+            return now(Kind::Names, outcome);
         }
-        Cap::Mkdir => {
-            let path = read_string(caller, &params[1])?;
-            let parents = matches!(arg(2), Val::I32(n) if n != 0);
+        OP_MKDIR => {
+            let path = text.clone();
+            let parents = a != 0;
             if !caller.data().grants.write {
-                return settle_now(caller, Kind::Change, denied_write_change(), results);
+                return now(Kind::Change, denied_write_change());
             }
             let here = resolve(caller, &path);
             let made = if parents {
@@ -2661,13 +2443,13 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
-            return settle_now(caller, Kind::Change, outcome, results);
+            return now(Kind::Change, outcome);
         }
-        Cap::Remove => {
-            let path = read_string(caller, &params[1])?;
-            let recursive = matches!(arg(2), Val::I32(n) if n != 0);
+        OP_REMOVE => {
+            let path = text.clone();
+            let recursive = a != 0;
             if !caller.data().grants.write {
-                return settle_now(caller, Kind::Change, denied_write_change(), results);
+                return now(Kind::Change, denied_write_change());
             }
             let p = resolve(caller, &path);
             let is_dir = std::fs::symlink_metadata(&p).map(|m| m.is_dir()).unwrap_or(false);
@@ -2683,13 +2465,13 @@ fn dispatch(
                 Err(e) if e.raw_os_error() == Some(39) => Outcome::Change(FAULT_NOT_EMPTY, e.to_string()),
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
-            return settle_now(caller, Kind::Change, outcome, results);
+            return now(Kind::Change, outcome);
         }
-        Cap::Rename => {
-            let from = read_string(caller, &params[1])?;
-            let to = read_string(caller, &params[2])?;
+        OP_RENAME => {
+            let from = text.clone();
+            let to = bytes.clone();
             if !caller.data().grants.write {
-                return settle_now(caller, Kind::Change, denied_write_change(), results);
+                return now(Kind::Change, denied_write_change());
             }
             let from_p = resolve(caller, &from);
             let to_p = resolve(caller, &to);
@@ -2697,26 +2479,27 @@ fn dispatch(
                 Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
-            return settle_now(caller, Kind::Change, outcome, results);
+            return now(Kind::Change, outcome);
         }
-        Cap::Exec => {
+        OP_EXEC => {
             // A host program, run to completion. `issues/system/0165`.
-            // `read_string` answers bytes here, so both are decoded lossily — a path or an
-            // argument that is not UTF-8 is a case the wac side cannot express anyway.
-            let path = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
-            let argv: Vec<String> = read_string_array(caller, &params[2])?
-                .into_iter()
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .collect();
-            let stdin = read_u8_array(caller, &params[3])?;
-            let env: Vec<String> = read_string_array(caller, &params[4])?
-                .into_iter()
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .collect();
-            let clear_env = matches!(arg(5), Val::I32(n) if n != 0);
-            let inherit = matches!(arg(6), Val::I32(n) if n != 0);
+            // `bytes` is the program, its arguments, its input and the `NAME=value` pairs. Decoded lossily —
+            // a path or an argument that is not UTF-8 is a case the wac side cannot express anyway.
+            let lossy = |v: Vec<Vec<u8>>| -> Vec<String> {
+                v.into_iter().map(|b| String::from_utf8_lossy(&b).into_owned()).collect()
+            };
+            let mut packed = Packed::new(&bytes);
+            let (Some(path), Some(argv), Some(stdin), Some(env)) =
+                (packed.part(), packed.list(), packed.part(), packed.list())
+            else {
+                return Ok(fault(FAULT_OTHER, "the request's arguments do not parse"));
+            };
+            let path = String::from_utf8_lossy(&path).into_owned();
+            let (argv, env) = (lossy(argv), lossy(env));
+            let clear_env = (a & 1) != 0;
+            let inherit = (a & 2) != 0;
             // Empty means "wherever this process already is", matching `spawn`'s `cwd`.
-            let cwd = String::from_utf8_lossy(&read_string(caller, &params[7])?).into_owned();
+            let cwd = String::from_utf8_lossy(&text.clone()).into_owned();
             if !caller.data().grants.run {
                 let refused = Outcome::Exec(
                     0,
@@ -2724,7 +2507,7 @@ fn dispatch(
                     Vec::new(),
                     "Not granted to this application".to_string(),
                 );
-                return settle_now(caller, Kind::Exec, refused, results);
+                return now(Kind::Exec, refused);
             }
             // **On a thread, so the ticket is handed back while the child is still running.**
             // Everything above reads wasm memory and has to happen here; nothing below touches the
@@ -2742,13 +2525,13 @@ fn dispatch(
                 // Nothing was consumed to make this, so there is nothing to hand back.
                 let _ = table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit, cwd));
             });
-            return pending_for(caller, Kind::Exec, id, results);
+            return later(Kind::Exec, id);
         }
-        Cap::Chmod => {
-            let path = read_string(caller, &params[1])?;
-            let mode = match arg(2) { Val::I32(n) => n as u32 & 0o7777, _ => 0 };
+        OP_CHMOD => {
+            let path = text.clone();
+            let mode = (a as i32) as u32 & 0o7777;
             if !caller.data().grants.write {
-                return settle_now(caller, Kind::Change, denied_write_change(), results);
+                return now(Kind::Change, denied_write_change());
             }
             let p = resolve(caller, &path);
             // The whole mode, written as given — unlike `setExecutable` above, which reads the mode and
@@ -2758,13 +2541,13 @@ fn dispatch(
                 Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
-            return settle_now(caller, Kind::Change, outcome, results);
+            return now(Kind::Change, outcome);
         }
-        Cap::SetExecutable => {
-            let path = read_string(caller, &params[1])?;
-            let on = matches!(arg(2), Val::I32(n) if n != 0);
+        OP_SET_EXECUTABLE => {
+            let path = text.clone();
+            let on = a != 0;
             if !caller.data().grants.write {
-                return settle_now(caller, Kind::Change, denied_write_change(), results);
+                return now(Kind::Change, denied_write_change());
             }
             let p = resolve(caller, &path);
             // Read the mode, change the one bit, write it back — the execute bits following read, which
@@ -2782,316 +2565,19 @@ fn dispatch(
                 }
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
-            return settle_now(caller, Kind::Change, outcome, results);
+            return now(Kind::Change, outcome);
         }
-        Cap::OpenInput => {
-            // `openInput("")` is standard input, which is what `packages/box` means by `-` and by an
-            // absent operand. It is a *redirect of this process's* input, so the state is here.
-            let path = read_string(caller, &params[1])?;
-            if path.is_empty() {
-                caller.data_mut().input = None;
-                return settle_now(caller, Kind::Change, Outcome::Change(FAULT_NONE, String::new()), results);
-            }
-            let change = match open_for_read(caller, &path) {
-                Ok(f) => {
-                    caller.data_mut().input = Some(f);
-                    Outcome::Change(FAULT_NONE, String::new())
-                }
-                Err(c) => c,
-            };
-            return settle_now(caller, Kind::Change, change, results);
-        }
-        Cap::OpenOutput => {
-            let path = read_string(caller, &params[1])?;
-            if path.is_empty() {
-                caller.data_mut().output = None;
-                return settle_now(caller, Kind::Change, Outcome::Change(FAULT_NONE, String::new()), results);
-            }
-            if !caller.data().grants.write {
-                return settle_now(
-                    caller,
-                    Kind::Change,
-                    Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted writing".into()),
-                    results,
-                );
-            }
-            let here = resolve(caller, &path);
-            let change = match std::fs::File::create(here) {
-                Ok(f) => {
-                    caller.data_mut().output = Some(f);
-                    Outcome::Change(FAULT_NONE, String::new())
-                }
-                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
-            };
-            return settle_now(caller, Kind::Change, change, results);
-        }
-        Cap::OutputError => {
-            // Empty means the output is fine, which is what a caller checks for. It is a separate
-            // capability rather than `write`'s answer because a buffered write fails *later* than the
-            // call that made it.
-            let why = caller.data().output_error.clone();
-            return settle_now(caller, Kind::Str, Outcome::Str(why.into_bytes()), results);
-        }
-        Cap::CloseFeed => {
+        OP_CLOSE_FEED => {
             // Ends a child's input **without stopping it**: a program that reads to the end before
             // answering — `wc` is the obvious one — needs the end while it is still running.
-            let h = match arg(1) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
+            let h = a as i32;
             if let Some(c) = child_of(caller, h) {
                 c.stdin.finish();
             }
         }
-        Cap::Interrupted => {
-            // **Nobody can ask this host to interrupt, so the answer is no** — and that is the answer
-            // rather than a stub. `Core.askInterrupt` is answered by whoever owns the keyboard; here
-            // the terminal belongs to whatever started the program, and over ssh to `sshd`, which is a
-            // wac program on the far side of an encrypted socket. Only a page can say yes, because
-            // there the keydown listener and the code servicing this bridge are the same thread.
-            // Direct, not a ticket: `askInterrupt` is `fn[i32()]` in `platform.wac`, the same shape as
-            // `waitAny` below. Settling a ticket here would answer a `Pending<i32>` the caller never
-            // asked for.
-            results[0] = Val::I32(0);
-        }
-        Cap::WaitAny => {
-            let ids = read_i32_array(caller, &params[1])?;
-            let millis = match arg(2) {
-                Val::I32(n) => n,
-                _ => -1,
-            };
-            let table = caller.data().tickets.clone();
-            results[0] = Val::I32(table.wait_any(&ids, millis));
-        }
-        Cap::Resolve(kind) => {
-            let id = match arg(1) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            // Collected, so nothing can be given up on any more and the handle note goes. Kept
-            // until here rather than dropped at completion, because the window between the two is
-            // the whole of `issues/system/0308b`.
-            caller.data().reading.lock().unwrap().remove(&id);
-            let outcome = caller.data().tickets.take(id).ok_or_else(|| {
-                // A ticket resolves once. Asking twice, or asking for one that was cancelled, is a
-                // program error rather than a value this can invent.
-                wasmtime::Error::msg(format!("ticket {id} has no outcome to collect"))
-            })?;
-            results[0] = match (kind, outcome) {
-                (Kind::I32, Outcome::I32(v)) => Val::I32(v),
-                (Kind::I64, Outcome::I64(v)) => Val::I64(v),
-                (Kind::Bytes, Outcome::Bytes(v)) => make_u8_array(caller, &v)?,
-                (Kind::Str, Outcome::Str(v)) => make_string(caller, &v)?,
-                (Kind::BytesOpt, Outcome::BytesOpt(None)) => Val::AnyRef(None),
-                (Kind::BytesOpt, Outcome::BytesOpt(Some(v))) => make_u8_array(caller, &v)?,
-                (Kind::Bool, Outcome::Bool(b)) => Val::I32(if b { 1 } else { 0 }),
-                (Kind::Captured, Outcome::Captured(out, err, cut)) => {
-                    make_captured(caller, &out, &err, cut)?
-                }
-                (Kind::Exec, Outcome::Exec(status, out, err, e)) => {
-                    make_exec(caller, status, &out, &err, &e)?
-                }
-                (Kind::Change, Outcome::Change(fault, msg)) => make_change(caller, fault, &msg)?,
-                (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
-                    make_file_result(caller, ok, &bytes, &err, fault)?
-                }
-                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, exec, fault, mode)) => {
-                    make_stat(caller, e, f, d, size, m, link, exec, fault, mode)?
-                }
-                (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
-                (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
-                (Kind::Socket, Outcome::Socket(h, e, peer, port, fault)) => {
-                    make_socket(caller, h, &e, &peer, port, fault)?
-                }
-                (Kind::Datagram, Outcome::Datagram(bytes, peer, port, e)) => {
-                    make_datagram(caller, &bytes, &peer, port, &e)?
-                }
-                (Kind::Child, Outcome::Child(h, eh, fh, e)) => make_child(caller, h, eh, fh, &e)?,
-                // A `Read` has three cases and the outcome says which: bytes are `Data`, no bytes are
-                // `End`, and a string is `Failed`. Empty-is-the-end is the queue's own rule — see
-                // `streams.rs` — and collapsing it into `Data([])` would tell a reader there was
-                // nothing *this time* rather than that there will never be more.
-                (Kind::Read, Outcome::Bytes(bytes)) => {
-                    if bytes.is_empty() {
-                        make_read_end(caller)?
-                    } else {
-                        make_read_data(caller, &bytes)?
-                    }
-                }
-                (Kind::Read, Outcome::Str(why)) => {
-                    make_read_failed(caller, &String::from_utf8_lossy(&why))?
-                }
-                (k, o) => {
-                    return Err(wasmtime::Error::msg(format!(
-                        "ticket {id} settled as {o:?}, which is not a {k:?}"
-                    )))
-                }
-            };
-        }
-        Cap::Settled => {
-            let id = match arg(1) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            let done = caller.data().tickets.is_done(id);
-            results[0] = Val::I32(if done { 1 } else { 0 });
-        }
-        Cap::Discard => {
-            let id = match arg(1) {
-                Val::I32(n) => n,
-                _ => 0,
-            };
-            // **What the ticket already held goes back where it came from.** `drop` is what a
-            // guest's `Pending.cancel` reaches, and an answer that landed between the caller giving
-            // up and this call has come off a stream once — discarding it lost the bytes every time,
-            // 0 of 10 on both hosts. `issues/system/0308b`.
-            //
-            // Which handle it was reading is the thing an id does not say, and `reading` is why this
-            // can ask. Into the **queue** for a child's stream, because another reader may be parked
-            // on it and a side table is somewhere it would never look; into the per-handle table for
-            // a socket, which has no queue to go back to. That is `0307b`'s rule, unchanged.
-            let held = caller.data().tickets.discard(id);
-            let whose = caller.data().reading.lock().unwrap().remove(&id);
-            // **An accepted connection is handed on, not put down.** There is nowhere to put a
-            // socket back — it is already in the table with a client attached — so it goes to the
-            // next accept still waiting on that listener, exactly as the accept thread does when it
-            // finds its own ticket gone. `issues/system/0310b`.
-            if let (Some(Outcome::Socket(slot, _, _, _, _)), Some(listener)) = (&held, whose) {
-                if *slot >= 0 {
-                    let next = caller.data().accepting.lock().unwrap()
-                        .get_mut(&listener).and_then(|q| q.pop_front());
-                    match (next, held.clone()) {
-                        (Some(other), Some(answer)) => {
-                            let _ = caller.data().tickets.complete(other, answer);
-                            return Ok(());
-                        }
-                        // Nobody waiting yet — the retry comes *after* the give-up in this
-                        // ordering, so it waits here for it rather than being dropped.
-                        (None, Some(answer)) => {
-                            caller.data().parked_accepts.lock().unwrap()
-                                .entry(listener).or_default().push_back(answer);
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            // **An abandoned `connect` is closed, not handed on.** The other capabilities here take
-            // something a *later* call wants — bytes, a connection off the backlog — so the answer
-            // is to pass it along. Nothing else wants this one: it is a line this program dialled
-            // and then stopped caring about. Left alone the handle never leaves the table and the
-            // peer holds an open connection to nobody, which the probe sees as a read that never
-            // ends. Told rather than left guessing. `issues/system/0310b`.
-            //
-            // An accept is distinguished by having a listener noted against it, and was handled
-            // above; a socket answer with no note is a dial.
-            if let (Some(Outcome::Socket(slot, _, _, _, _)), None) = (&held, whose) {
-                if *slot >= 0 {
-                    if let Some(Sock::Open(s)) = socket_at(caller, *slot) {
-                        let _ = s.shutdown(std::net::Shutdown::Both);
-                    }
-                    caller.data().handles.lock().unwrap().close(*slot);
-                }
-            }
-            if let (Some(Outcome::Bytes(bytes)), Some(h)) = (held, whose) {
-                if !bytes.is_empty() {
-                    if let Some(q) = child_stream(caller, h) {
-                        q.unread(bytes);
-                    } else {
-                        caller.data().pushback.lock().unwrap().entry(h).or_default().extend(bytes);
-                    }
-                }
-            }
-        }
-        // The whole of D6 in one arm: a runtime that answered zero here would make every program
-        // that used the capability wrong in a way nothing could see.
-        Cap::NotImplemented(name) => {
-            return Err(wasmtime::Error::msg(format!(
-                "{name} is not implemented in the native runtime yet"
-            )))
-        }
+        _ => return Ok(fault(FAULT_UNSUPPORTED, &format!("request {op} is not one this host serves"))),
     }
-    Ok(())
-}
-
-/// A `Pending<T>` for a ticket that is already settled.
-///
-/// Work a host does instantly still gets a ticket, because the *shape* is what the program sees: a
-/// caller may hold it, ask `isDone`, put it in a `waitAny` list, or never collect it at all. Answering
-/// the value directly would be a different type.
-fn settle_now(
-    caller: &mut Caller<'_, Host>,
-    kind: Kind,
-    outcome: Outcome,
-    results: &mut [Val],
-) -> Result<(), wasmtime::Error> {
-    let id = caller.data().tickets.submit();
-    // Submitted a line ago and nobody has had the chance to give it up, so this never comes back.
-    let _ = caller.data().tickets.complete(id, outcome);
-    pending_for(caller, kind, id, results)
-}
-
-/// Build the `Pending<T>` that names ticket `id`.
-fn pending_for(
-    caller: &mut Caller<'_, Host>,
-    kind: Kind,
-    id: i32,
-    results: &mut [Val],
-) -> Result<(), wasmtime::Error> {
-    let hooks = caller.data().pendings.get(&kind).cloned().ok_or_else(|| {
-        wasmtime::Error::msg(format!("this program has no Pending<{kind:?}> to answer with"))
-    })?;
-    let ctor = export_func(caller, &hooks.ctor)?;
-    let built = call_dyn(
-        caller,
-        &ctor,
-        &[Val::I32(id), hooks.resolve.clone(), hooks.settled.clone(), hooks.drop.clone()],
-    )?;
-    results[0] = built.into_iter().next().unwrap_or(Val::I32(0));
-    Ok(())
-}
-
-// ── The `Read` enum ───────────────────────────────────────────────────────────
-//
-// `readChunk` answers `Read`, which is `Data(u8[]) | End | Failed(string)`. An enum crosses through
-// `$bind$e_<Enum>_<Case>_new`, so the three cases are three exports and there is nothing to encode.
-//
-// The three are separate on purpose and this runtime keeps them separate: "no bytes right now",
-// "there will never be any more", and "the read failed" are three different things, and a host that
-// collapsed the third into the second would make every reader treat a broken pipe as a clean end.
-
-/// The export that builds one `Read` variant — **asked for, not spelled**.
-///
-/// These three names were written out here, which is the one thing `manifest.rs` exists to prevent:
-/// the mangling had three copies, and two of them would keep working wrongly the day it changed.
-/// The manifest describes enum variants now, so this asks. issues/system/0141.
-fn read_ctor(caller: &mut Caller<'_, Host>, variant: &str) -> Result<String, wasmtime::Error> {
-    caller.data().read_ctors.get(variant).cloned().ok_or_else(|| {
-        wasmtime::Error::msg(format!("the manifest names no constructor for Read.{variant}"))
-    })
-}
-
-fn make_read_data(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, wasmtime::Error> {
-    let arr = make_u8_array(caller, bytes)?;
-    let name = read_ctor(caller, "Data")?;
-    let f = export_func(caller, &name)?;
-    let out = call_dyn(caller, &f, &[arr])?;
-    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.Data answered nothing"))
-}
-
-fn make_read_end(caller: &mut Caller<'_, Host>) -> Result<Val, wasmtime::Error> {
-    let name = read_ctor(caller, "End")?;
-    let f = export_func(caller, &name)?;
-    let out = call_dyn(caller, &f, &[])?;
-    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.End answered nothing"))
-}
-
-fn make_read_failed(caller: &mut Caller<'_, Host>, why: &str) -> Result<Val, wasmtime::Error> {
-    let s = make_string(caller, why.as_bytes())?;
-    let name = read_ctor(caller, "Failed")?;
-    let f = export_func(caller, &name)?;
-    let out = call_dyn(caller, &f, &[s])?;
-    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.Failed answered nothing"))
+    Ok(Reply::Nothing)
 }
 
 /// Bytes from the operating system's own generator.
@@ -3111,51 +2597,12 @@ fn random_bytes(n: usize) -> Result<Vec<u8>, wasmtime::Error> {
     Ok(out)
 }
 
-/// Where output goes: into the innermost frame if there is one, or to the terminal.
-///
-/// One place rather than four, because the routing rule is the same for `log`, `warn`, `write` and
-/// `writeErr` and the first version of `pushChild` in the JavaScript host captured only `write` — which
-/// lost most of `packages/box`'s applets silently, since thirty of them use `log`.
+/// Where output goes: a parent's queue for a spawned child, or the terminal. One place for both streams.
 fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
-    if let Some(f) = caller.data_mut().frames.last_mut() {
-        if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
-        return true;
-    }
     if caller.data().out_closed[to_stderr as usize] {
-        caller.data_mut().output_error = String::new();
         return false;
     }
-    // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
-    // the program saying *my output is a file now*, which is not standard output — so whether
-    // something spawned this program is a fact about the stream it no longer writes to.
-    //
-    // These were the other way round until 2026-08-29, under a comment arguing that a child's queues
-    // came first *"because a child that was told to write to a file was told so by its own
-    // `openOutput`"* — which describes the case the branch above it then skipped. A spawned child's
-    // redirect never ran: `box cp README.md out` printed the file to standard output and left `out`
-    // empty, exiting 0. `issues/system/0277c`.
-    //
-    // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
-    // `Frame`'s capture, and `packages/platform`'s frame (gone since design/system/0013 step 5) stated
-    // the answer: *"`openOutput` redirects, as it does on the host: a child that says its output is a
-    // file gets a file."*
-    if !to_stderr {
-        // A redirected output is only standard output's: the error stream is where a program says
-        // what went wrong, and sending that to the file being written would hide it.
-        let h = caller.data_mut();
-        if let Some(f) = h.output.as_mut() {
-            use std::io::Write;
-            return match f.write_all(bytes) {
-                Ok(()) => true,
-                Err(e) => {
-                    h.output_error = e.to_string();
-                    false
-                }
-            };
-        }
-    }
-    // A spawned child writes to its parent's queues, never to the terminal — when it has not
-    // redirected itself above.
+    // A spawned child writes to its parent's queues, never to the terminal.
     if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherit_out) {
         let to = if to_stderr { streams.stderr.clone() } else { streams.stdout.clone() };
         return to.write(bytes);
@@ -3196,73 +2643,12 @@ fn denied_write_change() -> Outcome {
     Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted writing".into())
 }
 
-fn make_file_result(
-    caller: &mut Caller<'_, Host>,
-    ok: bool,
-    bytes: &[u8],
-    error: &str,
-    fault: i32,
-) -> Result<Val, wasmtime::Error> {
-    // The array before the string: both use the staging buffer, and building one while holding the
-    // other would overwrite it.
-    let b = make_u8_array(caller, bytes)?;
-    let e = make_string(caller, error.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_FileResult_of")?;
-    let built = call_dyn(caller, &f, &[Val::I32(if ok { 1 } else { 0 }), b, e, Val::I32(fault)])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("FileResult.of answered nothing"))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn make_stat(
-    caller: &mut Caller<'_, Host>,
-    exists: bool,
-    is_file: bool,
-    is_dir: bool,
-    size: i64,
-    modified: i64,
-    is_symlink: bool,
-    is_executable: bool,
-    fault: i32,
-    mode: i32,
-) -> Result<Val, wasmtime::Error> {
-    let f = export_func(caller, "$bind$sm_Stat_of")?;
-    let built = call_dyn(
-        caller,
-        &f,
-        &[
-            Val::I32(exists as i32),
-            Val::I32(is_file as i32),
-            Val::I32(is_dir as i32),
-            Val::I64(size),
-            Val::I64(modified),
-            Val::I32(is_symlink as i32),
-            Val::I32(is_executable as i32),
-            Val::I32(fault),
-            Val::I32(mode),
-        ],
-    )?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Stat.of answered nothing"))
-}
-
-/// A `string[]`, built one element at a time.
-///
-/// `$bind$arr_string_new(n, fill)` wants a value to fill with, so an empty string is made first and
-/// handed in — the alternative, `new0`, exists for the empty array and cannot size one.
-fn make_string_array(caller: &mut Caller<'_, Host>, items: &[Vec<u8>]) -> Result<Val, wasmtime::Error> {
-    let empty = make_string(caller, b"")?;
-    let new = export_func(caller, "$bind$arr_string_new")?;
-    let made = call_dyn(caller, &new, &[Val::I32(items.len() as i32), empty])?;
-    let arr = made.into_iter().next().ok_or_else(|| wasmtime::Error::msg("arr_string_new answered nothing"))?;
-    let set = export_func(caller, "$bind$arr_string_set")?;
-    for (i, item) in items.iter().enumerate() {
-        let s = make_string(caller, item)?;
-        call_dyn(caller, &set, &[arr.clone(), Val::I32(i as i32), s])?;
-    }
-    Ok(arr)
-}
-
 /// Faults, matching `FAULT_*` in `platform.wac` and `host/faults.ts`.
 const FAULT_NONE: i32 = 0;
+/// What a capability this host does not have answers — std's `Unsupported`.
+const FAULT_UNSUPPORTED: i32 = 9;
+/// The refusal's words, which std derives from `FAULT_NOT_GRANTED` the same way.
+const NOT_GRANTED: &str = "Not granted to this application";
 const FAULT_NOT_FOUND: i32 = 1;
 const FAULT_DENIED: i32 = 2;
 const FAULT_EXISTS: i32 = 3;
@@ -3308,14 +2694,9 @@ fn os_path(bytes: &[u8]) -> std::path::PathBuf {
     std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
 }
 
-/// A path, resolved against the innermost `pushChild` frame's directory.
+/// A path, resolved against the directory this program's parent gave it, when it gave one.
 ///
-/// **This is the frame's whole second job** and it is easy to miss: `platform.wac` says of `pushChild`
-/// that between it and `popChild` "every path is taken relative to `cwd`", and answering the frame's
-/// directory from `cli.cwd()` alone is not that — it tells a program where it is and then resolves its
-/// paths somewhere else.
-///
-/// The failure it caused is worth recording because it was invisible in the obvious tests. `cat f`
+/// The failure this once caused is worth recording because it was invisible in the obvious tests. `cat f`
 /// worked and `cd sub; cat f` said "No such file or directory", because the shell hands a *relative*
 /// path down and expects the capability to resolve it — so every applet reading a named file broke the
 /// moment a script changed directory, and every test that did not `cd` passed. It was found by running
@@ -3329,11 +2710,7 @@ fn resolve(caller: &mut Caller<'_, Host>, path: &[u8]) -> std::path::PathBuf {
     if p.is_absolute() {
         return p;
     }
-    match caller.data().frames.last() {
-        Some(f) if !f.cwd.is_empty() => os_path(&f.cwd).join(p),
-        _ if !caller.data().cwd.is_empty() => os_path(&caller.data().cwd).join(p),
-        _ => p,
-    }
+    if caller.data().cwd.is_empty() { p } else { os_path(&caller.data().cwd).join(p) }
 }
 
 /// Which `FAULT_*` an operating-system error is — `host/faults.ts`'s `faultOf`, in Rust.
@@ -3393,14 +2770,6 @@ fn stat_fault(e: &std::io::Error) -> i32 {
 }
 
 /// Open a file for reading, or the `Change` that says why not.
-fn open_for_read(caller: &mut Caller<'_, Host>, path: &[u8]) -> Result<std::fs::File, Outcome> {
-    if !caller.data().grants.read {
-        return Err(Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted reading".into()));
-    }
-    let here = resolve(caller, path);
-    std::fs::File::open(here).map_err(|e| Outcome::Change(fault_of(&e), e.to_string()))
-}
-
 // ── Children ──────────────────────────────────────────────────────────────────
 
 /// The child a handle belongs to, or None if it names something else.
@@ -3442,17 +2811,14 @@ fn keep(caller: &Caller<'_, Host>, what: Handle) -> i32 {
 /// `platform.wac` gives -2 its own meaning for a reason it states: without it "a world that cannot
 /// spawn made every spawnable name *fail* rather than fall through", which hid `packages/box`'s own
 /// `wc` behind a `WACPATH` lookup that could never work. A missing capability is not a broken program.
-fn no_spawn_here(
-    caller: &mut Caller<'_, Host>,
-    results: &mut [Val],
-) -> Result<(), wasmtime::Error> {
-    settle_now(caller, Kind::Child, Outcome::Child(-2, -2, -2, String::new()), results)
+fn no_spawn_here() -> Result<Reply, wasmtime::Error> {
+    now(Kind::Child, Outcome::Child(-2, -2, -2, String::new()))
 }
 
 /// Everything needed to run a module we were handed, or why it cannot be run.
 ///
 /// The manifest is read from the module rather than from beside it, which is the whole reason one
-/// artefact can be spawned: a host given bytes can find the field order of `Core`, the callback
+/// artefact can be spawned: a host given bytes can find `__wacHost`'s signatures, the callback
 /// signatures and the grants without being told anything else. `native.ts` says why that must not be
 /// hardcoded anywhere.
 ///
@@ -3495,8 +2861,7 @@ fn spawn_instance(
     // `INHERIT_OUT`: the child writes this process's streams rather than the queues below. Always
     // false for `spawnSelf`, which has no such flag — only `spawn` grew one.
     inherit_out: bool,
-    results: &mut [Val],
-) -> Result<(), wasmtime::Error> {
+) -> Result<Reply, wasmtime::Error> {
 
     // **A ceiling of the parent's own, intersected here rather than trusted.** `platform.wac`: "a
     // parent built without `--allow-net` cannot hand `GRANT_NET` to anyone; asking is not an error,
@@ -3558,13 +2923,57 @@ fn spawn_instance(
         exit.set(code);
     });
 
-    settle_now(
-        caller,
-        Kind::Child,
-        Outcome::Child(handle, err_handle, fs_handle, String::new()),
-        results,
-    )
+    now(Kind::Child, Outcome::Child(handle, err_handle, fs_handle, String::new()))
 }
+
+/// The requests, numbered as `std/platform.wac`'s `OP_*` numbers them.
+const OP_DROP: i32 = 0;
+/// `Launch.detached`, in a spawn's `b`: dropping the child's ticket does not stop it.
+const DETACHED: i64 = 4;
+const OP_NOW_MILLIS: i32 = 1;
+const OP_MONOTONIC_NANOS: i32 = 2;
+const OP_RANDOM_BYTES: i32 = 3;
+const OP_ARG_COUNT: i32 = 6;
+const OP_ARG: i32 = 7;
+const OP_ENV: i32 = 8;
+const OP_READ_FILE: i32 = 9;
+const OP_WRITE_FILE: i32 = 10;
+const OP_READ_STDIN: i32 = 11;
+const OP_WRITE_STDOUT: i32 = 12;
+const OP_STAT: i32 = 13;
+const OP_READ_DIR: i32 = 14;
+const OP_MKDIR: i32 = 15;
+const OP_REMOVE: i32 = 16;
+const OP_RENAME: i32 = 17;
+const OP_READ_CHUNK: i32 = 19;
+const OP_CONNECT: i32 = 21;
+const OP_LISTEN: i32 = 22;
+const OP_ACCEPT: i32 = 23;
+const OP_RECV: i32 = 24;
+const OP_SEND: i32 = 25;
+const OP_CLOSE_SOCKET: i32 = 26;
+const OP_SPAWN: i32 = 27;
+const OP_EXIT_CODE: i32 = 28;
+const OP_CLOSE_FEED: i32 = 29;
+const OP_SLEEP_MILLIS: i32 = 30;
+const OP_CWD: i32 = 41;
+const OP_LINK_STAT: i32 = 47;
+const OP_WRITE_STDERR: i32 = 48;
+const OP_SPAWN_SELF: i32 = 49;
+const OP_SET_EXECUTABLE: i32 = 52;
+const OP_BIND_DATAGRAM: i32 = 53;
+const OP_RECEIVE_FROM: i32 = 54;
+const OP_SEND_TO: i32 = 55;
+const OP_CLOSE_SEND: i32 = 57;
+const OP_EXEC: i32 = 59;
+const OP_CHMOD: i32 = 60;
+const OP_OPEN_FILE: i32 = 61;
+const OP_CLOSE_FILE: i32 = 62;
+const OP_CLOSE_OUTPUT: i32 = 63;
+const OP_LOAD: i32 = 64;
+const OP_CALL: i32 = 65;
+const OP_UNLOAD: i32 = 66;
+const OP_VALIDATE: i32 = 67;
 
 /// `GRANT_*`, matching `platform.wac`.
 const GRANT_READ: i32 = 1;
@@ -3576,131 +2985,41 @@ const GRANT_ENV: i32 = 8;
 /// bit to narrow with. `issues/system/0264c`.
 const GRANT_RUN: i32 = 16;
 
-/// A `u8[][]` as a list of byte strings, element by element.
-fn read_bytes_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u8>>, wasmtime::Error> {
-    let len_fn = export_func(caller, "$bind$arr_u8Arr_len")?;
-    let get = export_func(caller, "$bind$arr_u8Arr_get")?;
-    let out = call_dyn(caller, &len_fn, std::slice::from_ref(a))?;
-    let n = match out.first() {
-        Some(Val::I32(n)) => *n,
-        _ => return Err(wasmtime::Error::msg("$bind$arr_u8Arr_len did not answer an i32")),
-    };
-    let mut items = Vec::with_capacity(n.max(0) as usize);
-    for i in 0..n {
-        let got = call_dyn(caller, &get, &[a.clone(), Val::I32(i)])?;
-        let inner = got.into_iter().next().unwrap_or(Val::I32(0));
-        items.push(read_u8_array(caller, &inner)?);
+/// A request's packed `bytes`: parts that are a little-endian `u32` length then the bytes, and lists that
+/// are a `u32` count then their parts — design/system/0013's request table.
+struct Packed<'a> {
+    b: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Packed<'a> {
+    fn new(b: &'a [u8]) -> Self {
+        Packed { b, at: 0 }
     }
-    Ok(items)
-}
 
-/// `Datagram(bytes, peer, port, error)`, through the module's own constructor.
-fn make_datagram(
-    caller: &mut Caller<'_, Host>,
-    bytes: &[u8],
-    peer: &str,
-    port: i32,
-    error: &str,
-) -> Result<Val, wasmtime::Error> {
-    let body = make_u8_array(caller, bytes)?;
-    let p = make_string(caller, peer.as_bytes())?;
-    let e = make_string(caller, error.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_Datagram_of")?;
-    let built = call_dyn(caller, &f, &[body, p, Val::I32(port), e])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Datagram.of answered nothing"))
-}
-
-fn make_socket(
-    caller: &mut Caller<'_, Host>,
-    handle: i32,
-    error: &str,
-    peer: &str,
-    port: i32,
-    fault: i32,
-) -> Result<Val, wasmtime::Error> {
-    let e = make_string(caller, error.as_bytes())?;
-    let p = make_string(caller, peer.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_HostSocket_of")?;
-    let built = call_dyn(caller, &f, &[Val::I32(handle), e, p, Val::I32(port), Val::I32(fault)])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("HostSocket.of answered nothing"))
-}
-
-fn make_child(
-    caller: &mut Caller<'_, Host>,
-    handle: i32,
-    err_handle: i32,
-    fs_handle: i32,
-    error: &str,
-) -> Result<Val, wasmtime::Error> {
-    let e = make_string(caller, error.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_HostChild_of")?;
-    let built = call_dyn(
-        caller,
-        &f,
-        &[Val::I32(handle), Val::I32(err_handle), Val::I32(fs_handle), e],
-    )?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("HostChild.of answered nothing"))
-}
-
-fn make_change(caller: &mut Caller<'_, Host>, fault: i32, message: &str) -> Result<Val, wasmtime::Error> {
-    let m = make_string(caller, message.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_Change_of")?;
-    let built = call_dyn(caller, &f, &[Val::I32(fault), m])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Change.of answered nothing"))
-}
-
-/// A `string[]` as a list of byte strings.
-///
-/// Element by element through `$bind$arr_string_get`, because a string array is references and the
-/// staging buffer carries bytes: there is no `arr_string_to_mem` and there could not be a useful one.
-fn read_string_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u8>>, wasmtime::Error> {
-    let len_fn = export_func(caller, "$bind$arr_string_len")?;
-    let get = export_func(caller, "$bind$arr_string_get")?;
-    let out = call_dyn(caller, &len_fn, std::slice::from_ref(a))?;
-    let n = match out.first() {
-        Some(Val::I32(n)) => *n,
-        _ => return Err(wasmtime::Error::msg("$bind$arr_string_len did not answer an i32")),
-    };
-    let mut items = Vec::with_capacity(n.max(0) as usize);
-    for i in 0..n {
-        let got = call_dyn(caller, &get, &[a.clone(), Val::I32(i)])?;
-        let s = got.into_iter().next().unwrap_or(Val::I32(0));
-        items.push(read_string(caller, &s)?);
+    fn u32(&mut self) -> Option<usize> {
+        let w = self.b.get(self.at..self.at + 4)?;
+        self.at += 4;
+        Some(u32::from_le_bytes([w[0], w[1], w[2], w[3]]) as usize)
     }
-    Ok(items)
+
+    fn part(&mut self) -> Option<Vec<u8>> {
+        let n = self.u32()?;
+        let v = self.b.get(self.at..self.at.checked_add(n)?)?.to_vec();
+        self.at += n;
+        Some(v)
+    }
+
+    fn list(&mut self) -> Option<Vec<Vec<u8>>> {
+        let n = self.u32()?;
+        (0..n).map(|_| self.part()).collect()
+    }
 }
 
-/// `Exec.of(status, stdout, stderr, error)`.
-fn make_exec(
-    caller: &mut Caller<'_, Host>,
-    status: i32,
-    out: &[u8],
-    err: &[u8],
-    error: &str,
-) -> Result<Val, wasmtime::Error> {
-    // Both arrays and the string before the constructor: each uses the staging buffer, so building
-    // one while holding another would overwrite it.
-    let o = make_u8_array(caller, out)?;
-    let e = make_u8_array(caller, err)?;
-    let msg = make_string(caller, error.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_Exec_of")?;
-    let built = call_dyn(caller, &f, &[Val::I32(status), o, e, msg])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Exec.of answered nothing"))
-}
-
-fn make_captured(
-    caller: &mut Caller<'_, Host>,
-    out: &[u8],
-    err: &[u8],
-    truncated: bool,
-) -> Result<Val, wasmtime::Error> {
-    // Both arrays before the constructor: each one uses the staging buffer, so building one while
-    // holding the other would overwrite it.
-    let o = make_u8_array(caller, out)?;
-    let e = make_u8_array(caller, err)?;
-    let f = export_func(caller, "$bind$sm_Captured_of")?;
-    let built = call_dyn(caller, &f, &[o, e, Val::I32(if truncated { 1 } else { 0 })])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Captured.of answered nothing"))
+/// `spawn`'s and `spawnSelf`'s `bytes`: the module (empty for this program), then the arguments.
+fn spawn_parts(bytes: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+    let mut p = Packed::new(bytes);
+    Some((p.part()?, p.list()?))
 }
 
 /// Exactly the bytes given, which is what `write` means. Answers whether they landed.

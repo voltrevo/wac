@@ -47,7 +47,7 @@
 // than half of what is measured here. Dropping the four trap cases costs two points: the bounds checks
 // in `value.wac` trap, and a trap in `main` would end the run, so each has its own export.
 
-import { Core, Cli, Sys, Env, Files, Modules, Output, Procs } from "std";
+import { Sys, Env, Files, Modules, Output, Procs } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/json/test/cov_exercise.wac";

@@ -7,11 +7,11 @@
 // Deno exactly (`native/spike-v8`). design/lang/0003 records the decision — **rusty_v8 is the
 // primary platform** — and this is the beginning of the host that decision needs.
 //
-// **What runs here, and what does not.** This slice builds `Core` and answers `log` and `warn`,
-// which is the whole capability path end to end: an import object made in Rust, a dispatcher that
-// reads a wac string out of the module's own memory, a capability struct built through the module's
-// `$bind$` exports, and `main` called with it. `Cli` — files, sockets, children, and the ticket
-// table that makes `.wait()` work — is the next slice and is declined by name rather than silently.
+// **The flat ABI** (design/system/0013 step 6). A program exports `__wacHost`, which this host calls
+// with four funcrefs — `request`, `waitAny`, `exitWith`, `interrupted` — and `__wacAnswered`, through
+// which every answer arrives, from inside `request` or `waitAny` only. A request is a number and
+// plain values; an answer is one shape. So the host builds no wac value but a string and a `u8[]`,
+// and std decodes the rest.
 //
 // The one line of JavaScript is `new WebAssembly.Instance`, because that is a JS constructor and V8
 // exposes no C++ equivalent. Nothing of the program runs in it.
@@ -28,8 +28,8 @@ use serde::Deserialize;
 
 // ---------------------------------------------------------------------------------------------
 // The manifest, which is the compiler's description of the module beside it. `packages/platform/
-// native.ts` writes it; the field order in a struct is the *construction* order and is the reason
-// this file does not hardcode what `Core` contains.
+// native.ts` writes it. The host reads the callback signatures `__wacHost` takes, the exports, and
+// one method — `__WacHost.outstanding`.
 
 #[derive(Deserialize, Clone, Copy, Default)]
 struct Grants {
@@ -41,7 +41,7 @@ struct Grants {
     env: bool,
     #[serde(default)]
     net: bool,
-    /// Running a host program — `Cli.exec`. Separate from `spawn`'s authority on purpose: a host
+    /// Running a host program — `procs.exec`. Separate from `spawn`'s authority on purpose: a host
     /// that will start a confined wasm module must be able to refuse a host binary without
     /// refusing both. `issues/system/0165`.
     #[serde(default)]
@@ -75,25 +75,7 @@ struct Callback {
 #[derive(Deserialize)]
 struct Struct {
     name: String,
-    fields: Vec<Field>,
     methods: Vec<Method>,
-    #[serde(default)]
-    variants: Vec<Variant>,
-}
-
-/// One variant of an enum, and the export that builds it.
-#[derive(Deserialize)]
-struct Variant {
-    name: String,
-    #[serde(rename = "make")]
-    make: String,
-}
-
-#[derive(Deserialize)]
-struct Field {
-    name: String,
-    #[serde(rename = "type")]
-    ty: String,
 }
 
 #[derive(Deserialize)]
@@ -118,15 +100,6 @@ impl Manifest {
         self.structs.iter().find(|s| s.name == name)
     }
 
-    /// The export that builds `<enum>.<variant>` — what a host would otherwise spell itself.
-    fn variant_ctor(&self, enum_name: &str, variant: &str) -> Option<&str> {
-        self.find_struct(enum_name)?
-            .variants
-            .iter()
-            .find(|v| v.name == variant)
-            .map(|v| v.make.as_str())
-    }
-
     /// The index of the callback signature spelled `ty` — how a field names its dispatcher.
     fn callback_index(&self, ty: &str) -> Option<usize> {
         self.callbacks.iter().position(|c| c.ty == ty)
@@ -134,17 +107,21 @@ impl Manifest {
 }
 
 // ---------------------------------------------------------------------------------------------
-// What a slot means.
+// What a slot means, and what a request asks.
 //
 // A funcref reaches the guest as a slot number in a per-signature registry: the module calls
-// `wac.cb<j>(slot, …)` and the host decides what that slot *is*. The mapping from a capability
-// struct's field to a behaviour is here, in one place, rather than spread across the dispatcher.
+// `wac.cb<j>(slot, …)` and the host decides what that slot *is*. A program is handed four —
+// `request`, `waitAny`, `exitWith` and `interrupted` (design/system/0013 step 6) — and every
+// capability is a numbered request through the first, mapped to its behaviour by `cap_of_op`.
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Cap {
+    /// The four functions `__wacHost` is handed.
+    Request,
+    WaitAny,
     Exit,
-    Log,
-    Warn,
+    AskInterrupt,
+    /// What each request asks — `OP_*` in `std/platform.wac`.
     ArgCount,
     Arg,
     Write,
@@ -153,26 +130,19 @@ enum Cap {
     NowMillis,
     MonotonicNanos,
     RandomBytes,
-    WaitAny,
     SleepMillis,
     Env,
     Cwd,
-    OpenInput,
     ReadChunk,
-    OpenOutput,
-    OutputError,
     WriteFile,
     Stat,
     LinkStat,
     ReadDir,
     ReadStdin,
-    AskInterrupt,
     Spawn,
     SpawnOther,
     ExitCode,
     CloseFeed,
-    PushChild,
-    PopChild,
     Connect,
     Listen,
     Accept,
@@ -191,110 +161,88 @@ enum Cap {
     Mkdir,
     SetExecutable,
     Chmod,
-    /// `Cli.exec` — a host program, run to completion.
     Exec,
-    /// `Cli.load`, `Cli.call`, `Cli.unload` — a module in this isolate. `issues/system/0240c`.
     Load,
     Call,
     Unload,
     Validated,
-    /// `Pending<T>.resolve` — the guest asking for the answer it was promised.
-    ResolveI32,
-    ResolveI64,
-    ResolveText,
-    ResolveBytes,
-    ResolveFile,
-    ResolveChange,
-    ResolveStat,
-    ResolveNames,
-    ResolveSocket,
-    /// `Pending<Datagram>`, for `receiveFrom`. Registered like any other, and its absence was not an
-    /// error until a program asked for one — which is exactly how it went missing.
-    ResolveDatagram,
-    ResolveRead,
-    ResolveBool,
-    ResolveCaptured,
-    /// `Pending<Exec>` — `Cli.exec`'s answer.
-    ResolveExec,
-    ResolveChild,
-    /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
-    /// over, so `settled` is always true and `drop` has nothing to release.
-    Settled,
-    Drop,
     Unsupported,
 }
 
-fn capability_for(owner: &str, field: &str) -> Cap {
-    match (owner, field) {
-        ("Core", "log") => Cap::Log,
-        ("Core", "warn") => Cap::Warn,
-        ("Core", "nowMillis") => Cap::NowMillis,
-        ("Core", "monotonicNanos") => Cap::MonotonicNanos,
-        ("Core", "randomBytes") => Cap::RandomBytes,
-        ("Core", "waitAny") => Cap::WaitAny,
-        ("Core", "sleepMillis") => Cap::SleepMillis,
-        ("Cli", "argCount") => Cap::ArgCount,
-        ("Cli", "arg") => Cap::Arg,
-        ("Cli", "write") => Cap::Write,
-        ("Cli", "writeErr") => Cap::WriteErr,
-        ("Cli", "readFile") => Cap::ReadFile,
-        ("Cli", "env") => Cap::Env,
-        ("Cli", "cwd") => Cap::Cwd,
-        ("Cli", "openInput") => Cap::OpenInput,
-        ("Cli", "openOutput") => Cap::OpenOutput,
-        ("Cli", "outputError") => Cap::OutputError,
-        ("Cli", "readChunk") => Cap::ReadChunk,
-
-        ("Cli", "writeFile") => Cap::WriteFile,
-        ("Cli", "stat") => Cap::Stat,
-        ("Cli", "linkStat") => Cap::LinkStat,
-        ("Cli", "readDir") => Cap::ReadDir,
-        ("Cli", "readStdin") => Cap::ReadStdin,
-        ("Core", "askInterrupt") => Cap::AskInterrupt,
-        ("Core", "exit") => Cap::Exit,
-        ("Cli", "spawn") => Cap::SpawnOther,
-        ("Cli", "spawnSelf") => Cap::Spawn,
-        ("Cli", "exitCode") => Cap::ExitCode,
-        ("Cli", "closeFeed") => Cap::CloseFeed,
-        ("Cli", "pushChild") => Cap::PushChild,
-        ("Cli", "popChild") => Cap::PopChild,
-        ("Cli", "connect") => Cap::Connect,
-        ("Cli", "listen") => Cap::Listen,
-        ("Cli", "accept") => Cap::Accept,
-        ("Cli", "recv") => Cap::Recv,
-        ("Cli", "send") => Cap::Send,
-        ("Cli", "closeSocket") => Cap::CloseSocket,
-        ("Cli", "closeSend") => Cap::CloseSend,
-        ("Cli", "openFile") => Cap::OpenFile,
-        ("Cli", "closeFile") => Cap::CloseFile,
-        ("Cli", "closeOutput") => Cap::CloseOutput,
-        ("Cli", "bindDatagram") => Cap::BindDatagram,
-        ("Cli", "receiveFrom") => Cap::ReceiveFrom,
-        ("Cli", "sendTo") => Cap::SendTo,
-        ("Cli", "rename") => Cap::Rename,
-        ("Cli", "remove") => Cap::Remove,
-        ("Cli", "mkdir") => Cap::Mkdir,
-        ("Cli", "setExecutable") => Cap::SetExecutable,
-        ("Cli", "chmod") => Cap::Chmod,
-        ("Cli", "execWithIn") => Cap::Exec,
-        // **Answered, and the answer is "not here".** `issues/system/0240c` gave the JavaScript hosts
-        // `load`/`call` in `provider.ts`, where a module can be driven in the caller's own realm
-        // against the caller's own bridge. This host builds its world in Rust around one program's
-        // thread-local state, so a second module in the same isolate is a real piece of work rather
-        // than a wiring change — and until it is done, a program asking gets -2 and can fall through.
-        //
-        // Mapped rather than left to `Cap::Unsupported`, which *throws*: a capability a host does not
-        // have must be a value the caller reads, or `LoadedModule.unavailable()` can never be observed and
-        // every portable program dies on the ask instead of taking its other route.
-        ("Cli", "load") => Cap::Load,
-        ("Cli", "call") => Cap::Call,
-        ("Cli", "unload") => Cap::Unload,
-        // Compile and stop — see `Cli.validated`. Mapped here rather than left to
-        // `Cap::Unsupported` for the reason `load` is: this host has an engine to ask.
-        ("Cli", "validated") => Cap::Validated,
+/// The request numbered `op`: std's `OP_*` table, which is the JavaScript bridge's numbering.
+/// `OP_DROP` (0) is not here — it names another request rather than asking anything, and the
+/// dispatcher handles it before this is consulted.
+fn cap_of_op(op: i32) -> Cap {
+    match op {
+        1 => Cap::NowMillis,
+        2 => Cap::MonotonicNanos,
+        3 => Cap::RandomBytes,
+        6 => Cap::ArgCount,
+        7 => Cap::Arg,
+        8 => Cap::Env,
+        9 => Cap::ReadFile,
+        10 => Cap::WriteFile,
+        11 => Cap::ReadStdin,
+        12 => Cap::Write,
+        13 => Cap::Stat,
+        14 => Cap::ReadDir,
+        15 => Cap::Mkdir,
+        16 => Cap::Remove,
+        17 => Cap::Rename,
+        19 => Cap::ReadChunk,
+        21 => Cap::Connect,
+        22 => Cap::Listen,
+        23 => Cap::Accept,
+        24 => Cap::Recv,
+        25 => Cap::Send,
+        26 => Cap::CloseSocket,
+        27 => Cap::SpawnOther,
+        28 => Cap::ExitCode,
+        29 => Cap::CloseFeed,
+        30 => Cap::SleepMillis,
+        41 => Cap::Cwd,
+        47 => Cap::LinkStat,
+        48 => Cap::WriteErr,
+        49 => Cap::Spawn,
+        52 => Cap::SetExecutable,
+        53 => Cap::BindDatagram,
+        54 => Cap::ReceiveFrom,
+        55 => Cap::SendTo,
+        57 => Cap::CloseSend,
+        59 => Cap::Exec,
+        60 => Cap::Chmod,
+        61 => Cap::OpenFile,
+        62 => Cap::CloseFile,
+        63 => Cap::CloseOutput,
+        64 => Cap::Load,
+        65 => Cap::Call,
+        66 => Cap::Unload,
+        67 => Cap::Validated,
         _ => Cap::Unsupported,
     }
 }
+
+/// `OP_DROP`: withdraw request `id`.
+const OP_DROP: i32 = 0;
+// The requests whose answers take something (see `takes`), by std's numbers.
+const OP_READ_STDIN: i32 = 11;
+const OP_READ_CHUNK: i32 = 19;
+const OP_CONNECT: i32 = 21;
+const OP_LISTEN: i32 = 22;
+const OP_ACCEPT: i32 = 23;
+const OP_RECV: i32 = 24;
+const OP_SPAWN: i32 = 27;
+const OP_SPAWN_SELF: i32 = 49;
+const OP_BIND_DATAGRAM: i32 = 53;
+const OP_RECEIVE_FROM: i32 = 54;
+const OP_OPEN_FILE: i32 = 61;
+/// `Launch.detached`, in a spawn's `b`: dropping the child's ticket does not stop it.
+const DETACHED: i32 = 4;
+/// `Launch.flags()`'s bits as `spawn` carries them in `b` — `INHERIT_IN`, `INHERIT_OUT`, and
+/// `SPAWN_SERVES` when the child's files are served by this program. `DETACHED` (4) is std's.
+const INHERIT_IN: i64 = 1;
+const INHERIT_OUT: i64 = 2;
+const SPAWN_SERVES: i64 = 256;
 
 use streams::Stream;
 use tickets::{Answer, ReadAnswer, StatAnswer, Tickets};
@@ -313,7 +261,7 @@ const GRANT_READ: i32 = 1;
 const GRANT_WRITE: i32 = 2;
 const GRANT_NET: i32 = 4;
 const GRANT_ENV: i32 = 8;
-/// Running a host program — `Cli.exec`. See `GRANT_RUN` in `std/platform.wac`.
+/// Running a host program — `procs.exec`. See `GRANT_RUN` in `std/platform.wac`.
 const GRANT_RUN: i32 = 16;
 
 const FAULT_NONE: i32 = 0;
@@ -334,6 +282,8 @@ const FAULT_NOT_REPRESENTABLE: i32 = 6;
 const FAULT_NOT_GRANTED: i32 = 7;
 /// A directory where a file was wanted.
 const FAULT_IS_DIR: i32 = 8;
+/// A capability this host does not have — a value the caller reads, not a trap.
+const FAULT_UNSUPPORTED: i32 = 9;
 /// A file where a directory was wanted — `a/b/c` with `b` a file.
 const FAULT_NOT_A_DIR: i32 = 10;
 /// The filesystem will not take a write at all — `EROFS`.
@@ -460,13 +410,13 @@ fn fault_of(e: &std::io::Error) -> i32 {
 /// One instantiated module: what a dispatcher needs to answer *that module's* capability calls.
 ///
 /// **The reason this is a type at all** — `issues/system/0240c`. A dispatcher is a bare `fn` pointer
-/// and finds its context through the `HOST` thread-local, so until `Cli.load` existed there was
+/// and finds its context through the `HOST` thread-local, so until `modules.load` existed there was
 /// exactly one module per thread and these three fields could live directly on `HostState`. A loaded
 /// module is a second one in the same thread, and its capability calls have to resolve against *its*
 /// exports — `write_string` copies into the module's own memory, and the wrong memory is silent
 /// corruption rather than an error. So `call` swaps this in and out around the call it makes.
 ///
-/// A child spawned with `Cli.spawn` needs none of this: it gets a thread, and the thread-local with it.
+/// A child spawned with `procs.spawn` needs none of this: it gets a thread, and the thread-local with it.
 struct ModuleCtx {
     exports: v8::Global<v8::Object>,
     /// `caps[signature][slot]`, the same shape the wasmtime host uses.
@@ -481,40 +431,34 @@ struct ModuleCtx {
     /// loader's grants — `wac test --allow-read` handed a test the command's write capability, and a
     /// test wrote a file the run had not granted.
     grants: Grants,
-    /// **`Pending<T>` per module, because a `Pending` carries funcrefs** — `issues/system/0263c`.
-    ///
-    /// This lived in `HostState` alone, so every `Pending` the host handed a *loaded* module was built
-    /// with the **loader's** constructor and carried the loader's resolve/settled/drop funcrefs. Those
-    /// index the loader's `caps` table; called from the loaded module with its own ctx installed, they
-    /// reach the wrong slot and the program dies as an engine trap with no message.
-    ///
-    /// The symptom was that a loaded module could not use `Cli` at all. It was narrower and stranger
-    /// than that: `Cli.write` (a `bool`) worked, `Cli.readChunk` (an *enum*, built with the loader's
-    /// `read_variants` and still fine) worked, and `Core.monotonicNanos` — a `Pending` on the *other*
-    /// capability object — trapped. Everything built as a `Pending` trapped and nothing else did, which
-    /// is what pointed at the funcrefs rather than at the constructor.
-    ///
-    /// A plain struct or enum constructor is interchangeable between modules because the engine
-    /// canonicalises identical types; a funcref is not, because it names a slot in one module's table.
-    /// So this is the one part of the answer-building machinery that has to travel with the swap.
-    pending: HashMap<String, PendingGlobals>,
+    /// The `__WacHost` its `__wacHost` answered and its `__wacAnswered`, when it wants a host.
+    /// Per module because each is that module's own value and export — handing one module's
+    /// answers to another's export would settle the wrong program's requests.
+    wac: Option<WacHost>,
+    /// Its requests whose answers are still on a thread: the program's id, and the ticket's.
+    /// The ids are the module's own (each `__WacHost` counts from 1), so these swap with it.
+    inflight: HashMap<i32, i32>,
 }
 
-/// A module `Cli.load` instantiated, and what is needed to call into it.
+/// A module `modules.load` instantiated, and what is needed to call into it.
 struct HeldModule {
     ctx: ModuleCtx,
     /// Its own manifest's export list, so `call` dispatches on the signature the *module* declares
     /// rather than on anything the caller says about it.
     exports: Vec<ExportSig>,
-    /// `Core` and `Cli` built for it, in `main`'s order — kept because funcref slots are finite and a
-    /// world rebuilt per call fails on the seventeenth. `entry.ts` learnt the same thing about `main`.
-    world: Vec<v8::Global<v8::Value>>,
+}
+
+/// What a module's `__wacHost` answered, and the export answers are delivered through.
+#[derive(Clone)]
+struct WacHost {
+    host: v8::Global<v8::Value>,
+    answered: v8::Global<v8::Function>,
 }
 
 /// Everything a dispatcher needs, reachable from a `fn` pointer that cannot close over anything.
 struct HostState {
     exports: v8::Global<v8::Object>,
-    /// The last export `Cli.call` resolved, as `(handle, name, function)`.
+    /// The last export `Module.call` resolved, as `(handle, name, function)`.
     ///
     /// **Because resolving is a V8 string per call.** `get_export` builds a fresh `v8::String` from
     /// the name and does a property lookup, and a caller may take this path millions of times in a
@@ -529,11 +473,9 @@ struct HostState {
     caps: Vec<Vec<Cap>>,
     /// The same table, spelled — so a capability this host cannot answer says *which* it was
     /// instead of "that capability yet". `wc` reaching an unserved `Cli.stat` looked identical to
-    /// `wc` reaching an unserved `Cli.spawn`, and the whole point of the list on exit is that the
+    /// `wc` reaching an unserved `procs.spawn`, and the whole point of the list on exit is that the
     /// next slice knows what to build.
     cap_names: Vec<Vec<String>>,
-    /// Which capability names went unanswered, so the report names them rather than trapping.
-    unsupported: Vec<String>,
     /// The program's own arguments.
     argv: Vec<Vec<u8>>,
     /// A child's two output queues, when this program is one.
@@ -566,39 +508,13 @@ struct HostState {
     /// owned because a worker holds one too; nothing in it touches V8, which is what lets it cross
     /// a thread at all.
     tickets: Arc<Tickets>,
-    pending: HashMap<String, PendingGlobals>,
-    /// `FileResult`'s constructor export, looked up once from the manifest.
-    file_result_of: Option<String>,
-    /// `Change`'s, the same way.
-    change_of: Option<String>,
-    /// `Stat`'s.
-    stat_of: Option<String>,
-    /// `Read`'s variant constructors, by variant name, straight from the manifest.
-    read_variants: HashMap<String, String>,
-    /// `Socket`'s constructor.
-    socket_of: Option<String>,
-    datagram_of: Option<String>,
-    /// `Captured`'s.
-    captured_of: Option<String>,
-    /// `Exec.of`, for `Cli.exec`'s answer.
-    exec_of: Option<String>,
-    /// `Child`'s.
-    child_of: Option<String>,
-    /// `LoadedModule.of` and `CallResult.of`, for `Cli.load` and `Cli.call` — `issues/system/0240c`.
-    ///
-    /// Cached like the rest, and `None` for a program that never named the type: a module that does
-    /// not load anything has no `LoadedModule` class, and building one would be inventing a type it never
-    /// declared. That is the same rule `worldFor` reads on the JavaScript side.
-    loaded_of: Option<String>,
-    called_of: Option<String>,
+    /// This module's `__WacHost` and `__wacAnswered`, and its requests on threads — swapped with
+    /// the rest of `ModuleCtx` while a loaded module runs.
+    wac: Option<WacHost>,
+    inflight: HashMap<i32, i32>,
     /// The modules this program has loaded, by handle. From 1, so a zeroed field names nothing.
     loaded: HashMap<i32, HeldModule>,
     next_loaded: i32,
-    /// **The frame stack.** `pushChild` runs an applet *in this program* rather than in a child
-    /// process: box's dispatcher re-enters itself, reads the frame's argv, and its output is
-    /// collected here instead of reaching a terminal. While a frame is live it is what `argCount`,
-    /// `arg`, `cwd`, `write`, `writeErr` and `readChunk` are about.
-    frames: Vec<Frame>,
     /// **The open sockets**, by the handle the guest holds. Behind a mutex because `accept` and
     /// `recv` run on worker threads and each needs the listener or stream it was given.
     sockets: Arc<std::sync::Mutex<HashMap<i32, Sock>>>,
@@ -627,15 +543,13 @@ struct HostState {
     /// `receiving` is this for `receiveFrom` and has been since `0207`; this is reads.
     /// `issues/system/0308b`.
     reading: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
+    /// The spawn tickets not yet collected, and whether each child was started detached: a dropped one
+    /// stops its child unless it was (spec ch44 `§wac-std-child-drop-n2r5vxe`).
+    spawned: Arc<std::sync::Mutex<HashMap<i32, bool>>>,
     /// Which socket each outstanding `receiveFrom` ticket is reading, so a dropped one knows where
     /// to put back an answer that arrived first.
     receiving: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
     next_handle: i32,
-    /// **This program's standard input**, once `openInput` has redirected it to a file. `None` means
-    /// the process's own stdin, which is what a program that never redirects reads.
-    input: Option<std::fs::File>,
-    /// And where `write` goes, once `openOutput` has redirected it.
-    output: Option<std::fs::File>,
     /// Standard output and standard error, once `closeOutput` has ended them: a write after it is refused.
     out_closed: [bool; 2],
 }
@@ -644,7 +558,7 @@ thread_local! {
     static HOST: RefCell<Option<HostState>> = const { RefCell::new(None) };
     /// When this host started, which is what `monotonicNanos` counts from.
     static START: std::time::Instant = std::time::Instant::now();
-    /// **The status `Core.exit` asked for**, set just before it throws. The throw unwinds the program's
+    /// **The status `sys.exit` asked for**, set just before it throws. The throw unwinds the program's
     /// wasm frames to the call of `main`, which reads this to tell an exit from a trap.
     static EXIT_REQUEST: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 }
@@ -749,9 +663,9 @@ fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String
     if said.is_empty() { String::new() } else { format!(": {said}") }
 }
 
-/// The sentence itself, with no punctuation around it — what `Cli.call` puts in `CallResult.text`.
+/// The sentence itself, with no punctuation around it — what `Module.call` puts in `CallResult.text`.
 ///
-/// Split from `trap_said` when `Cli.call` needed the same answer without the `: ` a printed line
+/// Split from `trap_said` when `Module.call` needed the same answer without the `: ` a printed line
 /// wants: two readers of one global, and the one that had been guessing was the capability.
 fn trap_said_bare(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
     // **Inside a `TryCatch`, because this is asked *of a module that has just trapped*.** Its state is
@@ -1095,89 +1009,16 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // function is slot 3 of signature 7" without asking the module.
     let mut caps: Vec<Vec<Cap>> = vec![Vec::new(); m.callbacks.len()];
     let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
-    let mut unsupported: Vec<String> = Vec::new();
 
-    // **Nor does a `main` that declares no capabilities**, which is the same sentence as the one below
-    // about test files and took a second reading to see. `export i32 main() { return 3; }` has no
-    // `Core` in its manifest because it asked for none, and this refused it with *no struct Core in the
-    // manifest* — the host's own bookkeeping, about the smallest program that demonstrates the
-    // language's central claim. Whether `main` wants a world is knowable here and is asked for below;
-    // an undefined placeholder is never passed to a `main` that named one. `packages/wac/test/wac/runcli_test.wac`.
-    //
-    // **And a module with no `main` at all**, which `is_some_and` answered `false` for — so the
-    // named-export path below (`wac run math.wac gcd 48 18`) was refused before it was reached,
-    // with a message about the host's bookkeeping rather than about anything the caller did. A
-    // named export is called with the arguments it declared and never with a world, so the same
-    // "nothing will be handed one" reasoning applies.
-    // A `main` that names no world — nothing, or something other than `Core` first — is handed none.
-    let main_declares_nothing = match m.exports.iter().find(|e| e.name == "main") {
-        Some(e) => e.params.first().map_or(true, |p| p != "Core"),
-        None => true,
-    };
-
-    // **A module that wants no world must not be refused one it never asked for.** A wac test is the
-    // original case: a pure function answering a report, declaring no capabilities, so its manifest
-    // has no `Core` — and building one first meant every test file in the repository was refused with
-    // *no struct Core in the manifest*, about a program that was right. That path is
-    // `packages/wac/src/testrun.wac`'s now and reaches this through `Cli.load`, where the same
-    // reasoning holds for the same reason; `main_declares_nothing` is what carries it.
-    let mut shared: Vec<(String, v8::Local<v8::Value>)> = Vec::new();
-    let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported, &mut shared) {
-        Ok(v) => v,
+    // **The host's four functions, handed to `__wacHost`** — a module that exports none wants no
+    // host (a library, a pure test), and is run without one.
+    let wac = match bind_host(scope, exports, m, &mut caps, &mut names) {
+        Ok(w) => w,
         Err(e) => {
-            if main_declares_nothing {
-                // `HOST` is still wanted below — `read_string` reads a test's report through the
-                // module's own exports — so this falls through with an empty world rather than out.
-                v8::undefined(scope).into()
-            } else {
-                eprintln!("wac: {e}");
-                return 1;
-            }
+            eprintln!("wac: {e}");
+            return 1;
         }
     };
-    // `Cli` is built whether or not `main` takes it: a program that asks for one capability from it
-    // and never touches the rest should run, and the ones this host cannot answer are named on exit.
-    // **The reason is kept, not discarded.** Tolerating a `Cli` this host cannot finish is deliberate —
-    // see above — but `Err(_) => None` threw away a sentence that already named the fault, so a program
-    // whose `main` *does* take a `Cli` was told "the manifest describes none" when the manifest
-    // described one perfectly well and a single funcref field in it had no dispatcher. That sent readers
-    // looking for a missing struct. `issues/lang/0162b`.
-    let (cli, cli_err) =
-        match build_struct(scope, exports, m, "Cli", &mut caps, &mut names, &mut unsupported, &mut shared) {
-            Ok(v) => (Some(v), None),
-            Err(e) => (None, Some(e)),
-        };
-
-    // **The resolver trio, registered before the program runs.** A `Pending<T>` carries three
-    // funcrefs and the host has to have slots for them before it can hand one over — and their
-    // signatures are per-`T`, so `fn[i32(i32)]` and `fn[u8[](i32)]` are different dispatchers.
-    let mut pending: HashMap<String, PendingHooks> = HashMap::new();
-    for (ty, resolve) in [
-        ("i32", Cap::ResolveI32),
-        ("i64", Cap::ResolveI64),
-        ("string", Cap::ResolveText),
-        ("u8[]", Cap::ResolveBytes),
-        ("FileResult", Cap::ResolveFile),
-        ("Change", Cap::ResolveChange),
-        ("Stat", Cap::ResolveStat),
-        ("string[]", Cap::ResolveNames),
-        ("HostSocket", Cap::ResolveSocket),
-        ("Datagram", Cap::ResolveDatagram),
-        ("Read", Cap::ResolveRead),
-        ("bool", Cap::ResolveBool),
-        ("Captured", Cap::ResolveCaptured),
-        ("Exec", Cap::ResolveExec),
-        ("HostChild", Cap::ResolveChild),
-    ] {
-        match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
-            Ok(h) => {
-                pending.insert(ty.to_string(), h);
-            }
-            // A program that never asks for a `Pending<i32>` has no `Pending<i32>` in its manifest,
-            // and that is not an error until something asks for one.
-            Err(_) => {}
-        }
-    }
 
     HOST.with(|h| {
         *h.borrow_mut() = Some(HostState {
@@ -1185,7 +1026,6 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             exports: v8::Global::new(scope, exports),
             caps,
             cap_names: names,
-            unsupported: unsupported.clone(),
             argv: as_child.argv.clone(),
             grants: as_child.grants.unwrap_or(m.grants),
             child_out: as_child.out.clone(),
@@ -1202,69 +1042,21 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             wasm: wasm.to_vec(),
             manifest_text: manifest_text.to_string(),
             tickets: Arc::new(Tickets::default()),
-            pending: pending
-                .into_iter()
-                .map(|(k, v)| (k, PendingGlobals::new(scope, v)))
-                .collect(),
-            file_result_of: m
-                .find_struct("FileResult")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            change_of: m
-                .find_struct("Change")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            stat_of: m
-                .find_struct("Stat")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            child_of: m
-                .find_struct("HostChild")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
+            wac: wac.clone(),
+            inflight: HashMap::new(),
             loaded: HashMap::new(),
             next_loaded: 1,
-            loaded_of: m
-                .find_struct("LoadedModule")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            called_of: m
-                .find_struct("CallResult")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            captured_of: m
-                .find_struct("Captured")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            exec_of: m
-                .find_struct("Exec")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            frames: Vec::new(),
-            socket_of: m
-                .find_struct("HostSocket")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
-            datagram_of: m
-                .find_struct("Datagram")
-                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
-                .map(|mm| mm.export_name.clone()),
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
             datagrams: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pushback: Arc::new(std::sync::Mutex::new(HashMap::new())),
             parked_accepts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             accepting: Arc::new(std::sync::Mutex::new(HashMap::new())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            spawned: Arc::new(std::sync::Mutex::new(HashMap::new())),
             receiving: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
             // channels, and this counter used to collide with the second of them — 0148.
             next_handle: FIRST_FREE_HANDLE,
-            read_variants: ["Data", "End", "Failed"]
-                .into_iter()
-                .filter_map(|v| m.variant_ctor("Read", v).map(|c| (v.to_string(), c.to_string())))
-                .collect(),
-            input: None,
-            output: None,
             out_closed: [false, false],
         })
     });
@@ -1290,9 +1082,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // **A `main` that takes something other than a world is an ordinary export** (spec ch07,
     // `§wac-main-ordinary-pnxd9gt`): the module is a library, not a program, and `wac run m.wasm main wac`
     // calls it by name like any other.
-    let is_world = |ps: &[String]| {
-        ps.is_empty() || (ps.len() == 1 && ps[0] == "Core") || (ps.len() == 2 && ps[0] == "Core" && ps[1] == "Cli")
-    };
+    let is_world = |ps: &[String]| ps.is_empty() || (ps.len() == 1 && ps[0] == "__WacHost");
     let main_sig = match m.exports.iter().find(|e| e.name == "main" && is_world(&e.params)) {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -1307,28 +1097,13 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             return call_named(scope, exports, m, &args);
         }
     };
-    // **Named, not guessed.** `main(Core, Cli)` is the ordinary shape and this slice cannot serve
-    // `Cli` — saying which capability is missing beats trapping inside the program.
-    let args: Vec<v8::Local<v8::Value>> = match main_sig.params.as_slice() {
-        // Nothing declared, nothing handed over — and nothing built either, so `core` here is the
-        // placeholder from above and is deliberately not in this list.
-        [] => Vec::new(),
-        [a] if a == "Core" => vec![core],
-        [a, b] if a == "Core" && b == "Cli" => match cli {
-            Some(c) => vec![core, c],
-            None => {
-                match &cli_err {
-                    Some(e) => eprintln!("wac: main wants a Cli and this host could not build one: {e}"),
-                    None => eprintln!("wac: main wants a Cli and the manifest describes none"),
-                }
-                return 1;
-            }
-        },
-        other => {
-            eprintln!(
-                "wac: main({}) names a capability this host does not build",
-                other.join(", ")
-            );
+    // `main()` is handed nothing, and `main(__WacHost)` what `__wacHost` answered.
+    let host_v: Option<v8::Local<v8::Value>> = wac.as_ref().map(|w| v8::Local::new(scope, w.host.clone()));
+    let args: Vec<v8::Local<v8::Value>> = match (main_sig.params.len(), host_v) {
+        (0, _) => Vec::new(),
+        (_, Some(h)) => vec![h],
+        (_, None) => {
+            eprintln!("wac: main takes a __WacHost and the module exports no __wacHost to make one");
             return 1;
         }
     };
@@ -1418,20 +1193,17 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
 
     // **Work scheduled and never run is an error.** `main` returning is the program saying it is
     // done, and a continuation still waiting says it was not — the answer would simply never arrive,
-    // silently, which is the failure a promise-shaped API is most likely to have. So the world is
-    // asked, and a program that meant it says so with `core.dropAll()`.
-    //
-    // Asked of `Core` rather than of the scheduler this host built, because `Core.outstanding` is the
-    // question in the language's own words and survives the scheduler being reshaped.
-    if let Some(spec) = m.find_struct("Core") {
+    // silently, which is the failure a promise-shaped API is most likely to have. So the program's
+    // own `__WacHost.outstanding` is asked: the requests in flight and the continuations queued.
+    if let (Some(spec), Some(h)) = (m.find_struct("__WacHost"), host_v) {
         if let Some(mm) = spec.methods.iter().find(|mm| mm.name == "outstanding") {
             if let Some(f) = get_export(scope, exports, &mm.export_name) {
-                if let Some(v) = f.call(scope, exports.into(), &[core]) {
+                if let Some(v) = f.call(scope, exports.into(), &[h]) {
                     let left = v.to_int32(scope).map(|i| i.value()).unwrap_or(0);
                     if left > 0 {
                         eprintln!(
                             "wac: {} finished with {left} continuation(s) still waiting — \
-                             call `core.drain()` to run them, or `core.dropAll()` to abandon them",
+                             call `sys.drain()` to run them",
                             m.entry
                         );
                         return 1;
@@ -1440,183 +1212,77 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             }
         }
     }
-
-    // A capability the program never reached is not an error; one it *did* reach would have trapped
-    // above. Either way the reader is told what this host could not answer.
-    // **Behind a switch, because it is a note to whoever builds the next slice rather than to the
-    // person running the program.** A finished `wc` printing thirty capability names it never
-    // reached is noise, and worse, it is noise on stderr — where a program's own diagnostics are,
-    // and where a test comparing two hosts would find it.
-    if std::env::var_os("WACV8_CAPS").is_some() {
-        let missed =
-            HOST.with(|h| h.borrow().as_ref().map(|s| s.unsupported.clone()).unwrap_or_default());
-        if !missed.is_empty() {
-            eprintln!("wac: unanswered capabilities: {}", missed.join(", "));
-        }
-    }
     code
 }
 
 
 
 
-/// Build one capability struct from the manifest's field order, through the module's own exports.
-fn build_struct<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
+
+/// Bind the host's four functions and call `__wacHost` with them — `None` for a module that exports
+/// no `__wacHost`, which wants no host.
+///
+/// Each is a slot in the registry of its signature, turned into a funcref by the module's own
+/// `$bind$fnref_<j>` — the one operation a host cannot do for itself. The signatures are read off
+/// `__wacHost`'s own parameters rather than spelled here, so the manifest stays the authority.
+fn bind_host(
+    scope: &mut v8::PinScope,
     exports: v8::Local<v8::Object>,
     m: &Manifest,
-    name: &str,
     caps: &mut [Vec<Cap>],
     names: &mut [Vec<String>],
-    unsupported: &mut Vec<String>,
-    // Values built by `<Type>.create` and shared across the capabilities of one world.
-    //
-    // **`Core` and `Cli` must be handed the *same* `Sched`.** Each has one as a field, and building
-    // each capability independently gave each its own — so `cli.readFile(…).then(f)` registered its
-    // continuation on a scheduler `core.drain()` never looks at and the callback simply never ran.
-    // Nothing failed: the ticket was linked, the drain returned, and the work sat on the other one.
-    shared: &mut Vec<(String, v8::Local<'s, v8::Value>)>,
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let spec = m.find_struct(name).ok_or_else(|| format!("no struct {name} in the manifest"))?;
-    let ctor = spec
-        .methods
-        .iter()
-        .find(|mm| mm.name == "of")
-        .ok_or_else(|| format!("{name} has no `of`"))?;
-
-    let mut args: Vec<v8::Local<v8::Value>> = Vec::with_capacity(spec.fields.len());
-    for field in &spec.fields {
-        // **A field that is not a callback is a value the module makes for itself.**
-        //
-        // Every other field of a capability is a function this host supplies; `Core.sched` is wac
-        // state with wac logic on it, and the host's whole part is calling its `create` once. That
-        // is what lets a program be *handed* a scheduler — `core.delay(…).then(f)` — without the
-        // program assembling one, and without this host knowing what a continuation is.
-        //
-        // Looked up by convention (`<Type>.create`, no arguments) rather than by a new manifest
-        // entry: the manifest already names every export, and a rule that reads is worth more here
-        // than a field that would have to be kept in step in four hosts.
-        let sig = match m.callback_index(&field.ty) {
-            Some(sig) => sig,
-            None => {
-                let spec = m.find_struct(&field.ty).ok_or_else(|| {
-                    format!(
-                        "{name}.{} names {}, which no dispatcher serves and which the manifest \
-                         does not describe",
-                        field.name, field.ty
-                    )
-                })?;
-                let made = spec
-                    .methods
-                    .iter()
-                    .find(|mm| mm.name == "create")
-                    .ok_or_else(|| {
-                        format!(
-                            "{name}.{} names {}, which no dispatcher serves and which has no \
-                             `create` for this host to build it with",
-                            field.name, field.ty
-                        )
-                    })?;
-                let ctor = get_export(scope, exports, &made.export_name)
-                    .ok_or_else(|| format!("no {}", made.export_name))?;
-                if let Some((_, had)) = shared.iter().find(|(t, _)| t == &field.ty) {
-                    args.push(*had);
-                    continue;
-                }
-                let v = ctor
-                    .call(scope, exports.into(), &[])
-                    .ok_or_else(|| format!("{} trapped while building {name}", made.export_name))?;
-                shared.push((field.ty.clone(), v));
-                args.push(v);
-                continue;
-            }
-        };
-        let cap = capability_for(name, &field.name);
-        if cap == Cap::Unsupported {
-            unsupported.push(format!("{name}.{}", field.name));
-        }
-        let slot = caps[sig].len();
-        caps[sig].push(cap);
-        names[sig].push(format!("{name}.{}", field.name));
-
-        // `$bind$fnref_<j>(slot)` is the module turning a slot number into a funcref of that
-        // signature — the one operation a host cannot do for itself.
-        let helper = get_export(scope, exports, &m.callbacks[sig].helper)
-            .ok_or_else(|| format!("no {}", m.callbacks[sig].helper))?;
+) -> Result<Option<WacHost>, String> {
+    let Some(sig) = m.exports.iter().find(|e| e.name == "__wacHost") else { return Ok(None) };
+    let wanted = [
+        (Cap::Request, "request"),
+        (Cap::WaitAny, "waitAny"),
+        (Cap::Exit, "exitWith"),
+        (Cap::AskInterrupt, "interrupted"),
+    ];
+    if sig.params.len() != wanted.len() {
+        return Err(format!("__wacHost takes {} functions, and this host has four", sig.params.len()));
+    }
+    let mut args: Vec<v8::Local<v8::Value>> = Vec::with_capacity(4);
+    for (ty, (cap, name)) in sig.params.iter().zip(wanted) {
+        let j = m
+            .callback_index(ty)
+            .ok_or_else(|| format!("__wacHost's {name} is a {ty}, which no dispatcher serves"))?;
+        let slot = caps[j].len();
+        caps[j].push(cap);
+        names[j].push(name.to_string());
+        let helper = get_export(scope, exports, &m.callbacks[j].helper)
+            .ok_or_else(|| format!("no {}", m.callbacks[j].helper))?;
         let slot_v = v8::Integer::new(scope, slot as i32);
         let fr = helper
             .call(scope, exports.into(), &[slot_v.into()])
-            .ok_or_else(|| format!("{} refused slot {slot}", m.callbacks[sig].helper))?;
+            .ok_or_else(|| format!("{} refused slot {slot}", m.callbacks[j].helper))?;
         args.push(fr);
     }
-
-    let ctor_fn = get_export(scope, exports, &ctor.export_name)
-        .ok_or_else(|| format!("no {}", ctor.export_name))?;
-    ctor_fn
+    let make = get_export(scope, exports, "__wacHost").ok_or_else(|| "__wacHost is not callable".to_string())?;
+    let host = make
         .call(scope, exports.into(), &args)
-        .ok_or_else(|| format!("{} trapped while building {name}", ctor.export_name))
+        .ok_or_else(|| "__wacHost trapped".to_string())?;
+    let answered = get_export(scope, exports, "__wacAnswered")
+        .ok_or_else(|| "the module exports __wacHost and no __wacAnswered".to_string())?;
+    Ok(Some(WacHost { host: v8::Global::new(scope, host), answered: v8::Global::new(scope, answered) }))
 }
 
-/// Where output goes, in the one order every writer must use.
-///
-/// A frame first — that is what "captured" means, and the applet cannot tell. Then the queue to the
-/// **parent**, because a spawned child writes to whoever spawned it and not to the terminal. Only
-/// then the process's own stream.
+/// Where output goes, in the one order every writer must use: the queue to the **parent**, because
+/// a spawned child writes to whoever spawned it and not to the terminal, and only then the process's
+/// own stream.
 ///
 /// **Factored because `log` did not do any of it.** `Cap::Log` was a bare `println!`, so a spawned
 /// child's `core.log` landed on the host's standard output while its parent read `recv` and heard
 /// nothing — `issues/system/0169`, where the child's answers were all *correct* and simply went to the
-/// wrong place. The wasmtime host has had one `emit` for log, warn, write and writeErr all along,
-/// which is why it was right; this is that shape.
+/// wrong place. The wasmtime host has had one `emit` for every writer all along, which is why it was
+/// right; this is that shape.
 ///
-/// Answers whether the bytes landed, which is what `write` reports so a wac program can notice a
-/// closed pipe. Into a frame it always lands.
+/// Answers whether the bytes landed, which is what a write reports so a wac program can notice a
+/// closed pipe.
 fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
-    let captured = HOST.with(|h| {
-        let mut b = h.borrow_mut();
-        let Some(s) = b.as_mut() else { return false };
-        match s.frames.last_mut() {
-            Some(f) => {
-                if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
-                true
-            }
-            None => false,
-        }
-    });
-    if captured {
-        return true;
-    }
     let closed = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.out_closed[to_stderr as usize]));
     if closed {
         return false;
-    }
-    // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
-    // the program saying *my output is a file now*, which is not standard output — so whether
-    // something spawned this program is a fact about the stream it no longer writes to.
-    //
-    // This came after the queue until 2026-08-29, so a spawned child's redirect was skipped
-    // entirely: `box cp README.md out` printed the file to standard output and left `out` empty,
-    // exiting 0. `wac app-run` and `wac run` both make the program a child, so that was every
-    // file-writing applet on this host. `issues/system/0277c`.
-    //
-    // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
-    // `Frame`'s capture, and `packages/platform`'s frame (gone since design/system/0013 step 5) stated
-    // the answer: *"`openOutput` redirects, as it does on the host: a child that says its output is a
-    // file gets a file."* That was aligned to what the host does, and this host did not do it.
-    //
-    // Standard error is deliberately untouched: it is where a program says what went wrong, and
-    // sending that into the file being written would hide it — `native/src/main.rs` makes the same
-    // point and is right about it.
-    if !to_stderr {
-        let redirected = HOST.with(|h| {
-            let mut b = h.borrow_mut();
-            let s = b.as_mut()?;
-            let f = s.output.as_mut()?;
-            Some(f.write_all(bytes).and_then(|_| f.flush()).is_ok())
-        });
-        if let Some(ok) = redirected {
-            return ok;
-        }
     }
     let to_parent = HOST.with(|h| {
         let b = h.borrow();
@@ -1630,16 +1296,8 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
         let mut err = std::io::stderr();
         return err.write_all(bytes).and_then(|_| err.flush()).is_ok();
     }
-    HOST.with(|h| {
-        let mut b = h.borrow_mut();
-        match b.as_mut().and_then(|s| s.output.as_mut()) {
-            Some(f) => f.write_all(bytes).and_then(|_| f.flush()).is_ok(),
-            None => {
-                let mut out = std::io::stdout();
-                out.write_all(bytes).and_then(|_| out.flush()).is_ok()
-            }
-        }
-    })
+    let mut out = std::io::stdout();
+    out.write_all(bytes).and_then(|_| out.flush()).is_ok()
 }
 
 /// Point descriptor `fd` (1 or 2) at `/dev/null`: whoever reads the pipe it was sees the end, and the number
@@ -2028,188 +1686,46 @@ fn get_export<'s>(
     v.try_into().ok()
 }
 
-/// The three funcrefs a `Pending<T>` carries, and the export that builds one.
-struct PendingHooks<'s> {
-    ctor: v8::Local<'s, v8::Function>,
-    resolve: v8::Local<'s, v8::Value>,
-    settled: v8::Local<'s, v8::Value>,
-    drop: v8::Local<'s, v8::Value>,
-}
-
-/// The same, held across the call into the program.
-#[derive(Clone)]
-struct PendingGlobals {
-    ctor: v8::Global<v8::Function>,
-    resolve: v8::Global<v8::Value>,
-    settled: v8::Global<v8::Value>,
-    drop: v8::Global<v8::Value>,
-}
-
-impl PendingGlobals {
-    fn new(scope: &mut v8::PinScope, h: PendingHooks) -> Self {
-        Self {
-            ctor: v8::Global::new(scope, h.ctor),
-            resolve: v8::Global::new(scope, h.resolve),
-            settled: v8::Global::new(scope, h.settled),
-            drop: v8::Global::new(scope, h.drop),
-        }
-    }
-}
-
-/// Find `Pending<T>`'s constructor and register a slot for each of its three funcrefs.
-fn pending_hooks<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    exports: v8::Local<v8::Object>,
-    m: &Manifest,
-    ty: &str,
-    resolve_cap: Cap,
-    caps: &mut [Vec<Cap>],
-    names: &mut [Vec<String>],
-) -> Result<PendingHooks<'s>, String> {
-    let name = format!("Pending<{ty}>");
-    let spec = m.find_struct(&name).ok_or_else(|| format!("no {name}"))?;
-    let ctor_name = spec
-        .methods
-        .iter()
-        .find(|mm| mm.name == "of")
-        .ok_or_else(|| format!("{name} has no `of`"))?
-        .export_name
-        .clone();
-    let ctor = get_export(scope, exports, &ctor_name).ok_or_else(|| format!("no {ctor_name}"))?;
-
-    let mut fr = |field: &str, cap: Cap| -> Result<v8::Local<'s, v8::Value>, String> {
-        let f = spec
-            .fields
-            .iter()
-            .find(|f| f.name == field)
-            .ok_or_else(|| format!("{name} has no {field}"))?;
-        let sig = m
-            .callback_index(&f.ty)
-            .ok_or_else(|| format!("{name}.{field} names {}, which no dispatcher serves", f.ty))?;
-        // **One slot per capability, not per `Pending<T>`.** `settled` and `drop` do not depend on
-        // `T` — every instantiation registers the same `Cap::Settled` and `Cap::Discard` — and
-        // registering them per type burned a slot each time: `wc` has **15** `Pending<T>` types, so
-        // both of those signature classes sat at 15 of the module's 16 trampolines. One more
-        // capability answering through a new `Pending<T>` fills them, for every program, whether or
-        // not it uses that capability. `issues/lang/0109`.
-        //
-        // Reusing is not a saving, it is the truth: the same capability reached through the same
-        // signature is the same function, and the slot is what the module calls it by.
-        let slot = match caps[sig].iter().position(|c| *c == cap) {
-            Some(i) => i,
-            None => {
-                caps[sig].push(cap);
-                names[sig].push(format!("{name}.{field}"));
-                caps[sig].len() - 1
-            }
-        };
-        let helper = get_export(scope, exports, &m.callbacks[sig].helper)
-            .ok_or_else(|| format!("no {}", m.callbacks[sig].helper))?;
-        let slot_v = v8::Integer::new(scope, slot as i32);
-        helper
-            .call(scope, exports.into(), &[slot_v.into()])
-            .ok_or_else(|| format!("{} refused slot {slot}", m.callbacks[sig].helper))
-    };
-
-    let resolve = fr("resolve", resolve_cap)?;
-    let settled = fr("settled", Cap::Settled)?;
-    let drop = fr("drop", Cap::Drop)?;
-    Ok(PendingHooks { ctor, resolve, settled, drop })
-}
-
-/// Record an answer and hand back the `Pending<T>` that will produce it.
-fn ticket_for<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    ty: &str,
-    answer: Answer,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let (id, hooks) = HOST.with(|h| {
-        let mut b = h.borrow_mut();
-        let st = b.as_mut()?;
-        let id = st.tickets.settled_now(answer);
-        let p = st.pending.get(ty)?;
-        Some((
-            id,
-            (p.ctor.clone(), p.resolve.clone(), p.settled.clone(), p.drop.clone()),
-        ))
-    })?;
-    let ctor = v8::Local::new(scope, hooks.0);
-    let resolve = v8::Local::new(scope, hooks.1);
-    let settled = v8::Local::new(scope, hooks.2);
-    let dropf = v8::Local::new(scope, hooks.3);
-    let id_v = v8::Integer::new(scope, id);
-    let recv = v8::undefined(scope);
-    ctor.call(scope, recv.into(), &[id_v.into(), resolve, settled, dropf])
-}
-
-/// Hand back a `Pending<T>` for work that has **not** finished — the id is live, and whichever
-/// thread is doing the work will complete it.
-fn ticket_pending<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    ty: &str,
-    id: i32,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let hooks = HOST.with(|h| {
-        let b = h.borrow();
-        let p = b.as_ref()?.pending.get(ty)?;
-        Some((p.ctor.clone(), p.resolve.clone(), p.settled.clone(), p.drop.clone()))
-    })?;
-    let ctor = v8::Local::new(scope, hooks.0);
-    let resolve = v8::Local::new(scope, hooks.1);
-    let settled = v8::Local::new(scope, hooks.2);
-    let dropf = v8::Local::new(scope, hooks.3);
-    let id_v = v8::Integer::new(scope, id);
-    let recv = v8::undefined(scope);
-    ctor.call(scope, recv.into(), &[id_v.into(), resolve, settled, dropf])
-}
-
 /// The table, for a capability that is about to start work on a thread.
 fn table() -> Option<Arc<Tickets>> {
     HOST.with(|h| h.borrow().as_ref().map(|s| s.tickets.clone()))
 }
 
-/// A funcref the guest called: `wac.cb<j>(slot, …)`.
-/// A path as a pushed child means it — joined onto the frame's `cwd`.
-///
-/// **The native host was not doing this and the Deno host was**, so the same program answered
-/// differently depending on which ran it: `packages/platform/example/inside.wac` writes `note.txt` into
-/// the directory it is given, pushes a child with that directory as its `cwd`, and the child opens
-/// `note.txt` by name — which resolved against the *process* directory here and found nothing.
-/// `issues/system/0199`.
-///
-/// `Cap::Cwd` already answered from the frame, so the program was told where it was and then had its
-/// paths resolved somewhere else. That is the worst arrangement of the two halves.
+/// What answering a request came to: an answer in hand, a ticket a thread will complete, or nothing —
+/// a request nobody answers, like a close.
+enum Reply {
+    Now(Answer),
+    Later(i32),
+    Nothing,
+}
+
+/// One request's arguments, as `request(op, id, a, b, text, bytes)` carried them.
+struct Req {
+    a: i64,
+    b: i64,
+    text: String,
+    bytes: Vec<u8>,
+}
+
+fn no_table() -> Reply {
+    Reply::Now(Answer::Change(FAULT_OTHER, "no ticket table".into()))
+}
+
+/// A path as this program means it: joined onto the directory it was started in, when it resolves
+/// its own paths.
 ///
 /// Semantics copied from `packages/platform/host/child.ts`'s `joinPath`, deliberately including what it
 /// does *not* do: `.` and `..` are left alone, because every host below understands them and
 /// reimplementing them here would be a second opinion about what a path means.
-///
-/// **The frame's `cwd` only, not `cwd_override`.** The Deno host's `P` also folds in the world's own
-/// `opts.cwd`, so the two still differ about *that* — but applying it here broke
-/// `packages/platform/test/wac/v8host_test.wac`'s image differential, where a spawned `imaged` child
-/// stopped being able to read the image its parent served. Measured by isolating the two halves: with
-/// the frame alone the lane is 34 of 34, and with the override folded in it is 33. So the spawned-child
-/// case is a separate question from this issue's, and closing one blind broke something real.
-fn framed_path(path: &str) -> String {
+fn resolve_path(path: &str) -> String {
+    // **And never for the empty path**, which is the standard-input convention rather than a
+    // relative path. Below that, a spawned child's directory is the base for a path *it* built,
+    // which is what makes `cd sub; cat f.txt` find the file — but not for a child whose parent
+    // resolves paths on its behalf. `issues/system/0281c`.
     let base = HOST.with(|h| {
         let b = h.borrow();
         let s = b.as_ref()?;
-        // **The frame's `cwd`, then this program's own — but only if it resolves its own paths.**
-        // A frame is an applet running in process and its directory always wins. Below that, a
-        // spawned child's directory is the base for a path *it* built, which is what makes
-        // `cd sub; cat f.txt` find the file: the applet is a child of the shell and stands where the
-        // shell stands. It is not the base for a child whose parent resolves paths on its behalf.
-        // `issues/system/0281c`.
-        //
-        // **And never for the empty path**, which is the standard-input convention rather than a
-        // relative path: an applet reading stdin asks for `""`, and `Fs.onHost` knows it. The line
-        // below that turns an empty path into the directory predates this and is the frame's, where
-        // nothing reaches it that way — routing children into it made `cat` with no argument answer
-        // *Is a directory*, which is the whole of what `packages/box/test/shell.test.ts`'s three
-        // standard-input cases were reporting.
-        s.frames.last().map(|f| f.cwd.clone()).or_else(|| {
-            if s.resolves_own_paths && !path.is_empty() { s.cwd_override.clone() } else { None }
-        })
+        if s.resolves_own_paths && !path.is_empty() { s.cwd_override.clone() } else { None }
     });
     let cwd = match base {
         Some(d) if !d.is_empty() => d,
@@ -2218,12 +1734,399 @@ fn framed_path(path: &str) -> String {
     if path.starts_with('/') {
         return path.to_string();
     }
-    if path.is_empty() {
-        return cwd;
-    }
     if cwd.ends_with('/') { format!("{cwd}{path}") } else { format!("{cwd}/{path}") }
 }
 
+/// An answer in the one shape every request is answered in — `(fault, text, bytes, n, m, flags)`, the
+/// table in design/system/0013 step 6. std's decoders (`readOfFile`, `statOf`, `childOf`, …) read it.
+///
+/// **A refusal is a fault, never a flag.** `send`'s `false` and `write`'s used to be a `bool`; std's
+/// `lineSentOf`, `fedOf` and `wroteOf` read `fault`, so `false` is `FAULT_OTHER` with no words of its
+/// own, and `true` is `flags` 1 for a reader that asks.
+fn flat(a: Answer) -> (i32, String, Vec<u8>, i64, i64, i32) {
+    let none = (FAULT_NONE, String::new(), Vec::new(), 0i64, 0i64, 0i32);
+    match a {
+        Answer::I32(n) => (FAULT_NONE, String::new(), Vec::new(), n as i64, 0, 0),
+        Answer::I64(n) => (FAULT_NONE, String::new(), Vec::new(), n, 0, 0),
+        Answer::Text(t) => (FAULT_NONE, t, Vec::new(), 0, 0, 0),
+        Answer::Bytes(Some(b)) => (FAULT_NONE, String::new(), b, 0, 0, 1),
+        Answer::Bytes(None) => none,
+        Answer::File(true, b, _, _) => (FAULT_NONE, String::new(), b, 0, 0, 0),
+        Answer::File(false, _, why, fault) => (if fault == FAULT_NONE { FAULT_OTHER } else { fault }, why, Vec::new(), 0, 0, 0),
+        Answer::Change(fault, why) => (fault, why, Vec::new(), 0, 0, 0),
+        Answer::Stat(st) => {
+            if st.fault != FAULT_NONE {
+                return (st.fault, String::new(), Vec::new(), 0, 0, 0);
+            }
+            let kind = i32::from(st.exists)
+                | i32::from(st.is_file) << 1
+                | i32::from(st.is_dir) << 2
+                | i32::from(st.is_symlink) << 3
+                | i32::from(st.is_executable) << 4;
+            (FAULT_NONE, String::new(), Vec::new(), st.size, st.modified_millis, kind | (st.mode & 0xffff) << 16)
+        }
+        Answer::Names(names) => {
+            let mut b = Vec::new();
+            for n in names {
+                b.extend_from_slice(n.as_bytes());
+                b.push(0);
+            }
+            (FAULT_NONE, String::new(), b, 0, 0, 1)
+        }
+        Answer::Socket(handle, why, peer, port, fault) => {
+            if handle < 0 {
+                (if fault == FAULT_NONE { FAULT_OTHER } else { fault }, why, Vec::new(), 0, 0, 0)
+            } else {
+                (FAULT_NONE, peer, Vec::new(), handle as i64, port as i64, 0)
+            }
+        }
+        Answer::Datagram(bytes, peer, port, why) => {
+            if !why.is_empty() {
+                (FAULT_OTHER, why, Vec::new(), 0, 0, 0)
+            } else {
+                (FAULT_NONE, peer, bytes, port as i64, 0, 0)
+            }
+        }
+        Answer::Read(ReadAnswer::Data(b)) => (FAULT_NONE, String::new(), b, 0, 0, 0),
+        Answer::Read(ReadAnswer::End) => (FAULT_NONE, String::new(), Vec::new(), 0, 0, 1),
+        Answer::Read(ReadAnswer::Failed(why)) => (FAULT_OTHER, why, Vec::new(), 0, 0, 0),
+        Answer::Bool(true) => (FAULT_NONE, String::new(), Vec::new(), 0, 0, 1),
+        Answer::Bool(false) => (FAULT_OTHER, String::new(), Vec::new(), 0, 0, 0),
+        // `m` packs the error stream's handle (low 32) and the served-files channel's (high 32).
+        Answer::Child(handle, err, fs, why) => {
+            if handle < 0 {
+                let fault = if handle == -2 { FAULT_UNSUPPORTED } else { FAULT_OTHER };
+                (fault, why, Vec::new(), 0, 0, 0)
+            } else {
+                (FAULT_NONE, String::new(), Vec::new(), handle as i64, (err as u32 as i64) | ((fs as i64) << 32), 0)
+            }
+        }
+        // Both streams in `bytes`, split at `m`.
+        Answer::Exec(status, out, err, why) => {
+            if !why.is_empty() {
+                (FAULT_OTHER, why, Vec::new(), 0, 0, 0)
+            } else {
+                let split = out.len() as i64;
+                let mut b = out;
+                b.extend_from_slice(&err);
+                (FAULT_NONE, String::new(), b, status as i64, split, 0)
+            }
+        }
+        Answer::Called(status, text, value) => (FAULT_NONE, text, Vec::new(), value as i64, 0, status),
+    }
+}
+
+/// Hand request `id`'s answer to the module through its `__wacAnswered`. Only ever called from inside
+/// `request` or `waitAny`, which is what makes it safe to run the program's code from here: the
+/// program is parked in one of its own host calls and expects to be re-entered.
+///
+/// Answers whether the program's code returned: `false` leaves its trap or exit pending, and nothing
+/// more may be delivered on top of it.
+fn deliver(scope: &mut v8::PinScope, id: i32, answer: Answer) -> bool {
+    let Some(wac) = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.wac.clone())) else { return true };
+    let Some(exports) = HOST.with(|h| h.borrow().as_ref().map(|s| s.exports.clone())) else { return true };
+    let exports = v8::Local::new(scope, exports);
+    let (fault, text, bytes, n, m, flags) = flat(answer);
+    // Each conversion finishes before the next starts: both stage through the module's one buffer.
+    let Some(text_v) = write_string(scope, &text) else {
+        throw(scope, "could not build an answer's text");
+        return false;
+    };
+    let Some(bytes_v) = write_bytes(scope, &bytes) else {
+        throw(scope, "could not build an answer's bytes");
+        return false;
+    };
+    let host = v8::Local::new(scope, wac.host);
+    let f = v8::Local::new(scope, wac.answered);
+    let args: [v8::Local<v8::Value>; 8] = [
+        host,
+        v8::Integer::new(scope, id).into(),
+        v8::Integer::new(scope, fault).into(),
+        text_v,
+        bytes_v,
+        v8::BigInt::new_from_i64(scope, n).into(),
+        v8::BigInt::new_from_i64(scope, m).into(),
+        v8::Integer::new(scope, flags).into(),
+    ];
+    // A trap or an exit inside the program's continuation is left pending, and unwinds through the
+    // host call that is delivering — the program's own failure, reported where it would have been.
+    f.call(scope, exports.into(), &args).is_some()
+}
+
+/// `waitAny(ids, millis)`: block until one of the program's requests `ids` has an answer, deliver
+/// every one that has, and say which came first — its index in `ids`, or -1 when none did in time.
+/// An id with nothing on a thread was answered or dropped already, and is not waited for.
+fn wait_and_deliver(scope: &mut v8::PinScope, ids: &[i32], millis: i32) -> i32 {
+    let Some(t) = table() else { return -1 };
+    let pairs: Vec<(usize, i32, i32)> = HOST.with(|h| {
+        let b = h.borrow();
+        let Some(st) = b.as_ref() else { return Vec::new() };
+        ids.iter()
+            .enumerate()
+            .filter_map(|(i, id)| st.inflight.get(id).map(|tid| (i, *id, *tid)))
+            .collect()
+    });
+    if pairs.is_empty() {
+        return -1;
+    }
+    let tids: Vec<i32> = pairs.iter().map(|p| p.2).collect();
+    let first = t.wait_any(&tids, millis);
+    if first < 0 {
+        return -1;
+    }
+    for &(_, id, tid) in &pairs {
+        if !t.is_settled(tid) {
+            continue;
+        }
+        HOST.with(|h| {
+            if let Some(st) = h.borrow_mut().as_mut() {
+                st.inflight.remove(&id);
+                // Collected, so nothing can be given up on and the handle note goes — `0308b`.
+                st.reading.lock().unwrap().remove(&tid);
+            }
+        });
+        if let Some(answer) = t.take(tid) {
+            if !deliver(scope, id, answer) {
+                break;
+            }
+        }
+    }
+    pairs[first as usize].0 as i32
+}
+
+/// Withdraw ticket `id`, whose request the program dropped before its answer was delivered.
+///
+/// **An answer nobody has read is still the host's** (design/system/0013, settled before step 6), so
+/// what the ticket already held goes back where it came from — bytes to their stream, a datagram to its
+/// socket, an accepted connection to the next accept — or is closed. An answer still on a thread is
+/// handled by that thread, which finds its ticket gone and does the same.
+fn drop_ticket(id: i32) {
+    if let Some(t) = table() {
+        // **What the ticket already held goes back where it came from.** For most work
+        // discarding it is right; for a `receiveFrom` the answer *is* a datagram, read off
+        // the socket once. `issues/system/0207`.
+        if let Some(answer) = t.drop_ticket(id) {
+            // **A read's bytes go back too**, and for the same reason the datagram does:
+            // they came off a stream once, and an answer that landed between the caller
+            // giving up and this call was being binned every time. `issues/system/0308b`.
+            let reading = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|st| st.reading.lock().unwrap().remove(&id))
+            });
+            // **`Read` *or* `Bytes`.** `recv` answers a `Read`; `readStdin` answers
+            // `Answer::Bytes`, and matching only the first left its late ordering losing the
+            // lot — 0 of 6 — while its early one was fixed. The question is whether bytes
+            // came off a stream, not which capability spelled them. `issues/system/0310b`.
+            // **An accepted connection is handed on or parked, never put down.** There is
+            // nowhere to put a socket back: it is in the table with a client attached. If an
+            // accept is still waiting on that listener it gets it; if none is — the retry
+            // comes after the give-up in this ordering — it waits for one.
+            // `issues/system/0310b`.
+            if let (Some(listener), Answer::Socket(slot, _, _, _, _)) = (reading, &answer) {
+                if *slot >= 0 {
+                    let next = HOST.with(|h| {
+                        h.borrow().as_ref().and_then(|st| {
+                            st.accepting.lock().unwrap()
+                                .get_mut(&listener).and_then(|q| q.pop_front())
+                        })
+                    });
+                    match next {
+                        Some(other) => { let _ = t.complete(other, answer); }
+                        None => HOST.with(|h| {
+                            if let Some(st) = h.borrow().as_ref() {
+                                st.parked_accepts.lock().unwrap()
+                                    .entry(listener).or_default().push_back(answer);
+                            }
+                        }),
+                    }
+                    return;
+                }
+            }
+            // **A child nobody collected is stopped**, unless it was started detached: the ticket owned it, and
+            // no one else can reach it now (spec ch44 `§wac-std-child-drop-n2r5vxe`).
+            if let Answer::Child(handle, _, _, _) = &answer {
+                let detached = HOST.with(|h| {
+                    h.borrow().as_ref().and_then(|st| st.spawned.lock().unwrap().remove(&id))
+                });
+                if *handle >= 0 && detached != Some(true) {
+                    close_socket(*handle);
+                }
+                return;
+            }
+            // **An abandoned `connect` is closed, not handed on.** Nothing else wants this
+            // connection — it is a line this program dialled and stopped caring about — so
+            // left alone the handle never leaves the table and the peer holds an open line
+            // to nobody. An accept has a listener noted against it and was handled above; a
+            // socket answer with no note is a dial. `issues/system/0310b`.
+            if let (None, Answer::Socket(slot, _, _, _, _)) = (reading, &answer) {
+                if *slot >= 0 {
+                    HOST.with(|h| {
+                        if let Some(st) = h.borrow().as_ref() {
+                            if let Some(Sock::Stream(sk)) =
+                                st.sockets.lock().unwrap().remove(slot)
+                            {
+                                let _ = sk.shutdown(std::net::Shutdown::Both);
+                            }
+                        }
+                    });
+                }
+                return;
+            }
+            let taken: Option<&Vec<u8>> = match &answer {
+                Answer::Read(ReadAnswer::Data(b)) => Some(b),
+                Answer::Bytes(Some(b)) => Some(b),
+                _ => None,
+            };
+            if let (Some(handle), Some(bytes)) = (reading, taken) {
+                if !bytes.is_empty() {
+                    let queue = HOST.with(|h| {
+                        h.borrow().as_ref().and_then(|st| {
+                            match st.sockets.lock().unwrap().get(&handle) {
+                                Some(Sock::Queue(q)) => Some(q.clone()),
+                                _ => None,
+                            }
+                        })
+                    });
+                    match queue {
+                        // Into the queue, so a reader parked on it is woken by them.
+                        Some(q) => q.unread(bytes.clone()),
+                        // A socket has none, so they wait under the handle instead.
+                        None => {
+                            if let Some(map) = HOST.with(|h| {
+                                h.borrow().as_ref().map(|st| st.pushback.clone())
+                            }) {
+                                map.lock().unwrap().entry(handle).or_default()
+                                    .extend(bytes.iter().copied());
+                            }
+                        }
+                    }
+                }
+            }
+            let socket = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|st| st.receiving.lock().unwrap().remove(&id))
+            });
+            if let (Some(handle), Answer::Datagram(ref bytes, _, _, ref err)) =
+                (socket, &answer)
+            {
+                if err.is_empty() && !bytes.is_empty() {
+                    if let Some(q) = HOST.with(|h| {
+                        h.borrow().as_ref().map(|st| st.datagrams.clone())
+                    }) {
+                        q.lock().unwrap().entry(handle).or_default().push_back(answer);
+                    }
+                }
+            }
+        }
+    }
+    return;
+}
+
+/// Close a handle: end a child's queues and input, shut a connection, forget what was parked for it — what
+/// `closeSocket` does, and what dropping an uncollected spawn or connect does too.
+fn close_socket(handle: i32) {
+    HOST.with(|h| {
+        if let Some(st) = h.borrow().as_ref() {
+            // **Ending the queue is what stops the child**, and dropping the entry is not
+            // that. This removed the handle and nothing else — so the *parent's* `Arc` went
+            // and the child's stayed, the stream was never marked done, and the child's
+            // `write` kept answering `true` to a pipe nobody was reading. `yes | head -2`
+            // printed both lines and then never returned. `issues/system/0275c`.
+            //
+            // `streams.rs` states the contract this restores: *"`false` is what `write`
+            // answers to a closed pipe, and what a program like `yes` is written to
+            // notice."* And `native/src/main.rs` — the wasmtime host — has done exactly
+            // this since `issues/system/0123`, which is where the wording below comes from:
+            // ending the queues is what the child's *parent* needs, and a reader parked on
+            // its output has to find out.
+            match st.sockets.lock().unwrap().remove(&handle) {
+                Some(Sock::Queue(q)) => q.finish(),
+                // **Dropping a `TcpStream` is not closing the connection when a `recv` is
+                // parked on it.** `recv` takes its own descriptor with `try_clone`, which
+                // dups the fd, so removing this entry drops one of two and the peer is told
+                // nothing: a client reading to end-of-stream waits for ever. With no read
+                // outstanding there is no dup, the drop is the close, and it works — which
+                // is why this went unseen until something read from a proxy.
+                // `issues/system/0304b`, and its probe is
+                // `packages/platform/test/wac/closewhilereading_test.wac`.
+                //
+                // `shutdown` acts on the *connection* rather than on a descriptor, so it
+                // reaches the peer however many clones are live. The error is dropped for
+                // the same reason the rest of this handler drops errors: a socket already
+                // gone is the state the caller asked for.
+                Some(Sock::Stream(sk)) => {
+                    let _ = sk.shutdown(std::net::Shutdown::Both);
+                }
+                _ => {}
+            }
+            // Its input too: a child parked reading what nobody will send is stopped just as
+            // surely as one writing where nobody reads, and `closeFeed` is the capability
+            // for ending *only* that — see its note on why the two are not one thing.
+            if let Some(feed) = st.child_feeds.get(&handle) {
+                feed.finish();
+            }
+            // **And any bytes parked for it**, for the reason given a few lines down about
+            // a leftover datagram: the handle is reused, so what `0307b` set aside for this
+            // socket would be handed to the next one to take the number.
+            st.pushback.lock().unwrap().remove(&handle);
+            // **The child's handle stays in `child_exits`.** Its status is still worth
+            // asking for — a parent that stops a child and wants to know it is gone asks
+            // `exitCode` next — which is the wasmtime host's rule and the JavaScript hosts'.
+            //
+            // **And anything parked for it.** A handle is reused, so a datagram left over
+            // from a closed socket would be answered to whatever opens next —
+            // `issues/system/0207` is about not losing packets, not about inventing them.
+            st.datagrams.lock().unwrap().remove(&handle);
+        }
+    });
+}
+
+/// Whether request `op` takes something — a connection, a child, a file, bytes off a stream — that a
+/// dropped request has to give back. Its answer is never delivered inside the request.
+fn takes(op: i32) -> bool {
+    matches!(
+        op,
+        OP_READ_STDIN | OP_READ_CHUNK | OP_RECV | OP_RECEIVE_FROM | OP_CONNECT | OP_LISTEN | OP_ACCEPT
+            | OP_BIND_DATAGRAM | OP_SPAWN | OP_SPAWN_SELF | OP_OPEN_FILE
+    )
+}
+
+/// A little-endian `u32`-length-prefixed part, and the rest.
+fn take_part(b: &[u8]) -> Option<(&[u8], &[u8])> {
+    let n = u32::from_le_bytes(b.get(..4)?.try_into().ok()?) as usize;
+    let rest = &b[4..];
+    Some((rest.get(..n)?, &rest[n..]))
+}
+
+/// A `u32` count, then that many parts.
+fn take_list(mut b: &[u8]) -> Option<(Vec<Vec<u8>>, &[u8])> {
+    let n = u32::from_le_bytes(b.get(..4)?.try_into().ok()?) as usize;
+    b = &b[4..];
+    let mut out = Vec::with_capacity(n.min(4096));
+    for _ in 0..n {
+        let (part, rest) = take_part(b)?;
+        out.push(part.to_vec());
+        b = rest;
+    }
+    Some((out, b))
+}
+
+/// `spawn`'s `bytes`: the module (empty for this program), then the arguments — std's `spawnBytes`.
+fn unpack_spawn(b: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+    let (wasm, rest) = take_part(b)?;
+    let (args, _) = take_list(rest)?;
+    Some((wasm.to_vec(), args))
+}
+
+/// `exec`'s `bytes`: the program, its arguments, its input, and `NAME=value` pairs — std's `execBytes`.
+fn unpack_exec(b: &[u8]) -> Option<(String, Vec<String>, Vec<u8>, Vec<String>)> {
+    let text = |v: Vec<Vec<u8>>| v.into_iter().map(|x| String::from_utf8_lossy(&x).into_owned()).collect();
+    let (program, rest) = take_part(b)?;
+    let (args, rest) = take_list(rest)?;
+    let (input, rest) = take_part(rest)?;
+    let (pairs, _) = take_list(rest)?;
+    Some((String::from_utf8_lossy(program).into_owned(), text(args), input.to_vec(), text(pairs)))
+}
+
+/// A funcref the guest called: `wac.cb<j>(slot, …)` — one of the four `__wacHost` was handed.
 fn dispatch(
     scope: &mut v8::PinScope,
     args: v8::FunctionCallbackArguments,
@@ -2235,12 +2138,8 @@ fn dispatch(
         h.borrow().as_ref().and_then(|s| s.caps.get(sig).and_then(|v| v.get(slot)).copied())
     });
     let Some(cap) = cap else {
-        let msg = v8::String::new(scope, "no function in that slot").unwrap();
-        let e = v8::Exception::error(scope, msg);
-        scope.throw_exception(e);
-        return;
+        return throw(scope, "no function in that slot");
     };
-
     match cap {
         // **End the program now** (spec ch07 `sys.exit`): unwind to `main`'s call, abandoning
         // whatever is left. A throw rather than `process::exit` because a child is a thread here.
@@ -2249,56 +2148,117 @@ fn dispatch(
             EXIT_REQUEST.with(|e| e.set(Some(code)));
             throw(scope, "the program exited");
         }
-        Cap::Log | Cap::Warn => {
-            let text = read_string(scope, args.get(1));
-            // The newline `log` adds, added *before* the routing rather than at the terminal, so that
-            // a captured frame and a parent reading a child both get it: `log` is where thirty of
-            // `packages/box`'s applets send their output, and a capture that dropped the line endings
-            // would join every line of `ls` into one.
-            let mut bytes = text.into_bytes();
-            bytes.push(b'\n');
-            emit_bytes(&bytes, cap == Cap::Warn);
+        // **Nobody can ask this host to interrupt, so the answer is no** — and that is the answer
+        // rather than a stub. The terminal belongs to whatever started the program; only a page can
+        // say yes, because there the keydown listener and the code servicing requests are one thread.
+        Cap::AskInterrupt => rv.set_bool(false),
+        Cap::WaitAny => {
+            let ids = read_i32_array(scope, args.get(1));
+            let millis = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let which = wait_and_deliver(scope, &ids, millis);
+            rv.set(v8::Integer::new(scope, which).into());
+        }
+        Cap::Request => {
+            let op = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let id = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            // **A wasm `i64` is a JavaScript `BigInt`** at this boundary, and V8 is the one holding
+            // that rule.
+            let wide = |v: v8::Local<v8::Value>| v.to_big_int(scope).map(|b| b.i64_value().0).unwrap_or(0);
+            let a = wide(args.get(3));
+            let b = wide(args.get(4));
+            let text = read_string(scope, args.get(5));
+            let bytes = read_bytes(scope, args.get(6));
+            if op == OP_DROP {
+                let tid = HOST.with(|h| h.borrow_mut().as_mut().and_then(|s| s.inflight.remove(&id)));
+                if let Some(tid) = tid {
+                    drop_ticket(tid);
+                }
+                rv.set_undefined();
+                return;
+            }
+            match serve(scope, cap_of_op(op), op, &Req { a, b, text, bytes }) {
+                // **What a request takes stays the host's until somebody waits for it** (design/system/0013,
+                // settled before step 6): a connection, a child, a file opened, bytes off a stream. Answered at
+                // once, it was the program's before the call returned, and a `cancel` that never waited could
+                // not give it back. So it waits in a settled ticket, which `waitAny` delivers and `OP_DROP` undoes.
+                Reply::Now(answer) if id != 0 && takes(op) => {
+                    let Some(t) = table() else { rv.set_undefined(); return };
+                    let tid = t.submit();
+                    let _ = t.complete(tid, answer);
+                    HOST.with(|h| {
+                        if let Some(st) = h.borrow_mut().as_mut() {
+                            match op {
+                                OP_READ_STDIN | OP_READ_CHUNK => { st.reading.lock().unwrap().insert(tid, STDIN_HANDLE); }
+                                OP_RECV | OP_ACCEPT => { st.reading.lock().unwrap().insert(tid, a as i32); }
+                                OP_RECEIVE_FROM => { st.receiving.lock().unwrap().insert(tid, a as i32); }
+                                OP_SPAWN | OP_SPAWN_SELF => { st.spawned.lock().unwrap().insert(tid, (b & DETACHED as i64) != 0); }
+                                _ => {}
+                            }
+                            st.inflight.insert(id, tid);
+                        }
+                    });
+                }
+                Reply::Now(answer) if id != 0 => {
+                    deliver(scope, id, answer);
+                }
+                Reply::Later(tid) if id != 0 => HOST.with(|h| {
+                    if let Some(st) = h.borrow_mut().as_mut() {
+                        st.inflight.insert(id, tid);
+                    }
+                }),
+                // Nobody will ask for it: the ticket goes as a dropped one would.
+                Reply::Later(tid) => drop_ticket(tid),
+                _ => {}
+            }
             rv.set_undefined();
         }
+        // Only the four above are ever bound; a request's capability is never a slot.
+        _ => {
+            let who = HOST.with(|h| {
+                h.borrow()
+                    .as_ref()
+                    .and_then(|s| s.cap_names.get(sig).and_then(|v| v.get(slot)).cloned())
+                    .unwrap_or_else(|| format!("signature {sig} slot {slot}"))
+            });
+            throw(scope, &format!("{who} is not answered by this host"));
+        }
+    }
+}
+
+/// Answer one request — or start the work that will, on a thread.
+fn serve(scope: &mut v8::PinScope, cap: Cap, op: i32, r: &Req) -> Reply {
+    match cap {
         Cap::ArgCount => {
             let n = HOST.with(|h| {
                 let b = h.borrow();
                 let Some(s) = b.as_ref() else { return 0 };
-                s.frames.last().map(|f| f.argv.len()).unwrap_or(s.argv.len())
+                s.argv.len()
             }) as i32;
             if std::env::var_os("WACV8_TRACE").is_some() {
                 eprintln!("[trace] argCount -> {n}");
             }
-            match ticket_for(scope, "i32", Answer::I32(n)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<i32> to answer argCount with"),
-            }
+            return Reply::Now(Answer::I32(n));
         }
         Cap::Arg => {
-            let i = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let i = r.a;
             let bytes = HOST.with(|h| {
                 let b = h.borrow();
                 let Some(s) = b.as_ref() else { return Vec::new() };
-                let from = s.frames.last().map(|f| &f.argv).unwrap_or(&s.argv);
-                usize::try_from(i).ok().and_then(|i| from.get(i).cloned()).unwrap_or_default()
+                usize::try_from(i).ok().and_then(|i| s.argv.get(i).cloned()).unwrap_or_default()
             });
             if std::env::var_os("WACV8_TRACE").is_some() {
                 eprintln!("[trace] arg({i}) -> {:?}", String::from_utf8_lossy(&bytes));
             }
-            match ticket_for(scope, "u8[]", Answer::Bytes(Some(bytes))) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<u8[]> to answer arg with"),
-            }
+            return Reply::Now(Answer::Bytes(Some(bytes)));
         }
         Cap::Write | Cap::WriteErr => {
-            let bytes = read_bytes(scope, args.get(1));
-            // **Wherever output currently goes** — a frame, a parent, or this process's stream, in
-            // that order, and `openOutput` may have pointed the last one at a file. One helper, so
-            // `log` cannot drift from `write` again; see `emit_bytes`.
-            rv.set_bool(emit_bytes(&bytes, cap == Cap::WriteErr));
+            // **Wherever output currently goes** — a parent, or this process's stream, in that order.
+            // One helper, so the two streams cannot drift apart; see `emit_bytes`. Answered at once,
+            // which is what lets a program ignore a write to its diagnostic output.
+            return Reply::Now(Answer::Bool(emit_bytes(&r.bytes, cap == Cap::WriteErr)));
         }
         Cap::ReadFile => {
-            let path = framed_path(&read_string(scope, args.get(1)));
+            let path = resolve_path(&r.text);
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             // **Denied, not absent.** A program built without `--allow-read` learns that reading is
             // refused *to it*, with a fault kept separate from the operating system's own, so a
@@ -2311,15 +2271,11 @@ fn dispatch(
                     "Not granted to this application".into(),
                     FAULT_NOT_GRANTED,
                 );
-                match ticket_for(scope, "FileResult", a) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<FileResult> for readFile"),
-                }
-                return;
+                return Reply::Now(a);
             }
             // **On a thread**, which is the whole reason this returns a ticket rather than a value:
             // a slow disk must not stop the program from doing what else it had in flight.
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
             let worker = t.clone();
             std::thread::spawn(move || {
@@ -2329,35 +2285,16 @@ fn dispatch(
                 };
                 let _ = worker.complete(id, a);
             });
-            match ticket_pending(scope, "FileResult", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<FileResult> to answer readFile with"),
-            }
+            return Reply::Later(id);
         }
         Cap::Env => {
-            // **Absent, not refused.** Without the grant this answers "this world's environment does
-            // not say", which is what the JavaScript hosts do by handing the provider no reader at
-            // all — a program cannot tell an unset variable from an ungranted one, and should not.
-            let name = read_string(scope, args.get(1));
+            // **Refused, not absent**: std's `Env` answers `NotGranted` when the host withheld the
+            // environment, and an unset variable is `flags` 0 — two facts, two spellings.
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.env));
-            let value = if granted {
-                std::env::var(&name).ok().map(String::into_bytes)
-            } else {
-                None
-            };
-            match ticket_for(scope, "u8[]", Answer::Bytes(value)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
+            if !granted {
+                return Reply::Now(Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into()));
             }
-        }
-        Cap::AskInterrupt => {
-            // **Nobody can ask this host to interrupt, so the answer is no** — and that is the
-            // answer rather than a stub. The terminal belongs to whatever started the program;
-            // only a page can say yes, because there the keydown listener and the code servicing
-            // this bridge are the same thread. Direct rather than a ticket: `askInterrupt` is
-            // `fn[i32()]`, and settling one would answer a `Pending<i32>` nobody asked for.
-            let v = v8::Integer::new(scope, 0);
-            rv.set(v.into());
+            return Reply::Now(Answer::Bytes(std::env::var(&r.text).ok().map(String::into_bytes)));
         }
         Cap::Spawn => {
             // **`spawnSelf` only.** `spawn(path, …)` runs a *different* bundle, which means reading
@@ -2367,20 +2304,22 @@ fn dispatch(
             //
             // A child is a thread with its own V8 isolate — an isolate belongs to one thread, so
             // there is no sharing to be had — compiling the same bytes again and running `main`.
-            // `u8[][]`, not `string[]` — 0148. `pushChild` below is the one that takes text.
-            let argv = read_bytes_array(scope, args.get(1));
-            let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
-            let cwd = read_string(scope, args.get(3));
+            // The arguments are bytes, not text — 0148 — packed after the (empty) module.
+            let Some((_, argv)) = unpack_spawn(&r.bytes) else {
+                return Reply::Now(Answer::Child(-1, -1, -1, "a spawn request that does not unpack".into()));
+            };
+            let grant_bits = r.a as i32;
+            let cwd = r.text.clone();
             // The `INHERIT_*` mask: the input bit and the output bit are the host's — `DETACHED` (4) is
             // handled in std, where the ticket decides whether to stop the child. `issues/system/0312b`.
-            let mask = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0);
-            let inherits = mask & 1 != 0;
+            let mask = r.b;
+            let inherits = mask & INHERIT_IN != 0;
             // **The child writes this process's own streams**, as `spawn`'s does — this read only the
             // input bit, so a `spawnSelf` child handed the output wrote into a queue nobody read.
-            let inherit_out = mask & 2 != 0;
-            // The fifth and last wac argument. Read rather than dropped as it used to be, which is
-            // the whole of 0157: a parent that offered to serve a filesystem was never asked to.
-            let serve_fs = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            let inherit_out = mask & INHERIT_OUT != 0;
+            // Read rather than dropped as it used to be, which is the whole of 0157: a parent that
+            // offered to serve a filesystem was never asked to.
+            let serve_fs = mask & SPAWN_SERVES != 0;
 
             let out = Arc::new(Stream::capped());
             let err = Arc::new(Stream::capped());
@@ -2434,7 +2373,7 @@ fn dispatch(
                     argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
                 eprintln!("[trace] {:?} spawn argv={shown:?} -> handle {handle}, err {err_handle}", std::thread::current().id());
             }
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
@@ -2484,23 +2423,20 @@ fn dispatch(
                 }
             });
             let a = Answer::Child(handle, err_handle, fs_handle, String::new());
-            match ticket_for(scope, "HostChild", a) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<HostChild> for spawn"),
-            }
+            return Reply::Now(a);
         }
         Cap::CloseFeed => {
             // **Ends a child's input without stopping it.** A program that reads to the end before
             // answering — `wc` is the obvious one — needs the end while it is still running, so this
             // finishes the queue rather than dropping the child.
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             let feed = HOST.with(|h| {
                 h.borrow().as_ref().and_then(|s| s.child_feeds.get(&handle).cloned())
             });
             if let Some(q) = feed {
                 q.finish();
             }
-            rv.set_undefined();
+            return Reply::Nothing;
         }
         Cap::SpawnOther => {
             // **`spawn` takes a program's bytes, and here a program is a wasm module** that carries
@@ -2511,7 +2447,9 @@ fn dispatch(
             // A JavaScript worker bundle — what the JS hosts are handed — is not a program here, and
             // that answers -1 with a reason rather than -2: -2 means this world has no `spawn` at
             // all, and a caller reading it gives up on `spawnSelf` too, which works.
-            let bytes = read_bytes(scope, args.get(1));
+            let Some((bytes, argv)) = unpack_spawn(&r.bytes) else {
+                return Reply::Now(Answer::Child(-1, -1, -1, "a spawn request that does not unpack".into()));
+            };
             let Some(text) = manifest_in(&bytes) else {
                 let why = if bytes.len() >= 4 && &bytes[0..4] == b"\0asm" {
                     "that module carries no wac.manifest section, so this runtime cannot describe it"
@@ -2519,30 +2457,19 @@ fn dispatch(
                     "this runtime starts wasm modules, and that is not one; spawnSelf works"
                 };
                 let a = Answer::Child(-1, -1, -1, why.into());
-                match ticket_for(scope, "HostChild", a) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<HostChild> for spawn"),
-                }
-                return;
+                return Reply::Now(a);
             };
 
-            // `u8[][]` here too: `spawn` differs from `spawnSelf` only by the bytes in front. 0148.
-            let argv = read_bytes_array(scope, args.get(2));
-            let grant_bits = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
-            let cwd = read_string(scope, args.get(4));
-            // **Flags, not a bool**, as `platform.wac`'s `INHERIT_IN`/`INHERIT_OUT`. One `i32`
-            // because a capability may not have seven parameters — `issues/lang/0291c` — and
-            // because `grants` two arguments earlier is already a bitfield.
-            let inherit = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0);
-            let inherits = inherit & 1 != 0;
+            let grant_bits = r.a as i32;
+            let cwd = r.text.clone();
+            // **Flags, not a bool**, as `platform.wac`'s `INHERIT_IN`/`INHERIT_OUT`.
+            let inherit = r.b;
+            let inherits = inherit & INHERIT_IN != 0;
             // **The child writes this process's own streams.** A child here is a thread, so the two
             // reach the real descriptors in the order it wrote them — which two queues cannot,
             // because the parent reads whichever answers first. `issues/system/0282c`.
-            let inherit_out = inherit & 2 != 0;
-            // The sixth here against the fifth in `spawnSelf`: same list with the program's bytes
-            // in front. Getting this index wrong is silent — it reads as `serveFs` never being
-            // asked for, which is what 0157 looked like.
-            let serve_fs = args.get(6).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            let inherit_out = inherit & INHERIT_OUT != 0;
+            let serve_fs = inherit & SPAWN_SERVES != 0;
 
             let out = Arc::new(Stream::capped());
             let err = Arc::new(Stream::capped());
@@ -2590,7 +2517,7 @@ fn dispatch(
                     argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
                 eprintln!("[trace] {:?} spawn argv={shown:?} -> handle {handle}, err {err_handle}", std::thread::current().id());
             }
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
@@ -2624,15 +2551,12 @@ fn dispatch(
                 }
             });
             let a = Answer::Child(handle, err_handle, fs_handle, String::new());
-            match ticket_for(scope, "HostChild", a) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<HostChild> for spawn"),
-            }
+            return Reply::Now(a);
         }
         Cap::ExitCode => {
             // **The child's ticket, not a poll.** A parent may ask before the child has started;
             // blocking on the ticket is the answer, and the table already does that correctly.
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             let known = HOST.with(|h| {
                 h.borrow().as_ref().and_then(|s| s.child_exits.get(&handle).copied())
             });
@@ -2641,17 +2565,11 @@ fn dispatch(
                     // Hand back the child's own ticket rather than a fresh one: the answer is
                     // already promised to that id, and two tickets for one fact is how a `wait`
                     // comes to block for ever.
-                    match ticket_pending(scope, "i32", id) {
-                        Some(p) => rv.set(p),
-                        None => throw(scope, "this program has no Pending<i32> for exitCode"),
-                    }
+                    return Reply::Later(id);
                 }
                 // Nothing was spawned under that handle. 127 is what a shell says about a command
                 // it could not run, which is the truth here.
-                None => match ticket_for(scope, "i32", Answer::I32(127)) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<i32> for exitCode"),
-                },
+                None => return Reply::Now(Answer::I32(127)),
             }
         }
         Cap::ReadStdin => {
@@ -2667,27 +2585,17 @@ fn dispatch(
                 })
                 .unwrap_or_default();
             // **All of it, to the end** — the unbounded read, as against `readChunk`'s bounded one.
-            // A frame's input answers here too, because an applet that reads all of stdin should get
-            // what its caller handed it rather than the terminal behind them both.
             // **A child reads what its parent sent, here too.** `readChunk` had this branch and
             // this one did not, so a spawned `wc` read the *process's* standard input — empty — and
             // answered `0 0 0` to a question its parent had asked with bytes in hand. The bounded
             // read and the unbounded one are two capabilities and one rule.
-            // **An explicit `openInput` wins over the parent's queue as well**, and that is the half
-            // of the rule this host was missing. The frame's queue below was ordered correctly and
-            // this branch was not, four lines above the comment that describes the very same bug —
-            // so a spawned applet that had opened a file went on reading what its parent was
-            // feeding it. Usually nothing, so `wc -c f` answered a plausible `0` and `sha256sum`
-            // gave the hash of the empty string; when the parent still had input, the applet
-            // printed *that* in place of the file. `issues/system/0285c`.
-            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
-            let from_parent = if redirected { None } else { HOST.with(|h| {
+            let from_parent = HOST.with(|h| {
                 let b = h.borrow();
                 let s = b.as_ref()?;
                 if s.inherits { None } else { s.child_input.clone() }
-            })};
+            });
             if let Some(q) = from_parent {
-                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let Some(t) = table() else { return no_table() };
                 let id = t.submit();
                     HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
                 let worker = t.clone();
@@ -2715,32 +2623,9 @@ fn dispatch(
                         q.unread(back);
                     }
                 });
-                match ticket_pending(scope, "u8[]", id) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<u8[]> for readStdin"),
-                }
-                return;
+                return Reply::Later(id);
             }
-            let framed = if redirected { None } else { HOST.with(|h| {
-                let mut b = h.borrow_mut();
-                let st = b.as_mut()?;
-                match st.frames.last_mut() {
-                    Some(f) if !f.inherit_input => {
-                        let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
-                        f.stdin_at = f.stdin.len();
-                        Some(rest)
-                    }
-                    _ => None,
-                }
-            })};
-            if let Some(bytes) = framed {
-                match ticket_for(scope, "u8[]", Answer::Bytes(Some(bytes))) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<u8[]> for readStdin"),
-                }
-                return;
-            }
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
                     HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
             let worker = t.clone();
@@ -2764,68 +2649,13 @@ fn dispatch(
                     });
                 }
             });
-            match ticket_pending(scope, "u8[]", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<u8[]> to answer readStdin with"),
-            }
-        }
-        Cap::PushChild => {
-            // **An applet inside this program**, not a child process: box's dispatcher re-enters
-            // itself with the frame's argv, and what it writes is collected rather than printed.
-            let argv = read_string_array_bytes(scope, args.get(1));
-            let stdin = read_bytes(scope, args.get(2));
-            let cwd = read_string(scope, args.get(3));
-            let inherit_input = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
-            if std::env::var_os("WACV8_TRACE").is_some() {
-                let shown: Vec<String> =
-                    argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-                eprintln!("[trace] pushChild argv={shown:?} stdin={} inherit={inherit_input}", stdin.len());
-            }
-            HOST.with(|h| {
-                if let Some(st) = h.borrow_mut().as_mut() {
-                    st.frames.push(Frame {
-                        argv,
-                        stdin,
-                        stdin_at: 0,
-                        cwd,
-                        inherit_input,
-                        ..Default::default()
-                    });
-                }
-            });
-            match ticket_for(scope, "bool", Answer::Bool(true)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<bool> for pushChild"),
-            }
-        }
-        Cap::PopChild => {
-            // A pop with nothing pushed answers two empty arrays rather than failing — the caller
-            // has nothing to clean up either way, and `platform.wac` says so.
-            let (out, err) = HOST.with(|h| {
-                let mut b = h.borrow_mut();
-                let Some(s) = b.as_mut() else { return (Vec::new(), Vec::new()) };
-                let popped = s.frames.pop().map(|f| (f.out, f.err)).unwrap_or_default();
-                // **A redirection ends with the frame that made it.** Otherwise the next applet in
-                // a pipeline reads the file the previous one opened — the same wrong-answer shape
-                // as above, one command later.
-                s.input = None;
-                s.output = None;
-                popped
-            });
-            // **Never truncated here.** The JavaScript hosts cap a frame's output at 8 MiB and
-            // answer `false` from `write` at the cap, which a producer like `box yes` stops on.
-            // This one simply grows, so the same applet answers in full; `Captured.truncated` is
-            // the field that lets a caller tell the two apart, and on this host it is always false.
-            match ticket_for(scope, "Captured", Answer::Captured(out, err, false)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Captured> for popChild"),
-            }
+            return Reply::Later(id);
         }
         Cap::BindDatagram => {
             // The same one grant as `connect` and `listen`: the authority is "speak to something
             // that is not this process", and the transport does not change what that means.
-            let address = read_string(scope, args.get(1));
-            let port = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let address = r.text.clone();
+            let port = r.a as i32;
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net));
             let answer = if !granted {
                 Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0,
@@ -2841,13 +2671,10 @@ fn dispatch(
                     Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             };
-            match ticket_for(scope, "HostSocket", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<HostSocket> for bindDatagram"),
-            }
+            return Reply::Now(answer);
         }
         Cap::ReceiveFrom => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             let sock = HOST.with(|h| {
                 let b = h.borrow();
                 let st = b.as_ref()?;
@@ -2859,14 +2686,7 @@ fn dispatch(
             });
             // A bad handle is known now and answers now — there is nothing to wait for.
             let Some(sk) = sock else {
-                return match ticket_for(
-                    scope,
-                    "Datagram",
-                    Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),
-                ) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
-                };
+                return Reply::Now(Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),);
             };
             // **On a thread, with a live ticket — like `recv`, and for a sharper reason.**
             // `recv_from` used to run here, inline, and the ticket was built from the finished
@@ -2885,13 +2705,10 @@ fn dispatch(
                 q.get_mut(&handle).and_then(|d| d.pop_front())
             });
             if let Some(a) = waiting {
-                return match ticket_for(scope, "Datagram", a) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
-                };
+                return Reply::Now(a);
             }
 
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
             let worker = t.clone();
             let parked = queues.clone();
@@ -2928,16 +2745,13 @@ fn dispatch(
                     r.lock().unwrap().remove(&id);
                 }
             });
-            match ticket_pending(scope, "Datagram", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
-            }
+            return Reply::Later(id);
         }
         Cap::SendTo => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let address = read_string(scope, args.get(2));
-            let port = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
-            let body = read_bytes(scope, args.get(4));
+            let handle = r.a as i32;
+            let address = r.text.clone();
+            let port = r.b as i32;
+            let body = &r.bytes;
             let sock = HOST.with(|h| {
                 let b = h.borrow();
                 let st = b.as_ref()?;
@@ -2949,19 +2763,16 @@ fn dispatch(
             });
             let ok = match sock {
                 None => false,
-                Some(sk) => sk.send_to(&body, (address.as_str(), port as u16)).is_ok(),
+                Some(sk) => sk.send_to(body, (address.as_str(), port as u16)).is_ok(),
             };
-            match ticket_for(scope, "bool", Answer::Bool(ok)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<bool> for sendTo"),
-            }
+            return Reply::Now(Answer::Bool(ok));
         }
         Cap::Listen | Cap::Connect => {
             // **One grant for both ends.** Dialling out and accepting in are the same authority —
             // the ability to speak to something that is not this process — and `platform.wac` gives
             // them one flag.
-            let address = read_string(scope, args.get(1));
-            let port = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let address = r.text.clone();
+            let port = r.a as i32;
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net));
             let answer = if !granted {
                 Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0,
@@ -2990,13 +2801,10 @@ fn dispatch(
                     Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             };
-            match ticket_for(scope, "HostSocket", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<HostSocket> for that"),
-            }
+            return Reply::Now(answer);
         }
         Cap::Accept => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             // **On a thread, and this is the one that proves the table.** A server sits in `accept`
             // until somebody dials it, which may be never — a host that did this inline would stop
             // the program dead, and the ticket exists precisely so it does not.
@@ -3011,11 +2819,7 @@ fn dispatch(
             });
             let Some(listener) = listener else {
                 let a = Answer::Socket(-1, "no such listener".into(), String::new(), 0, FAULT_OTHER);
-                match ticket_for(scope, "HostSocket", a) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<HostSocket> for accept"),
-                }
-                return;
+                return Reply::Now(a);
             };
             // A connection a dropped accept already took is answered before waiting for another.
             let already = HOST.with(|h| {
@@ -3024,12 +2828,9 @@ fn dispatch(
                 })
             });
             if let Some(a) = already {
-                return match ticket_for(scope, "HostSocket", a) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<HostSocket> for accept"),
-                };
+                return Reply::Now(a);
             }
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let listen_handle = handle;
             let waiting = HOST.with(|h| h.borrow().as_ref().map(|st| st.accepting.clone()));
             let id = t.submit();
@@ -3089,13 +2890,10 @@ fn dispatch(
                     }
                 }
             });
-            match ticket_pending(scope, "HostSocket", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<HostSocket> to answer accept with"),
-            }
+            return Reply::Later(id);
         }
         Cap::Recv => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             enum Source {
                 Socket(std::net::TcpStream),
                 Queue(Arc<Stream>),
@@ -3136,10 +2934,7 @@ fn dispatch(
                 // true` died before running anything. The JS host has said this all along, by
                 // checking `n_HANDLE` before its socket table. issues/system/0148.
                 if handle == PARENT_FS_HANDLE {
-                    return match ticket_for(scope, "Read", Answer::Read(ReadAnswer::End)) {
-                        Some(p) => rv.set(p),
-                        None => throw(scope, "this program has no Pending<Read> to answer recv with"),
-                    };
+                    return Reply::Now(Answer::Read(ReadAnswer::End));
                 }
                 // **A handle that is gone is an answer too, for the same reason the parent is.**
                 // A reader parked in `recv` while another task closes that socket is an ordinary
@@ -3154,10 +2949,7 @@ fn dispatch(
                 } else {
                     "network access not granted to this application".to_string()
                 };
-                return match ticket_for(scope, "Read", Answer::Read(ReadAnswer::Failed(why))) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Read> to answer recv with"),
-                };
+                return Reply::Now(Answer::Read(ReadAnswer::Failed(why)));
             };
             // **What an abandoned reader already took, before asking the source for more.** Order
             // is the whole of a stream's meaning, so these come first and whole. 0307b.
@@ -3166,10 +2958,7 @@ fn dispatch(
             });
             if let Some(bytes) = waiting {
                 if !bytes.is_empty() {
-                    return match ticket_for(scope, "Read", Answer::Read(ReadAnswer::Data(bytes))) {
-                        Some(p) => rv.set(p),
-                        None => throw(scope, "this program has no Pending<Read> to answer recv with"),
-                    };
+                    return Reply::Now(Answer::Read(ReadAnswer::Data(bytes)));
                 }
             }
             let back = HOST.with(|h| h.borrow().as_ref().map(|st| st.pushback.clone()));
@@ -3181,7 +2970,7 @@ fn dispatch(
                 });
             };
             if let Source::Queue(q) = source {
-                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let Some(t) = table() else { return no_table() };
                 let id = t.submit();
                 note(id);
                 let worker = t.clone();
@@ -3197,17 +2986,13 @@ fn dispatch(
                     };
                     unread_bytes(&q, worker.complete(id, a));
                 });
-                match ticket_pending(scope, "Read", id) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Read> to answer recv with"),
-                }
-                return;
+                return Reply::Later(id);
             }
             // A file is read on a thread as a socket is: a slow disk must not stop the program. The
             // descriptor is a duplicate sharing the original's offset, so reads continue where the last
             // left off.
             if let Source::File(mut file) = source {
-                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let Some(t) = table() else { return no_table() };
                 let id = t.submit();
                 note(id);
                 let worker = t.clone();
@@ -3220,14 +3005,10 @@ fn dispatch(
                     };
                     park_read(&back, handle, worker.complete(id, a));
                 });
-                match ticket_pending(scope, "Read", id) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Read> to answer recv with"),
-                }
-                return;
+                return Reply::Later(id);
             }
             let Source::Socket(mut stream) = source else { unreachable!() };
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
             note(id);
             let worker = t.clone();
@@ -3240,14 +3021,11 @@ fn dispatch(
                 };
                 park_read(&back, handle, worker.complete(id, a));
             });
-            match ticket_pending(scope, "Read", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Read> to answer recv with"),
-            }
+            return Reply::Later(id);
         }
         Cap::Send => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let bytes = read_bytes(scope, args.get(2));
+            let handle = r.a as i32;
+            let bytes = &r.bytes;
             // **A child is fed on the same handle its output comes back on.** `send` knew only
             // sockets, so `runner` fed its child nothing and `wc` counted an empty stream — `0 0 0`,
             // which is a right-looking answer to a question never asked.
@@ -3255,27 +3033,20 @@ fn dispatch(
                 h.borrow().as_ref().and_then(|s| s.child_feeds.get(&handle).cloned())
             });
             if let Some(q) = feed {
-                let ok = q.write(&bytes);
-                match ticket_for(scope, "bool", Answer::Bool(ok)) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<bool> to answer send with"),
-                }
-                return;
+                let ok = q.write(bytes);
+                return Reply::Now(Answer::Bool(ok));
             }
             let sent = HOST.with(|h| {
                 let b = h.borrow();
                 let Some(st) = b.as_ref() else { return false };
                 let mut socks = st.sockets.lock().unwrap();
                 match socks.get_mut(&handle) {
-                    Some(Sock::Stream(sk)) => sk.write_all(&bytes).and_then(|_| sk.flush()).is_ok(),
-                    Some(Sock::File(f)) => f.write_all(&bytes).is_ok(),
+                    Some(Sock::Stream(sk)) => sk.write_all(bytes).and_then(|_| sk.flush()).is_ok(),
+                    Some(Sock::File(f)) => f.write_all(bytes).is_ok(),
                     _ => false,
                 }
             });
-            match ticket_for(scope, "bool", Answer::Bool(sent)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<bool> to answer send with"),
-            }
+            return Reply::Now(Answer::Bool(sent));
         }
         // **End the outbound direction and keep reading** — `issues/system/0215`.
         //
@@ -3287,11 +3058,11 @@ fn dispatch(
         // An error from `shutdown` is dropped for the same reason `closeSocket` drops one — a peer
         // that has already gone is not a failure of this call, and a program that tidies up on every
         // path should not have to know which paths already did it.
-        // **A file as a stream of its own** — `Cli.openFile`. `how` is 0 to read, 1 to create or truncate,
+        // **A file as a stream of its own** — `files.openRead`/`openWrite`. `how` is 0 to read, 1 to create or truncate,
         // 2 to create or append; the grant is the one `readFile` or `writeFile` would need.
         Cap::OpenFile => {
-            let path = framed_path(&read_string(scope, args.get(1)));
-            let how = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let path = resolve_path(&r.text);
+            let how = r.a as i32;
             let granted = HOST.with(|h| {
                 h.borrow().as_ref().is_some_and(|s| if how == 0 { s.grants.read } else { s.grants.write })
             });
@@ -3310,15 +3081,12 @@ fn dispatch(
                     Err(e) => Answer::Socket(-1, message_of(&e), String::new(), 0, fault_of_path(&e, &path)),
                 }
             };
-            match ticket_for(scope, "HostSocket", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<HostSocket> for openFile"),
-            }
+            return Reply::Now(answer);
         }
         // The end of a file `openFile` opened. `std::fs::File` does not buffer — each `send` was a write
         // to the system — so dropping it is the whole of closing, and a later read finds every byte.
         Cap::CloseFile => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             let gone = HOST.with(|h| {
                 h.borrow().as_ref().and_then(|st| st.sockets.lock().unwrap().remove(&handle))
             });
@@ -3326,43 +3094,30 @@ fn dispatch(
                 Some(Sock::File(_)) => true,
                 _ => false,
             };
-            match ticket_for(scope, "bool", Answer::Bool(ok)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<bool> for closeFile"),
-            }
+            return Reply::Now(Answer::Bool(ok));
         }
         // The end of this program's output or its diagnostic output; it goes on running. A spawned child's
         // queue is finished, so its parent reads the end; this process's own stream is pointed at
         // `/dev/null` rather than closed, so the descriptor cannot be reused by a file opened later.
-        // Not under a frame, whose output is its capture.
         Cap::CloseOutput => {
-            let to_err = args.get(1).boolean_value(scope);
+            let to_err = r.a != 0;
             let ok = HOST.with(|h| {
                 let mut b = h.borrow_mut();
                 let Some(s) = b.as_mut() else { return false };
-                if !s.frames.is_empty() {
-                    return false;
-                }
                 if s.out_closed[to_err as usize] {
                     return true;
                 }
                 s.out_closed[to_err as usize] = true;
-                if !to_err && s.output.take().is_some() {
-                    return true;
-                }
                 if let Some(q) = if to_err { s.child_err.clone() } else { s.child_out.clone() } {
                     q.finish();
                     return true;
                 }
                 close_std_stream(if to_err { 2 } else { 1 })
             });
-            match ticket_for(scope, "bool", Answer::Bool(ok)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<bool> for closeOutput"),
-            }
+            return Reply::Now(Answer::Bool(ok));
         }
         Cap::CloseSend => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let handle = r.a as i32;
             HOST.with(|h| {
                 if let Some(st) = h.borrow().as_ref() {
                     if let Some(Sock::Stream(s)) = st.sockets.lock().unwrap().get(&handle) {
@@ -3370,80 +3125,19 @@ fn dispatch(
                     }
                 }
             });
-            rv.set_undefined();
+            return Reply::Nothing;
         }
         Cap::CloseSocket => {
-            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            HOST.with(|h| {
-                if let Some(st) = h.borrow().as_ref() {
-                    // **Ending the queue is what stops the child**, and dropping the entry is not
-                    // that. This removed the handle and nothing else — so the *parent's* `Arc` went
-                    // and the child's stayed, the stream was never marked done, and the child's
-                    // `write` kept answering `true` to a pipe nobody was reading. `yes | head -2`
-                    // printed both lines and then never returned. `issues/system/0275c`.
-                    //
-                    // `streams.rs` states the contract this restores: *"`false` is what `write`
-                    // answers to a closed pipe, and what a program like `yes` is written to
-                    // notice."* And `native/src/main.rs` — the wasmtime host — has done exactly
-                    // this since `issues/system/0123`, which is where the wording below comes from:
-                    // ending the queues is what the child's *parent* needs, and a reader parked on
-                    // its output has to find out.
-                    match st.sockets.lock().unwrap().remove(&handle) {
-                        Some(Sock::Queue(q)) => q.finish(),
-                        // **Dropping a `TcpStream` is not closing the connection when a `recv` is
-                        // parked on it.** `recv` takes its own descriptor with `try_clone`, which
-                        // dups the fd, so removing this entry drops one of two and the peer is told
-                        // nothing: a client reading to end-of-stream waits for ever. With no read
-                        // outstanding there is no dup, the drop is the close, and it works — which
-                        // is why this went unseen until something read from a proxy.
-                        // `issues/system/0304b`, and its probe is
-                        // `packages/platform/test/wac/closewhilereading_test.wac`.
-                        //
-                        // `shutdown` acts on the *connection* rather than on a descriptor, so it
-                        // reaches the peer however many clones are live. The error is dropped for
-                        // the same reason the rest of this handler drops errors: a socket already
-                        // gone is the state the caller asked for.
-                        Some(Sock::Stream(sk)) => {
-                            let _ = sk.shutdown(std::net::Shutdown::Both);
-                        }
-                        _ => {}
-                    }
-                    // Its input too: a child parked reading what nobody will send is stopped just as
-                    // surely as one writing where nobody reads, and `closeFeed` is the capability
-                    // for ending *only* that — see its note on why the two are not one thing.
-                    if let Some(feed) = st.child_feeds.get(&handle) {
-                        feed.finish();
-                    }
-                    // **And any bytes parked for it**, for the reason given a few lines down about
-                    // a leftover datagram: the handle is reused, so what `0307b` set aside for this
-                    // socket would be handed to the next one to take the number.
-                    st.pushback.lock().unwrap().remove(&handle);
-                    // **The child's handle stays in `child_exits`.** Its status is still worth
-                    // asking for — a parent that stops a child and wants to know it is gone asks
-                    // `exitCode` next — which is the wasmtime host's rule and the JavaScript hosts'.
-                    //
-                    // **And anything parked for it.** A handle is reused, so a datagram left over
-                    // from a closed socket would be answered to whatever opens next —
-                    // `issues/system/0207` is about not losing packets, not about inventing them.
-                    st.datagrams.lock().unwrap().remove(&handle);
-                }
-            });
-            rv.set_undefined();
+            close_socket(r.a as i32);
+            return Reply::Nothing;
         }
         Cap::ReadDir => {
-            let path = framed_path(&read_string(scope, args.get(1)));
+            let path = resolve_path(&r.text);
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             if !granted {
-                // **Absent, not refused**, matching `readFile`'s neighbour only in shape: a
-                // directory this build may not read is one it cannot see, and `string[]?` has a
-                // spelling for that.
-                match ticket_for(scope, "string[]", Answer::Names(None)) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<string[]> for readDir"),
-                }
-                return;
+                return Reply::Now(Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into()));
             }
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
             let worker = t.clone();
             std::thread::spawn(move || {
@@ -3456,45 +3150,28 @@ fn dispatch(
                         // **Sorted**, because a directory's order is the filesystem's and a program
                         // that prints it would print something different on another machine.
                         names.sort();
-                        Answer::Names(Some(names))
+                        Answer::Names(names)
                     }
-                    Err(_) => Answer::Names(None),
+                    // Which failure, now that the answer can say: `ls` on a file and on nothing are
+                    // different sentences.
+                    Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
                 };
                 let _ = worker.complete(id, a);
             });
-            match ticket_pending(scope, "string[]", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<string[]> to answer readDir with"),
-            }
+            return Reply::Later(id);
         }
-        // `Cli.load` — a module in this isolate, whose exports this program may call.
-        // `issues/system/0240c`.
+        // `modules.load` — a module in this isolate, whose exports this program may call. Answered at
+        // once: `n` the handle. `issues/system/0240c`.
         Cap::Load => {
-            let bytes = read_bytes(scope, args.get(1));
-            let asked = args.get(2).int32_value(scope).unwrap_or(0);
-            let (handle, why) = match load_module(scope, &bytes, asked) {
-                Ok(h) => (h, String::new()),
-                Err(e) => (-1, e),
-            };
-            match build_loaded(scope, handle, &why) {
-                Some(v) => rv.set(v),
-                None => throw(scope, "could not build a LoadedModule for the answer"),
-            }
-            return;
+            return Reply::Now(match load_module(scope, &r.bytes, r.a as i32) {
+                Ok(h) => Answer::I32(h),
+                Err(e) => Answer::Change(FAULT_OTHER, e),
+            });
         }
+        // `flags` the status, `n` the value, `text` what a trap said.
         Cap::Call => {
-            let handle = match args.get(1).int32_value(scope) {
-                Some(n) => n,
-                None => 0,
-            };
-            let name = read_string(scope, args.get(2));
-            let arg = args.get(3).int32_value(scope).unwrap_or(0);
-            let (status, text, value) = call_loaded(scope, handle, &name, arg);
-            match build_called(scope, status, &text, value) {
-                Some(v) => rv.set(v),
-                None => throw(scope, "could not build a CallResult for the answer"),
-            }
-            return;
+            let (status, text, value) = call_loaded(scope, r.a as i32, &r.text, r.b as i32);
+            return Reply::Now(Answer::Called(status, text, value));
         }
         // **A `TryCatch`, and it is not optional.** A rejected module leaves an exception on the
         // isolate, and the *next* compile walks into V8's own check that a null result and a pending
@@ -3503,11 +3180,10 @@ fn dispatch(
         // one because nothing else compiles twice in a row; a caller validating a corpus does nothing
         // else. `packages/wac/test/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
         Cap::Validated => {
-            let bytes = read_bytes(scope, args.get(1));
             let said = {
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));
                 let mut tc = tc.init();
-                let ok = v8::WasmModuleObject::compile(&tc, &bytes).is_some();
+                let ok = v8::WasmModuleObject::compile(&tc, &r.bytes).is_some();
                 // The engine's own sentence when it has one. It usually does — "expected magic word",
                 // "section out of order" — and it is the difference between a caller able to say what
                 // is wrong with a module and one able only to say that something is.
@@ -3522,24 +3198,24 @@ fn dispatch(
                 tc.reset();
                 why
             };
-            if let Some(v) = write_string(scope, &said) {
-                rv.set(v);
-            }
-            return;
+            return Reply::Now(if said.is_empty() {
+                Answer::Change(FAULT_NONE, String::new())
+            } else {
+                Answer::Change(FAULT_OTHER, said)
+            });
         }
         Cap::Unload => {
-            if let Some(n) = args.get(1).int32_value(scope) {
-                HOST.with(|h| {
-                    if let Some(st) = h.borrow_mut().as_mut() {
-                        st.loaded.remove(&n);
-                        // The cache names a function inside the module that is going away.
-                        if matches!(&st.last_call, Some((hh, _, _)) if *hh == n) {
-                            st.last_call = None;
-                        }
+            let n = r.a as i32;
+            HOST.with(|h| {
+                if let Some(st) = h.borrow_mut().as_mut() {
+                    st.loaded.remove(&n);
+                    // The cache names a function inside the module that is going away.
+                    if matches!(&st.last_call, Some((hh, _, _)) if *hh == n) {
+                        st.last_call = None;
                     }
-                });
-            }
-            return;
+                }
+            });
+            return Reply::Nothing;
         }
         Cap::Exec => {
             // A host program, run to completion. `issues/system/0165`.
@@ -3551,37 +3227,24 @@ fn dispatch(
             // **On a thread, so the ticket is handed back while the child is still running.** The
             // reads above touch the v8 heap and have to happen here; nothing in `run_host_program`
             // does. This used to run the child to completion inside the capability call and settle
-            // the ticket in the same breath, so a `Pending<Exec>` on this host was a promise of
+            // the ticket in the same breath, so an `exec` answer on this host was a promise of
             // something that had already happened — three concurrent `sleep 1` were 3013ms here
             // against 1009ms for the same program on the Deno host, which dispatches and returns at
             // once. Issue 0211, held by `packages/platform/test/wac/exec_test.wac`. The lost overlap
             // was the smaller half: a ticket that exists only after the work is over cannot be
             // watched by `waitAny`, so a child that wedged had nothing bounding it.
-            let path = read_string(scope, args.get(1));
-            let argv: Vec<String> = read_string_array_bytes(scope, args.get(2))
-                .into_iter()
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .collect();
-            let stdin = read_bytes(scope, args.get(3));
-            let env: Vec<String> = read_string_array_bytes(scope, args.get(4))
-                .into_iter()
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .collect();
-            let clear_env = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
-            let inherit = args.get(6).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
-            // Empty means "wherever this process already is", matching `spawn`'s `cwd`.
-            let cwd = read_string(scope, args.get(7));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.run));
             if !granted {
-                let refused =
-                    Answer::Exec(0, Vec::new(), Vec::new(), "Not granted to this application".into());
-                match ticket_for(scope, "Exec", refused) {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
-                }
-                return;
+                return Reply::Now(Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into()));
             }
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let Some((path, argv, stdin, env)) = unpack_exec(&r.bytes) else {
+                return Reply::Now(Answer::Change(FAULT_OTHER, "an exec request that does not unpack".into()));
+            };
+            let clear_env = r.a & 1 != 0;
+            let inherit = r.a & 2 != 0;
+            // Empty means "wherever this process already is", matching `spawn`'s `cwd`.
+            let cwd = r.text.clone();
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
             let worker = t.clone();
             std::thread::spawn(move || {
@@ -3595,30 +3258,28 @@ fn dispatch(
                     run_host_program(path, argv, stdin, env, clear_env, inherit, cwd),
                 );
             });
-            match ticket_pending(scope, "Exec", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
-            }
+            return Reply::Later(id);
         }
         Cap::Rename | Cap::Remove | Cap::Mkdir | Cap::SetExecutable | Cap::Chmod => {
             // Four mutations behind one grant, because they are one authority: the ability to change
             // what is on disk. Each answers a `Change`, and a refusal is `FAULT_NOT_GRANTED` rather
             // than the operating system's `FAULT_DENIED` — this build cannot, as against this file
             // will not.
-            let a = framed_path(&read_string(scope, args.get(1)));
+            let a = resolve_path(&r.text);
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
             let answer = if !granted {
                 Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
             } else {
                 let r = match cap {
                     Cap::Rename => {
-                        let to = framed_path(&read_string(scope, args.get(2)));
+                        // The second path rides in `bytes`, as UTF-8 — a request carries one string.
+                        let to = resolve_path(&String::from_utf8_lossy(&r.bytes));
                         std::fs::rename(&a, &to)
                     }
                     Cap::Remove => {
                         // `recursive` is the second argument, and a directory is not removed without
                         // it — the difference between `rm` and `rm -r`, which the caller chose.
-                        let recursive = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+                        let recursive = r.a != 0;
                         let is_dir = std::fs::metadata(&a).map(|m| m.is_dir()).unwrap_or(false);
                         match (is_dir, recursive) {
                             (true, true) => std::fs::remove_dir_all(&a),
@@ -3627,7 +3288,7 @@ fn dispatch(
                         }
                     }
                     Cap::Mkdir => {
-                        let parents = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+                        let parents = r.a != 0;
                         if parents { std::fs::create_dir_all(&a) } else { std::fs::create_dir(&a) }
                     }
                     Cap::Chmod => {
@@ -3635,12 +3296,12 @@ fn dispatch(
                         // changes one bit, because one bit is all it promises; this promises the mode.
                         // `issues/system/0296c`.
                         use std::os::unix::fs::PermissionsExt;
-                        let mode = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) as u32 & 0o7777;
+                        let mode = r.a as u32 & 0o7777;
                         std::fs::set_permissions(&a, std::fs::Permissions::from_mode(mode))
                     }
                     _ => {
                         use std::os::unix::fs::PermissionsExt;
-                        let on = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+                        let on = r.a != 0;
                         std::fs::metadata(&a).and_then(|md| {
                             let mut perm = md.permissions();
                             let mode = perm.mode();
@@ -3670,33 +3331,27 @@ fn dispatch(
                     Err(e) => Answer::Change(fault_of_path(&e, &a), message_of(&e)),
                 }
             };
-            match ticket_for(scope, "Change", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Change> for that"),
-            }
+            return Reply::Now(answer);
         }
         Cap::WriteFile => {
-            let path = framed_path(&read_string(scope, args.get(1)));
-            let data = read_bytes(scope, args.get(2));
+            let path = resolve_path(&r.text);
+            let data = &r.bytes;
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
             let answer = if !granted {
                 Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
             } else {
-                match std::fs::write(&path, &data) {
+                match std::fs::write(&path, data) {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
                     Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
                 }
             };
-            match ticket_for(scope, "Change", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Change> to answer writeFile with"),
-            }
+            return Reply::Now(answer);
         }
         Cap::Stat | Cap::LinkStat => {
             // **`stat` follows a link and `linkStat` does not**, which is the whole difference
             // between "what does this name lead to" and "what is this name" — `find` wants the
             // first and `tar` the second.
-            let path = framed_path(&read_string(scope, args.get(1)));
+            let path = resolve_path(&r.text);
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             let answer = if !granted {
                 Answer::Stat(Box::new(StatAnswer { fault: FAULT_NOT_GRANTED, ..Default::default() }))
@@ -3747,79 +3402,23 @@ fn dispatch(
                     Err(e) => StatAnswer { fault: fault_of_path(&e, &path), ..Default::default() },
                 }))
             };
-            match ticket_for(scope, "Stat", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Stat> to answer stat with"),
-            }
-        }
-        Cap::OpenInput => {
-            // **Redirect this program's standard input to a file.** It outranks anything else the
-            // program might read from, which is the order `native/src` had to fix: a `cat f` that
-            // had opened the file went on reading the queue it was spawned with, printed nothing,
-            // and exited 0.
-            let path = framed_path(&read_string(scope, args.get(1)));
-            // **`openInput("")` is standard input**, which is what `packages/box` means by `-` and by
-            // an absent operand — `grep h` with nothing to read from a file says it this way. Taken
-            // as a path it is a file that does not exist, and `grep: : No such file or directory` is
-            // what a pipeline looked like before this line: an empty name, because there was none.
-            if path.is_empty() {
-                HOST.with(|h| {
-                    if let Some(st) = h.borrow_mut().as_mut() {
-                        st.input = None;
-                    }
-                });
-                match ticket_for(scope, "Change", Answer::Change(FAULT_NONE, String::new())) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Change> for openInput"),
-                }
-                return;
-            }
-            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
-            let answer = if !granted {
-                Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
-            } else {
-                match std::fs::File::open(&path) {
-                    Ok(f) => {
-                        HOST.with(|h| {
-                            if let Some(st) = h.borrow_mut().as_mut() {
-                                st.input = Some(f);
-                            }
-                        });
-                        Answer::Change(FAULT_NONE, String::new())
-                    }
-                    Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
-                }
-            };
-            match ticket_for(scope, "Change", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Change> to answer openInput with"),
-            }
+            return Reply::Now(answer);
         }
         Cap::ReadChunk => {
-            // **A ticket, as every read is.** `fn[Pending<Read>()]` is the *bounded* read: it answers
-            // with whatever is there, or that the input has ended, and a program loops on it —
-            // awaiting each answer, so a world that cannot block (a page) can run the same loop.
+            // The *bounded* read: it answers with whatever is there, or that the input has ended, and
+            // a program loops on it — awaiting each answer, so a world that cannot block (a page) can
+            // run the same loop.
             // Here the answer is usually ready by the time the ticket is made; reading what a parent
             // sends is the one that waits, and it waits on a thread, as `recv` does.
-            // **An explicit `openInput` wins over the frame's queue, and the order is the whole of
-            // the bug.** `openInput` redirects *this* program's input to a file, so an applet that
-            // opened one and then read the frame's queue instead read what its caller had already
-            // finished: `sha256sum README.md` inside the shell hashed nothing and printed the hash
-            // of the empty string, which is a wrong answer that looks like a right one.
-            // `native/src/main.rs` carries the same warning about `cat f`; I ordered these the other
-            // way round and walked into it.
             // A child reads what its parent sends — unless it inherits, when the terminal is what
             // was meant.
-            // **An explicit `openInput` wins over the parent's queue as well**, and that is the half
-            // of the rule this host was missing. `issues/system/0285c`.
-            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
-            let from_parent = if redirected { None } else { HOST.with(|h| {
+            let from_parent = HOST.with(|h| {
                 let b = h.borrow();
                 let s = b.as_ref()?;
                 if s.inherits { None } else { s.child_input.clone() }
-            })};
+            });
             if let Some(q) = from_parent {
-                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let Some(t) = table() else { return no_table() };
                 let id = t.submit();
                 HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
                 let worker = t.clone();
@@ -3832,138 +3431,45 @@ fn dispatch(
                     };
                     unread_bytes(&q, worker.complete(id, a));
                 });
-                match ticket_pending(scope, "Read", id) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Read> to answer readChunk with"),
-                }
-                return;
+                return Reply::Later(id);
             }
-            // Inside a frame: the bytes it was given, then the end. One chunk rather than a
-            // trickle, because the frame has all of them already and splitting would invent a
-            // boundary the caller then has to reassemble.
-            let framed = if redirected { None } else { HOST.with(|h| {
-                let mut b = h.borrow_mut();
-                let st = b.as_mut()?;
-                match st.frames.last_mut() {
-                    Some(f) if !f.inherit_input => {
-                        let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
-                        f.stdin_at = f.stdin.len();
-                        Some(rest)
-                    }
-                    _ => None,
-                }
-            })};
-            let answer = if let Some(bytes) = framed {
-                if bytes.is_empty() { ReadAnswer::End } else { ReadAnswer::Data(bytes) }
-            } else {
-                let mut buf = [0u8; 65536];
-                let n = HOST.with(|h| {
-                    let mut b = h.borrow_mut();
-                    let st = b.as_mut()?;
-                    Some(match st.input.as_mut() {
-                        Some(f) => f.read(&mut buf),
-                        None => std::io::stdin().read(&mut buf),
-                    })
-                });
-                match n {
-                    Some(Ok(0)) | None => ReadAnswer::End,
-                    Some(Ok(n)) => ReadAnswer::Data(buf[..n].to_vec()),
-                    Some(Err(e)) => ReadAnswer::Failed(message_of(&e)),
-                }
+            let mut buf = [0u8; 65536];
+            let answer = match std::io::stdin().read(&mut buf) {
+                Ok(0) => ReadAnswer::End,
+                Ok(n) => ReadAnswer::Data(buf[..n].to_vec()),
+                Err(e) => ReadAnswer::Failed(message_of(&e)),
             };
-            match ticket_for(scope, "Read", Answer::Read(answer)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Read> to answer readChunk with"),
-            }
-        }
-        Cap::OpenOutput => {
-            // **Redirect this program's standard output to a file**, which is what `Cli.write` then
-            // reaches. An empty path means "back to the real one", the same as `native/src`.
-            let path = framed_path(&read_string(scope, args.get(1)));
-            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
-            let answer = if path.is_empty() {
-                HOST.with(|h| {
-                    if let Some(st) = h.borrow_mut().as_mut() {
-                        st.output = None;
-                    }
-                });
-                Answer::Change(FAULT_NONE, String::new())
-            } else if !granted {
-                Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
-            } else {
-                match std::fs::File::create(&path) {
-                    Ok(f) => {
-                        HOST.with(|h| {
-                            if let Some(st) = h.borrow_mut().as_mut() {
-                                st.output = Some(f);
-                            }
-                        });
-                        Answer::Change(FAULT_NONE, String::new())
-                    }
-                    Err(e) => Answer::Change(fault_of_path(&e, &path), message_of(&e)),
-                }
-            };
-            match ticket_for(scope, "Change", answer) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Change> to answer openOutput with"),
-            }
-        }
-        Cap::OutputError => {
-            // Whether the redirected output has gone wrong — nothing here writes lazily, so a write
-            // that returned true has already reached the file.
-            match ticket_for(scope, "string", Answer::Text(String::new())) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<string> for outputError"),
-            }
+            return Reply::Now(Answer::Read(answer));
         }
         Cap::Cwd => {
             // **Where the program thinks it is**, which is where every relative path it hands back
             // will be resolved from. Not behind the read grant: knowing the name of the directory
             // is not reading anything in it, and `box` asks for it to print paths.
-            let framed = HOST.with(|h| {
-                let b = h.borrow();
-                let s = b.as_ref()?;
-                s.frames.last().map(|f| f.cwd.clone()).or_else(|| s.cwd_override.clone())
-            });
+            let framed = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.cwd_override.clone()));
             let here = match framed {
                 Some(d) if !d.is_empty() => d,
                 _ => std::env::current_dir()
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_default(),
             };
-            match ticket_for(scope, "string", Answer::Text(here)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<string> to answer cwd with"),
-            }
-        }
-        Cap::WaitAny => {
-            // The ids come over as a wac `i32[]`, and the answer is an index into *that* list —
-            // first ready in the caller's own order, never first to finish. `tickets.rs` says why.
-            let ids = read_i32_array(scope, args.get(1));
-            let millis = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let which = table().map(|t| t.wait_any(&ids, millis)).unwrap_or(-1);
-            let v = v8::Integer::new(scope, which);
-            rv.set(v.into());
+            return Reply::Now(Answer::Text(here));
         }
         Cap::SleepMillis => {
-            let millis = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(0).max(0);
-            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let millis = r.a.clamp(0, i32::MAX as i64);
+            let Some(t) = table() else { return no_table() };
             let id = t.submit();
             let worker = t.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(millis as u64));
                 let _ = worker.complete(id, Answer::I64(millis as i64));
             });
-            match ticket_pending(scope, "i64", id) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<i64> to answer sleepMillis with"),
-            }
+            return Reply::Later(id);
         }
         Cap::RandomBytes => {
             // **From the operating system**, not from a generator this host seeds: `box` uses these
             // for temporary names, and a program that gets predictable ones has a race with anything
             // else running. `/dev/urandom` is the whole of it — no crate, no state, no reseeding.
-            let n = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(0).max(0) as usize;
+            let n = r.a.clamp(0, i32::MAX as i64) as usize;
             let bytes = match std::fs::File::open("/dev/urandom") {
                 Ok(mut f) => {
                     let mut buf = vec![0u8; n];
@@ -3974,15 +3480,12 @@ fn dispatch(
                 }
                 Err(_) => None,
             };
-            match bytes {
-                Some(b) => match ticket_for(scope, "u8[]", Answer::Bytes(Some(b))) {
-                    Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<u8[]> for randomBytes"),
-                },
+            return Reply::Now(match bytes {
+                Some(b) => Answer::Bytes(Some(b)),
                 // **Not an empty array.** A program handed zero bytes where it asked for sixteen
                 // would build a name out of nothing and think it had one.
-                None => throw(scope, "this host could not read /dev/urandom"),
-            }
+                None => Answer::Change(FAULT_UNSUPPORTED, "this host could not read /dev/urandom".into()),
+            });
         }
         Cap::NowMillis | Cap::MonotonicNanos => {
             // The wall clock and a monotonic one. `monotonicNanos` is measured from the first call
@@ -3996,246 +3499,10 @@ fn dispatch(
             } else {
                 START.with(|s| s.elapsed().as_nanos() as i64)
             };
-            match ticket_for(scope, "i64", Answer::I64(n)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<i64> to answer the clock with"),
-            }
+            return Reply::Now(Answer::I64(n));
         }
-        Cap::ResolveI32
-        | Cap::ResolveI64
-        | Cap::ResolveText
-        | Cap::ResolveBytes
-        | Cap::ResolveFile
-        | Cap::ResolveChange
-        | Cap::ResolveStat
-        | Cap::ResolveNames
-        | Cap::ResolveSocket
-        | Cap::ResolveDatagram
-        | Cap::ResolveRead
-        | Cap::ResolveBool
-        | Cap::ResolveCaptured
-        | Cap::ResolveExec
-        | Cap::ResolveChild => {
-            // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
-            // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
-            // should look like one rather than answering twice.
-            let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            // **This blocks**, which is what `wait()` means: the guest asked for the answer and
-            // there is nothing else for this thread to do until the work that produces it lands.
-            // Collected, so nothing can be given up on and the handle note goes — `0308b`.
-            HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().remove(&id); } });
-            let answer = table().and_then(|t| t.take(id));
-            match answer {
-                Some(Answer::I32(n)) => {
-                    let v = v8::Integer::new(scope, n);
-                    rv.set(v.into());
-                }
-                // **A wasm `i64` is a JavaScript `BigInt`**, and V8 is the one holding that rule —
-                // handing back a Number here is a type error at the boundary, not a rounding one.
-                Some(Answer::I64(n)) => {
-                    let v = v8::BigInt::new_from_i64(scope, n);
-                    rv.set(v.into());
-                }
-                Some(Answer::Text(t)) => match write_string(scope, &t) {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "could not build a string for the answer"),
-                },
-                Some(Answer::Bytes(None)) => rv.set_null(),
-                Some(Answer::Bytes(Some(b))) => match write_bytes(scope, &b) {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "could not build a u8[] for the answer"),
-                },
-                Some(Answer::Bool(b)) => rv.set_bool(b),
-                Some(Answer::Child(handle, err_handle, fs_handle, error)) => {
-                    match build_child(scope, handle, err_handle, fs_handle, &error) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a Child for the answer"),
-                    }
-                }
-                Some(Answer::Exec(status, out, err, error)) => {
-                    match build_exec(scope, status, &out, &err, &error) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build an Exec for the answer"),
-                    }
-                }
-                Some(Answer::Captured(out, err, truncated)) => {
-                    match build_captured(scope, &out, &err, truncated) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a Captured for the answer"),
-                    }
-                }
-                Some(Answer::Datagram(bytes, peer, port, error)) => {
-                    match build_datagram(scope, &bytes, &peer, port, &error) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a Datagram for the answer"),
-                    }
-                }
-                Some(Answer::Socket(handle, error, peer, port, fault)) => {
-                    match build_socket(scope, handle, &error, &peer, port, fault) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a Socket for the answer"),
-                    }
-                }
-                Some(Answer::Read(r)) => {
-                    let built = match r {
-                        ReadAnswer::Data(b) => build_read_data(scope, &b),
-                        ReadAnswer::End => build_read_end(scope),
-                        ReadAnswer::Failed(why) => build_read_failed(scope, &why),
-                    };
-                    match built {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a Read for the answer"),
-                    }
-                }
-                Some(Answer::Names(None)) => rv.set_null(),
-                Some(Answer::Names(Some(names))) => match build_names(scope, &names) {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "could not build a string[] for the answer"),
-                },
-                Some(Answer::Stat(st)) => match build_stat(scope, &st) {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "could not build a Stat for the answer"),
-                },
-                Some(Answer::Change(fault, message)) => {
-                    match build_change(scope, fault, &message) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a Change for the answer"),
-                    }
-                }
-                Some(Answer::File(ok, bytes, error, fault)) => {
-                    match build_file_result(scope, ok, &bytes, &error, fault) {
-                        Some(v) => rv.set(v),
-                        None => throw(scope, "could not build a FileResult for the answer"),
-                    }
-                }
-                None => throw(scope, "that ticket has already been taken, or was never issued"),
-            }
-        }
-        Cap::Settled => {
-            // Every answer here is in the table before its ticket is handed over.
-            let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let known = table().is_some_and(|t| t.is_settled(id));
-            rv.set_bool(known);
-        }
-        Cap::Drop => {
-            let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            if let Some(t) = table() {
-                // **What the ticket already held goes back where it came from.** For most work
-                // discarding it is right; for a `receiveFrom` the answer *is* a datagram, read off
-                // the socket once. `issues/system/0207`.
-                if let Some(answer) = t.drop_ticket(id) {
-                    // **A read's bytes go back too**, and for the same reason the datagram does:
-                    // they came off a stream once, and an answer that landed between the caller
-                    // giving up and this call was being binned every time. `issues/system/0308b`.
-                    let reading = HOST.with(|h| {
-                        h.borrow().as_ref().and_then(|st| st.reading.lock().unwrap().remove(&id))
-                    });
-                    // **`Read` *or* `Bytes`.** `recv` answers a `Read`; `readStdin` answers
-                    // `Answer::Bytes`, and matching only the first left its late ordering losing the
-                    // lot — 0 of 6 — while its early one was fixed. The question is whether bytes
-                    // came off a stream, not which capability spelled them. `issues/system/0310b`.
-                    // **An accepted connection is handed on or parked, never put down.** There is
-                    // nowhere to put a socket back: it is in the table with a client attached. If an
-                    // accept is still waiting on that listener it gets it; if none is — the retry
-                    // comes after the give-up in this ordering — it waits for one.
-                    // `issues/system/0310b`.
-                    if let (Some(listener), Answer::Socket(slot, _, _, _, _)) = (reading, &answer) {
-                        if *slot >= 0 {
-                            let next = HOST.with(|h| {
-                                h.borrow().as_ref().and_then(|st| {
-                                    st.accepting.lock().unwrap()
-                                        .get_mut(&listener).and_then(|q| q.pop_front())
-                                })
-                            });
-                            match next {
-                                Some(other) => { let _ = t.complete(other, answer); }
-                                None => HOST.with(|h| {
-                                    if let Some(st) = h.borrow().as_ref() {
-                                        st.parked_accepts.lock().unwrap()
-                                            .entry(listener).or_default().push_back(answer);
-                                    }
-                                }),
-                            }
-                            rv.set_undefined();
-                            return;
-                        }
-                    }
-                    // **An abandoned `connect` is closed, not handed on.** Nothing else wants this
-                    // connection — it is a line this program dialled and stopped caring about — so
-                    // left alone the handle never leaves the table and the peer holds an open line
-                    // to nobody. An accept has a listener noted against it and was handled above; a
-                    // socket answer with no note is a dial. `issues/system/0310b`.
-                    if let (None, Answer::Socket(slot, _, _, _, _)) = (reading, &answer) {
-                        if *slot >= 0 {
-                            HOST.with(|h| {
-                                if let Some(st) = h.borrow().as_ref() {
-                                    if let Some(Sock::Stream(sk)) =
-                                        st.sockets.lock().unwrap().remove(slot)
-                                    {
-                                        let _ = sk.shutdown(std::net::Shutdown::Both);
-                                    }
-                                }
-                            });
-                        }
-                        rv.set_undefined();
-                        return;
-                    }
-                    let taken: Option<&Vec<u8>> = match &answer {
-                        Answer::Read(ReadAnswer::Data(b)) => Some(b),
-                        Answer::Bytes(Some(b)) => Some(b),
-                        _ => None,
-                    };
-                    if let (Some(handle), Some(bytes)) = (reading, taken) {
-                        if !bytes.is_empty() {
-                            let queue = HOST.with(|h| {
-                                h.borrow().as_ref().and_then(|st| {
-                                    match st.sockets.lock().unwrap().get(&handle) {
-                                        Some(Sock::Queue(q)) => Some(q.clone()),
-                                        _ => None,
-                                    }
-                                })
-                            });
-                            match queue {
-                                // Into the queue, so a reader parked on it is woken by them.
-                                Some(q) => q.unread(bytes.clone()),
-                                // A socket has none, so they wait under the handle instead.
-                                None => {
-                                    if let Some(map) = HOST.with(|h| {
-                                        h.borrow().as_ref().map(|st| st.pushback.clone())
-                                    }) {
-                                        map.lock().unwrap().entry(handle).or_default()
-                                            .extend(bytes.iter().copied());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let socket = HOST.with(|h| {
-                        h.borrow().as_ref().and_then(|st| st.receiving.lock().unwrap().remove(&id))
-                    });
-                    if let (Some(handle), Answer::Datagram(ref bytes, _, _, ref err)) =
-                        (socket, &answer)
-                    {
-                        if err.is_empty() && !bytes.is_empty() {
-                            if let Some(q) = HOST.with(|h| {
-                                h.borrow().as_ref().map(|st| st.datagrams.clone())
-                            }) {
-                                q.lock().unwrap().entry(handle).or_default().push_back(answer);
-                            }
-                        }
-                    }
-                }
-            }
-            rv.set_undefined();
-        }
-        Cap::Unsupported => {
-            let who = HOST.with(|h| {
-                h.borrow()
-                    .as_ref()
-                    .and_then(|s| s.cap_names.get(sig).and_then(|v| v.get(slot)).cloned())
-                    .unwrap_or_else(|| format!("signature {sig} slot {slot}"))
-            });
-            throw(scope, &format!("{who} is not answered by this host yet"));
+        Cap::Request | Cap::WaitAny | Cap::Exit | Cap::AskInterrupt | Cap::Unsupported => {
+            Reply::Now(Answer::Change(FAULT_UNSUPPORTED, format!("request {op} is not answered by this host")))
         }
     }
 }
@@ -4246,59 +3513,7 @@ fn throw(scope: &mut v8::PinScope, what: &str) {
     scope.throw_exception(e);
 }
 
-/// A wac `string[]` out of the module's memory, as bytes — `pushChild`'s argv.
-fn read_string_array_bytes(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) -> Vec<Vec<u8>> {
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
-    let Some(exports) = exports else { return Vec::new() };
-    let exports = v8::Local::new(scope, exports);
-    let Some(len_fn) = get_export(scope, exports, "$bind$arr_string_len") else { return Vec::new() };
-    let Some(n) = len_fn.call(scope, exports.into(), &[v]).and_then(|r| r.to_int32(scope)) else {
-        return Vec::new();
-    };
-    let n = n.value();
-    let Some(get) = get_export(scope, exports, "$bind$arr_string_get") else { return Vec::new() };
-    let mut out = Vec::with_capacity(n.max(0) as usize);
-    for i in 0..n {
-        let idx = v8::Integer::new(scope, i);
-        let Some(item) = get.call(scope, exports.into(), &[v, idx.into()]) else { continue };
-        out.push(read_string(scope, item).into_bytes());
-    }
-    out
-}
 
-/// A wac `u8[][]` out of the module's memory — `spawn` and `spawnSelf`'s argv.
-///
-/// **Not `read_string_array_bytes`, and telling them apart is the whole of `issues/system/0148`.**
-/// The three capabilities that take an argument list do not agree on its type: `pushChild` takes
-/// `string[]`, while `spawn` and `spawnSelf` take `u8[][]` — `packages/platform/src/stream.wac` says
-/// why, that an argument is bytes and not text (wac-mono 0065). Both spawns were read with the
-/// `string[]` accessors, so `$bind$arr_string_len` was called on a `u8[][]` reference; the call fails
-/// and *every* path in that reader returns an empty `Vec`. The child was therefore started with no
-/// arguments at all, and a shell asked for nothing exits 0 without printing: `seq 1 3` through the
-/// native host produced silence, and `imaged` printed its own usage, once per stage of the pipeline.
-///
-/// The module has always exported what this needs. `$bind$arr_u8Arr_len` and `$bind$arr_u8Arr_get`
-/// are emitted for any `u8[][]` the boundary reaches — the outer array's helpers are named from the
-/// element, so an array of `u8[]` is `u8Arr` — and nothing on this side ever asked for them.
-fn read_bytes_array(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) -> Vec<Vec<u8>> {
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
-    let Some(exports) = exports else { return Vec::new() };
-    let exports = v8::Local::new(scope, exports);
-    let Some(len_fn) = get_export(scope, exports, "$bind$arr_u8Arr_len") else { return Vec::new() };
-    let Some(n) = len_fn.call(scope, exports.into(), &[v]).and_then(|r| r.to_int32(scope)) else {
-        return Vec::new();
-    };
-    let n = n.value();
-    let Some(get) = get_export(scope, exports, "$bind$arr_u8Arr_get") else { return Vec::new() };
-    let mut out = Vec::with_capacity(n.max(0) as usize);
-    for i in 0..n {
-        let idx = v8::Integer::new(scope, i);
-        let Some(item) = get.call(scope, exports.into(), &[v, idx.into()]) else { continue };
-        // Each element is a `u8[]`, which is the reader a string takes minus the decode.
-        out.push(read_bytes(scope, item));
-    }
-    out
-}
 
 /// A wac `i32[]` out of the module's memory — how `waitAny` is handed its list of tickets.
 fn read_i32_array(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) -> Vec<i32> {
@@ -4372,160 +3587,27 @@ fn write_bytes<'s>(
     from_mem.call(scope, exports.into(), &[n.into()])
 }
 
-/// `FileResult.of(ok, bytes, error, fault)` — the module building its own struct, from its own
-/// manifest-declared constructor, so the field order is never a copy this host keeps.
-fn build_file_result<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    ok: bool,
-    bytes: &[u8],
-    error: &str,
-    fault: i32,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| {
-        h.borrow().as_ref().and_then(|s| s.file_result_of.clone())
-    })?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    // **Bytes first, then the string.** Both stage through the same buffer, so building one after
-    // the other is the only order that does not overwrite the first with the second.
-    let bytes_v = write_bytes(scope, bytes)?;
-    let error_v = write_string(scope, error)?;
-    let ok_v = v8::Integer::new(scope, i32::from(ok));
-    let fault_v = v8::Integer::new(scope, fault);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[ok_v.into(), bytes_v, error_v, fault_v.into()])
-}
 
-/// `Change.of(fault, message)`.
-fn build_change<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    fault: i32,
-    message: &str,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.change_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let msg = write_string(scope, message)?;
-    let fault_v = v8::Integer::new(scope, fault);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[fault_v.into(), msg])
-}
 
 // **The enum constructors come from the manifest**, like every other export this host calls. They
 // used to be spelled here — `$bind$e_Read_Data_new` and its two neighbours — which is the one thing
 // `StructSpec` exists to prevent, and `native/src/main.rs` still does it. `issues/system/0141`.
 
-fn build_read_data<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    bytes: &[u8],
-) -> Option<v8::Local<'s, v8::Value>> {
-    let arr = write_bytes(scope, bytes)?;
-    call_variant(scope, "Data", &[arr])
-}
 
-fn build_read_end<'s>(scope: &mut v8::PinScope<'s, '_>) -> Option<v8::Local<'s, v8::Value>> {
-    call_variant(scope, "End", &[])
-}
 
-fn build_read_failed<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    why: &str,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let msg = write_string(scope, why)?;
-    call_variant(scope, "Failed", &[msg])
-}
 
-/// Build one `Read` variant through the export the manifest named for it.
-fn call_variant<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    variant: &str,
-    args: &[v8::Local<v8::Value>],
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor = HOST.with(|h| {
-        h.borrow().as_ref().and_then(|s| s.read_variants.get(variant).cloned())
-    })?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let f = get_export(scope, exports, &ctor)?;
-    f.call(scope, exports.into(), args)
-}
 
-/// `Stat.of(…)`, in the manifest's field order.
-fn build_stat<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    st: &StatAnswer,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.stat_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    // Every value first, then the call — a closure that borrows the scope cannot be alive while
-    // anything else wants it mutably, which is Rust saying what the V8 API means.
-    let exists = v8::Integer::new(scope, i32::from(st.exists));
-    let is_file = v8::Integer::new(scope, i32::from(st.is_file));
-    let is_dir = v8::Integer::new(scope, i32::from(st.is_dir));
-    let size = v8::BigInt::new_from_i64(scope, st.size);
-    let modified = v8::BigInt::new_from_i64(scope, st.modified_millis);
-    let is_symlink = v8::Integer::new(scope, i32::from(st.is_symlink));
-    let is_executable = v8::Integer::new(scope, i32::from(st.is_executable));
-    let fault = v8::Integer::new(scope, st.fault);
-    let mode = v8::Integer::new(scope, st.mode);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(
-        scope,
-        exports.into(),
-        &[
-            exists.into(),
-            is_file.into(),
-            is_dir.into(),
-            size.into(),
-            modified.into(),
-            is_symlink.into(),
-            is_executable.into(),
-            fault.into(),
-            mode.into(),
-        ],
-    )
-}
 
-/// One pushed frame: an applet running inside this program.
-#[derive(Default)]
-struct Frame {
-    argv: Vec<Vec<u8>>,
-    stdin: Vec<u8>,
-    stdin_at: usize,
-    cwd: String,
-    inherit_input: bool,
-    out: Vec<u8>,
-    err: Vec<u8>,
-}
 
-/// `Child.of(handle, errHandle, fsHandle, error)`.
-fn build_child<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    handle: i32,
-    err_handle: i32,
-    fs_handle: i32,
-    error: &str,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.child_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let msg = write_string(scope, error)?;
-    let a = v8::Integer::new(scope, handle);
-    let b = v8::Integer::new(scope, err_handle);
-    let c = v8::Integer::new(scope, fs_handle);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[a.into(), b.into(), c.into(), msg])
-}
 
 
 /// Instantiate `wasm` in this isolate and keep what is needed to call into it.
 ///
 /// **The same sequence `run_as_with` uses to start a program**, stopping before `main`: compile, build
-/// one dispatcher per callback signature, instantiate, build the capability structs. The world it gets
+/// one dispatcher per callback signature, instantiate, bind its `__wacHost`. The world it gets
 /// is this program's own — `dispatch` reaches the same `HOST`, so a loaded module's `readFile` is
 /// served exactly as its loader's is and the grants are the loader's by construction, which is why
-/// `Cli.load` takes no grant argument. `issues/system/0240c`.
+/// `modules.load` is bounded by the loader's grants. `issues/system/0240c`.
 fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32, String> {
     let Some(text) = manifest_in(wasm) else {
         return Err("this module carries no wac.manifest section".into());
@@ -4570,55 +3652,13 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
 
     let mut caps: Vec<Vec<Cap>> = vec![Vec::new(); m.callbacks.len()];
     let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
-    let mut unsupported: Vec<String> = Vec::new();
 
-    // **`Core` and `Cli`, and neither is required.** A module of pure test functions names no
-    // capability, so its manifest has no `Core` — building one first is what made `wac test` refuse
-    // every test file in this repository once, and the same mistake is available here.
-    let mut world: Vec<v8::Global<v8::Value>> = Vec::new();
-    let mut shared2: Vec<(String, v8::Local<v8::Value>)> = Vec::new();
-    if let Ok(core) = build_struct(scope, exports, &m, "Core", &mut caps, &mut names, &mut unsupported, &mut shared2) {
-        world.push(v8::Global::new(scope, core));
-        if let Ok(cli) = build_struct(scope, exports, &m, "Cli", &mut caps, &mut names, &mut unsupported, &mut shared2) {
-            world.push(v8::Global::new(scope, cli));
-        }
-    }
-
-    // **This module's own `Pending<T>` constructors** — `issues/system/0263c`, and the same loop
-    // `run_as_with` runs for a program. Without it every `Pending` handed to this module was built by
-    // the loader's constructor, carrying the loader's resolve/settled/drop funcrefs: those index the
-    // loader's `caps` table, and called with this module's ctx installed they reach the wrong slot and
-    // trap with no message. A `Pending` is the one answer shape that carries funcrefs, which is why it
-    // is the one that had to move.
-    //
-    // Registered *after* `Core` and `Cli` above, matching the program path's order — the slot numbers
-    // are internal to this module's table and `pending_hooks` returns the funcrefs it registered, so
-    // consistency is automatic either way.
-    let mut pending: HashMap<String, PendingHooks> = HashMap::new();
-    for (ty, resolve) in [
-        ("i32", Cap::ResolveI32),
-        ("i64", Cap::ResolveI64),
-        ("string", Cap::ResolveText),
-        ("u8[]", Cap::ResolveBytes),
-        ("FileResult", Cap::ResolveFile),
-        ("Change", Cap::ResolveChange),
-        ("Stat", Cap::ResolveStat),
-        ("string[]", Cap::ResolveNames),
-        ("HostSocket", Cap::ResolveSocket),
-        ("Datagram", Cap::ResolveDatagram),
-        ("Read", Cap::ResolveRead),
-        ("bool", Cap::ResolveBool),
-        ("Captured", Cap::ResolveCaptured),
-        ("Exec", Cap::ResolveExec),
-        ("HostChild", Cap::ResolveChild),
-    ] {
-        // A module that never asks for a `Pending<i32>` has none in its manifest, and that is not an
-        // error until something asks for one — `pending_hooks` answers `Err` and this skips it, which
-        // is the program path's rule verbatim.
-        if let Ok(h) = pending_hooks(scope, exports, &m, ty, resolve, &mut caps, &mut names) {
-            pending.insert(ty.to_string(), h);
-        }
-    }
+    // **Its own `__WacHost`, and none is required.** A module of pure test functions exports no
+    // `__wacHost` and is called with nothing. One that does gets the host's four functions bound in
+    // *its* slot table, so its requests come back through `dispatch` with its own context installed,
+    // and its answers go to its own `__wacAnswered` — never the loader's. `issues/system/0263c` was
+    // that mistake once, with `Pending`'s funcrefs.
+    let wac = bind_host(scope, exports, &m, &mut caps, &mut names)?;
 
     // A ceiling of the caller's own: asking for more than this program holds is not an error, and the
     // module finds the capability denied — `spawn`'s rule, one layer in.
@@ -4626,10 +3666,8 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
     let entry = HeldModule {
         ctx: ModuleCtx {
             exports: v8::Global::new(scope, exports),
-            pending: pending
-                .into_iter()
-                .map(|(k, v)| (k, PendingGlobals::new(scope, v)))
-                .collect(),
+            wac,
+            inflight: HashMap::new(),
             caps,
             cap_names: names,
             grants: Grants {
@@ -4651,7 +3689,6 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
             },
         },
         exports: m.exports.clone(),
-        world,
     };
     Ok(HOST.with(|h| {
         let mut b = h.borrow_mut();
@@ -4683,16 +3720,8 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
         let lm = st.loaded.get(&handle)?;
         let sig = lm.exports.iter().find(|e| e.name == name)?;
         let takes_int = sig.params.len() == 1 && sig.params[0] == "i32";
-        let world_arity =
-            if sig.params.iter().enumerate().all(|(i, t)| t == ["Core", "Cli"][i.min(1)])
-                && sig.params.len() <= 2
-                && !sig.params.is_empty()
-                && sig.params[0] == "Core"
-            {
-                sig.params.len()
-            } else {
-                0
-            };
+        // A test that takes the module's own `__WacHost`, as `main` may.
+        let takes_host = sig.params.len() == 1 && sig.params[0] == "__WacHost";
         // 0 nothing to read, 1 an `i32`, 2 a `string`, 3 something this cannot answer for.
         let ret_kind: u8 = if sig.ret.is_empty() || sig.ret == "void" {
             0
@@ -4703,9 +3732,9 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
         } else {
             3
         };
-        Some((takes_int, world_arity, ret_kind, sig.params.is_empty(), lm.world.len()))
+        Some((takes_int, takes_host, ret_kind, sig.params.is_empty(), lm.ctx.wac.is_some()))
     });
-    let Some((takes_int, world_arity, ret_kind, no_params, worlds)) = plan else {
+    let Some((takes_int, takes_host, ret_kind, no_params, has_host)) = plan else {
         return (2, format!("no export named {name}"), 0);
     };
     // Only a refusal needs the words, and a refusal happens once.
@@ -4719,11 +3748,11 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
                 .unwrap_or_default()
         })
     };
-    if !no_params && !takes_int && world_arity == 0 {
+    if !no_params && !takes_int && !takes_host {
         return (3, format!("cannot call {name}({})", spelled(", ")), 0);
     }
-    if world_arity > worlds {
-        return (3, format!("this module was built without {}", spelled(" and ")), 0);
+    if takes_host && !has_host {
+        return (3, format!("{name} takes a {} and this module exports no __wacHost", spelled(", ")), 0);
     }
     if ret_kind == 3 {
         let ret = HOST.with(|h| {
@@ -4741,36 +3770,37 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
     let saved = HOST.with(|h| {
         let mut b = h.borrow_mut();
         let st = b.as_mut().expect("a host");
-        let lm = st.loaded.get(&handle).expect("the module");
+        let lm = st.loaded.get_mut(&handle).expect("the module");
         let mine = ModuleCtx {
             exports: lm.ctx.exports.clone(),
             caps: lm.ctx.caps.clone(),
             cap_names: lm.ctx.cap_names.clone(),
             grants: lm.ctx.grants.clone(),
-            // Cloned rather than taken: the module stays loaded and a second call needs these again.
-            // `PendingGlobals` is four `v8::Global`s, so a clone is four refcount bumps.
-            pending: lm.ctx.pending.clone(),
+            wac: lm.ctx.wac.clone(),
+            // Taken, and given back after: requests it left in flight are still its own next call.
+            inflight: std::mem::take(&mut lm.ctx.inflight),
         };
-        // Only when the callee takes one. `__cov_get(i32)` does not, and cloning a vector of
-        // `v8::Global`s per call to hand nothing to it is the same waste as the signature above.
-        let world: Vec<v8::Global<v8::Value>> =
-            if world_arity > 0 { lm.world.clone() } else { Vec::new() };
+        // Only when the callee takes one. `__cov_get(i32)` does not.
+        let host: Option<v8::Global<v8::Value>> =
+            if takes_host { mine.wac.as_ref().map(|w| w.host.clone()) } else { None };
         let was = ModuleCtx {
             exports: st.exports.clone(),
             caps: std::mem::take(&mut st.caps),
             cap_names: std::mem::take(&mut st.cap_names),
             grants: st.grants.clone(),
-            pending: std::mem::take(&mut st.pending),
+            wac: st.wac.take(),
+            inflight: std::mem::take(&mut st.inflight),
         };
         st.exports = mine.exports;
         st.caps = mine.caps;
         st.cap_names = mine.cap_names;
         st.grants = mine.grants;
-        // The loaded module's own `Pending` constructor, for the reason `ModuleCtx.pending` gives.
-        st.pending = mine.pending;
-        (was, world)
+        // The loaded module's own host value and export, for the reason `ModuleCtx.wac` gives.
+        st.wac = mine.wac;
+        st.inflight = mine.inflight;
+        (was, host)
     });
-    let (was, world) = saved;
+    let (was, host) = saved;
 
     // **Called inside a `TryCatch`, and read outside it.** The answer has to be turned into a wac
     // `string` through the module's own helpers, which wants the outer scope — so the call happens in
@@ -4810,8 +3840,8 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
                 if takes_int {
                     argv.push(v8::Integer::new(scope, arg).into());
                 }
-                for g in world.iter().take(world_arity) {
-                    argv.push(v8::Local::new(scope, g.clone()));
+                if let Some(g) = host.clone() {
+                    argv.push(v8::Local::new(scope, g));
                 }
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));
                 let mut tc = tc.init();
@@ -4825,7 +3855,7 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
                     // nothing that `status == 1` has not already said.
                     //
                     // What a caller can use is the sentence `trap "…"` left behind, which is what the
-                    // test runner ten screens up has always printed and what `Cli.call` had no way to
+                    // test runner ten screens up has always printed and what `Module.call` had no way to
                     // reach. Empty for an engine trap — a bounds check, a null dereference — which
                     // writes none, and reporting the previous one's would be worse than reporting
                     // nothing (`issues/lang/0254c`, which is that this global is never cleared).
@@ -4864,89 +3894,27 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
     // ...and put the caller's back, whatever happened.
     HOST.with(|h| {
         if let Some(st) = h.borrow_mut().as_mut() {
+            // The module's requests still in flight go back with it, if it is still loaded.
+            let left = std::mem::replace(&mut st.inflight, was.inflight);
+            if let Some(lm) = st.loaded.get_mut(&handle) {
+                lm.ctx.inflight = left;
+            }
             st.exports = was.exports;
             st.caps = was.caps;
             st.cap_names = was.cap_names;
             st.grants = was.grants;
-            // **And the caller's own `Pending` constructors.** Forgetting this line is what "the test
-            // trapped" was: the save above *takes* the map, so a loader that did not get it back had
-            // an empty one and died on its next `Pending`-answering capability — after the call
-            // returned, which is why the trap looked like it came from somewhere else.
-            st.pending = was.pending;
+            // **And the caller's own host value.** Forgetting this is what "the test trapped" was
+            // once, with `Pending`: the save above *takes* it, so a loader that did not get it back
+            // would deliver its next answer nowhere.
+            st.wac = was.wac;
         }
     });
     outcome
 }
 
-/// `LoadedModule.of(handle, error)` — `issues/system/0240c`.
-fn build_loaded<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    handle: i32,
-    error: &str,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.loaded_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let msg = write_string(scope, error)?;
-    let a = v8::Integer::new(scope, handle);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[a.into(), msg])
-}
 
-/// `CallResult.of(status, text, value)`.
-fn build_called<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    status: i32,
-    text: &str,
-    value: i32,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.called_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let msg = write_string(scope, text)?;
-    let a = v8::Integer::new(scope, status);
-    let c = v8::Integer::new(scope, value);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[a.into(), msg, c.into()])
-}
 
-/// `Captured.of(out, err, truncated)`.
-fn build_captured<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    out: &[u8],
-    err: &[u8],
-    truncated: bool,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.captured_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let o = write_bytes(scope, out)?;
-    let e = write_bytes(scope, err)?;
-    let t = v8::Integer::new(scope, i32::from(truncated));
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[o, e, t.into()])
-}
 
-fn build_exec<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    status: i32,
-    out: &[u8],
-    err: &[u8],
-    error: &str,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.exec_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let st = v8::Integer::new(scope, status);
-    let o = write_bytes(scope, out)?;
-    let e = write_bytes(scope, err)?;
-    // **A wac `string`, not a JS one.** `write_string` stages it through the module's own buffer and
-    // hands back the object the binding expects; a `v8::String` is the wrong type and the
-    // constructor throws. Built after the two byte arrays because all three share that buffer.
-    let msg = write_string(scope, error)?;
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[st.into(), o, e, msg])
-}
 
 /// One open socket: a listener waiting for connections, or a stream carrying them.
 enum Sock {
@@ -4959,51 +3927,12 @@ enum Sock {
     /// together is what `platform.wac` says handles are for, and that only works if one capability
     /// serves both.
     Queue(Arc<Stream>),
-    /// **A file opened as a stream** — `Cli.openFile`. Read with `recv` and written with `send` like a
+    /// **A file opened as a stream** — `files.openRead`/`openWrite`. Read with `recv` and written with `send` like a
     /// socket, so a program holds as many as it likes; `closeFile` ends it.
     File(std::fs::File),
 }
 
-/// `Socket.of(handle, error, peer, port)` — declared in `platform.wac` rather than left to bindgen
-/// precisely so a host can build one without reaching for a generated name.
-/// `Datagram(bytes, peer, port, error)`, built through the module's own constructor.
-fn build_datagram<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    bytes: &[u8],
-    peer: &str,
-    port: i32,
-    error: &str,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.datagram_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let body = write_bytes(scope, bytes)?;
-    let who = write_string(scope, peer)?;
-    let p = v8::Integer::new(scope, port);
-    let err = write_string(scope, error)?;
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[body, who, p.into(), err])
-}
 
-fn build_socket<'s>(
-    scope: &mut v8::PinScope<'s, '_>,
-    handle: i32,
-    error: &str,
-    peer: &str,
-    port: i32,
-    fault: i32,
-) -> Option<v8::Local<'s, v8::Value>> {
-    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.socket_of.clone()))?;
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let err = write_string(scope, error)?;
-    let who = write_string(scope, peer)?;
-    let h = v8::Integer::new(scope, handle);
-    let p = v8::Integer::new(scope, port);
-    let ctor = get_export(scope, exports, &ctor_name)?;
-    let f = v8::Integer::new(scope, fault);
-    ctor.call(scope, exports.into(), &[h.into(), err, who, p.into(), f.into()])
-}
 
 /// `STDIN`, in `std/platform.wac`. A channel number, never a socket.
 ///
@@ -5055,6 +3984,8 @@ fn keep_socket(sock: Sock) -> i32 {
     })
 }
 
+
+/// A wac `string` from Rust, through the staging buffer.
 /// A wac `string[]` from Rust.
 ///
 /// `_new` takes a fill value because a string reference has no default — the array is made full of
@@ -5083,7 +4014,6 @@ fn build_names<'s>(
     Some(arr)
 }
 
-/// A wac `string` from Rust, through the staging buffer.
 /**
  * An integer argument as wac writes one: decimal or `0x` hex, a sign, `_` between digits. A hex
  * literal is a bit pattern (spec ch09), so `0xFFFFFFFF` is a `u32`'s whole range and an `i32`'s

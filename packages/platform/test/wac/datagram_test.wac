@@ -23,7 +23,7 @@
 // and `got: ping … sender-is-a yes` is the one that says a datagram made the trip.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { freshDir } from "../../../wactest/src/host.wac";
 import { wacBinary, nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
 import { flatten } from "core";

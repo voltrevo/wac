@@ -16,7 +16,7 @@
 // named with `git -C` instead; every argument this needs is an argument git already takes.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { Vec, flatten } from "core";
 import { Buf } from "core";
 import { Rule, parseIgnore, ignored } from "../../src/ignore.wac";

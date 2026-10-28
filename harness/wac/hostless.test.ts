@@ -69,7 +69,6 @@ await wacTestRun("packages/gzip/test/wac/crc32_test.wac", "crc32");
 await wacTestRun("packages/gzip/test/wac/inflate_at_test.wac", "inflate-at");
 await wacTestRun("packages/json/test/wac/bounds_test.wac", "json-bounds");
 await wacTestRun("packages/platform/test/wac/ripple_test.wac", "ripple");
-await wacTestRun("packages/platform/test/wac/sched_test.wac", "sched");
 await wacTestRun("packages/quic/test/wac/connection_test.wac", "quic-connection");
 await wacTestRun("packages/quic/test/wac/short_test.wac", "quic-short");
 await wacTestRun("packages/quic/test/wac/tamper_test.wac", "quic-tamper");

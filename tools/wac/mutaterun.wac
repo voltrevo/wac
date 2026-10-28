@@ -54,7 +54,7 @@
 //
 // `issues/system/0161` step 6.
 
-import { Cli, Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
+import { Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { Flags, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
 import { Profiled, buildProfile } from "./mutatecoverage.wac";

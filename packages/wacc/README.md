@@ -2460,7 +2460,7 @@ one call shape this checker never counted. The count is written in the field's o
 | false alarms | 0 | 0 |
 
 **A third attempt at reaching, and the same answer as before.** `dird.wac` imports `Cli` and never
-writes `Pending`, so `cli.argCount().wait(1)` has a receiver this checker cannot name — the last
+writes `Pending`, so the `.wait(1)` on what `argCount` answered has a receiver this checker cannot name — the last
 `.wait` case, and it needs the type an imported declaration is *made of*. Restricted to the same
 file, and refusing any name the importing file declares itself, it reaches 248 and costs **fourteen**
 false alarms: `Decoded d = decode(raw);` in five files, where a struct reached in from one file

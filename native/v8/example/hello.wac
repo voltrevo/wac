@@ -1,15 +1,14 @@
-// The smallest program that needs a capability: it says something.
+// The smallest program that needs a host: it says something, on each of its two streams.
 //
-// `main(Core)` rather than the usual `main(Core, Cli)` because `Cli` is the next slice of the host —
-// this one proves the path a capability takes, which is the same for all of them: a funcref made by
-// the module's own `$bind$fnref_<j>`, a struct built by its `of`, a call back into Rust through
-// `wac.cb<j>`, and a wac string read out of the module's memory.
+// What it proves is the path every capability takes under the flat ABI (design/system/0013 step 6):
+// the host binds four funcrefs through the module's own `$bind$fnref_<j>`, hands them to `__wacHost`,
+// and a write comes back to Rust as `request(OP_WRITE_STDOUT, …)` with its answer delivered through
+// `__wacAnswered` before the call returns.
 
-import { Core, Sys } from "std";
+import { Sys } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  core.log("hello from a Rust host on V8");
-  core.warn("and this goes to stderr");
+  sys.log("hello from a Rust host on V8");
+  sys.warn("and this goes to stderr");
   return 0;
 }

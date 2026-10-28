@@ -55,7 +55,7 @@ pass. `git fsck --strict` accepts the result, `git log` shows the commit with it
 **It checks a repository out.** `example/gitco.wac` is a program — no TypeScript in the path — that
 resolves `HEAD`, reads the commit's tree out of loose objects or a pack, writes every file and
 subdirectory, and writes a matching `.git/index`. Delete a repository's working tree, run it, and
-`git status --porcelain` is empty with `git fsck` clean — modes included, since `Cli.setExecutable` landed.
+`git status --porcelain` is empty with `git fsck` clean — modes included, since `Files.setExecutable` landed.
 
 It walks history. Given this repository's own objects it resolves `HEAD` through a symbolic ref, reads
 the commit, and follows parents to the root — **445 commits, identical to `git rev-list --first-parent`,
@@ -165,7 +165,7 @@ worse than one that says which:
   a `Repo` holds only an `Fs`. Where it sits was measured with `git check-ignore -v` rather than assumed —
   it loses to `.git/info/exclude` and to a `.gitignore` — and the test's fixture makes all three disagree
   about the same three files, because one where they agree passes against a matcher that never read it.
-- **A file's mode is one bit wide.** `Cli.setExecutable` carries the executable bit and nothing else, so
+- **A file's mode is one bit wide.** `Files.setExecutable` carries the executable bit and nothing else, so
   `packages/fs` grew a `setExecutable` beside `chmod` rather than widening `chmod` — which still refuses
   on a host mount, because applying one bit of a mode and answering success would let `chmod 600 secret`
   report a file private that anyone can read. That is the decision recorded in

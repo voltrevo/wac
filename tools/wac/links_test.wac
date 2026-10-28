@@ -53,7 +53,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 // `tracked` and `nonEmptyLines` moved to `packages/wactest/src/repo.wac` when
 // `duplicatedline_test.wac` became the second guard to want them.
 import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
-import { Cli, Exec, Files, Output, Procs, Sys } from "std";
+import { Exec, Files, Output, Procs, Sys } from "std";
 import { hashString, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -619,6 +619,8 @@ string[][] gone() {
     ["packages/box/test/sealing.test.ts", "packages/fs/src/remote.wac"],
     ["packages/wacc/src/check.wac", "packages/platform/src/frame.wac"],
     ["tools/wac/seedfresh_test.wac", "packages/platform/test/wac/frame_test.wac"],
+    // **design/system/0013 step 6** deleted `Sched` and the tests of it; this design note measured against them.
+    ["design/lang/0010-a-method-type-parameter-has-to-come-from-the-slot.md", "packages/platform/test/wac/scheduled_test.wac"],
     // **One deletion, 2026-08-21: the suite orchestrator moved from TypeScript to wac.**
     // tools/runTests.ts, tools/killedLane.ts and its test became `tools/runTests.wac`,
     // `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`. Every sentence below is either an

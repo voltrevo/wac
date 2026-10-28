@@ -21,7 +21,7 @@
 // answer for the same object.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Change, FileResult, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Exec, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { Vec, flatten } from "core";
 import { RefValue, PackedRef, parseRef, parsePackedRefs, packedTarget } from "../../src/refs.wac";
 import { Commit, Parsed, Who, parseCommit } from "../../src/commit.wac";

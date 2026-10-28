@@ -19,7 +19,7 @@
 // also where the note about `-ign_eof` and the 55 seconds it used to cost lives.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Datagram, Exec, Pending, HostSocket, ChildEnv, Env, Files, Launch, Net, Procs, Sys, Datagrams, Clock } from "std";
+import { Datagram, Exec, ChildEnv, Env, Files, Launch, Net, Procs, Sys, Datagrams, Clock } from "std";
 import { Buf, flatten } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";

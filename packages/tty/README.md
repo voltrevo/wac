@@ -93,7 +93,7 @@ with a price, written up beside the loop there.
 The step's own criterion is that `^C` ends a running `yes`. **It is met on both halves**, and they
 failed for different reasons, which is why they were finished separately and by different means.
 
-- **In a page.** `Core.askInterrupt` is the seam, answered by the page because its keydown listener
+- **In a page.** The host's `interrupted` call — `sys.interrupted()` — is the seam, answered by the page because its keydown listener
   and its bridge service are the same thread — so while the worker is parked *asking*, the page has
   already seen the keystroke. `^C` ends a running `yes` in a real Chromium
   (`platform/test/browser_live.test.ts`), canaried both ways.
@@ -122,7 +122,7 @@ Worth stating because the obvious plan is to give `Shell` a `Page` and poll at i
 would make `^C` work at the prompt, which it already does, and do nothing at all for a running command,
 which is the whole criterion. The page half was solved on the **capability** instead — something every
 applet already holds — because a running `yes` is inside `dispatch`, so the shell's own check points
-are not reached, and an applet is handed `Core`, `Cli`, `Fs` and `Args` and never a `Page`.
+are not reached, and an applet is handed its handles and `Args` and never a `Page`.
 
 ## What is not here
 

@@ -35,9 +35,9 @@
 //   - **`main` may be called twice in one instance.** Safe by construction, not by convention: wac
 //     has no module-level variables, so a program's state is reachable from its own frame and gone
 //     when it returns.
-//   - **The capabilities may not be rebuilt per run.** bindgen registers one wasm function per host
-//     function and sixteen per signature can be live, so rebuilding `Core` and `Cli` each time died
-//     on the fifth run. `entry.ts` builds them once and `Bridge.rebind` re-points them at each run's
+//   - **The host may not be remade per run.** bindgen registers one wasm function per host function
+//     and sixteen per signature can be live, so rebuilding the capabilities each time died on the
+//     fifth run. `entry.ts` makes the host once and `Bridge.rebind` re-points it at each run's
 //     buffer.
 //   - **The worker goes back in the pool when the run is over**, not when `spawnChild` terminates
 //     it. `terminate` is called from `shutdown`, including on the error path, and returning it from
@@ -230,8 +230,6 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
               ? { env: (n: string) => Deno.env.get(n) }
               : {}),
             ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-            log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
-            warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
             write: async (b: Uint8Array) => {
               if (!await out.push(b)) throw new Error("the program's output is not being read");
             },

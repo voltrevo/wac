@@ -185,7 +185,6 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   const written: Uint8Array[] = [];
   const w = browserWorld({
     args: ["one", "two"],
-    log: (l) => { logged.push(l); },
     warn: (l) => { logged.push(`!${l}`); },
     write: (b) => { written.push(b); },
     root,
@@ -199,9 +198,11 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   // Out of range is empty, not an error — the same as everywhere else.
   assertEquals(unstr(await call(OP.ARG, i32le(9))), "");
 
-  await call(OP.LOG, str("hello"));
-  await call(OP.WARN, str("careful"));
-  assertEquals(logged.join(","), "hello,!careful");
+  // Standard output is the page's own sink; standard error, with no sink of its own, the console's warnings.
+  await call(OP.WRITE_STDOUT, str("hello"));
+  await call(OP.WRITE_STDERR, str("careful"));
+  assertEquals(dec.decode(written[0]), "hello");
+  assertEquals(logged.join(","), "!careful");
 
   assertEquals((await call(OP.RANDOM_BYTES, i32le(16))).length, 16);
   await rejects(() => call(OP.RANDOM_BYTES, i32le(-1)), "out of range");
@@ -271,25 +272,27 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   assertEquals(empty.fault, FAULT_OTHER, "a browser exception no category covers");
   assertEquals(empty.message, "empty path", empty.message);
 
-  // Streaming input, in CHUNK-sized pieces out of a Blob.
+  // A file as a stream, in CHUNK-sized pieces out of a Blob.
+  const opening = (how: number, path: string) => new Uint8Array([how, 0, 0, 0, ...str(path)]);
   await put("big.txt", "x".repeat(200_000));
-  await call(OP.OPEN_INPUT, str("big.txt"));
+  const hr = new DataView((await call(OP.OPEN_FILE, opening(0, "big.txt"))).buffer).getInt32(0, true);
   let total = 0;
   let chunks = 0;
   for (;;) {
-    const c = readBytes(await call(OP.READ_CHUNK));
+    const c = readBytes(await call(OP.RECV, new Uint8Array([hr, 0, 0, 0])));
     if (c.length === 0) break;
     total += c.length;
     chunks++;
   }
   assertEquals(total, 200_000, "the whole file arrived");
   assertEquals(chunks > 1, true, "and in more than one chunk");
+  await call(OP.CLOSE_FILE, new Uint8Array([hr, 0, 0, 0]));
 
-  // Streaming output: `write` follows the current output, as it does everywhere else.
-  await call(OP.OPEN_OUTPUT, str("out.txt"));
-  await call(OP.WRITE_STDOUT, str("first "));
-  await call(OP.WRITE_STDOUT, str("second"));
-  await call(OP.OPEN_OUTPUT, str(""));            // back to the page, which closes the file
+  // And written as one: what was sent is the file's once it is closed, and standard output is untouched.
+  const hw = new DataView((await call(OP.OPEN_FILE, opening(1, "out.txt"))).buffer).getInt32(0, true);
+  await call(OP.SEND, new Uint8Array([hw, 0, 0, 0, ...str("first ")]));
+  await call(OP.SEND, new Uint8Array([hw, 0, 0, 0, ...str("second")]));
+  await call(OP.CLOSE_FILE, new Uint8Array([hw, 0, 0, 0]));
   assertEquals(dec.decode(await call(OP.READ_FILE, str("out.txt"))), "first second");
   await call(OP.WRITE_STDOUT, str("to the page"));
   assertEquals(dec.decode(written[written.length - 1]), "to the page");
@@ -446,11 +449,8 @@ Deno.test("a failed read says what a failed change says", async () => {
   // them, our two inventions as prose.
   assertEquals(said, "No such file or directory", said);
 
-  // `openInput` answers a `Change` now rather than throwing, so the agreement is between the phrase in
-  // that answer and the phrase in the throw above — the same words either way, which is the whole claim.
-  const change = await w[OP.OPEN_INPUT](str("nothing-here")) as Uint8Array;
-  assertEquals(change[0], FAULT_NOT_FOUND, `fault ${change[0]}`);
-  assertEquals(new TextDecoder().decode(change.subarray(1)), "No such file or directory");
+  // Opening a file as a stream says it in the same words as reading it whole, which is the whole claim.
+  await rejects(() => w[OP.OPEN_FILE](new Uint8Array([0, 0, 0, 0, ...str("nothing-here")])), "No such file or directory");
 });
 
 Deno.test("a page spawns a worker of its own — 0030", async () => {
@@ -517,5 +517,5 @@ Deno.test("the browser world denies the filesystem when the page grants none", a
     assertEquals(c.fault, FAULT_NOT_GRANTED, `op ${op} should be FAULT_NOT_GRANTED, was ${c.fault}`);
     assertEquals(c.message.includes("write not granted"), true, c.message);
   }
-  await rejects(() => roCall(OP.OPEN_OUTPUT, str("f")), "write not granted");
+  await rejects(() => roCall(OP.OPEN_FILE, new Uint8Array([1, 0, 0, 0, ...str("f")])), "write not granted");
 });

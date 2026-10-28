@@ -6,7 +6,7 @@
 // this is the only thing that says they fit together. `issues/system/0161` step 6.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Change, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { parseFlags } from "./mutatefiles.wac";
 import { flatten } from "core";

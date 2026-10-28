@@ -11,7 +11,7 @@
 // `harness/appRun.ts` already solves this *from TypeScript*: `appRunner` builds the program's worker
 // half once and runs it in a worker, ~1ms a run, which is what took `native_hostfs.test.ts` from 29s
 // to 9.4s while it was still TypeScript. A wac test cannot call it — it is a Deno module, and a wac
-// test's only way out is `Cli.exec`. So this is that harness behind one `exec`: the wac side sends a
+// test's only way out is `exec`. So this is that harness behind one `exec`: the wac side sends a
 // batch of runs and reads a batch of answers, which is exactly the shape `wactest/src/oracle.wac`
 // already speaks.
 //

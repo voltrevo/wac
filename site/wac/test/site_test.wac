@@ -5,7 +5,7 @@
 // **A link to a heading that is not there is the failure this exists for.** The browser follows it
 // without complaint — the page opens at its top — and nothing about the page that wrote it looks wrong.
 
-import { Change, Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { Vec, flatten } from "core";
 import { T } from "../../../packages/wactest/src/assert.wac";
 import { Attr, Node } from "../../../packages/web";

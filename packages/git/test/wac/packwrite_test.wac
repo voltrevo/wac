@@ -25,7 +25,7 @@
 // directly rather than being flattened into a string, which is what the probe had to do.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Env, Files, Launch, Procs, Sys, Clock, MemoryStore } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys, Clock, MemoryStore } from "std";
 import { Vec, flatten } from "core";
 import { Kind } from "../../src/object.wac";
 import { Indexed, indexPack, writePack, completePack } from "../../src/pack.wac";

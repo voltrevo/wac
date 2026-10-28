@@ -6,11 +6,9 @@
 // checks the spelling from outside, which is what makes the property worth asserting: both sides come
 // from the same compiler, and the compiler changed.
 //
-// It also has to contain the names the host asks for by hand. `main.rs` maps its own `Kind`s onto
-// `Pending<i32>`, `Pending<u8[]?>` and the rest, and `Pending<u8[]?>` is the interesting one: the
-// emitter collapses it into `Pending<u8[]>`, because a nullable reference and a reference are the
-// same wasm type, and records the second spelling as an alias. The manifest carries both names,
-// pointing at one type [issue 0106].
+// It also has to describe what the host looks up by hand, which since design/system/0013 step 6 is one export:
+// `__wacHost`, whose four parameters are the host's calls and are bound by their type strings, beside
+// `__wacAnswered` and a `main` taking the `__WacHost` it answers.
 //
 // Host-side until 2026-08-19, `issues/system/0161`. **Built with `wac build`**, which is the producer:
 // it writes the module and the `.json` beside it, from `manifest.wac`. That was `deno run native.ts`
@@ -20,7 +18,7 @@
 // separate file, and it is gone.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { startsWith, endsWith, joined } from "../../../wactest/src/strings.wac";
 import { jsonFile, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { customSection } from "./section.wac";
@@ -29,20 +27,6 @@ import { freshDir } from "../../../wactest/src/host.wac";
 import { flatten } from "core";
 
 string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
-
-/** What `native/src/main.rs` looks up by name, and would return `None` for if it were absent. */
-string[] hostNeeds() {
-  return [
-    "Core",
-    "Cli",
-    "Pending<i32>",
-    "Pending<i64>",
-    "Pending<bool>",
-    "Pending<string>",
-    "Pending<u8[]>",
-    "Pending<u8[]?>"
-  ];
-}
 
 bool listed(string[] all, string want) {
   for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
@@ -131,45 +115,25 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
           "\{nUnresolved} funcref field(s) name a signature the manifest has no dispatcher " +
           "for — the host cannot wire them: " + joined(firstFew, " | "));
 
-  string[] names = namesIn(structs);
-  string[] needs = hostNeeds();
-  string[] missing = string[].filled(needs.len(), "");
-  i32 nMissing = 0;
-  for (i32 i = 0; i < needs.len(); i++) {
-    if (!listed(names, needs[i])) { missing[nMissing] = needs[i]; nMissing = nMissing + 1; }
+  // **The host's way in.** `__wacHost` takes the host's four calls, and each is bound by looking its type up among
+  // the callbacks — so a parameter spelled one way and a callback spelled another is a program no host can start.
+  JsonArray exports = arrayOf(m, "exports");
+  i32 make = indexOfNamed(exports, "__wacHost");
+  t.isTrue(make >= 0, "the manifest names no `__wacHost` export, which every host calls first");
+  if (make >= 0) {
+    JsonArray params = arrayOf(exports.get(make).object()!, "params");
+    t.eqI32(params.len(), 4, "`__wacHost` takes \{params.len()} parameters, not the host's four calls");
+    for (i32 i = 0; i < params.len(); i++) {
+      string ty = params.get(i).text()!;
+      t.isTrue(listed(callbackTypes, ty), "`__wacHost` parameter \{i} is \{ty}, which no callback describes");
+    }
   }
-  string[] gone = string[].filled(nMissing, "");
-  for (i32 i = 0; i < nMissing; i++) { gone[i] = missing[i]; }
-  t.eqI32(nMissing, 0,
-          "the manifest does not name " + joined(gone, ", ") + " — main.rs asks for each");
-
-  // **Every enum says how to build it.** `Read` is what `readChunk` answers with, and a host that is
-  // not told `$bind$e_Read_Data_new` spells it — which both hosts did until this field existed,
-  // making three copies of one convention, two of which keep working wrongly the day it changes
-  // [issue 0141]. The check is that the manifest describes enums at all, and names a constructor for
-  // each variant.
-  i32 at = indexOfNamed(structs, "Read");
-  t.isTrue(at >= 0, "the manifest describes no Read, which is what every readChunk answers with");
-  if (at >= 0) {
-    JsonArray variants = arrayOf(structs.get(at).object()!, "variants");
-    string[] wanted = ["Data", "End", "Failed"];
-    for (i32 i = 0; i < wanted.len(); i++) {
-      i32 v = indexOfNamed(variants, wanted[i]);
-      t.isTrue(v >= 0, "Read has no \{wanted[i]} variant in the manifest");
-      if (v < 0) { continue; }
-      string make = strOf(variants.get(v).object()!, "make");
-      t.isTrue(startsWith(make, "$bind$"),
-               "Read.\{wanted[i]} names \"\{make}\", which is not an export");
-    }
-    // A payload is part of the description too: `Data(u8[] bytes)` is what makes it constructible.
-    i32 d = indexOfNamed(variants, "Data");
-    if (d >= 0) {
-      JsonArray df = arrayOf(variants.get(d).object()!, "fields");
-      t.eqI32(df.len(), 1, "Read.Data carries \{df.len()} fields, expected one");
-      if (df.len() == 1) {
-        t.eqStr(strOf(df.get(0).object()!, "type"), "u8[]", "Read.Data's payload");
-      }
-    }
+  t.isTrue(indexOfNamed(exports, "__wacAnswered") >= 0, "the manifest names no `__wacAnswered`, which every answer goes through");
+  i32 main = indexOfNamed(exports, "main");
+  t.isTrue(main >= 0, "the manifest names no `main`");
+  if (main >= 0) {
+    JsonArray params = arrayOf(exports.get(main).object()!, "params");
+    t.isTrue(params.len() == 1 && params.get(0).text()! == "__WacHost", "`main` does not take the `__WacHost`");
   }
 
   // The dispatcher naming is a convention shared with `emit.wac` and the Rust host, so it is stated

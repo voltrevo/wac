@@ -29,37 +29,40 @@ const GRANTS = { read: true, write: true, net: true, run: true, env: true };
 const ENTRY = ".cache/lostbytes/jsprobe.wac";
 
 /** The parent gives up on a read, then asks again; the child answers late either way. */
-const PROGRAM = `import { Core, Cli, HostChild, Pending, GRANT_ALL, Sys } from "std";
-import { Read } from "core";
+const PROGRAM = `import { Authority, Child, Input, Launch, Output, Sys } from "std";
+import { Read, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
-  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : "";
+  Output out = sys.stdout();
+  string[] args = sys.args();
+  string mode = args.len() > 0 ? args[0] : "";
   if (mode == "child") {
-    core.delay(400).wait();
-    cli.write("PAYLOAD".toBytes());
+    sys.clock().sleepMillis(400).wait();
+    out.write("PAYLOAD".toBytes()).wait();
     return 0;
   }
-  HostChild kid = cli.spawnSelf(["child".toBytes()], GRANT_ALL(), ".", 0, false).wait();
-  if (kid.handle < 0) { core.log("no child: " + kid.error); return 1; }
+  Authority all = Authority(sys.files(), sys.net(), sys.env(), sys.procs());
+  auto started = flatten(sys.procs().spawnSelf(["child"], all, Launch.plain()).wait());
+  if (started.isErr()) { sys.log("no child: \\{started.err()!}"); return 1; }
+  Child kid = started.unwrap();
+  Input from = kid.output();
   if (mode != "control") {
-    Pending<Read> first = cli.recv(kid.handle);
-    core.waitAny([first.id], 50);
+    auto first = from.chunk();
+    sys.drainFor(50);
     first.cancel();
-    core.cancel(first.id);
   }
   string got = "";
   bool reading = true;
   while (reading) {
-    match (cli.recv(kid.handle).wait()) {
+    auto r = flatten(from.chunk().wait());
+    if (r.isErr()) { reading = false; continue; }
+    match (r.unwrap()) {
       Data(b): { got = got + string.fromBytes(b); }
       End: { reading = false; }
-      Failed(e): { reading = false; }
+      Failed(why): { reading = false; }
     }
   }
-  core.log(got == "PAYLOAD" ? "VERDICT kept" : "VERDICT lost");
+  sys.log(got == "PAYLOAD" ? "VERDICT kept" : "VERDICT lost");
   return 0;
 }
 `;

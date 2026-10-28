@@ -24,7 +24,7 @@ export type NodeNet = {
 };
 import { serveHostCalls } from "./respond.ts";
 import { nodeWorld } from "./node.ts";
-import { WacExit, worldFor } from "./provider.ts";
+import { mainArgs, WacExit } from "./provider.ts";
 import type { AppModule, Grants } from "./entry.ts";
 
 /** Node's `worker_threads`, described rather than imported so this checks under Deno. */
@@ -134,13 +134,13 @@ export function runAsWorkerEntryNode(
     const b = bridgeOf((m as Start).sab);
     try {
       if (typeof app.main !== "function") {
-        throw new Error("an application must export `main(Core, Cli) -> i32`");
+        throw new Error("an application must export `main(__WacHost) -> i32`");
       }
       // Allocates the counter array. Without it every instrumented function traps on its first branch
       // with "dereferencing a null pointer" — which is what a Node coverage build did until this line
       // existed, while the Deno one worked, because only half the contract had been implemented.
       if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
-      const code = app.main(...worldFor(b, app as unknown as Record<string, unknown>));
+      const code = app.main(...mainArgs(b, app as unknown as Record<string, unknown>));
       if (cov !== undefined && fs !== undefined) dumpCoverageNode(app, cov, fs);
       port.postMessage({ ok: true, code } as Result);
     } catch (err) {
@@ -285,7 +285,7 @@ export async function runLauncherNode(
     args: proc.argv.slice(2),
     fs: { read: grants.read === true, write: grants.write === true },
     net: grants.net === true,
-    // **Missing here, and that is why `Cli.exec` had never run on this host.** `run` was added to
+    // **Missing here, and that is why `exec` had never run on this host.** `run` was added to
     // `Grants`, to the capability and to `binary.ts`, and to none of the seams between them: the
     // launcher built a world with no `run` in it, so a program built with `--allow-run` was refused
     // by its own host. `issues/system/0165`.

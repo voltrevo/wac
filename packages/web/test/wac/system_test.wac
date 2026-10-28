@@ -5,23 +5,57 @@
 
 import { Check } from "./check.wac";
 import { Buf, Ticket } from "core";
-import { FAULT_NOT_FOUND, FAULT_NOT_GRANTED, Files, GRANT_READ, GRANT_WRITE, Stat, Sys } from "std";
+import { FAULT_NOT_FOUND, Files, GRANT_READ, GRANT_WRITE, OP_CLOSE_FILE, OP_MONOTONIC_NANOS, OP_OPEN_FILE,
+         OP_READ_DIR, OP_READ_FILE, OP_RECV, OP_SEND, OP_SLEEP_MILLIS, OP_STAT, OP_WRITE_FILE, Stat, Sys } from "std";
 import { Dom, Page, STAT_EXISTS, STAT_FILE, System, World, answered } from "../../src/page.wac";
 
-/** What the fake browser was asked, one line per request. */
-struct Asked {
+/** The fake browser: what it was asked, one line per request, and the page it answers into. */
+struct Browser {
   string log;
+  Page page;
+  World? world;
+  /** Whether a parent serves this page files: the line to it exists only then, as in a real browser. */
+  bool served;
 }
 
-System recording(Asked asked) {
-  System s = System.inert();
-  s.readFile = (i32 req, string p) => { asked.log = asked.log + "read \{req} " + p + "\n"; };
-  s.writeFile = (i32 req, string p, u8[] b) => { asked.log = asked.log + "write \{req} " + p + " \{b.len()}\n"; };
-  s.stat = (i32 req, string p) => { asked.log = asked.log + "stat \{req} " + p + "\n"; };
-  s.readDir = (i32 req, string p) => { asked.log = asked.log + "dir \{req} " + p + "\n"; };
-  s.sleep = (i32 req, i32 ms) => { asked.log = asked.log + "sleep \{req} \{ms}\n"; };
-  s.monotonicNanos = () => 42 as i64;
-  return s;
+string opName(i32 op) {
+  if (op == OP_READ_FILE()) { return "read"; }
+  if (op == OP_WRITE_FILE()) { return "write"; }
+  if (op == OP_STAT()) { return "stat"; }
+  if (op == OP_READ_DIR()) { return "dir"; }
+  if (op == OP_SLEEP_MILLIS()) { return "sleep"; }
+  if (op == OP_OPEN_FILE()) { return "open"; }
+  if (op == OP_RECV()) { return "recv"; }
+  if (op == OP_SEND()) { return "send"; }
+  if (op == OP_CLOSE_FILE()) { return "close"; }
+  return "op\{op}";
+}
+
+/**
+ * A browser that answers what it knows at once — the clock, and a send to a parent nobody is — and records the
+ * rest: `name id [text] a [+bytes]`.
+ */
+System recording(Browser b) {
+  return System((i32 op, i32 id, i64 a, i64 n, string text, u8[] bytes) => {
+    if (op == OP_MONOTONIC_NANOS()) {
+      answered(b.page, b.world!, id, 0, "", u8[](), 42 as i64, 0 as i64, 0);
+      return;
+    }
+    if (op == OP_SEND() && a == 1 as i64 && !b.served) {
+      answered(b.page, b.world!, id, 5, "", u8[](), 0 as i64, 0 as i64, 0);
+      return;
+    }
+    b.log = b.log + opName(op) + " \{id}" + (text == "" ? "" : " " + text) + " \{a}"
+          + (bytes.len() > 0 ? " +\{bytes.len()}" : "") + "\n";
+  }, (i32 code) => { });
+}
+
+/** A page over the fake browser, holding `grants`, with `page.sys` set as the build's wrapper sets it. */
+World over(Browser b, i32 grants) {
+  World w = World.create(recording(b), grants);
+  b.world = w;
+  b.page.sys = w.sys;
+  return w;
 }
 
 /** Answer request `req` with bytes and no fault, as the browser would. */
@@ -43,9 +77,8 @@ async i32 copies(Page page) {
   }
 }
 
-/** What the build's wrapper does: run the program with the page as its schedule target, then drain. */
-Ticket<i32> startCopies(Page page, World w) {
-  page.sys = w.sys;
+/** Run `copies` with the page as its schedule target, then drain — what the build's wrapper does. */
+Ticket<i32> startCopies(Page page) {
   schedule page.take;
   Ticket<i32> t = copies(page);
   page.drain();
@@ -54,15 +87,14 @@ Ticket<i32> startCopies(Page page, World w) {
 
 export string test_a_read_waits_for_the_browser_and_the_answer_runs_it_on() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(recording(asked), GRANT_READ | GRANT_WRITE);
-  Ticket<i32> done = startCopies(page, w);
-  t.eqStr(asked.log, "read 1 in.txt\n", "it asked, and waits");
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ | GRANT_WRITE);
+  Ticket<i32> done = startCopies(b.page);
+  t.eqStr(b.log, "read 2 in.txt 0\n", "it asked, and waits");
   t.isFalse(done.settled(), "nothing has answered");
-  give(page, w, 1, "hello");
-  t.eqStr(asked.log, "read 1 in.txt\nwrite 2 out.txt 5\n", "the answer ran it on to the write");
-  answered(page, w, 2, 0, "", u8[](), 0 as i64, 0 as i64, 0);
+  give(b.page, w, 2, "hello");
+  t.eqStr(b.log, "read 2 in.txt 0\nwrite 3 out.txt 0 +5\n", "the answer ran it on to the write");
+  answered(b.page, w, 3, 0, "", u8[](), 0 as i64, 0 as i64, 0);
   t.isTrue(done.settled(), "the write's answer finished it");
   t.eqI32(done.value(), 5, "with what it read");
   return t.report();
@@ -70,38 +102,49 @@ export string test_a_read_waits_for_the_browser_and_the_answer_runs_it_on() {
 
 export string test_a_missing_file_is_an_err_in_the_programs_words() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(recording(asked), GRANT_READ | GRANT_WRITE);
-  Ticket<i32> done = startCopies(page, w);
-  answered(page, w, 1, FAULT_NOT_FOUND(), "NotFoundError: A requested file or directory could not be found",
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ | GRANT_WRITE);
+  Ticket<i32> done = startCopies(b.page);
+  answered(b.page, w, 2, FAULT_NOT_FOUND(), "NotFoundError: A requested file or directory could not be found",
            u8[](), 0 as i64, 0 as i64, 0);
   t.isTrue(done.settled(), "a failed read finished it");
   t.eqI32(done.value(), 0 - 1, "as an Err");
   return t.report();
 }
 
+async string refusals(Sys sys) {
+  string out = "";
+  match (await sys.readFile("x")) {
+    Ok(b): { out = "read went"; }
+    Err(why): { out = why; }
+  }
+  match (await sys.writeFile("x", u8[]())) {
+    Ok(): { return out + "|write went"; }
+    Err(why): { return out + "|" + why; }
+  }
+}
+
 export string test_what_the_page_was_not_granted_is_refused_without_asking() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(recording(asked), GRANT_READ);
-  Ticket<i32> done = startCopies(page, w);
-  give(page, w, 1, "hi");
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ);
+  Ticket<i32> done = startCopies(b.page);
+  give(b.page, w, 2, "hi");
   t.isTrue(done.settled(), "the write was refused at once");
   t.eqI32(done.value(), 0 - 2, "as an Err");
-  t.eqStr(asked.log, "read 1 in.txt\n", "and the browser was never asked to write");
+  t.eqStr(b.log, "read 2 in.txt 0\n", "and the browser was never asked to write");
 
-  // Through `sys.cli` as well, which is no way around the grant.
-  World none = World.create(recording(asked), 0);
-  t.isFalse(none.sys.cli.readFile("x").wait().ok, "the raw capability refuses too");
-  t.eqI32(none.sys.cli.readFile("x").wait().fault, FAULT_NOT_GRANTED(), "as not granted");
   // Saying which grant the page was built without, which is the thing to change.
-  t.eqStr(none.sys.cli.readFile("x").wait().error,
-          "Not granted to this application: the page was built without `--grant read`", "a read's refusal");
-  t.eqStr(none.sys.cli.writeFile("x", u8[]()).wait().message,
-          "Not granted to this application: the page was built without `--grant write`", "a write's refusal");
-  t.eqStr(asked.log, "read 1 in.txt\n", "still without asking");
+  Browser nb = Browser("", Page.create(Dom.inert()), null, false);
+  World none = over(nb, 0);
+  schedule nb.page.take;
+  Ticket<string> said = refusals(none.sys);
+  nb.page.drain();
+  t.isTrue(said.settled(), "both refusals answered at once");
+  t.eqStr(said.value(), "Not granted to this application: the page was built without `--grant read`|"
+                        + "Not granted to this application: the page was built without `--grant write`",
+          "each in the words of the grant it needs");
+  t.eqStr(nb.log, "", "without asking the browser");
   return t.report();
 }
 
@@ -112,67 +155,68 @@ async i32 clocked(Sys sys) {
   return (a + b) as! i32;
 }
 
-Ticket<i32> startClocked(Page page, Sys sys) {
-  schedule page.take;
-  Ticket<i32> t = clocked(sys);
-  page.drain();
-  return t;
-}
-
-export string test_what_this_side_knows_settles_at_once_and_a_sleep_waits() {
+export string test_what_the_browser_knows_settles_at_once_and_a_sleep_waits() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(recording(asked), 0);
-  Ticket<i32> done = startClocked(page, w.sys);
-  t.eqStr(asked.log, "sleep 1 5\n", "the clock answered without a request, and the sleep asked");
-  answered(page, w, 1, 0, "", u8[](), 7 as i64, 0 as i64, 0);
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, 0);
+  schedule b.page.take;
+  Ticket<i32> done = clocked(w.sys);
+  b.page.drain();
+  t.eqStr(b.log, "sleep 2 5\n", "the clock answered inside its request, and the sleep asked");
+  answered(b.page, w, 2, 0, "", u8[](), 7 as i64, 0 as i64, 0);
   t.isTrue(done.settled(), "the sleep's answer finished it");
   t.eqI32(done.value(), 84, "reading the clock twice");
   return t.report();
 }
 
 async string listed(Sys sys) {
-  string[]? names = await sys.cli.readDir("/").ticket();
-  Stat s = await sys.cli.stat("a").ticket();
-  if (names is null) { return "none"; }
+  Files files = sys.files();
   string out = "";
-  for (string n in names!) { out = out + n + ","; }
-  return out + (s.exists && s.isFile && !s.isDir ? " file \{s.size}" : " not a file");
-}
-
-Ticket<string> startListed(Page page, Sys sys) {
-  schedule page.take;
-  Ticket<string> t = listed(sys);
-  page.drain();
-  return t;
+  match (await files.readDir("/")) {
+    Ok(names): { for (string n in names) { out = out + n + ","; } }
+    Err(why): { return "none"; }
+  }
+  match (await files.stat("a")) {
+    Ok(s): { return out + (s.isFile && !s.isDir ? " file \{s.size}" : " not a file"); }
+    Err(why): { return out + " no stat"; }
+  }
 }
 
 export string test_a_listing_and_a_stat_are_read_from_the_answer() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(recording(asked), GRANT_READ);
-  Ticket<string> done = startListed(page, w.sys);
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ);
+  schedule b.page.take;
+  Ticket<string> done = listed(w.sys);
+  b.page.drain();
   u8[] names = "a\0b c\0".toBytes();
-  answered(page, w, 1, 0, "", names, 0 as i64, 0 as i64, 0);
-  answered(page, w, 2, 0, "", u8[](), 12 as i64, 0 as i64, STAT_EXISTS | STAT_FILE);
+  answered(b.page, w, 2, 0, "", names, 0 as i64, 0 as i64, 1);
+  answered(b.page, w, 3, 0, "", u8[](), 12 as i64, 0 as i64, STAT_EXISTS | STAT_FILE);
   t.isTrue(done.settled(), "both answers finished it");
   t.eqStr(done.value(), "a,b c, file 12", "names split on NUL, spaces kept, and the stat's flags");
   return t.report();
 }
 
+async i32 readsOne(Sys sys) {
+  match (await sys.readFile("x")) {
+    Ok(b): { return b.len(); }
+    Err(why): { return 0 - 1; }
+  }
+}
+
 export string test_an_answer_nobody_asked_for_and_a_late_one_are_dropped() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(recording(asked), GRANT_READ);
-  give(page, w, 99, "stray");
-  t.isFalse(w.answers.has(99), "an answer to a request never made is not kept");
-  // A read whose ticket is abandoned before the browser answers: the late answer is not kept.
-  w.sys.cli.readFile("x").cancel();
-  give(page, w, 1, "late");
-  t.isFalse(w.answers.has(1), "the late answer was dropped");
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ);
+  give(b.page, w, 99, "stray");
+  t.eqI32(w.host.pending.len(), 0, "an answer to a request never made is not kept");
+  // A read whose ticket is abandoned before the browser answers: the browser is told, and the late answer
+  // settles nothing.
+  auto read = w.sys.files().readFile("x");
+  read.cancel();
+  t.eqStr(b.log, "read 2 x 0\nop0 2 0\n", "the browser was told it was dropped");
+  give(b.page, w, 2, "late");
+  t.isFalse(read.settled(), "the late answer settled nothing");
   return t.report();
 }
 
@@ -181,16 +225,12 @@ export string test_a_page_holds_a_system_before_the_build_gives_it_one() {
   // `main` is `main(Page page)` whatever was granted, so a page has a `sys` from the start: one that
   // answers nothing and refuses what needs a grant, until the build's wrapper sets the browser's.
   Page page = Page.create(Dom.inert());
-  t.eqI32(page.sys.cli.readFile("x").wait().fault, FAULT_NOT_GRANTED(), "a read is refused");
+  schedule page.take;
+  Ticket<i32> read = readsOne(page.sys);
+  page.drain();
+  t.isTrue(read.settled(), "a read is refused at once");
+  t.eqI32(read.value(), 0 - 1, "as an Err");
   return t.report();
-}
-
-/** A page whose browser records the line to a parent, and answers it only when told to. */
-System withParent(Asked asked) {
-  System s = recording(asked);
-  s.send = (i32 req, i32 h, u8[] b) => { asked.log = asked.log + "send \{req}\n"; };
-  s.recv = (i32 req, i32 h) => { asked.log = asked.log + "recv \{req}\n"; };
-  return s;
 }
 
 /** What a parent serving files answers the hello with: one frame, the greeting and who its files act as. */
@@ -222,31 +262,19 @@ async string greetsThenAsks(Page page) {
  */
 export string test_a_page_program_learns_it_is_served_without_waiting() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(withParent(asked), GRANT_READ | GRANT_WRITE);
-  page.sys = w.sys;
-  schedule page.take;
-  Ticket<string> user = greetsThenAsks(page);
-  page.drain();
-  t.eqStr(asked.log, "send 1\n", "it said hello, and waits");
+  Browser b = Browser("", Page.create(Dom.inert()), null, true);
+  World w = over(b, GRANT_READ | GRANT_WRITE);
+  schedule b.page.take;
+  Ticket<string> user = greetsThenAsks(b.page);
+  b.page.drain();
+  t.eqStr(b.log, "send 1 1 +5\n", "it said hello, and waits");
   t.isFalse(user.settled(), "nothing has answered");
-  answered(page, w, 1, 0, "", u8[](), 0 as i64, 0 as i64, 1);
-  t.eqStr(asked.log, "send 1\nrecv 2\n", "the hello went, so it listens for the answer");
-  answered(page, w, 2, 0, "", servedAnswer("ada"), 0 as i64, 0 as i64, 0);
+  answered(b.page, w, 1, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  t.eqStr(b.log, "send 1 1 +5\nrecv 2 1\n", "the hello went, so it listens for the answer");
+  answered(b.page, w, 2, 0, "", servedAnswer("ada"), 0 as i64, 0 as i64, 0);
   t.isTrue(user.settled(), "the answer ran it on");
   t.eqStr(user.value(), "ada", "and its files are the parent's, acting as the parent's user");
   return t.report();
-}
-
-/** The fake browser for streams: each open, read, write and close it was asked, one line each. */
-System streaming(Asked asked) {
-  System s = recording(asked);
-  s.openFile = (i32 req, string p, i32 how) => { asked.log = asked.log + "open \{req} " + p + " \{how}\n"; };
-  s.recv = (i32 req, i32 h) => { asked.log = asked.log + "recv \{req} \{h}\n"; };
-  s.send = (i32 req, i32 h, u8[] b) => { if (h != 1) { asked.log = asked.log + "send \{req} \{h} \{b.len()}\n"; } };
-  s.closeFile = (i32 req, i32 h) => { asked.log = asked.log + "close \{req} \{h}\n"; };
-  return s;
 }
 
 /** `copies` again, through streams: what `cat f` and `echo x > f` do in a page's shell. */
@@ -284,26 +312,22 @@ async i32 streams(Page page) {
 
 export string test_a_page_opens_a_file_as_a_stream_to_read_and_to_write() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  Page page = Page.create(Dom.inert());
-  World w = World.create(streaming(asked), GRANT_READ | GRANT_WRITE);
-  page.sys = w.sys;
-  schedule page.take;
-  Ticket<i32> done = streams(page);
-  page.drain();
-  // The greeting, refused as a page with no parent refuses it: nothing was sent.
-  answered(page, w, 1, 0, "", u8[](), 0 as i64, 0 as i64, 0);
-  t.eqStr(asked.log, "open 2 in.txt 0\n", "the page asked the browser to open it");
-  answered(page, w, 2, 0, "", u8[](), 5 as i64, 0 as i64, 0);
-  t.eqStr(asked.log, "open 2 in.txt 0\nrecv 3 5\n", "and read from the handle it was given");
-  give(page, w, 3, "hello");
-  answered(page, w, 4, 0, "", u8[](), 0 as i64, 0 as i64, 1);
-  t.eqStr(asked.log, "open 2 in.txt 0\nrecv 3 5\nrecv 4 5\nclose 5 5\n", "to the end, then closed it");
-  answered(page, w, 5, 0, "", u8[](), 0 as i64, 0 as i64, 1);
-  answered(page, w, 6, 0, "", u8[](), 6 as i64, 0 as i64, 0);
-  answered(page, w, 7, 0, "", u8[](), 0 as i64, 0 as i64, 1);
-  answered(page, w, 8, 0, "", u8[](), 0 as i64, 0 as i64, 1);
-  t.eqStr(asked.log, "open 2 in.txt 0\nrecv 3 5\nrecv 4 5\nclose 5 5\nopen 6 out.txt 1\nsend 7 6 5\nclose 8 6\n",
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, GRANT_READ | GRANT_WRITE);
+  schedule b.page.take;
+  Ticket<i32> done = streams(b.page);
+  b.page.drain();
+  t.eqStr(b.log, "open 2 in.txt 0\n", "the greeting went nowhere, and the page asked the browser to open it");
+  answered(b.page, w, 2, 0, "", u8[](), 5 as i64, 0 as i64, 0);
+  t.eqStr(b.log, "open 2 in.txt 0\nrecv 3 5\n", "and read from the handle it was given");
+  give(b.page, w, 3, "hello");
+  answered(b.page, w, 4, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  t.eqStr(b.log, "open 2 in.txt 0\nrecv 3 5\nrecv 4 5\nclose 5 5\n", "to the end, then closed it");
+  answered(b.page, w, 5, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  answered(b.page, w, 6, 0, "", u8[](), 6 as i64, 0 as i64, 0);
+  answered(b.page, w, 7, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  answered(b.page, w, 8, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  t.eqStr(b.log, "open 2 in.txt 0\nrecv 3 5\nrecv 4 5\nclose 5 5\nopen 6 out.txt 1\nsend 7 6 +5\nclose 8 6\n",
           "a write opens, sends and closes the same way");
   t.isTrue(done.settled(), "the last close finished it");
   t.eqI32(done.value(), 5, "with what it read");
@@ -312,10 +336,11 @@ export string test_a_page_opens_a_file_as_a_stream_to_read_and_to_write() {
 
 export string test_a_page_refuses_to_open_a_stream_it_was_not_granted() {
   Check t = Check.create();
-  Asked asked = Asked("");
-  World w = World.create(streaming(asked), 0);
-  t.eqI32(w.sys.cli.openFile("x", 0).wait().fault, FAULT_NOT_GRANTED(), "a read is refused");
-  t.eqI32(w.sys.cli.openFile("x", 1).wait().fault, FAULT_NOT_GRANTED(), "and a write");
-  t.eqStr(asked.log, "", "without asking the browser");
+  Browser b = Browser("", Page.create(Dom.inert()), null, false);
+  World w = over(b, 0);
+  Files files = w.sys.files();
+  t.isTrue(files.openRead("x").wait().unwrap().isErr(), "a read is refused");
+  t.isTrue(files.openWrite("x").wait().unwrap().isErr(), "and a write");
+  t.eqStr(b.log, "", "without asking the browser");
   return t.report();
 }

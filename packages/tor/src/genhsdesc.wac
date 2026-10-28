@@ -19,7 +19,7 @@
 // against each other — the seam this project keeps being caught by — so they are joined here, and the
 // subcredential tor is handed is the derived one rather than a constant.
 
-import { Change, Sys, Files, Output } from "std";
+import { Sys, Files, Output } from "std";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import {
   ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded,

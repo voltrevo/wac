@@ -26,7 +26,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { HostSocket, Env, Files, Net, Procs, Sys, Datagrams, Clock } from "std";
+import { Env, Files, Net, Procs, Sys, Datagrams, Clock } from "std";
 import { flatten } from "core";
 import { Server, ask, firstHeard, handshake, heardCount, receiveWithin, startServer,
          stopServer } from "./peer.wac";

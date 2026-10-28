@@ -27,7 +27,7 @@ import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
-import { Change, Exec, Env, Files, Procs, Sys } from "std";
+import { Exec, Env, Files, Procs, Sys } from "std";
 import { flatten } from "core";
 
 static string REPO = "https://example.invalid/dep.git";

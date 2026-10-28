@@ -34,37 +34,40 @@
 // three bundles and a compile. 82s of CPU across both, and the ladder is nearly all of it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Change, Exec, FileResult, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { flatten } from "core";
 
 /**
- * A program whose *transcript* differs between hosts if a redirect is mishandled.
+ * A program whose *transcript* differs between hosts if a file stream is mishandled.
  *
- * `openOutput` says "my standard output is this file now", and under `wac app` the program is a child
- * of `app-run` — which is exactly the shape `issues/system/0277c` broke: a spawned child's redirect
- * was skipped, so the bytes went to standard output and the file was left empty. Then the two hosts
- * disagree about this transcript, which is the whole mechanism.
+ * It writes a file through `openWrite` and reads it back, under `wac app`, where the program is a child of
+ * `app-run` — the shape `issues/system/0277c` broke, when the stream was the redirect `openOutput` made and a
+ * spawned child's bytes went to standard output instead. Two hosts that disagree about the file disagree about
+ * this transcript, which is the whole mechanism.
  *
  * It reports what it read back rather than asserting anything itself: a probe that judges is a probe
  * that can be wrong twice.
  */
 static string PROBE =
-  "import { Core, Cli, FileResult, Sys } from \"std\";\n" +
-  "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
-  "  cli.openOutput(\"probe.out\").wait();\n" +
-  "  cli.write(\"redirected\\n\".toBytes());\n" +
-  "  cli.openOutput(\"\").wait();\n" +
+  "import { Files, Output, Sys } from \"std\";\n" +
+  "import { flatten } from \"core\";\n" +
+  "export i32 main(Sys sys) {\n  Files fs = sys.files();\n  Output out = sys.stdout();\n" +
+  "  auto opened = flatten(fs.openWrite(\"probe.out\").wait());\n" +
+  "  if (opened.isOk()) {\n" +
+  "    opened.unwrap().write(\"streamed\\n\".toBytes()).wait();\n" +
+  "    opened.unwrap().close().wait();\n" +
+  "  }\n" +
   "  auto fRead = flatten(fs.readFile(\"probe.out\").wait());\n" +
-  "  core.log(fRead.isOk() ? \"file holds: \" + string.fromBytes(fRead.unwrap()) : \"file: MISSING\");\n" +
+  "  out.line(fRead.isOk() ? \"file holds: \" + string.fromBytes(fRead.unwrap()) : \"file: MISSING\");\n" +
   "  return 0;\n" +
   "}\n";
 
-/** A program with no imports beyond `Core`, so what is being tested is the command and not a graph. */
+/** A program that only prints, so what is being tested is the command and not a graph. */
 static string PROGRAM =
-  "import { Core, Sys } from \"std\";\n" +
-  "export i32 main(Sys sys) { Core core = sys.core; core.log(\"it compiled and it ran\"); return 0; }\n";
+  "import { Output, Sys } from \"std\";\n" +
+  "export i32 main(Sys sys) { Output out = sys.stdout(); out.line(\"it compiled and it ran\"); return 0; }\n";
 
 Exec sh(Procs procs, string script) {
   return flatten(procs.exec("/bin/sh", ["-c", script], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
@@ -199,9 +202,9 @@ void sameAnswerOnBothHosts(Env env, Files fs, Procs procs, T t, string host, str
   string sb = trimmed(string.fromBytes(b.stdout));
   t.eqStr(sb, sa, "\{host}: the two hosts disagree about what the program did");
   t.eqI32(b.status, a.status, "\{host}: and about its status");
-  // The canary. Both hosts losing the redirect would agree on an empty file and pass the line above.
-  t.isTrue(contains(sa, "file holds: redirected"),
-           "neither host redirected — the comparison above is worth nothing: \{sa}");
+  // The canary. Both hosts losing the stream would agree on a missing file and pass the line above.
+  t.isTrue(contains(sa, "file holds: streamed"),
+           "neither host streamed the file — the comparison above is worth nothing: \{sa}");
 }
 
 export string test_bootstrap_host_deno_builds_a_working_wac(Sys sys) {

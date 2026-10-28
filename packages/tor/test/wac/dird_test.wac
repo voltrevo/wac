@@ -20,7 +20,7 @@
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Pending, Clock, Env, Files, Net, Procs, Sys, Socket } from "std";
+import { Exec, Clock, Env, Files, Net, Procs, Sys, Socket } from "std";
 import { Read, flatten } from "core";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

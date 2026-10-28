@@ -10,7 +10,7 @@
 // here is a marshalling bug and cannot be anything else.
 
 import { buildNative } from "../native.ts";
-import { drive, hostName, manifestIn } from "../host/driver.ts";
+import { asAppModule, drive, manifestIn } from "../host/driver.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -89,21 +89,16 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
       bound.number(enc.encode("-3.5")),
       "number",
     );
-
-    // And the names a host reaches for are the names it has always used.
-    assertEquals(hostName("Pending<i64>"), "Pending_i64");
-    assertEquals(hostName("Pending<u8[]?>"), "Pending_u8ArrOpt");
-    assertEquals(hostName("string[]"), "stringArr");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("a driven module takes capabilities, which is the conversion a host cannot fake", async () => {
-  // **`Core.of(...)` is handed JavaScript functions**, and a module cannot hold one: each has to be
+Deno.test("a driven module takes its host's calls, which is the conversion a host cannot fake", async () => {
+  // **`__wacHost` is handed JavaScript functions**, and a module cannot hold one: each has to be
   // registered in a slot of its signature and turned into a funcref by the module's own
   // `$bind$fnref_<j>`. That is the conversion generated glue exists to do, and the reason a driver
-  // that only converted values would get as far as building `Core` and no further.
+  // that only converted values would get as far as making the host and no further.
   const dir = await Deno.makeTempDir({ prefix: "wac-driver-caps-" });
   try {
     await buildNative("native/v8/example/hello.wac", `${dir}/hello`, {});
@@ -111,57 +106,37 @@ Deno.test("a driven module takes capabilities, which is the conversion a host ca
     const manifest = manifestIn(wasm);
     if (manifest === null) throw new Error("no wac.manifest section");
 
-    const driven = drive(wasm, manifest);
+    const app = asAppModule(drive(wasm, manifest), manifest);
     const said: string[] = [];
     const warned: string[] = [];
+    const dec = new TextDecoder();
+    let h: unknown;
 
-    // The field order is the manifest's, never a copy this test keeps — the same rule the hosts
-    // follow, and the reason inserting a capability does not silently shift every argument.
-    //
-    // **Both faces of the world**, because `hello` takes a `Sys` and the module's `main` is the
-    // adapter the hosts call as `main(Core, Cli)` (spec ch07).
-    const world = (name: string): unknown => {
-      const st = manifest.structs.find((s) => s.name === name);
-      if (st === undefined) throw new Error(`the manifest describes no ${name}`);
-      const args = st.fields.map((f) => {
-        // **A field that is not a function.** `Core.sched` is a value the module makes for itself, so
-        // a host builds it rather than implementing it — handing a JavaScript function here is what
-        // "type incompatibility when transforming from/to JS" means, and it is the boundary doing
-        // its job.
-        if (!f.type.startsWith("fn[")) {
-          const cls = driven.classes[f.type] as unknown as { create?(): unknown } | undefined;
-          if (cls?.create !== undefined) return cls.create();
-          return 0;
-        }
-        if (f.name === "log") return (s: string) => void said.push(s);
-        if (f.name === "warn") return (s: string) => void warned.push(s);
-        // Everything else is answered by refusing: `hello` reaches none of them, and a call that
-        // arrives is a fact worth failing on rather than a silent zero.
-        return () => {
-          throw new Error(`hello called ${name}.${f.name}, which this test does not serve`);
-        };
-      });
-      // **`of` is optional on the type now**, because an *enum* has variant constructors and neither
-      // `of` nor `create` — see `drive()`. Asserted rather than cast, so a missing one is said out loud.
-      const cls = driven.classes[name];
-      if (cls?.of === undefined) throw new Error(`the manifest describes no \`${name}.of\``);
-      return cls.of(...args);
+    // Writes to the two streams (12 and 48), answered at once from inside `request` as a host must;
+    // anything else `hello` asks is a fact worth failing on rather than a silent zero.
+    const request = (op: number, id: number, _a: bigint, _b: bigint, _text: string, bytes: Uint8Array) => {
+      if (op === 12) said.push(dec.decode(bytes));
+      else if (op === 48) warned.push(dec.decode(bytes));
+      else throw new Error(`hello asked for request ${op}, which this test does not serve`);
+      if (id !== 0) {
+        (app.__wacAnswered as CallableFunction)(h, id, 0, "", new Uint8Array(0), 0n, 0n, 1);
+      }
     };
-    const main = driven.exports["main"] as CallableFunction;
-    const code = main(world("Core"), world("Cli"));
+    const refuse = () => { throw new Error("hello waited or exited, which it should not need to"); };
+    h = (app.__wacHost as CallableFunction)(request, refuse, refuse, () => false);
+    const code = (app.main as CallableFunction)(h);
 
     assertEquals(code, 0, "hello returns 0");
-    assertEquals(said, ["hello from a Rust host on V8"]);
-    assertEquals(warned, ["and this goes to stderr"]);
+    assertEquals(said.join(""), "hello from a Rust host on V8\n");
+    assertEquals(warned.join(""), "and this goes to stderr\n");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
 Deno.test("a capability answering an array of references is built, not passed through", async () => {
-  // **The gap a `hello` cannot find.** `Core.log` takes a string, so a driver that converted only
-  // strings and byte arrays looked complete — until a capability answers `string[]?`, which
-  // `readDir` does, or bytes-of-bytes, which `popChild` does. `fromWasm` could read those and
+  // **The gap a `hello` cannot find.** A driver that converted only strings and byte arrays looked
+  // complete — until an export took `string[]` or bytes-of-bytes. `fromWasm` could read those and
   // `toWasm` could not build them, so a host got as far as the boundary and no further.
   const dir = await Deno.makeTempDir({ prefix: "wac-driver-arrays-" });
   try {

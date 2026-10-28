@@ -1,8 +1,3 @@
-//
-// `Pending.then` is a lambda — `design/lang/0002` — and the reference compiler does not have
-// them. The marker is not a skip: the corpus tests that read it assert the two front ends
-// genuinely *disagree* here, so a stale marker fails rather than dropping the file silently.
-//
 // **Keep new text in this file ASCII, until `issues/lang/0253a` is fixed.** One non-ASCII character
 // in a *comment* here is enough to turn `test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes`
 // red: this file's text is embedded in `packages/wacc/src/coretext.wac`, so a comment reaches what
@@ -13,103 +8,36 @@
 //
 // The platform world: everything an application may do, and nothing else.
 //
-// wac has no ambient access — no imports a program can name, no globals reaching outside
-// — so an application can only touch what it is handed. These structs *are* the
-// permission list. Reading one tells you exactly what a program can do, not because of a
-// convention but because there is no other route out.
+// wac has no ambient access -- no imports a program can name, no globals reaching outside -- so an
+// application can only touch what it is handed: a `Sys`, and the handles it gives out.
 //
-// Two profiles rather than one flat struct, so an application takes what it needs and a
-// reader can see the difference between "reads the clock" and "reads your filesystem".
+// **Under them is one host call** (design/system/0013 step 6). A host serves numbered requests whose
+// arguments are ints, a string and bytes -- the `OP_*` table at the end of this file -- and answers
+// each in one shape, `Answer`, through `answered`. Everything a handle does is std code over that, so
+// a host builds no wac value and a host that answers one module can answer another. The program
+// adapter hands the host's four calls to `__WacHost.of` and builds the `Sys` over what it answers.
 //
-// Every capability returns a value; none fills a buffer. Arrays *copy* across the
-// boundary, so a `fn<void(u8[])> fill` type-checks and quietly does nothing — the host's
-// writes land on a copy. Returning is the only shape that works.
-//
-// Capabilities are also coarse on purpose. Behind each one may be a thread parking and
-// unparking on a `SharedArrayBuffer`, which is nothing per file read and ruinous per byte.
-// `readFile`, never `readByte`.
+// Requests are coarse on purpose. Behind each may be a thread parking on a `SharedArrayBuffer`,
+// which is nothing per file read and ruinous per byte: `readFile`, never `readByte`.
 
-/**
- * A call that has been started but not yet collected.
- *
- * Every capability that produces a value hands back one of these instead of the value.
- * `.wait()` blocks until the answer is there and gives it to you, which is what almost
- * every caller wants and is why the swap from the old surface is `x(…)` to `x(…).wait()`
- * and nothing more.
- *
- * What the shape buys is the calls you *do not* wait for immediately:
- *
- * ```wac
- * Pending<FileResult> a = cli.readFile("one");
- * Pending<FileResult> b = cli.readFile("two");   // both are already running
- * FileResult ra = a.wait();
- * FileResult rb = b.wait();
- * ```
- *
- * and, more importantly, waiting on whichever of several answers first — which is how a
- * program watches two sockets at once, and is the only reason `nc`, an SSH relay and a
- * shell were not writable before.
- *
- * **The ticket carries its own resolver, and an `id` rather than a closure.** The reason is
- * the host boundary, not the language: a JS closure is not a wasm function, so bindgen
- * registers one wasm function per host function and only *sixteen per signature* can be
- * live at once — see spec/spec/bindgen.md. A resolver closed over its own answer would
- * burn a slot per call and die on the seventeenth outstanding read. So one resolver is
- * registered per signature and the `id` selects which call it is for.
- *
- * **The same table caught the host out a second time**, which is worth knowing before anyone
- * economises on either side of it: a worker that runs a *second* program used to build a second
- * `Core` and `Cli`, three more `fn<void(i32)>` each time, and failed on the fifth run with the
- * message this paragraph predicts. `host/entry.ts` builds them once and re-points the bridge
- * instead (wac-mono 0076). Registration is by identity, so the fix is exactly "pass the same
- * function again".
- *
- * This comment used to say "wac has no closures, so whatever `.wait()` calls has to be
- * inside the ticket". Both halves are wrong now and only the second was when this note was
- * written: lambdas landed 2026-08-16 and capture by reference, `spec/cases/0191`. Context can
- * travel *beside* a funcref, as an unbound method reference with the receiver as its first
- * parameter (`[§wac-fnref-method-h9pd3wn]`). Read as written it says callbacks cannot carry
- * context in wac, which cost agent-b an hour of threading it by hand. Corrected on their
- * report.
- *
- * **And it can travel *inside* one now**: `c.inc` is a bound reference, an `fn<…>` of the
- * receiver-less signature, as of `design/lang/0002` tier one — `[§wacc-fnref-bound]`. So a
- * funcref-plus-context pair is no longer the only spelling, which is what `Shell.askInterrupt`
- * exists to stop being.
- *
- * A ticket is good once. Waiting on a spent one is an error rather than a plausible wrong
- * answer, because the slot underneath is reused and its generation has moved on.
- */
 // The one type this world does not define itself. `Read` is in `core` — the compiler's own module —
 // because the streaming transforms in `gzip` and `stream` must name it too and have no business
 // depending on a capability world, and because **nominal typing** means a second copy of it could
 // never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
 // closures in the language", which is both out of date and never the reason: two declarations of a
 // shape are two types whatever a funcref can capture.)
-import { Buf, Continuation, Map, Queue, Read, Result, Ticket, TicketBase, Vec, hashString, stringEq, toString, __wacScheduleTarget,
+import { Buf, Continuation, Map, Queue, Read, Result, Stuck, Ticket, TicketBase, Vec, flatten, hashI32, hashString, i32Eq, stringEq, toString, __wacScheduleTarget,
          __wacSetScheduleTarget } from "core";
 
-/** A handler slot that does nothing, so a table can be filled before anything is registered. */
-void schedIdle(i32 id) { }
 
 /**
  * Milliseconds as nanoseconds, because a budget is given in the first and the clock answers in the
- * second. Named rather than written out at each use: `Sched.run` compares a difference of nanoseconds
+ * second. Named rather than written out at each use: `drainUntil` compares a difference of nanoseconds
  * against a number of milliseconds, and getting that by a factor of a million is a bug that looks like
  * a scheduler that never waits.
  */
 i64 millisToNanos(i32 millis) { return (millis as i64) * (1000000 as i64); }
 
-/**
- * Outstanding continuations, and what to run when each ticket answers.
- *
- * **A program never names one.** The world hands it over inside `Core`, and reaches it through
- * `core.delay`, `core.drain` and `core.dropAll` — so this is a capability like every other thing in
- * this file, rather than an object a program assembles for itself. `Loop`, which it replaces, was the
- * second kind and read wrong in every example.
- *
- * Plain arrays rather than `Vec`, so `platform` keeps its one import and depends on no package.
- */
 /**
  * What a host's `waitAny` answers when it **cannot wait** — a page, which may not block until an answer
  * arrives. Distinct from `-1`, "nothing answered in time": this one means "return to me, and I will call
@@ -117,861 +45,6 @@ i64 millisToNanos(i32 millis) { return (millis as i64) * (1000000 as i64); }
  */
 export i32 HOST_CANNOT_WAIT() { return 0 - 2; }
 
-export struct Sched {
-  i32[] ids;
-  fn<void(i32)>[] handlers;
-  /** Each ticket's own `drop`, so abandoning releases the host's slot rather than forgetting it. */
-  fn<void(i32)>[] drops;
-  i32 n;
-  /**
-   * The continuations nobody awaited — the program's schedule target, installed by `Core.of`, and
-   * what `Core.drain` runs (spec ch35). Here rather than on `Core` because the host builds this
-   * with `create` and marshals `Core` field by field.
-   */
-  Queue<Continuation> queued;
-  /**
-   * Whether the last wait was refused by a host that cannot wait — a page, which has no way to sleep
-   * until an answer arrives, and whose `waitAny` answers `HOST_CANNOT_WAIT` instead. The program then
-   * yields to the host rather than failing, and is resumed when an answer has arrived (design
-   * `system/0015`, decision 4). Hosts that can wait never set it.
-   */
-  bool yielded;
-
-  Sched create() {
-    Queue<Continuation> queued;
-    return Sched(i32[].filled(8, 0), fn<void(i32)>[].filled(8, schedIdle), fn<void(i32)>[].filled(8, schedIdle), 0,
-                 queued, false);
-  }
-
-  /** How much work is outstanding — what the host asks before deciding a clean exit. */
-  i32 pending(const this) { return this.n; }
-
-  /**
-   * How many queued continuations are still current, dropping the rest — the ones a `wait` ran past, which
-   * do nothing when called and would otherwise count as work left.
-   */
-  i32 liveQueued(this) {
-    Queue<Continuation> kept;
-    i32 live = 0;
-    while (true) {
-      Continuation? c = this.queued.pop();
-      if (c is null) { break; }
-      if (!c!.current()) { continue; }
-      kept.push(c!);
-      live = live + 1;
-    }
-    while (true) {
-      Continuation? c = kept.pop();
-      if (c is null) { break; }
-      this.queued.push(c!);
-    }
-    return live;
-  }
-
-  /** Run `handler` when `id` answers. Registering the same id twice runs both, in order. */
-  void on(this, i32 id, fn<void(i32)> handler, fn<void(i32)> drop) {
-    if (this.n == this.ids.len()) { this.grow(); }
-    this.ids[this.n] = id;
-    this.handlers[this.n] = handler;
-    this.drops[this.n] = drop;
-    this.n = this.n + 1;
-  }
-
-  void grow(this) {
-    i32 want = this.ids.len() * 2;
-    i32[] ni = i32[].filled(want, 0);
-    fn<void(i32)>[] nh = fn<void(i32)>[].filled(want, schedIdle);
-    fn<void(i32)>[] nd = fn<void(i32)>[].filled(want, schedIdle);
-    for (i32 i = 0; i < this.n; i++) {
-      ni[i] = this.ids[i];
-      nh[i] = this.handlers[i];
-      nd[i] = this.drops[i];
-    }
-    this.ids = ni;
-    this.handlers = nh;
-    this.drops = nd;
-  }
-
-  /**
-   * Withdraw the registration for `id`, if there is one. Answers whether there was.
-   *
-   * **For work that is abandoned rather than finished.** `run` unregisters a handler before running
-   * it, so a continuation that re-arms needs nothing from this — the normal path never calls it. What
-   * does is a caller giving up on something it registered: a relay dropping a connection has to take
-   * back the reads still outstanding on that connection's other sockets, or they fire later against a
-   * closed handle.
-   *
-   * The ticket's own `drop` is called, as `dropAll` does, so the host's slot is released rather than
-   * leaked. Silent when `id` is not registered, because "already fired" and "never registered" are
-   * both fine answers to *make sure this is not pending*.
-   */
-  bool off(this, i32 id) {
-    i32 at = this.indexOf(id);
-    if (at < 0) { return false; }
-    fn<void(i32)> go = this.drops[at];
-    this.removeAt(at);
-    go(id);
-    return true;
-  }
-
-  /**
-   * Take the continuation off and **keep the ticket**.
-   *
-   * The other half of `off`, which abandons both. This is for a caller that means to resolve the
-   * ticket itself: it must take the handler back first, or the answer arrives twice — once where the
-   * caller waited and once when `run` dispatches — and a body that appends to a list or sends a
-   * packet does that twice too.
-   *
-   * **Found by `design/lang/0014` step 2**, where an async function's ticket has to answer a plain
-   * `.wait()` by driving its own chain. Written as `off` at first, and every wait-driven case
-   * trapped: `off` releases the host's slot, so the very next line waited on a ticket that was gone.
-   * The two are one search and two policies, which is why `indexOf` exists rather than a second loop
-   * that can drift from this one.
-   */
-  bool detach(this, i32 id) {
-    i32 at = this.indexOf(id);
-    if (at < 0) { return false; }
-    this.removeAt(at);
-    return true;
-  }
-
-  /**
-   * Run what is registered for `id`, now, and answer how many ran — for a world that is **told** a
-   * ticket answered rather than waiting to find out.
-   *
-   * `run` learns which ticket answered by parking in `waitAny`, and a page cannot park: its host
-   * calls in when an answer arrives, and this is what that call does. Each registration for `id` is
-   * taken off before any of them runs, as `run` does, so a handler that registers for the same id
-   * again is waiting for the *next* answer rather than this one.
-   */
-  i32 fire(this, i32 id) {
-    i32 n = 0;
-    for (i32 i = 0; i < this.n; i++) {
-      if (this.ids[i] == id) { n = n + 1; }
-    }
-    if (n == 0) { return 0; }
-    fn<void(i32)>[] due = fn<void(i32)>[].filled(n, schedIdle);
-    i32 k = 0;
-    while (true) {
-      i32 at = this.indexOf(id);
-      if (at < 0) { break; }
-      due[k] = this.handlers[at];
-      k = k + 1;
-      this.removeAt(at);
-    }
-    for (i32 i = 0; i < n; i++) { due[i](id); }
-    return n;
-  }
-
-  /** Where `id` is registered, or -1. */
-  i32 indexOf(const this, i32 id) {
-    for (i32 i = 0; i < this.n; i++) {
-      if (this.ids[i] == id) { return i; }
-    }
-    return 0 - 1;
-  }
-
-  void removeAt(this, i32 at) {
-    for (i32 i = at; i + 1 < this.n; i++) {
-      this.ids[i] = this.ids[i + 1];
-      this.handlers[i] = this.handlers[i + 1];
-      this.drops[i] = this.drops[i + 1];
-    }
-    this.n = this.n - 1;
-  }
-
-  /**
-   * Run registered work until nothing is outstanding or the budget runs out. Answers how many ran.
-   *
-   * **This is the only place other code runs while a program waits.** There is no second stack — a
-   * park in `waitAny` runs nothing — so a continuation can only run inside a call that dispatches,
-   * and this is that call. A program blocked anywhere else stalls its continuations until it gets
-   * here, which is the honest cost of having no preemption and is why `drain` is written by the
-   * program rather than happening to it.
-   *
-   * A handler is unregistered **before** it runs, so it may register more work — including re-arming
-   * the same kind of read, which is what a relay does on every packet.
-   *
-   * **`millis` bounds the call, not each wait.** It cannot be handed straight to `waitAny`: that
-   * bounds one wait, and this does many, so `n` handlers and a one-second budget would be `n` seconds
-   * — and a handler that re-arms would make it unbounded, because work arriving is what keeps the
-   * loop going. So the clock is read and each wait is asked for what is *left*. The first wait always
-   * happens with the whole budget, which keeps `0` askable: that is `waitAny`'s "which is ready right
-   * now", and a `run` that could not do it would have no way to poll.
-   *
-   * `-1` is "as long as it takes" and reads no clock at all, so `drain` — the only caller in the
-   * repository — pays nothing for a budget it does not have. It matters that it is nothing rather than
-   * a little: the clock is a capability call, so it parks the worker like any other.
-   */
-  i32 run(this, const Core core, i32 millis) {
-    i32 ran = 0;
-    bool bounded = millis >= 0;
-    i64 deadline = 0 as i64;
-    if (bounded) { deadline = core.monotonicNanos().wait() + millisToNanos(millis); }
-    i32 waits = 0;
-    while (this.n > 0) {
-      i32 budget = millis;
-      if (bounded && waits > 0) {
-        i64 left = deadline - core.monotonicNanos().wait();
-        if (left <= 0 as i64) { return ran; }
-        // Rounded down, so a fraction of a millisecond left asks for `0` — a poll, which is the
-        // truth: there is no time to wait with.
-        // `as!` rather than `as~`: this is bounded above by `millis`, which is an `i32` already, so
-        // the check is a claim that cannot fail rather than a value being squeezed.
-        budget = (left / (1000000 as i64)) as! i32;
-      }
-      // **In registration order**, which `removeAt` preserves by shifting rather than swapping — so
-      // with several continuations due at once they run in the order they were registered. That is
-      // `waitAny`'s tie-break plus this list's order; neither alone is enough to say it.
-      i32[] live = i32[].filled(this.n, 0);
-      for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
-      i32 which = core.waitAny(live, budget);
-      waits = waits + 1;
-      if (which < 0) { return ran; }
-      i32 id = this.ids[which];
-      fn<void(i32)> handler = this.handlers[which];
-      this.removeAt(which);
-      handler(id);
-      ran = ran + 1;
-    }
-    return ran;
-  }
-
-  /**
-   * Wait for one registered ticket and run its handler — the single round `Core.drain` interleaves
-   * with the continuations it runs. Answers how many ran: one, or none when nothing is registered or
-   * nothing answered within `millis` (below zero: as long as it takes).
-   */
-  i32 runOne(this, const Core core, i32 millis) {
-    if (this.n == 0) { return 0; }
-    i32[] live = i32[].filled(this.n, 0);
-    for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
-    i32 which = core.waitAny(live, millis);
-    if (which == HOST_CANNOT_WAIT()) { this.yielded = true; }
-    if (which < 0) { return 0; }
-    i32 id = this.ids[which];
-    fn<void(i32)> handler = this.handlers[which];
-    this.removeAt(which);
-    handler(id);
-    return 1;
-  }
-
-  /**
-   * Abandon everything outstanding, and answer how much there was.
-   *
-   * **Exiting with work outstanding is an error; exiting after this is not.** The difference is that
-   * one of them said so. Each ticket's own `drop` is called, so the host's slots are released rather
-   * than left for a ring that fills up.
-   */
-  i32 dropAll(this) {
-    // **Taken out of the list before any of them runs**, like `run` unregisters a handler before
-    // running it. Walking `this.n` while a `drop` calls `on` reaches entries that were not there when
-    // this was called — dropping work it was not asked to abandon — and the clear afterwards then
-    // forgets whatever the drops registered while still reporting a clean exit.
-    i32 had = this.n;
-    i32[] ids = i32[].filled(had, 0);
-    fn<void(i32)>[] drops = fn<void(i32)>[].filled(had, schedIdle);
-    for (i32 i = 0; i < had; i++) {
-      ids[i] = this.ids[i];
-      drops[i] = this.drops[i];
-    }
-    this.n = 0;
-    for (i32 i = 0; i < had; i++) { drops[i](ids[i]); }
-    return had;
-  }
-}
-
-export struct Pending<T> {
-  i32 id;
-  fn<T(i32)> resolve;
-  fn<bool(i32)> settled;
-  fn<void(i32)> drop;
-  /**
-   * Where a continuation goes, or null for a ticket nobody linked.
-   *
-   * The host builds tickets through `of` and knows nothing about any scheduler; a capability that
-   * hands out *linked* tickets does so itself. So `then` works on `core.delay(…)` and does not on a
-   * raw `recv`, and which is which is a property of the capability rather than of this type.
-   */
-  Sched? sched;
-
-  /**
-   * Whether **waiting** on this ticket can make it answer.
-   *
-   * True of every ticket a host hands out, because waiting is exactly how the host is asked. True of
-   * an `async` function's ticket, because waiting drives its machine. False of a ticket the program
-   * made whose answer arrives only when somebody *else's* continuation runs — nothing a `wait` is
-   * allowed to do can advance one of those, and `design/lang/0014` D2 is what makes that so: a wait
-   * drives its own chain and deliberately runs no unrelated registered work.
-   *
-   * **It has to be recorded rather than worked out.** Measured 2026-08-30: at the moment of the wait
-   * a host ticket whose answer has not arrived and a ticket nothing can ever answer are
-   * indistinguishable — `sched` is null and `settled` is false for both. Asking again afterwards does
-   * not separate them either, because a host ticket is *not* settled after being waited on: its slot
-   * is spent and `settled` answers false again.
-   *
-   * **False is the default a hand-written ticket should have.** Getting it wrong that way traps and
-   * says so; getting it wrong the other way is what this replaces — a silent zero.
-   */
-  bool waitable;
-
-  /**
-   * A ticket the host will answer. Every capability's is made through here, which is why this sets
-   * `waitable`: being waited on is how the host is asked.
-   */
-  Pending<T> of(i32 id, fn<T(i32)> resolve, fn<bool(i32)> settled, fn<void(i32)> drop) {
-    return Pending<T>(id, resolve, settled, drop, null, true);
-  }
-
-  /**
-   * A ticket the *program* answers, which waiting can drive — an `async` function's, and anything
-   * else whose `resolve` does the work rather than asking for it.
-   *
-   * The counterpart is no static at all: a ticket only a continuation can answer is built with the
-   * constructor and `false`, and saying so is the point.
-   */
-  Pending<T> driven(i32 id, fn<T(i32)> resolve, fn<bool(i32)> settled, fn<void(i32)> drop) {
-    return Pending<T>(id, resolve, settled, drop, null, true);
-  }
-
-  /**
-   * The same ticket, told **which world** runs its continuations.
-   *
-   * Takes a `Core` rather than the scheduler inside it, so a program never names a scheduler — the
-   * same rule `delay`, `drain` and `dropAll` keep. It is also the honest statement of the
-   * relationship: the world that answers a ticket is the world that dispatches it.
-   *
-   * **`Core`'s own tickets arrive linked** — `Core.of` does it, so `core.delay`, `core.randomBytes`,
-   * `core.nowMillis` and `core.monotonicNanos` all carry continuations without being asked. This is
-   * for the ones handed out by a capability that is *not* the world that dispatches: `Cli` has no
-   * scheduler, so `cli.readFile(p).linkedTo(core).then(f)` is how the rest of the world gets them.
-   * `waitAny` already takes ticket ids across differing `Pending<T>`, which is the property that
-   * makes one scheduler enough for all of them.
-   *
-   * **It read `core.randomBytes(8).linkedTo(core).then(f)` until 2026-08-30**, which asked the caller
-   * to hand `core` back to a ticket `core` had just produced — and the failure for forgetting was a
-   * bare trap. The operator had said so when this was built.
-   */
-  Pending<T> linkedTo(const this, const Core core) {
-    return this.on(core.sched);
-  }
-
-  /**
-   * The same ticket, told which scheduler dispatches its continuations.
-   *
-   * **`Core.of` uses this on every ticket `Core` itself hands out**, which is why `core.delay`,
-   * `core.randomBytes`, `core.nowMillis` and `core.monotonicNanos` carry continuations without being
-   * asked to. A capability reached *through* the world that dispatches has no business making the
-   * caller say so a second time; `linkedTo` above is for a ticket some *other* capability handed
-   * out, and `Cli`'s are all of those.
-   */
-  Pending<T> on(const this, const Sched s) {
-    return Pending<T>(this.id, this.resolve, this.settled, this.drop, s, this.waitable);
-  }
-
-  /**
-   * The same ticket with `f` applied to its answer — a **chained** ticket of a different type.
-   *
-   * `design/lang/0010` criterion 4, and it is smaller than that document predicted. It expected a
-   * derived ticket resolved when the first resolves, which is scheduler plumbing; what it needs is
-   * function composition and no scheduler change at all. A ticket is an id plus three functions of
-   * that id, so the chained one keeps the **same host id** — the same slot, the same `settled`, the
-   * same `drop`, the same world — and differs only in `resolve`, which gains `f` on top. `waitAny`
-   * takes ids across differing `Pending<T>` for exactly this reason.
-   *
-   * Nothing runs here. `f` is applied when the answer arrives and the ticket is resolved, so a
-   * chained ticket nobody consumes costs a closure and never calls `f`:
-   *
-   *     cli.readFile(p).linkedTo(core).map<i32>((string s) => s.len()).then((i32 n) => …)
-   *
-   * **Not named `then`, and that is not a preference.** wac has no overloading, `then` has five real
-   * callers all passing a void lambda, and a void-bodied lambda cannot satisfy `fn<U(T)>`. So the
-   * consumer keeps the name it has and the transform takes the one it would have in any case.
-   *
-   * **Two chains from one ticket resolve one host slot twice**, which is the pre-existing property of
-   * `resolve` rather than something this adds — a ticket answers once, and `map` does not copy it.
-   */
-  Pending<U> map<U>(const this, fn<U(T)> f) {
-    return Pending<U>(this.id, (i32 id) => f(this.resolve(id)), this.settled, this.drop, this.sched,
-                      this.waitable);
-  }
-
-  /**
-   * Run `f` with the answer once it is here, and return **now**.
-   *
-   * The scheduler holding the continuation never learns `T`: what is registered is a `fn<void(i32)>`,
-   * and the wrapper closing over `resolve` is what carries the type across. That wrapper is a lambda
-   * written inside a generic, which is why this could not exist before `issues/lang/0142`.
-   *
-   * **Traps on an unlinked ticket** rather than dropping the continuation on the floor — a `then`
-   * that silently never runs is the worst failure this could have, and a ticket is unlinked only
-   * when the capability that made it does not schedule.
-   *
-   * The ticket's own `drop` is registered beside the handler, so `Sched.dropAll` can release the
-   * host's slot rather than merely forgetting the callback.
-   */
-  void then(this, fn<void(T)> f) {
-    // **A bare trap, and it should not be.** This is the one mistake the API invites — `delay` hands
-    // back a linked ticket and every other capability hands back an unlinked one — so `then` on a
-    // `readFile` is where a reader arrives, and what they get is *Uncaught RuntimeError: unreachable*.
-    //
-    // `trap "…"` did not carry its message when this was written — `issues/lang/0147`, which is
-    // **closed**: wacc emits it and the V8 host prints it, so `wac run` says *trapped: …* today. This
-    // should say something, and the sentence it should say is the one `design/lang/0014` D7 is about.
-    // Left as a bare trap only because nobody has written that sentence yet, not because it cannot be
-    // written.
-    if (this.sched is null) { trap; }
-    this.sched!.on(this.id, (i32 id) => { f(this.resolve(id)); }, this.drop);
-  }
-
-  /**
-   * Block until the answer is here, and take it. The ticket is spent afterwards.
-   *
-   * `const this` because it writes nothing — the spending happens on the host side of the
-   * resolver. It has to be const to be callable at all from a `const this` method, which
-   * is where half the capability calls in `packages/sh` and `packages/ssh` live.
-   */
-  T wait(const this) {
-    // **`design/lang/0014` D7.** A ticket that only a continuation can answer cannot be advanced by
-    // waiting on it — D2 says a wait drives its own chain and runs no unrelated registered work — so
-    // waiting is a mistake rather than a delay. It used to return whatever the resolver had, which
-    // for the shape that reaches here is a default: a program that asks for a file size and is told
-    // zero, with nothing said. `settled` first, because a ticket that already has its answer is
-    // fine whoever put it there.
-    if (!this.waitable && !this.settled(this.id)) {
-      trap "this ticket is answered by a continuation, so waiting cannot advance it — call core.drain()";
-    }
-    return this.resolve(this.id);
-  }
-
-  /** Whether `wait` would return immediately. Never blocks. */
-  bool isDone(const this) { return this.settled(this.id); }
-
-  /**
-   * This host ticket as core's `Ticket`, which is what `await` takes (spec ch35).
-   *
-   * **A bridge, and a temporary one**: `design/lang/0016` phase 2 has the host hand out `Ticket`s
-   * itself and deletes `Pending`, and this with it. Until then a `wait` on the result blocks on the
-   * host, and a linked ticket is also answered by `core.drain()`'s `waitAny`, so several awaits on
-   * host work still advance together.
-   */
-  Ticket<T> ticket(this) {
-    Ticket<T> t;
-    // **An answer already here settles the ticket now.** Registering it instead would leave it to
-    // whoever dispatches the scheduler — a `drain` on a command line, and in a page, where the host
-    // says when an answer arrives and has already said it, nobody: a page awaiting the clock waited
-    // for ever.
-    if (this.settled(this.id)) {
-      t.resolve(this.resolve(this.id));
-      return t;
-    }
-    if (this.sched is not null) {
-      this.sched!.on(this.id, (i32 id) => { if (!t.done) { t.resolve(this.resolve(id)); } }, this.drop);
-    }
-    t.drive = () => {
-      if (this.sched is not null) { this.sched!.detach(this.id); }
-      if (!t.done) { t.resolve(this.wait()); }
-      return true;
-    };
-    return t;
-  }
-
-  /**
-   * Stop caring. **Detach, not abort**: the host may already be inside the work and
-   * generally cannot be interrupted. What this guarantees is that the answer is discarded.
-   */
-  void cancel(const this) { this.drop(this.id); }
-}
-
-/**
- * A file that may not have been there. `bytes` is empty when `ok` is false.
- *
- * The static exists so the *host* can build one. A struct has no constructor JavaScript
- * can reach, and without this every application had to re-export a maker of its own —
- * ceremony that had nothing to do with counting words.
- */
-export struct FileResult {
-  bool ok;
-  u8[] bytes;
-  /** The host's own sentence, which is the only text worth showing a person. */
-  string error;
-  /**
-   * Which `FAULT_*` this was — `FAULT_NONE` when `ok`.
-   *
-   * The message cannot be branched on: "No such file or directory (os error 2)" from Deno, "ENOENT: no
-   * such file or directory" from Node and a `NotFoundError` from the Origin Private File System are
-   * three spellings of one fact. A program that wanted to say what GNU says about a missing file had to
-   * parse English or print the host's sentence, and nine programs in `packages/sh` printed the
-   * sentence. The mutating side has had a category since `Change` existed; this is the same one, on the
-   * side that reads. wac-mono 0062.
-   */
-  i32 fault;
-
-  FileResult of(bool ok, u8[] bytes, string error, i32 fault) {
-    return FileResult(ok, bytes, error, fault);
-  }
-}
-
-
-/**
- * What a child program wrote, once it has finished.
- *
- * Both streams, because a shell needs them apart: a program's diagnostics go to the terminal
- * even when its output is piped into the next stage, and one buffer cannot say which was which.
- */
-export struct Captured {
-  u8[] out;
-  u8[] err;
-  /**
-   * Whether `out` is **all** of what the child wrote, or as much as would fit.
-   *
-   * A frame's output is held in this program's memory rather than draining anywhere, so on the
-   * JavaScript hosts it is capped at 8 MiB, and at the cap `write` starts answering false.
-   *
-   * **The native runtime does not cap it**, which is a difference rather than a simplification and is
-   * why this field exists rather than a constant: its frame is a `Vec` that grows, so the same applet
-   * answers in full there and this is always `false`. A caller that must not be handed a short answer
-   * reads this field; a caller that must not be handed an unbounded one cannot learn that here, and
-   * `issues/system/0252a` is which of the two behaviours should win. From inside the child that is indistinguishable
-   * from the reader going away, which is exactly what `box yes` is written to stop on: `while
-   * (cli.write(block)) {}`. So an applet that fills the buffer exits **cleanly**, believing its pipe
-   * closed, and hands back a short answer that looks complete.
-   *
-   * That is the wrong-answer shape this repository keeps removing, and it was measurable: `boxsh -c
-   * 'seq 1 1500000 | wc -c'` printed 8323568 where bash prints 10888896, with nothing said.
-   *
-   * A full buffer is a fact about **this program's memory**; a closed pipe is a fact about the
-   * **reader**. The child cannot tell them apart and does not need to — the *caller* can, because it
-   * is the one holding the buffer, and this is where it finds out. `packages/box`'s `boxRun` turns it
-   * into a failed command with a message, which is the honest answer: we could not run this, rather
-   * than here is a number that is not the answer.
-   */
-  bool truncated;
-
-  Captured of(u8[] out, u8[] err, bool truncated) { return Captured(out, err, truncated); }
-}
-
-
-
-/**
- * What every host can do, synchronously or made to look so.
- *
- * Deno, Node and a browser all provide these, which is what makes an application that
- * uses only `Core` portable without qualification.
- */
-export struct Core {
-  /** Wall clock, milliseconds since the epoch. Moves backwards; do not measure with it. */
-  fn<Pending<i64>()> nowMillis;
-  /** Monotonic nanoseconds from an arbitrary origin. For measuring, never for dating. */
-  fn<Pending<i64>()> monotonicNanos;
-  /**
-   * A ticket that settles once the given milliseconds have passed, resolving to the
-   * monotonic nanoseconds at which it did — so `.wait()` is a sleep that tells you how far
-   * it overshot.
-   *
-   * **For a deadline, use `Cli.waitAny`'s `millis` instead.** This was originally built to
-   * be that: a timer ticket in the `waitAny` list, whichever lands first wins. It works, and
-   * it is the wrong shape — the ticket costs a ring slot, cannot be written inline (there
-   * would be nothing left to cancel), and has to be disposed of on every path or the ring
-   * fills up and the next call stops the program. `Atomics.wait` already takes a timeout, so
-   * the deadline needs no ticket, no slot and no cleanup at all.
-   *
-   * What is left is sleeping, which this is good at and which `waitAny` cannot express: a
-   * retry backoff, a poll interval, a deliberate pause. It stays in `Core` because a clock
-   * is not authority and all three hosts have one.
-   */
-  fn<Pending<i64>(i32)> sleepMillis;
-  /**
-   * Cryptographically secure random bytes, from one byte to a megabyte.
-   *
-   * The ceiling is the capability's rather than any host's, and asking for more is a fault instead
-   * of a short answer: a caller that wanted two megabytes of key material and silently received one
-   * is the worse failure. The floor of the *implementation* is a host detail that leaked once —
-   * Web Crypto refuses more than 65,536 bytes in a single call, so two of the three hosts threw on
-   * everything above that while the third chunked and did not (0122). `example/entropy.wac` walks
-   * the range on both hosts, one byte past that cap included.
-   */
-  fn<Pending<u8[]>(i32)> randomBytes;
-  /** A line of output. */
-  fn<void(string)> log;
-  /** A line of output on the error channel. */
-  fn<void(string)> warn;
-
-  /**
-   * Block until one of these calls has an answer, and say which — for at most `millis`.
-   *
-   * Takes the `id` of each ticket and returns its index in the list. Every id is accepted
-   * whatever its `Pending<T>`: a relay waits on a `recv` and an `accept` together, and
-   * their types differ.
-   *
-   * **This is the capability the ring exists for.** Overlapping two reads is a
-   * convenience; waiting on whichever of two *sockets* speaks first is the difference
-   * between a program being writable and not. `nc`, an SSH relay and a shell all need it,
-   * and `isDone` alone does not give it to them — polling `isDone` in a loop is a spin,
-   * which burns a core to avoid parking.
-   *
-   * `millis` is the deadline, and **-1 means wait as long as it takes**:
-   *
-   *     i32 w = core.waitAny([r.id, a.id], -1);   // until one of them answers
-   *     i32 w = core.waitAny([r.id], 5000);       // ...or five seconds, whichever first
-   *     i32 w = core.waitAny([click.id, file.id], 0);   // which is ready right now
-   *
-   * **When several are ready, the answer is the first of them in the list you passed** — not the one
-   * that finished first. Both hosts scan the caller's order and return the first settled ticket:
-   * `packages/platform/host/call.ts` is `for (const t of tickets) if (isDone(b, t)) return t;`, and
-   * `native/src/tickets.rs` says why — *"first in the caller's list rather than first to finish, so the
-   * answer does not depend on how the threads were scheduled"*, which is `design/system/0001` D12.
-   *
-   * **It is not a statement about when work finishes.** A ticket the host has not marked ready yet is
-   * not ready, so a 1ms timer that has been descheduled loses to a 2ms one that has not — and no
-   * tie-break can change that, because there is no tie. `issues/system/0202` was filed on that
-   * observation and asked which policy to adopt; the policy was already here, and what it saw was the
-   * other thing. `packages/platform/test/wac/scheduled_test.wac` asserts the tie-break by asking twice
-   * with the list reversed, which is what separates position from completion.
-   *
-   * **Returns -1 when the time ran out**, and also for an empty list, which is the same
-   * statement: nothing settled. That is how a silent peer is survivable — see
-   * `example/patience.wac` — and it is why there is no `recvWithin`. A deadline belongs to
-   * the wait rather than to each capability, so this one parameter bounds `connect`,
-   * `accept`, `readFile` or a child's `exitCode` without any of them knowing about it.
-   *
-   * The deadline **costs nothing**: no opcode, no slot, no ticket to dispose of, because
-   * `Atomics.wait` takes a timeout and the wait is already in this worker's own memory. An
-   * earlier design passed a timer ticket in the list instead; it worked, and every caller
-   * had to remember to cancel the loser or lose a slot for good. `core.sleepMillis` remains
-   * for *sleeping*, which is a different thing from a deadline.
-   *
-   * Blocking, and it reaches no further than this worker's own memory: the wait is on the
-   * completion counter the host bumps, so it takes no slot and cannot deadlock the ring
-   * however many tickets are outstanding.
-   *
-   * **In `Core` rather than `Cli`**, which it was not at first and should have been. It grants
-   * nothing — it cannot start work, only notice that some has finished — and it is the same in
-   * every host, which is what `Core` means. Keeping it beside the filesystem left an
-   * interactive page unable to wait on a click *or* a dropped file, and that is exactly the
-   * question this exists to answer.
-   */
-  fn<i32(i32[], i32)> waitAny;
-
-  /**
-   * Whether the user has asked to interrupt what is running — `^C`, and nothing else.
-   *
-   * **The seam design/system/0001 step 5 was missing, and it is on `Core` rather than on the shell.**
-   * A signal here is cooperative: `kill` writes on a row in the process table and the receiver
-   * collects it at its next check point. That reaches a shell *between* commands and cannot reach a
-   * running one, because a running applet is inside `dispatch` and the shell's check points are not
-   * executing. An applet is handed `Core`, `Cli`, `Fs` and `Args` and never a `Page` or a `Conn`, so
-   * whatever it polls must be one of those four.
-   *
-   * **Only a host that owns the keyboard can answer yes, and today none does.** Under Deno, Node and
-   * wasmtime the terminal belongs to whatever started the program — over ssh, to `sshd` on the far
-   * side of an encrypted socket — so those answer *no*. The one that answered yes was std's `Page` on
-   * the browser host, which is gone (design/system/0011 step 7); a `packages/web` terminal hands its
-   * shell an interrupt of its own, `Shell.askInterrupt`. `issues/system/0363a` is whether this goes.
-   *
-   * Reading clears it, so two callers do not both act on one `^C`.
-   *
-   * `i32` because that is what crosses; `interrupted()` is the read.
-   */
-  fn<i32()> askInterrupt;
-
-  /**
-   * End the program now with this status, abandoning whatever is left — `Sys.exit` (spec ch07).
-   * Does not return: the host unwinds the program to the call of its `main`.
-   */
-  fn<void(i32)> exit;
-
-  /**
-   * The world\'s scheduler — where a continuation registered with `then` waits its turn.
-   *
-   * **A program never names this.** It reaches it through `delay`, `drain` and `dropAll` below, which
-   * read as what they are: things this world can do. The scheduler is a value the host builds at
-   * start-up and hands over with the rest of the capabilities, which is what keeps "no ambient
-   * anything" true — a program given no world cannot schedule.
-   *
-   * A field rather than a funcref, unlike everything else here, because the methods below are wac
-   * code over it rather than host calls. The host has only to construct it.
-   */
-  Sched sched;
-
-  /**
-   * A ticket that settles after `millis`, already able to carry a continuation.
-   *
-   * `sleepMillis` is the ticket; the only thing added is where its continuations go. So
-   * `core.delay(500).wait()` is the sleep it always was, and `core.delay(500).then(f)` is the same
-   * ticket with a continuation on it.
-   */
-  Pending<i64> delay(const this, i32 millis) {
-    return this.sleepMillis(millis);
-  }
-
-  /**
-   * Take back the continuation put on the ticket with this id, if it still has one.
-   *
-   * **The counterpart of `then` for work that is abandoned rather than finished.** A continuation
-   * that re-arms needs nothing from this — `run` unregisters a handler before running it — so this is
-   * for a caller giving up: a relay dropping a connection takes back the reads outstanding on that
-   * connection's other sockets, which would otherwise fire against a closed handle. The ticket's own
-   * `drop` runs, so the host's slot is released rather than leaked.
-   *
-   * **On `Core` and taking an id, rather than on `Pending<T>`**, and not for the reason this once
-   * gave: `issues/lang/0292c` claimed a method on that struct could not be added at all, and closed
-   * as not a bug — it was a duplicate member, because `cancel` was already there.
-   *
-   * The real reason is `const`. The obvious home is inside `Pending.cancel`, which drops the host's
-   * ticket and should plainly take the continuation off with it. But that method is `const this` —
-   * load-bearing, since it is called from the const methods that hold most of `packages/sh` and
-   * `packages/ssh` — and detaching writes to a `Sched` the whole program shares:
-   *
-   *     error: a non-const reference cannot be taken from a const one
-   *       |     if (this.sched is not null) { this.sched!.off(this.id); }
-   *       |                                              ^
-   *
-   * So the two halves of *stop caring* are split by who may write: the ticket's own half is const
-   * and lives on `Pending`, and the scheduler's half is not and lives here. A caller that wants
-   * both does `p.cancel()` and `core.cancel(p.id)`, which is worth a single call one day and needs
-   * a mutable `Pending` to have one.
-   */
-  bool cancel(this, i32 id) { return this.sched.off(id); }
-
-  /**
-   * Take a continuation back **without** abandoning its ticket — `Sched.detach`.
-   *
-   * `cancel` is for giving up; this is for taking over. A caller that is about to resolve a ticket
-   * itself has to unregister first or the answer is delivered twice, and it must not let the ticket
-   * be dropped on the way out or there is nothing left to resolve.
-   */
-  bool detach(this, i32 id) { return this.sched.detach(id); }
-
-  /**
-   * Run continuations until none are outstanding. Answers how many ran.
-   *
-   * **The program says when.** There is no second stack here — a park in `waitAny` runs nothing at
-   * all — so a continuation can only run inside a call that dispatches, and this is that call. A
-   * `main` that schedules and returns without draining leaves work outstanding, which the host
-   * treats as an error; `dropAll` is how a program says it meant to.
-   */
-  i32 drain(this) { return this.drainWithin(0 - 1); }
-
-  /**
-   * `drain`, bounded: ready continuations first, then one round of the host's — a continuation whose
-   * ticket has settled runs, one still waiting goes back in order, and when none could run one
-   * `waitAny` answers whichever host ticket is first, which may settle a ticket a continuation waits
-   * on. Answers how many host answers it dispatched, which is what it answered before continuations
-   * were queued here. `millis` below zero is no bound.
-   */
-  i32 drainWithin(this, i32 millis) { return this.drainUntil(millis, null); }
-
-  /**
-   * `drainWithin`, stopping as soon as `until` has settled — how a program's `async` `main` is run
-   * with its unawaited work alongside (`Sys.__wacSettle`). Null is no such stop.
-   */
-  i32 drainUntil(this, i32 millis, TicketBase? until) {
-    bool bounded = millis >= 0;
-    i64 deadline = 0 as i64;
-    if (bounded) { deadline = this.monotonicNanos().wait() + millisToNanos(millis); }
-    i32 ran = 0;
-    while (true) {
-      if (until is not null && until!.done) { return ran; }
-      Queue<Continuation> later;
-      bool moved = false;
-      while (true) {
-        Continuation? c = this.sched.queued.pop();
-        if (c is null) { break; }
-        // One a `wait` already ran past does nothing when called, and is not work left.
-        if (!c!.current()) { continue; }
-        TicketBase? on = c!.t;
-        if (on is null || on!.done) {
-          c!.call();
-          moved = true;
-        } else {
-          later.push(c!);
-        }
-      }
-      while (true) {
-        Continuation? back = later.pop();
-        if (back is null) { break; }
-        this.sched.queued.push(back!);
-      }
-      if (moved) { continue; }
-      if (this.sched.pending() == 0) { return ran; }
-      i32 budget = 0 - 1;
-      if (bounded) {
-        i64 left = deadline - this.monotonicNanos().wait();
-        if (left <= 0 as i64) { return ran; }
-        budget = (left / (1000000 as i64)) as! i32;
-      }
-      i32 one = this.sched.runOne(this, budget);
-      if (one == 0) { return ran; }
-      ran = ran + one;
-    }
-  }
-
-  /**
-   * `drain`, for at most `millis` — and answers how many ran, so what is left is `outstanding()`.
-   *
-   * The budget bounds the whole call rather than each wait, which is the only reading that is any use:
-   * a bound per wait is `n` bounds for `n` continuations, and none at all once a handler re-arms.
-   *
-   * **What is left over is still outstanding**, so a program that leaves after a partial drain gets the
-   * same error as one that never drained. Running out of time is not a decision; `dropAll` is.
-   */
-  i32 drainFor(this, i32 millis) { return this.drainWithin(millis); }
-
-  /**
-   * Abandon every outstanding continuation, releasing each ticket. Answers how many there were.
-   *
-   * Not `const this`, like `drain` and unlike everything else here: a scheduler reached through a
-   * `const` receiver is const too, and both of these write to it. That is the aliasing rule doing its
-   * job — a `Core` held const cannot quietly run somebody\'s continuations.
-   */
-  i32 dropAll(this) {
-    i32 queued = this.sched.queued.len();
-    while (this.sched.queued.pop() is not null) { }
-    return this.sched.dropAll() + queued;
-  }
-
-  /** How much work is outstanding — the question the host asks when `main` returns. */
-  i32 outstanding(this) { return this.sched.pending() + this.sched.liveQueued(); }
-
-  /**
-   * Whether the user has asked to interrupt. Call it once per *block* of work, never per byte:
-   * every opcode parks the worker, so this is a round trip.
-   *
-   *     while (cli.write(block)) { if (core.interrupted()) { return 130; } }
-   *
-   * 130 is `128 + SIGINT`, which is what a shell reports for a program a `^C` ended.
-   */
-  bool interrupted(const this) { return this.askInterrupt() != 0; }
-
-  Core of(
-    fn<Pending<i64>()> nowMillis,
-    fn<Pending<i64>()> monotonicNanos,
-    fn<Pending<i64>(i32)> sleepMillis,
-    fn<Pending<u8[]>(i32)> randomBytes,
-    fn<void(string)> log,
-    fn<void(string)> warn,
-    fn<i32(i32[], i32)> waitAny,
-    fn<i32()> askInterrupt,
-    fn<void(i32)> exit,
-    Sched sched
-  ) {
-    // **Linked here, once, rather than by every caller.** These four are the only capabilities
-    // `Core` answers with a ticket, and `Core` is the thing that dispatches — so a ticket it handed
-    // out arrives able to carry a continuation. `then` on an unlinked ticket is a bare trap, and
-    // requiring `core.randomBytes(8).linkedTo(core).then(f)` made the world ask the caller to hand
-    // it back something it already had.
-    // The program's own queue is the schedule target where no `schedule` statement is in force
-    // (`§wac-schedule-default-is8g8z4`) — the first world's, which is the host's: a `Core` a test
-    // builds afterwards must not take the program's continuations away from it.
-    if (__wacScheduleTarget() is null) { __wacSetScheduleTarget(sched.queued.push); }
-    return Core(() => nowMillis().on(sched),
-                () => monotonicNanos().on(sched),
-                (i32 ms) => sleepMillis(ms).on(sched),
-                (i32 n) => randomBytes(n).on(sched),
-                log, warn, waitAny, askInterrupt, exit, sched);
-  }
-}
 
 /** What a path is, if it is anything. Everything is zero or false when `exists` is false. */
 /**
@@ -1021,7 +94,7 @@ export i32 FAULT_NOT_REPRESENTABLE() { return 6; }
  * **`faultWords` has a phrase for it, and used not to.** The argument for having none was that the host's
  * own sentence — "filesystem read not granted to this application" — says what no errno phrase can, and a
  * caller falling back to the message would print exactly the right thing. That holds only where there *is*
- * a message: `Change` and `FileResult` carry one, and **`Stat` does not**. So `stat: cannot tell — ` was
+ * a message: a failed read or change carries one, and **`Stat` does not**. So `stat: cannot tell — ` was
  * what a program printed for the answer this category exists to give, with nothing after the dash.
  */
 export i32 FAULT_NOT_GRANTED() { return 7; }
@@ -1155,7 +228,7 @@ export i32 FAULT_TIMED_OUT() { return 17; }
 /**
  * A fault in the words the real tools use, or `""` where the category has none to give.
  *
- * One table, because there were four: `sh` had one for a `Change` and another for a `FileResult`, `box`
+ * One table, because there were four: `sh` had one for a change and another for a read, `box`
  * had a third, and a fourth was about to be written for `Stat`. Four copies of a phrase list drift, and
  * the drift is invisible — each one is only read when something has already gone wrong. The `sh` and `box`
  * copies had already diverged: one of them had no phrase for `FAULT_NOT_REPRESENTABLE` and said the host's
@@ -1206,33 +279,7 @@ export string faultWords(i32 fault) {
   return "";
 }
 
-/**
- * Why a failed `Change` failed, in the words the tool this world imitates uses.
- *
- * A fault the world has a *category* for gets the category's phrase; anything else keeps the host's own
- * message, which is then the only thing that knows. That distinction is what the fault numbers are for:
- * the host's words differ per platform and per runtime — `File exists (os error 17): mkdir '/tmp/x'`
- * under Deno, `EEXIST: file already exists, mkdir '/tmp/x'` under Node, `already exists` in a browser —
- * while what happened does not.
- *
- * **Here rather than in `packages/sh`, which is where it was.** `sh`'s builtins had it and `box`'s
- * applets did not, and they are the same programs: `mkdir` is a builtin of one and an applet of the
- * other, so the same failure printed GNU's four words through the shell and an errno with the host's
- * absolute path through the applet. Two applets had gone further and inlined a *one-row* copy of the
- * table — `c.fault == FAULT_EXISTS() ? "File exists" : c.message` — which is the drift `faultWords`
- * exists to stop, one row at a time. It belongs beside the phrases, where anything holding a fault can
- * reach it.
- */
-export string reasonOf(Change c) {
-  string words = faultWords(c.fault);
-  return words == "" ? c.message : words;
-}
 
-/** The same, for a read that failed: `FileResult` carries its host sentence as `error`. */
-export string readReason(FileResult f) {
-  string words = faultWords(f.fault);
-  return words == "" ? f.error : words;
-}
 
 /**
  * The same, for a program that did not do what was asked — and the **killed** case is why it exists.
@@ -1254,9 +301,8 @@ export string execReason(Exec r) {
   return said.len() > 0 ? said : "exited non-zero and said nothing";
 }
 
-/** What a filesystem change answered. */
 /**
- * What a host program did: `Cli.exec`'s answer.
+ * What a host program did: `Procs.exec`'s answer.
  *
  * **`status` is an exit code, not a fault.** A program that ran and exited non-zero is a different
  * fact from a program that could not be started, and every differential oracle in this repository
@@ -1315,33 +361,6 @@ export struct Exec {
   bool signalled(const this) { return this.ran() && this.status == 0 - 1; }
 }
 
-export struct Change {
-  /** `FAULT_NONE` when it worked. */
-  i32 fault;
-  /** The host's own words, and empty when it worked. */
-  string message;
-
-  Change of(i32 fault, string message) { return Change(fault, message); }
-
-  bool ok(const this) { return this.fault == FAULT_NONE(); }
-
-  /**
-   * Whether the thing was simply not there — the case `rm -f` is allowed to ignore.
-   *
-   * Before this, `remove` answered a message and `rm -f` had to ask `stat` first, which is both an
-   * extra call and a race: a file can vanish between the two. Asking the failure itself cannot race
-   * with anything.
-   *
-   * **`FAULT_NOT_A_DIR` counts, and this is what GNU does.** `rm -f f/g` where `f` is a file exits 0
-   * and says nothing, exactly as `rm -f nosuch` does, because both mean "there is nothing at that
-   * path". Ours failed with a diagnostic — first because `ENOTDIR` had no category at all and landed in
-   * `FAULT_OTHER`, then, once it had one, because this method still named only the one. The `-f` in
-   * `rm -rf build/x/y` is written for precisely this: a path whose middle turned out not to be there.
-   */
-  bool absent(const this) {
-    return this.fault == FAULT_NOT_FOUND() || this.fault == FAULT_NOT_A_DIR();
-  }
-}
 
 export struct Stat {
   bool exists;
@@ -1363,7 +382,7 @@ export struct Stat {
   /**
    * Whether the owner-execute bit is set.
    *
-   * **One bit, not a mode**, for the reason `Cli.setExecutable` gives. It is what distinguishes git's
+   * **One bit, not a mode**, for the reason `Files.setExecutable` gives. It is what distinguishes git's
    * `100644` from its `100755`, and building a tree from a working tree cannot tell them apart without it
    * — every blob was recorded as `100644`, which made a commit of an executable record a mode change
    * nobody asked for. issues/system/0132.
@@ -1455,83 +474,6 @@ export struct Stat {
   }
 }
 
-/**
- * The command line, the standard streams and the filesystem. Absent in a browser, which
- * is the honest reason this is not part of `Core`.
- *
- * `readStdin` and `write` need no grant, for the same reason `arg` does not: what the
- * user pipes in and what the program prints are the user's own doing, not a reach into
- * anything they did not offer. The filesystem is different and is gated.
- */
-/**
- * A socket, or why there isn't one.
- *
- * A handle rather than a current-socket, unlike `openInput` and `openOutput`. Those are
- * one-at-a-time because the transforms take `fn<u8[]()>`, which has no parameter to
- * carry a handle *in* — not because wac cannot pass context beside a funcref, which it
- * can;
- * an `i32` in a struct has no such problem, and a server needs a listener and a
- * connection open at the same time, so a current-socket could not express it.
- */
-export struct HostSocket {
-  i32 handle;      // negative when `error` is set
-  string error;
-  /**
-   * Who is at the other end, for a socket that came from `accept`. Empty otherwise.
-   *
-   * The address only — `127.0.0.1`, or an IPv6 address without brackets — because the port a client
-   * dialled *from* is of no use to anyone and would invite string parsing at every call site.
-   *
-   * A server could not previously log who connected, rate-limit by source, or refuse a non-loopback
-   * peer. That last one is the check that makes a bind to every interface survivable, and it was not
-   * expressible: the address exists on the host side and was dropped at the boundary. wac-mono 0025.
-   */
-  string peer;
-
-  /**
-   * This socket's own port: what `listen` bound, what `connect` dialled *from*, what an accepted
-   * socket is served on. Zero when the host does not say.
-   *
-   * It exists because port 0 was useless without it. Asking the kernel for a free port is how a server
-   * avoids a clash it cannot predict — and `listen` answered with a handle alone, so a program that
-   * asked for 0 got one and could never learn which port it had, which is the same as not being able
-   * to ask. `platform/test/listen.test.ts` had a comment saying exactly that, above three hardcoded
-   * port numbers, and one of them collided with another agent's suite run and blocked a push.
-   */
-  i32 port;
-
-  /**
-   * Declared here rather than left to bindgen, because the host builds these.
-   *
-   * bindgen emits a constructor for a struct that has none, and its name carries the `$` that marks
-   * a generated identifier — so relying on it means the host reaches for a name no wac source
-   * mentions. Two lines here and the capability world states its own construction API.
-   */
-  HostSocket of(i32 handle, string error, string peer, i32 port, i32 fault) {
-    return HostSocket(handle, error, peer, port, fault);
-  }
-
-  /** Whether the peer is this machine — the check a server on every interface needs. */
-  /**
-   * Why it failed, when `handle` is negative: one of the `FAULT_*` codes, and `FAULT_NONE` on success.
-   *
-   * **`FileResult` and `Change` have carried a category for a long time and this did not**, so the one
-   * refusal a program most needs to tell from an ordinary failure -- "you were not granted the
-   * network" against "nothing is listening there" -- was the one with only English to go on. The
-   * hosts do not even agree on the English: `wacland` says "network access not granted to this
-   * application" and the V8 host says "Not granted to this application", so
-   * `packages/platform/example/probe.wac` matched `"ot granted"` with the first letter dropped to
-   * catch both. That is what this field removes. `issues/system/0238c`.
-   *
-   * The same mistake made with `FileResult.error` reported `failed` under both native hosts while the
-   * confinement was working, which is the worst direction for a program that reports what it may do.
-   */
-  i32 fault;
-
-  bool fromLoopback(const this) {
-    return this.peer == "127.0.0.1" || this.peer == "::1" || this.peer == "localhost";
-  }
-}
 
 /**
  * One datagram, **and who sent it**, in a single answer.
@@ -1571,7 +513,7 @@ export struct Datagram {
  * `waitAny` over two handles that happen to have different origins.
  */
 /**
- * What a spawned child may do, for `Cli.spawn`.
+ * What a spawned child may do: `Authority.grants()`, which `OP_SPAWN` carries.
  *
  * Bit flags, combined with `|`. The host intersects them with its own grants, so these are a
  * request rather than an instruction and a parent can never widen what it was given.
@@ -1580,19 +522,19 @@ export struct Datagram {
  * are how a parent talks to it at all, and they reach nothing the parent did not hand over.
  */
 export static i32 GRANT_NONE = 0;
-/** `readFile`, `stat`, `readDir`, `openInput` on a path. */
+/** `readFile`, `stat`, `readDir`, `openRead` on a path. */
 export static i32 GRANT_READ = 1;
-/** `writeFile`, `mkdir`, `remove`, `rename`, `openOutput` to a path. */
+/** `writeFile`, `mkdir`, `remove`, `rename`, `openWrite` to a path. */
 export static i32 GRANT_WRITE = 2;
 /** `connect`, `listen`, `accept` — the child's own sockets, not the parent's. */
 export static i32 GRANT_NET = 4;
-/** `env`, which reports every variable unset without it. */
+/** `env`, which answers `NotGranted` without it. */
 export static i32 GRANT_ENV = 8;
 
 /**
- * Running a host program — `Cli.exec`.
+ * Running a host program — `Procs.exec`.
  *
- * **Bit 16, and added late on purpose.** `Cli.spawn`'s note says there is no bit for this and that a
+ * **Bit 16, and added late on purpose.** `spawn`'s note used to say there was no bit for this and that a
  * loaded module which could `exec` would hold the one authority the narrowing exists for. That was
  * right while the *host* decided grants: nothing could pass it on, so `load_module` hard-coded
  * `run: false`. With the built-in program holding every capability and deciding what it hands on, the
@@ -1620,11 +562,11 @@ export i32 GRANT_ALL() { return GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV
  * `issues/lang/0291c`.
  */
 export static i32 INHERIT_NONE = 0;
-/** `Cli.openFile`'s `how`: read it. */
+/** `OP_OPEN_FILE`'s `a`: read it. */
 static i32 OPEN_READ = 0;
-/** `Cli.openFile`'s `how`: write it, created if absent and emptied if not. */
+/** `OP_OPEN_FILE`'s `a`: write it, created if absent and emptied if not. */
 static i32 OPEN_WRITE = 1;
-/** `Cli.openFile`'s `how`: write after what is there, created if absent. */
+/** `OP_OPEN_FILE`'s `a`: write after what is there, created if absent. */
 static i32 OPEN_APPEND = 2;
 /**
  * The child reads this program's own standard input instead of the queue `send` fills.
@@ -1649,7 +591,7 @@ export static i32 INHERIT_IN = 1;
  */
 export static i32 INHERIT_OUT = 2;
 /**
- * **Not a stream: the child outlives its ticket.** A `Pending<Child>` owns its child — dropping it
+ * **Not a stream: the child outlives its ticket.** A child's ticket owns the child — dropping it
  * uncollected stops the child, as `closeSocket` on the handle does — so a child nobody can reach is not
  * something a program makes by accident. This flag asks for exactly that: fire-and-forget, a child that
  * runs on with no one holding it. Shares the `inherit` mask because it is a choice about the child made
@@ -1660,7 +602,7 @@ export static i32 DETACHED = 4;
 /**
  * How many host calls one worker may have outstanding at once.
  *
- * Every unsettled `Pending<T>` holds one call slot until it is collected or cancelled, so this is the
+ * Every request in flight holds one call slot until it is collected or cancelled, so this is the
  * ceiling on how many handles a program can watch: watching N sockets means N outstanding `recv`s, plus
  * one for an `accept` and one for whatever it writes with. Exceeding it does not degrade into slowness —
  * the extra submission parks, and the calls holding the slots cannot complete, so it deadlocks.
@@ -1691,116 +633,7 @@ export static i32 STDIN = 0;
  */
 export static i32 PARENT_FS = 1;
 
-export struct HostChild {
-  /**
-   * The child's handle, or a negative number and an `error`.
-   *
-   * Two negatives, and the difference is the caller's whole decision:
-   *
-   *   -1  this program exists and would not start — `packages/sh` reports 126, as a shell does for
-   *       a file that is not executable
-   *   -2  **this world has no `spawn` at all**, so nothing was attempted and nothing is wrong with
-   *       the program. A caller with another route should take it
-   *
-   * Without the second, a world that cannot spawn made every spawnable name *fail* rather than fall
-   * through: in the browser shell, `WACPATH=/b` with a file named `wc` in it reported
-   * "no handler for capability 27" and exit 126, hiding `packages/box`'s own `wc`, which was sitting
-   * right there and works. A missing capability is not a broken program.
-   */
-  i32 handle;
-  /**
-   * The child's *error* stream, as a handle of its own — `recv(errHandle)` reads it.
-   *
-   * A program has two output streams and a handle carries one, so a child needs two. Without this
-   * they were merged: a shell running `cat nosuch | wc -c` counted the error message, because the
-   * child's complaint arrived on the same handle as its output, and `cat nosuch` alone printed to
-   * *standard output*. Both are wrong in the same way, and a second handle rather than a second
-   * capability keeps everything that already works on handles working — `waitAny` most of all, which
-   * is what lets a parent watch a child's two streams and a socket together.
-   *
-   * Negative when `handle` is: there is nothing to read from a child that never started.
-   */
-  i32 errHandle;
-  /**
-   * The child's **filesystem channel**, as a handle of its own — the third stream, and the one that
-   * makes a child able to see anything but what its parent sends it.
-   *
-   * A spawned child is a separate instance with its own memory, which is the confinement `spawnSelf`
-   * exists to provide. It is also why a child could not see its parent's *filesystem*: a session
-   * booted on an image holds that image in wac memory, and there is no route from one instance's
-   * memory to another's. So a spawned stage got `Fs.onHost` — the machine — and a sealed session
-   * could not spawn at all without unsealing itself. That is wac-mono 0116.
-   *
-   * The route is a channel rather than a copy. The child asks and the parent answers, on this handle:
-   * `recv(fsHandle)` in the parent reads a request, `send(fsHandle, …)` answers it, and
-   * `packages/fs`'s `Backing.Remote` is the other end. Which means the parent's filesystem stays the
-   * only one there is — the child's writes are the parent's writes, its permissions are checked
-   * against the parent's `user`, and the mounts it sees are whatever the parent has mounted, because
-   * nothing has been duplicated.
-   *
-   * **It is a handle so that `waitAny` can watch it beside the child's output**, which is what a
-   * parent serving a child while relaying its bytes actually needs. A parent that does not serve it
-   * leaves the child parked on a request; a parent that does not *want* to serve it should not pass
-   * `PARENT_FS` to the child in the first place.
-   *
-   * Negative when `handle` is, and on a host with no spawn at all.
-   */
-  i32 fsHandle;
-  string error;
 
-  /** As `Socket.of`: the host builds these, so the constructor is declared rather than generated. */
-  HostChild of(i32 handle, i32 errHandle, i32 fsHandle, string error) {
-    return HostChild(handle, errHandle, fsHandle, error);
-  }
-
-  /** Whether this world can spawn at all. False says nothing about the program. */
-  bool unavailable(const this) { return this.handle == -2; }
-}
-
-/**
- * A module this program has instantiated and may call the exports of.
- *
- * **The other half of `spawn`, and deliberately not a replacement for it.** `spawn` hands over a
- * *program*: an argument vector, two streams, an exit code, on its own thread, and `closeSocket` stops
- * it wherever it is. This hands over a module's *functions*, in this program's own world, on this
- * program's own thread — so an export that loops forever hangs the caller, and nothing here can stop
- * it. Anything unbounded or untrusted is `spawn`'s.
- *
- * Its world is the caller's, undiminished: see `load` for why there is no grant argument.
- *
- * It exists because four commands needed it and no wac program could express them: `wac test` calls a
- * module's `test*` exports and has to survive one of them trapping, and `covdump`, `tracestat` and
- * `ctcompare` read the counters through `__cov_init`, `__cov_len`, `__cov_get` and `__cov_hash`.
- * Every host already did this internally — `host/driver.ts`'s `asAppModule`, `native/v8`'s
- * `run_tests` — and none of them offered it. `issues/system/0240c`.
- *
- * **Which exports there are is not a capability.** A module carries its own manifest, and the manifest
- * lists every non-`$bind$` export with its parameters and return type — so a caller reads the names
- * from the bytes it already has (`manifestIn` in `packages/wacc/src/manifest.wac`) and the host
- * dispatches on the signature it finds there. Nothing has to describe a module to the host that the
- * module does not already say about itself.
- */
-export struct LoadedModule {
-  /**
-   * The module, or why not.
-   *
-   *   >= 0  a handle for `call` and `unload`
-   *    -1   this world can load and this module could not be — `error` says why
-   *    -2   **this world has no `load` at all**, so nothing was attempted
-   *
-   * The same two negatives `Child` uses, for the same reason it uses them: a caller that reads -2 has
-   * a host without the capability and should fall through to whatever it would have done, where -1 is
-   * a real failure about this module.
-   */
-  i32 handle;
-  /** The host's own sentence, empty when `handle` is not negative. */
-  string error;
-
-  /** Whether this world can load a module at all. False says nothing about the module. */
-  bool unavailable(const this) { return this.handle == -2; }
-
-  LoadedModule of(i32 handle, string error) { return LoadedModule(handle, error); }
-}
 
 /**
  * What one call to a loaded module's export answered.
@@ -1810,7 +643,7 @@ export struct LoadedModule {
  * status for it, a caller learns about such a test by dying with it.
  *
  * The signatures a call accepts are a **closed set**: `void f()`, `i32 f()`, `i32 f(i32)`, and
- * `i32`- or `string`-returning `f(Core?, Cli?)`. That is every shape the four commands need. Anything
+ * `i32`- or `string`-returning `f(__WacHost)`. That is every shape the four commands need. Anything
  * else answers `status == 3` rather than being marshalled — widening the set is a decision about the
  * boundary, and answering plainly is what stops it being made by accident.
  */
@@ -1842,898 +675,106 @@ export struct CallResult {
   CallResult of(i32 status, string text, i32 value) { return CallResult(status, text, value); }
 }
 
-export struct Cli {
-  fn<Pending<i32>()> argCount;
-  /**
-   * One argument, **as bytes**.
-   *
-   * Not a `string`, and that is the whole of wac-mono 0065. An argument is bytes on every system this
-   * targets, and a capability that called it text forced a conversion at the boundary — `TextDecoder`
-   * one way, `TextEncoder` the other — so a name that is not valid UTF-8 came back as replacement
-   * characters. It was silent: `cat $(printf '\xff\xfe')` named a file nobody had asked about, and a
-   * program using the argument as a path would have opened the wrong one.
-   *
-   * A caller that wants text says so: `string.fromBytes(cli.arg(0).wait())`. That is one call longer and
-   * it is honest about where the interpretation happens — the alternative was a clever codec smuggling
-   * bytes through a type that should not have been there.
-   */
-  fn<Pending<u8[]>(i32)> arg;
-  /**
-   * One environment value, as bytes. Null when the variable is unset, which is not the same as empty.
-   *
-   * Bytes for the same reason as `arg`: an environment value is not text on any system here, and this is
-   * how a path in `$HOME` or `$WACPATH` survives being one.
-   */
-  fn<Pending<u8[]?>(string)> env;
 
-  /** All of standard input, to the end. Empty when there is none. */
-  fn<Pending<u8[]>()> readStdin;
-  /**
-   * Exactly these bytes on standard output — no newline, no encoding.
-   *
-   * `log` is for lines of text; this is for a program whose output *is* bytes. Without it
-   * nothing could emit binary, which ruled out every compressor and encoder as a filter.
-   *
-   * Answers with whether the write succeeded, which most callers discard. The type is not
-   * for them: `fn<bool(u8[])>` is the shape every streaming transform in this repo takes
-   * for its sink, so `write` can be handed to one directly instead of through an adapter
-   * — and `fn<bool(u8[])>` has no spare parameter, so an adapter has nowhere to keep one.
-   */
-  fn<bool(u8[])> write;
-  /**
-   * Exactly these bytes on standard error, with the same shape and the same absence of a grant.
-   *
-   * `warn` is the program talking about itself: a diagnostic *line*, which is what every applet in
-   * `packages/box` wants and what it should keep using. This is the program passing bytes through,
-   * and the two are different jobs rather than one with a redundant spelling.
-   *
-   * `packages/ssh` is why it exists. A remote command's two streams arrive interleaved and tagged,
-   * in the order the command wrote them, and with only `warn` the client could reproduce standard
-   * output exactly and standard error not at all: emitting per packet inserted a newline at every
-   * boundary, so it had to buffer to the end, which lost the ordering — and mangled anything that
-   * was not valid UTF-8, since `warn` takes a string. wac-mono issue 0014.
-   *
-   * No grant, for the reason `write` has none: what a program prints is the user's own doing.
-   */
-  fn<bool(u8[])> writeErr;
-
-  fn<Pending<FileResult>(string)> readFile;
-  /**
-   * **Answers a `Change`**: a fault category and the host's message. A `bool` could say that a write
-   * failed and never why, and a bare message could say why to a person but not to a program.
-   *
-   * That mattered more than it looks. `rm -f` could only suppress every failure or none, because
-   * "no such file" and "permission denied" arrived as the same `false`; `find` could report that a
-   * directory was unreadable but not that it was a mount point rather than a typo; and every
-   * `writeFile` diagnostic in this repo was the applet's guess at what had gone wrong. The message
-   * is the host's own, which is the only one that knows.
-   */
-  fn<Pending<Change>(string, u8[])> writeFile;
-  /** What a path is. `exists` is false where the filesystem was not granted. */
-  fn<Pending<Stat>(string)> stat;
-  /**
-   * `stat` without following the last component: the link, not its target.
-   *
-   * A separate capability rather than a flag on `stat`, and rather than making `stat` stop
-   * following, because every caller in this repo wants the followed answer — `find` and `du` ask
-   * "is this a directory I should walk into", and that is a question about the target. Doing both
-   * syscalls inside `stat` would have doubled the cost of every directory walk to serve the one
-   * applet that cares.
-   *
-   * `tar` is that applet: its header says symbolic links are refused, and until this existed it
-   * could not tell one from the thing it points at, so a link to a directory was archived as the
-   * directory and a cycle grew the path until something trapped.
-   *
-   * A host with no links answers exactly as `stat` does, `isSymlink` false — that is true rather
-   * than a stand-in, since the Origin Private File System has none.
-   */
-  fn<Pending<Stat>(string)> linkStat;
-  /** Names within a directory, or null if it is not one — or not permitted. */
-  fn<Pending<string[]?>(string)> readDir;
-
-  /**
-   * Making, unmaking and moving. All three answer a `Change`, as `writeFile` does.
-   *
-   * `writeFile` alone cannot express a safe update: it truncates and then fills, so a
-   * reader arriving in between sees a half-written file, and a crash leaves one. With
-   * `rename` an application can write beside the target and move it into place, which on
-   * every filesystem this runs on is atomic. That is why these are one tier rather than
-   * three conveniences — see `applets/cp.wac`, which does exactly that.
-   *
-   * `parents` and `recursive` are `mkdir -p` and `rm -r`. Both default to nothing: a
-   * caller has to ask for the recursive form, because the recursive form is the one that
-   * can destroy something it was not pointed at.
-   */
-  fn<Pending<Change>(string, bool)> mkdir;
-  fn<Pending<Change>(string, bool)> remove;
-  fn<Pending<Change>(string, string)> rename;
-
-  /**
-   * Make a file executable, or stop it being one.
-   *
-   * **One bit rather than a mode, and that is a decision rather than a shortcut** —
-   * issues/system/0132. Three reasons, in the order they mattered:
-   *
-   *   - git's two regular-file modes, `100644` and `100755`, differ only in this bit. Symlink and
-   *     gitlink are entry *kinds*, not permissions. Nothing in this repository needs the rest of a
-   *     POSIX mode, and a surface that promised one would be promising something no caller wants.
-   *   - a browser's OPFS has no mode bits at all. With one bit the browser host answers
-   *     `FAULT_UNSUPPORTED` — the capability is present and the *backing* refuses, which is a
-   *     distinction this vocabulary can make since 0117. A general `chmod(path, mode)` there would be
-   *     unanswerable rather than merely unsupported.
-   *   - widening later is additive; narrowing later removes something callers depend on. The cheaper
-   *     mistake to make is the narrow one.
-   *
-   * `Stat.isExecutable` is the reading half, and the two together are what let a checkout produce a
-   * working tree `git status` calls clean.
-   */
-  fn<Pending<Change>(string, bool)> setExecutable;
-
-  /**
-   * Set a file's permission bits — `issues/system/0296c`.
-   *
-   * **The widening `setExecutable` above was written narrow against.** Its note gives three reasons for
-   * one bit, and the third is that *"widening later is additive; narrowing later removes something
-   * callers depend on"* — this is that widening, and the two reasons for the narrow form still hold, so
-   * it stays: git wants exactly the execute bit, and a caller who wants that should say so rather than
-   * computing a mode.
-   *
-   * `mode` is the low twelve bits, as `chmod(2)` takes them: `0o755`, `0o600`, and the three
-   * set-user/group/sticky bits above them. Nothing here interprets symbolic forms — `u+x` is the
-   * *shell's* spelling, and `applets/chmod.wac` is what turns one into a number.
-   *
-   * **A host with no modes answers `FAULT_UNSUPPORTED`**, as it does for `setExecutable`: a browser's
-   * OPFS has no permission bits, so the capability is present and the backing refuses. That is the
-   * distinction this vocabulary has had since `0117`, and it is why a general mode is answerable here
-   * rather than merely absent.
-   *
-   * What this was wanted for: a test cannot make a directory unreadable, so it cannot ask what `find`
-   * and `du` do with one — `box.test.ts` builds that fixture with `Deno.chmod` and could not be
-   * written in wac at all.
-   */
-  fn<Pending<Change>(string, i32)> chmod;
-
-  /**
-   * Streaming input: `openInput` chooses the source, `readChunk` pulls from it.
-   *
-   * Everything else here answers with the whole of something, which is fine for a
-   * filename and wrong for a pipe — `cat` of a large file held it entirely in memory, and
-   * so did every filter. These two are the incremental half.
-   *
-   * `openInput("")` selects standard input, which is also where a program starts, so an
-   * applet that only ever filters need not call it at all. A path selects that file
-   * instead, and the previous source is closed.
-   *
-   * There is one current input rather than a handle per file because the transforms take
-   * `fn<u8[]()>`, which has no parameter to carry a handle in. That is a choice in those
-   * packages, not a limit of the language — wac can pass context beside a funcref, and a
-   * transform taking `fn<[i32]>` could be handed a real file handle. Worth knowing
-   * before anyone repeats the design: `recv(handle)` is what it looks like done that way,
-   * and standard input has a handle now precisely so `waitAny` can watch it.
-   *
-   * `readChunk` answers with an empty array at end of input, and with at most
-   * `CHUNK` bytes otherwise. A short chunk does not mean the end.
-   *
-   * `openInput` answers with a `Change`: `FAULT_NONE` when the source was selected, and a
-   * category with the host's words when it was not.
-   *
-   * **A `Change` and not a bare message**, which is what this used to be, for the reason
-   * `openOutput` was changed first: a message alone cannot be translated. `readFile` carries a
-   * fault and its callers print what GNU prints; this carried the host's sentence, so
-   * `cat missing` said `No such file or directory (os error 2): open '/tmp/x'` where the whole-file
-   * path said `No such file or directory` — the same failure, worded two ways in one program,
-   * depending on whether the applet happened to stream. That is the drift `faultWords` exists to
-   * end, and it survived in the streaming half until a differential test against `cat` caught it.
-   */
-  fn<Pending<Change>(string)> openInput;
-  /**
-   * The next piece of the current input, as a ticket — `Data`, `End` or `Failed`.
-   *
-   * **A ticket because a world that cannot block answers it later.** It was `fn<Chunk()>`, answered
-   * on the spot, which is all a host with threads to park ever needed; a page has none, and its
-   * input is a queue another worker fills. A program awaits it — `await cli.readChunk().ticket()` —
-   * and a host that has the bytes already hands back a ticket that is settled.
-   *
-   * One at a time all the same: it acts on the *current* stream, which the world keeps in order, so
-   * two in flight is not a faster read but an undefined one. The capabilities worth several at once
-   * are the ones that *name their target*: `readFile(path)`, `stat(path)`, `recv(handle)`.
-   *
-   * `write` stays a plain call. Writing never has to wait for an answer: a host with threads blocks
-   * inside it, and a page hands the bytes on.
-   */
-  fn<Pending<Read>()> readChunk;
-  /**
-   * Why the last `write` or `writeErr` answered false: the empty string when the other end simply
-   * went away, and the host's message when the write itself failed.
-   *
-   * One question for both streams rather than two, because no caller has ever needed to know *which*
-   * stream failed — a program asks this to decide between exiting 0 and reporting a real failure, and
-   * that decision is the same either way. If one ever does need to tell them apart, that is the point
-   * to split it, and the split will be visible rather than guessed at.
-   *
-   * A closed pipe is an answer rather than an error — `yes | head -1` ends that way and should exit
-   * 0 — so the two have to be distinguishable. Without this a full disk and a departed reader were
-   * the same `false`, and every filter treated both as "my work here is done".
-   */
-  fn<Pending<string>()> outputError;
-
-  /**
-   * Where `write` goes. `openOutput("")` is standard output, which is where it starts.
-   *
-   * The mirror of `openInput`, and for the same reason: without it a program could not
-   * produce more output to a *file* than fits in memory, because `writeFile` takes the
-   * whole of it at once. `cp` of a file larger than memory needed this; so would `split`,
-   * or any filter told to write somewhere other than a pipe.
-   *
-   * A path truncates that file and makes it the destination of every subsequent `write`.
-   * Opening another output closes the previous one, and so does opening `""` — which is
-   * how a program that has finished writing a file knows the bytes are there, since
-   * `rename` over a file still open would move it half-written. `cp` does exactly that.
-   *
-   * **Answers a `Change`**, so a caller can tell *which* failure it was rather than only that the
-   * sentence came from the host. It used to answer a bare string, and the host's sentence reached the
-   * user: `sh`'s streaming redirection reported `No such file or directory (os error 2): open
-   * '/tmp/…/sub/out'` where bash says `sub/out: No such file or directory`. Every other call that
-   * changes something — `writeFile`, `mkdir`, `remove`, `rename` — has carried a fault category since
-   * wac-mono 0062, and this one was left behind because nothing had needed to word its failure yet.
-   */
-  fn<Pending<Change>(string)> openOutput;
-
-
-  /**
-   * The network. `--allow-net`, and nothing without it.
-   *
-   * `connect` resolves and dials; `listen` binds an address and a port, and `accept` blocks until
-   * someone arrives. `recv` answers with at most `CHUNK` bytes and with an empty array when the
-   * peer has closed — a short read means nothing, exactly as it does for a file.
-   *
-   * **`listen` takes the address to bind, and it is not optional.** It used to take a port alone and
-   * the host bound `0.0.0.0`, so every server written on this platform was reachable from every
-   * interface and no program could ask for loopback. For most servers that is a deployment surprise;
-   * for `packages/tor`'s SOCKS proxy it is the difference between serving the person at the keyboard
-   * and running an open proxy that sources strangers' traffic out of somebody else's exit node. Every
-   * other SOCKS implementation binds loopback for that reason, so the safe configuration was not only
-   * unavailable, it was the one people would assume they already had.
-   *
-   * `"127.0.0.1"` is loopback, `"0.0.0.0"` is every interface, and the empty string means *every
-   * interface* as well — the old behaviour, spelled out rather than defaulted into. A caller has to
-   * write one of them, which is the point: the surprising one is now a thing somebody typed.
-   *
-   * Watching two sockets at once is `waitAny` below, over the ids of two tickets in flight.
-   * This comment used to say there was no way to do that and that "when something needs it,
-   * that is the shape to add" — it was left behind when the shape was added, twenty lines
-   * further down, and contradicting it.
-   */
-  fn<Pending<HostSocket>(string, i32)> connect;
-  fn<Pending<HostSocket>(string, i32)> listen;
-  fn<Pending<HostSocket>(i32)> accept;
-  fn<Pending<Read>(i32)> recv;
-  fn<Pending<bool>(i32, u8[])> send;
-  fn<void(i32)> closeSocket;
-
-  /**
-   * **Say "that is all" without saying "goodbye"**: end the outbound direction and keep reading.
-   *
-   * `closeSocket` stops the socket both ways, so a client that used it to signal end-of-input could
-   * never receive the answer. That is the exchange every request/response protocol over a raw socket
-   * needs — the server reads to the end and only then replies — and until 2026-08-20 there was no
-   * call for it. `issues/system/0215`.
-   *
-   * The argument was already written one capability over: `closeFeed` says *"a program that reads to
-   * the end before answering — `wc` is the obvious one — needs the end to arrive while it is still
-   * running, and killing it instead means it never speaks."* The same sentence, and the same example
-   * program, for a socket instead of a child. `closeFeed` is the child case and this is the socket
-   * one; a handle is a handle everywhere else, and this is the one place the two differ, because a
-   * child has a standard input to end and a socket has a direction.
-   *
-   * **A separate call rather than a flag on `closeSocket`**, deliberately. A host that did not know
-   * about a new argument would read it as an ordinary close, so the program would hang waiting for a
-   * reply that the host had just made unreachable — where an unrecognised call fails and says so.
-   *
-   * After this, `send` on the handle is over; `recv` keeps working until the peer closes its own
-   * side. Under `--allow-net` with everything else here: the authority is "speak to something that
-   * is not this process", and stopping speaking is not a second question.
-   */
-  fn<void(i32)> closeSend;
-
-  /**
-   * **A file as a stream of its own**, in the socket's handle space: `recv` reads it, `send` writes it and
-   * `closeFile` ends it. `how` is `OPEN_READ`, `OPEN_WRITE` (created or truncated) or `OPEN_APPEND` (created or
-   * added to). Any number may be open at once, so this is what `Files.openRead` and `openWrite` stand on.
-   */
-  fn<Pending<HostSocket>(string, i32)> openFile;
-  /** The end of a file `openFile` opened. What was written is the file's once this answers; `false` if it was not. */
-  fn<Pending<bool>(i32)> closeFile;
-  /**
-   * The end of this program's output (`toErr` false) or its diagnostic output: a reader sees the end while the
-   * program goes on. `false` if the host could not close it.
-   */
-  fn<Pending<bool>(bool)> closeOutput;
-
-  /**
-   * Datagrams, under the same one `--allow-net` grant.
-   *
-   * The authority is "speak to something that is not this process", and the transport does not change
-   * what that means: a program that may open a TCP connection may send a UDP packet, and one that may
-   * not may do neither. A second grant would be a second question with the same answer.
-   *
-   * Every field above this is *stream* — `connect`, `listen`, `accept`, `recv`, `send` — and QUIC needs
-   * none of them. A QUIC server answers many peers from one socket, and a connection is identified by
-   * its connection id rather than by an address, so a peer may legitimately move mid-connection. A
-   * connected socket represents neither: not one socket for many peers, and not one peer at changing
-   * addresses. That is `design/system/0007`, and this is its first step.
-   *
-   * `bindDatagram` takes an address and a port exactly as `listen` does, with the same rule that the
-   * address is not optional — `"127.0.0.1"` for loopback, `"0.0.0.0"` or `""` for every interface — and
-   * answers a `Socket` whose `port` is what the kernel bound, so `bindDatagram(addr, 0)` is usable.
-   * The handle goes to `receiveFrom`, `sendTo`, `waitAny` and `closeSocket` like any other.
-   *
-   * There is no `connect` for datagrams and no `accept`. The peer is named on every `sendTo` and
-   * arrives with every `receiveFrom`, which is what makes one socket serve many.
-   */
-  fn<Pending<HostSocket>(string, i32)> bindDatagram;
-  /** One datagram with its sender — see `Datagram` for why those are one answer and not two. */
-  fn<Pending<Datagram>(i32)> receiveFrom;
-  /** A datagram to a peer named in this call, which is the half that makes one socket serve many. */
-  fn<Pending<bool>(i32, string, i32, u8[])> sendTo;
-
-
-  /**
-   * Start a child on `prog`, with `args` as its arguments.
-   *
-   * `prog` is a **program's bytes**: since 2026-08-21 a wasm module carrying its own `wac.manifest`
-   * runs on every host — the two native ones and, through `host/driver.ts`, Deno and Node — and the
-   * JavaScript hosts also accept the worker bundle they used to require. So one artefact is a program
-   * everywhere, which is what `issues/system/0144` was open on: before it, a program that read a file
-   * and ran it worked under `wac` and failed under Deno, and `packages/sh` searching `$WACPATH` was
-   * where that split showed up first.
-   *
-   * Running a *program* is therefore two steps, read it and spawn it, which is why there is no
-   * registry of launchable things here: the capability is "run this", and where the code
-   * came from is the caller's business and the filesystem's.
-   *
-   * The child talks through its handle. What it writes arrives at `recv(handle)`; what
-   * `send(handle, bytes)` carries becomes its standard input; `closeSocket(handle)` stops
-   * it. `exitCode(handle)` waits for it to finish.
-   *
-   * **`closeSocket` stops it wherever it is**, and this is a guarantee rather than a request: a
-   * child that is computing and not writing stops too. That took a runtime change on the host with
-   * no JavaScript in it — a wasm guest leaves a loop only when it decides to, so the engine ticks an
-   * epoch and the child traps on the next check (issue 0123). Before it, the three JavaScript hosts
-   * terminated a worker and the native one finished the child's queues and let the thread run, which
-   * is the same thing for every program that writes and nothing at all for one that does not.
-   *
-   * **And the handle stays askable afterwards.** `exitCode` on a stopped child answers **-1** — "no
-   * status of its own" — on every host, because stopping something and then finding out it is gone
-   * is one operation in two halves and a supervisor needs both. All four hosts used to drop the
-   * child at `closeSocket`: two threw, one silently read the call as the *other* meaning of
-   * `exitCode` and set the caller's own status to the handle number.
-   *
-   * **What "stops it" means differs between the hosts, and the weaker one is the contract.** The
-   * JavaScript host terminates the worker outright; the native runtime finishes all three of the
-   * child's queues, so the child stops at its *next write*, which answers false. Every program in this
-   * repo writes, so the two are the same to watch — `kill %1` on a background `seq` ends it on both —
-   * but a child that computed without writing would keep going on one host and not the other. Depend
-   * on the streams ending, not on the instant. wac-mono 0123.
-   *
-   * **`grants` is what the child may do beyond those streams**, as `GRANT_*` flags — and it
-   * is a *ceiling of the parent's own*, intersected by the host rather than trusted.
-   *
-   * **The four are independent on three hosts out of four.** In a page, `GRANT_WRITE` without
-   * `GRANT_READ` yields nothing: reaching a file to write it means walking directory handles from the
-   * root, and holding the root handle *is* the read capability on the Origin Private File System.
-   * Deno and Node have a path-based open and can give a child `write` without `read`; a page cannot,
-   * and the child finds out as a `FAULT_NOT_GRANTED` from its first write rather than being told at
-   * spawn. Named here because "intersected by the host" reads as four separate switches, and on one
-   * host two of them are one. A parent
-   * built without `--allow-net` cannot hand `GRANT_NET` to anyone; asking is not an error, and
-   * the child simply finds the capability denied. `GRANT_NONE` is the honest default and what
-   * every example passes.
-   *
-   *     cli.spawn(source, args, GRANT_NONE, "", INHERIT_NONE, false)   // fed; nothing else
-   *     cli.spawn(source, args, GRANT_READ | GRANT_NET, dir, INHERIT_IN, false)  // ...if the parent has both
-   *
-   * This is the reason to prefer spawning a worker to spawning a process. What the child may
-   * do is the *parent's* choice; `--allow-run=/bin/sh` cannot express it at any granularity,
-   * because there the child inherits the operating system's authority instead. A shell served
-   * over a socket can be given one directory and no network.
-   *
-   * Flags rather than a struct because no capability takes a struct *parameter* anywhere in
-   * this world — every one of them returns structs — so this would have been the first, and a
-   * bitmask needs nothing from the boundary that is not already exercised.
-   *
-   * **The confinement is this language's, not the runtime's.** A wac child cannot reach
-   * past what it was handed because wac has no ambient anything. Arbitrary JavaScript in a
-   * worker can: it inherits the process's permissions, and dropping them needs an unstable
-   * Deno flag that would appear in the shebang of every program that spawns. So this is a
-   * composition and concurrency primitive rather than a sandbox. See wac-mono issue 0015.
-   *
-   * `cwd` is where the child's relative paths resolve from, and what its own `cwd()` reports. Empty
-   * means "wherever the host already was", which is what a program with no opinion wants. A shell
-   * has an opinion: without this, `cd sub; prog f` looked in the wrong place, because a spawned
-   * program inherited the *host's* directory rather than the shell's. `pushChild` took a directory
-   * from the start for exactly this reason and `spawn` did not.
-   *
-   * **`inherit` says which of the child's standard streams are this program's own** rather than
-   * queues — `INHERIT_IN`, `INHERIT_OUT`, either, both, or `INHERIT_NONE`. What each buys is on the
-   * constants; the shape of the argument is worth a word here.
-   *
-   * `INHERIT_NONE` is the ordinary case, and a shell wants it: a child fed from a pipeline, a
-   * redirection or a here-document gets exactly the bytes its parent chose, and its output comes
-   * back on `Child.handle` for the parent to do something with. Inheriting is for a program standing
-   * in for the one it started.
-   *
-   * **It was two bools until 2026-08-29**, and `INHERIT_OUT` is the one that was missing: a parent
-   * relaying two queues cannot know which stream was written first, so `echo one; nope; echo two`
-   * put the complaint after both lines. `issues/system/0282c`.
-   */
-  fn<Pending<HostChild>(u8[], u8[][], i32, string, i32, bool)> spawn;
-
-  /**
-   * **This same program again, as a child**, with these arguments and at most these grants.
-   *
-   * `spawn` needs a worker bundle from somewhere, and somewhere is a filesystem — which is fine on a
-   * command line and impossible in a browser tab, where there is no directory of programs and
-   * nothing to have put one there. So a page could spawn and had nothing to spawn, and
-   * `packages/box`'s applets ran *inside* the shell's own wasm instance with no boundary at all.
-   *
-   * Every built program already carries its own worker bundle: the launcher holds it as a string,
-   * because that is how it started the program in the first place. So "run me again" needs no file,
-   * no path and no grant of its own — the code is already here, and the argument is what decides
-   * which program it becomes. `box sort` is `box` with `sort` as its first argument, which is exactly
-   * what a multi-call binary is; a shell that can say that has sixty real programs instead of sixty
-   * function calls.
-   *
-   * The child runs `main`, never `page`, even when the program has both. A page is the top-level
-   * thing a person opened; a child is a program with a handle, and there is nowhere for it to draw.
-   *
-   * Grants are a ceiling of the parent's own, as with `spawn`: a shell that may read hands its
-   * children reading, and a program granted nothing cannot widen itself by spawning. `cwd` is where
-   * the child's relative paths resolve from, empty for the host's own directory, and `inherit` is the
-   * mask `spawn` takes: `INHERIT_IN` hands over this program's own standard input rather than a queue,
-   * and `DETACHED` lets the child outlive its ticket — see `spawn` above for both.
-   *
-   * **`serveFs` is a promise to answer the child's filesystem questions**, on `Child.fsHandle`. It
-   * is not a grant — it widens nothing, since what the child can reach is whatever this program's
-   * own `Fs` will answer — it is a statement about what this program is *going to do*, and the child
-   * needs it because the alternative is waiting for an answer that is never coming. False ends the
-   * child's end of the channel before it starts, so a program built on `Fs.overParent` finds out
-   * immediately and falls back to the host, and every spawner that predates this goes on behaving
-   * exactly as it did. A parent that passes true and then does not serve parks its child, which is
-   * the one failure this cannot make safe and the reason it is stated rather than assumed.
-   */
-  fn<Pending<HostChild>(u8[][], i32, string, i32, bool)> spawnSelf;
-
-  /**
-   * End a spawned worker's standard input without stopping it.
-   *
-   * Distinct from `closeSocket`, which stops the child outright. A program that reads to the
-   * end before answering — `wc` is the obvious one — needs the end to arrive while it is
-   * still running, and killing it instead means it never speaks.
-   */
-  fn<void(i32)> closeFeed;
-
-  /** Wait for a spawned worker to finish. Negative if it failed to run at all. */
-  fn<Pending<i32>(i32)> exitCode;
-  /**
-   * Where relative paths are resolved from, as the host sees it.
-   *
-   * A *read*, and nothing more: there is no `chdir`, because a mutable working directory is
-   * ambient state — it changes what every relative path in the program means, from anywhere, and
-   * that is the shape this world exists to avoid. A program that wants to move around keeps its
-   * own idea of where it is and passes whole paths, which is what `packages/sh` does.
-   *
-   * It is here because a program cannot otherwise answer "where am I", and the first thing
-   * anybody types into a new shell is `pwd`. Under Deno and Node it is the process's directory;
-   * in a browser it is `/`, the root of the Origin Private File System, because that is the
-   * honest answer rather than a fiction.
-   */
-  fn<Pending<string>()> cwd;
-
-  /**
-   * Run a program *inside* this one: the world a child sees, pushed and then popped.
-   *
-   * `pushChild` says what the next stretch of work is called and was given, what it reads, where
-   * its relative paths resolve from, and that its output is to be kept rather than written. `popChild` ends that and
-   * answers with what it wrote. Between the two, `arg` and `argCount` answer from `argv`,
-   * `readChunk` returns `stdin` and then end of input, `Core.log`, `write` and `Core.warn`
-   * accumulate, and every path is taken relative to `cwd`.
-   *
-   * **The last argument says the child reads the *real* standard input** rather than the bytes handed
-   * over. A shell that runs a command in process has to have bytes to give it, and to have them it must
-   * read its own input to the end — which at a terminal never comes, so `seq 1 3` hung a shell that
-   * could not spawn (wac-mono 0110). With it set, `readChunk` and `readStdin` reach past the frame to
-   * the process's own input, exactly as they do when nothing is pushed; the output is still captured,
-   * which is what the frame is for.
-   *
-   * `argv` is in the layout `box` uses — the program's own name first — because an applet that
-   * reads its arguments positionally rather than through a parser is reading that layout already.
-   * `Core.log` is captured along with `write` for the same kind of reason: it is where thirty of
-   * those applets send their output, so a capture that took only `write` would lose most of them
-   * silently. That is exactly what the first working version of this did.
-   *
-   * **Why this exists.** A shell has to run a program and keep its output, and when this was
-   * written it could not do that by handing the program a different `Cli`: there were no closures,
-   * so a substitute capability had nowhere to put what it collected.
-   *
-   * **That stopped being true on 2026-08-16.** Lambdas capture by reference — `spec/cases/0191`,
-   * and `spec/cases/0193 a capability can be faked with lambdas` is the case named for exactly
-   * this — so a substitute `Cli` whose `write` is a lambda closing over a `Buf` is writable now.
-   * Whether this should therefore go is `issues/system/0327a`; it is a decision about a shipped
-   * capability rather than a comment fix, and the argument below is the record of why it was
-   * built. `packages/sh` therefore had its own small
-   * `cat`, `wc`, `grep` and nine more — implementations that existed only because the real ones
-   * could not be called. With this, `packages/box`'s applets run in the shell unchanged, and one
-   * `grep` serves both.
-   *
-   * **Why a scope rather than a `chdir`.** `cwd` above refuses to be settable because a mutable
-   * working directory changes what every relative path in a program means. This does not
-   * contradict that: it is a *child's* view, bounded by a matching `popChild`, and what the
-   * parent's own paths mean is unchanged before and after. That is also the honest fix for
-   * something `spawn` gets wrong today — a spawned program inherits the host's directory rather
-   * than the shell's, so `cd sub; prog f` looks in the wrong place.
-   *
-   * Nesting is a stack, so a program that runs a program that runs a program is fine. A
-   * `popChild` with nothing pushed answers with two empty arrays rather than failing: the
-   * caller has nothing to clean up, and there is no state to corrupt.
-   *
-   * This is *not* isolation. The child is the same wasm instance with the same authority; it can
-   * still open any file the parent could. A real boundary is `spawn`, which is a separate worker
-   * with its own grants — and which a browser cannot do yet.
-   */
-  fn<Pending<bool>(string[], u8[], string, bool)> pushChild;
-  fn<Pending<Captured>()> popChild;
-
-  /**
-   * Run a program on the host, to completion, and hand back what it said.
-   *
-   * The capability `spawn` is repeatedly mistaken for. `spawn` starts another **wasm module** and
-   * `spawnSelf` starts an applet of this one; neither runs `/usr/bin/gunzip`. This does, which is why
-   * it is a separate capability rather than an overload: a host that will start a confined wasm
-   * module must be able to refuse a host binary without refusing both, and in a browser it always
-   * does. Granted by `--allow-run`.
-   *
-   * `args` are arguments, **not a shell line**. They are passed as an argument vector, so a value
-   * containing a space, a quote or a semicolon arrives whole and is never re-split or interpreted.
-   * A caller who wants a shell asks for one by name: `exec("/bin/sh", ["-c", line], ...)`.
-   *
-   * `stdin` is handed over and then closed, so a program that reads to the end — which is most
-   * oracles — sees the end.
-   *
-   * **Buffered, and that is measured rather than a simplification.** Of the 107 host-side test files
-   * that spawn a process, not one reads a child's output while still writing to it; the fifteen that
-   * keep a child alive start a *server* and then talk to it over a socket, which is `connect`. So
-   * there is no streaming form here, and adding one should wait for a caller that needs it.
-   * `issues/system/0165` records the count.
-   *
-   * `env` is `NAME=value` strings, and a name given twice takes the last value. A string with no
-   * `=` in it is ignored rather than being a fault: there is nothing it could mean.
-   *
-   * **`clearEnv` is the whole of `issues/system/0198`**, which is why this parameter exists at all
-   * rather than only the four the runner wanted. False — what `Cli.exec` passes — *adds* `env` to
-   * everything this process holds, and that inheritance is an authority nobody declared: a program
-   * refused `--allow-env` can still read `HOME` by running `printenv`, so `--allow-run` confers
-   * `--allow-env`. True hands the child exactly `env` and nothing else, which is the shape
-   * `issues/system/0182` argued for — total, so that what you pass is what it gets and passing
-   * nothing means nothing.
-   *
-   * It is not the default **yet**, and the reason is a count rather than a doubt: 342 call sites,
-   * many of them oracles that read `PATH` or reach the network through a proxy variable, and every
-   * one of them needs its own answer to "which of these did it actually need". Flipping the default
-   * is that sweep, not this parameter. `Cli.exec` is where it flips.
-   *
-   * **Removing a named variable is still not expressible**, and `clearEnv` is not it: a caller who
-   * wants everything *except* one name has to name what stays, and nothing here can enumerate the
-   * environment — `Cli.env` answers one name at a time. `packages/wactest/src/childenv.wac`'s
-   * `withoutEnv` uses a shell's `unset` for that, and has to.
-   *
-   * `inherit` sends the child's stdout and stderr to this program's own, and then `Exec.stdout` and
-   * `Exec.stderr` come back **empty**: the bytes went somewhere else, and reporting them in both
-   * places would be a copy the caller cannot ask not to have. `status` still arrives. It is what a
-   * runner wants — a lane that shows its output as it runs, rather than three minutes of silence and
-   * then everything — and it is the nearest thing here to streaming: incremental output, without a
-   * caller having to read it. What it is *not* is capturable — an inherited stream goes to the real
-   * file descriptor, so `pushChild`'s capture does not see it.
-   */
-  fn<Pending<Exec>(string, string[], u8[], string[], bool, bool, string)> execWithIn;
-
-  /**
-   * `execWithIn` with no directory — the child runs wherever this program is.
-   *
-   * **The capability is the wider one and this is a method over it**, which is the same arrangement
-   * `exec` below already has with this. It means the thirty-five callers that do not care where the
-   * child runs are unchanged, and a host still implements exactly one of the three.
-   */
-  Pending<Exec> execWith(const this, string path, string[] args, u8[] stdin, string[] env,
-                         bool clearEnv, bool inherit) {
-    return this.execWithIn(path, args, stdin, env, clearEnv, inherit, "");
-  }
-
-  /**
-   * `execWith` with nothing added, nothing cleared and buffered output — what almost every caller
-   * wants: 342 call sites in 154 files, and the ones that do not are a test runner and the fixtures
-   * that need a child's environment to be theirs rather than the machine's.
-   *
-   * A method rather than a second capability, so that there is one thing for a host to implement and
-   * one payload on the bridge. It is also **where the default flips** when `issues/system/0198` is
-   * closed: the second `false` below becomes `true`, and the call sites that were relying on
-   * inheritance fail here rather than in six hosts.
-   */
-  Pending<Exec> exec(const this, string path, string[] args, u8[] stdin) {
-    return this.execWith(path, args, stdin, string[](), false, false);
-  }
-
-  /**
-   * Instantiate `module` and answer a handle to call its exports through — `issues/system/0240c`.
-   *
-   * **`grants` narrows, and cannot widen.** Asking for more than this program holds ends where every
-   * other over-ask ends: at the host, which serves what the build granted. So the module gets the
-   * intersection, exactly as a spawned child does.
-   *
-   * **This argument was left out once, and that was wrong.** The reasoning was that a loaded module
-   * shares the caller's world and there is nowhere to enforce a narrowing: true of the *launcher*,
-   * which cannot tell this module's calls from its loader's, and false of the world the module is
-   * *handed*, which is built here. `wac test --allow-read` handed a test the command's write
-   * capability and a test wrote a file to disk; the native host failed the same test. `issues/system/0242c`.
-   *
-   * What makes handing over a narrowed world sufficient is the argument `spawn` makes for itself:
-   * **the isolation is the language's, not the runtime's.** A wac module reaches only what it was
-   * given, because wac has no ambient anything. That would not hold for arbitrary JavaScript, and a
-   * loaded module is a wac module.
-   *
-   * **Not `Pending`, because nothing crosses to a host.** Driving a module and calling one of its
-   * exports both finish before the call returns. Every other field here answers a ticket because it
-   * asks the launcher something; these three do not ask anybody.
-   *
-   * **On this thread.** See `LoadedModule`: nothing can stop a running export, so an export that loops
-   * forever hangs the caller.
-   */
-  fn<LoadedModule(u8[], i32)> load;
-
-  /**
-   * Call `name` on a loaded module, and answer what it did — including trapping.
-   *
-   * `arg` is passed to a signature that takes one `i32` and ignored by every other shape in the set.
-   * One field rather than a vector because the set is closed and one is all of it: `__cov_get(i)` is
-   * the only member that takes anything at all.
-   *
-   * A trap does not end the caller and does not poison the handle: the next `call` on the same module
-   * runs. That is what lets a runner take a file's tests in order when one of them is meant to trap —
-   * and it is safe for the same reason `test_traps_*` has always been able to run beside its
-   * neighbours, which is that wac has no module-level state for a trap to leave behind.
-   */
-  fn<CallResult(i32, string, i32)> call;
-
-  /**
-   * Let a loaded module go.
-   *
-   * `void`, and forgiving of a handle that is not one: a caller tidying up after a failure should not
-   * have to know how far it got. Not required for correctness — a program that exits releases
-   * everything — but a runner that loads a module per file would otherwise hold every one of them.
-   */
-  fn<void(i32)> unload;
-
-  /**
-   * Would the engine accept these bytes as a module? "" if it would, and why not if it would not.
-   *
-   * **Compiles and stops there**, which is the whole difference from `load` and the reason this is
-   * its own field rather than a flag on it. `load` wants a `wac.manifest` section, instantiates, and
-   * builds a world out of the exports — three things that can fail for reasons that are nothing to do
-   * with the bytes being a well-formed module. A program asking "did the compiler emit something the
-   * engine will take" is asking about the *bytes*.
-   *
-   * **The question only a host can answer**, and so the one thing about modules that stayed on this
-   * side of `issues/system/0257c`'s line. wac has no `WebAssembly.validate`, so
-   * `packages/wacc/test/wac/corpusemit_test.wac` used to run each module it emitted — a fork per
-   * module, 142s of the 193s it took — and `wac validate` was a host command for want of this.
-   *
-   * **Not `Pending`, for `load`'s reason:** nothing crosses to a launcher. The engine is here.
-   *
-   * A host with no engine to ask answers a refusal, as every unsupported capability does. That is not
-   * the same as "these bytes are bad", so the sentence has to say which — `FAULT_UNSUPPORTED`'s words
-   * rather than a bare "rejected".
-   */
-  fn<string(u8[])> validated;
-
-
-  /** Where this `Cli`'s tickets send their continuations — as `Core.of` does for its four. */
-  Sched sched;
-
-  Cli of(
-    fn<Pending<i32>()> argCount,
-    fn<Pending<u8[]>(i32)> arg,
-    fn<Pending<u8[]?>(string)> env,
-    fn<Pending<u8[]>()> readStdin,
-    fn<bool(u8[])> write,
-    fn<bool(u8[])> writeErr,
-    fn<Pending<FileResult>(string)> readFile,
-    fn<Pending<Change>(string, u8[])> writeFile,
-    fn<Pending<Stat>(string)> stat,
-    fn<Pending<Stat>(string)> linkStat,
-    fn<Pending<string[]?>(string)> readDir,
-    fn<Pending<Change>(string, bool)> mkdir,
-    fn<Pending<Change>(string, bool)> remove,
-    fn<Pending<Change>(string, string)> rename,
-    fn<Pending<Change>(string, bool)> setExecutable,
-    fn<Pending<Change>(string, i32)> chmod,
-    fn<Pending<Change>(string)> openInput,
-    fn<Pending<Read>()> readChunk,
-    fn<Pending<string>()> outputError,
-    fn<Pending<Change>(string)> openOutput,
-    fn<Pending<HostSocket>(string, i32)> connect,
-    fn<Pending<HostSocket>(string, i32)> listen,
-    fn<Pending<HostSocket>(i32)> accept,
-    fn<Pending<Read>(i32)> recv,
-    fn<Pending<bool>(i32, u8[])> send,
-    fn<void(i32)> closeSocket,
-    fn<void(i32)> closeSend,
-    fn<Pending<HostSocket>(string, i32)> openFile,
-    fn<Pending<bool>(i32)> closeFile,
-    fn<Pending<bool>(bool)> closeOutput,
-    fn<Pending<HostSocket>(string, i32)> bindDatagram,
-    fn<Pending<Datagram>(i32)> receiveFrom,
-    fn<Pending<bool>(i32, string, i32, u8[])> sendTo,
-    fn<Pending<HostChild>(u8[], u8[][], i32, string, i32, bool)> spawn,
-    fn<Pending<HostChild>(u8[][], i32, string, i32, bool)> spawnSelf,
-    fn<void(i32)> closeFeed,
-    fn<Pending<i32>(i32)> exitCode,
-    fn<Pending<string>()> cwd,
-    fn<Pending<bool>(string[], u8[], string, bool)> pushChild,
-    fn<Pending<Captured>()> popChild,
-    fn<Pending<Exec>(string, string[], u8[], string[], bool, bool, string)> execWithIn,
-    fn<LoadedModule(u8[], i32)> load,
-    fn<CallResult(i32, string, i32)> call,
-    fn<void(i32)> unload,
-    fn<string(u8[])> validated,
-    Sched sched
-  ) {
-    return Cli(
-      () => argCount().on(sched), (i32 a0) => arg(a0).on(sched),
-      (string a0) => env(a0).on(sched), () => readStdin().on(sched), write, writeErr,
-      (string a0) => readFile(a0).on(sched), (string a0, u8[] a1) => writeFile(a0, a1).on(sched),
-      (string a0) => stat(a0).on(sched), (string a0) => linkStat(a0).on(sched),
-      (string a0) => readDir(a0).on(sched), (string a0, bool a1) => mkdir(a0, a1).on(sched),
-      (string a0, bool a1) => remove(a0, a1).on(sched),
-      (string a0, string a1) => rename(a0, a1).on(sched),
-      (string a0, bool a1) => setExecutable(a0, a1).on(sched),
-      (string a0, i32 a1) => chmod(a0, a1).on(sched),
-      (string a0) => openInput(a0).on(sched), () => readChunk().on(sched), () => outputError().on(sched),
-      (string a0) => openOutput(a0).on(sched), (string a0, i32 a1) => connect(a0, a1).on(sched),
-      (string a0, i32 a1) => listen(a0, a1).on(sched), (i32 a0) => accept(a0).on(sched),
-      (i32 a0) => recv(a0).on(sched), (i32 a0, u8[] a1) => send(a0, a1).on(sched), closeSocket,
-      closeSend, (string a0, i32 a1) => openFile(a0, a1).on(sched), (i32 a0) => closeFile(a0).on(sched),
-      (bool a0) => closeOutput(a0).on(sched),
-      (string a0, i32 a1) => bindDatagram(a0, a1).on(sched),
-      (i32 a0) => receiveFrom(a0).on(sched),
-      (i32 a0, string a1, i32 a2, u8[] a3) => sendTo(a0, a1, a2, a3).on(sched),
-      (u8[] a0, u8[][] a1, i32 a2, string a3, i32 a4, bool a5) =>
-        owned(spawn(a0, a1, a2, a3, a4, a5).on(sched), (a4 & DETACHED) != 0, closeSocket),
-      (u8[][] a0, i32 a1, string a2, i32 a3, bool a4) =>
-        owned(spawnSelf(a0, a1, a2, a3, a4).on(sched), (a3 & DETACHED) != 0, closeSocket),
-      closeFeed, (i32 a0) => exitCode(a0).on(sched), () => cwd().on(sched),
-      (string[] a0, u8[] a1, string a2, bool a3) => pushChild(a0, a1, a2, a3).on(sched),
-      () => popChild().on(sched),
-      (string a0, string[] a1, u8[] a2, string[] a3, bool a4, bool a5, string a6) => execWithIn(a0, a1, a2, a3, a4, a5, a6).on(sched),
-      load, call, unload, validated, sched
-    );
-  }
-}
-
-/**
- * A spawn's ticket, owning its child (spec ch44; `issues/system/0312b`): dropped while it still holds an
- * uncollected child, it stops that child, as `closeSocket` on the handle does. `detached` leaves it be.
- * A ticket already collected answers `settled` false and so stops nothing — the handle is the caller's
- * by then. Done here, where every host's `Cli` is built, so no host has to know.
- */
-Pending<HostChild> owned(Pending<HostChild> p, bool detached, fn<void(i32)> closeSocket) {
-  if (detached) { return p; }
-  fn<void(i32)> stop = (i32 id) => {
-    if (p.settled(id)) {
-      HostChild c = p.resolve(id);
-      if (c.handle >= 0) { closeSocket(c.handle); }
-    }
-    p.drop(id);
-  };
-  return Pending<HostChild>(p.id, p.resolve, p.settled, stop, p.sched, p.waitable);
-}
 
 // ── Sys ─────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * The authority a program is handed on its `main` (spec ch07, ch44): every effect on the world is
- * a method reached through one.
+ * The authority a program is handed on its `main` (spec ch07, ch44): every effect on the world is a method reached
+ * through one, or a handle one hands out.
  *
- * **Built on `Core` and `Cli`**, the two faces the hosts construct, and holding them is how a program
- * reaches the parts of the host ch44 has not yet given a `Sys` form — directories, processes, the
- * environment, the terminal, datagrams (its "Open" section). That is also the limit of `run`'s
- * narrowing: the methods here refuse what `held` lacks, and a callee reaching past them to `cli`
- * holds what the host granted the program.
+ * **Built over the host's flat calls** (design/system/0013 step 6): the program adapter hands it the `__WacHost`
+ * the host holds, and every handle is std over that — so nothing here is a value the host built.
  */
 export struct Sys {
-  Core core;
-  Cli cli;
+  __WacHost host;
   /** The line to this program's parent, which `files` asks once whether the parent serves it files. */
   ParentLine parent;
+  /**
+   * A line to the output (`false`) or the diagnostic output: what `log` and `warn` call. A function rather than a
+   * request made here, so a `const` holder can log -- every request changes the host's bookkeeping, and calling a
+   * function a field holds does not change the holder.
+   */
+  fn<void(bool, string)> say;
 
-  /** The `Sys` a program's `main` is handed — by the program adapter (`wacc/src/program.wac`), or a world of its own. */
-  Sys __wacOf(Core core, Cli cli) { return Sys(core, cli, ParentLine.on(cli)); }
+  /** The `Sys` a program's `main` is handed — by the program adapter (`wacc/src/program.wac`). */
+  Sys __wacOn(__WacHost host) {
+    return Sys(host, ParentLine.on(host), (bool toErr, string line) => { hostWrite(host, toErr, (line + "\n").toBytes()); });
+  }
 
   /** The program's arguments, in order, without its own name. Needs no grant. */
   string[] args(const this) {
-    i32 n = this.cli.argCount().wait();
+    i32 n = flatten(hostAsk(this.host, OP_ARG_COUNT(), 0 as i64, 0 as i64, "", u8[](), countOf).wait()).orElse(0);
     string[] out = string[].defaulted(n);
-    for (i32 i = 0; i < n; i++) { out[i] = string.fromBytes(this.cli.arg(i).wait()); }
+    for (i32 i = 0; i < n; i++) {
+      out[i] = string.fromBytes(flatten(hostAsk(this.host, OP_ARG(), i as i64, 0 as i64, "", u8[](), argOf).wait()).orElse(u8[]()));
+    }
     return out;
   }
 
   /** A line on the program's output. */
-  void log(const this, string line) { this.core.log(line); }
+  void log(const this, string line) { this.say(false, line); }
 
   /** A line on the program's diagnostic output. */
-  void warn(const this, string line) { this.core.warn(line); }
+  void warn(const this, string line) { this.say(true, line); }
 
-  /** Wall-clock time, in milliseconds since the epoch. */
-  Ticket<i64> nowMillis(const this) { return this.core.nowMillis().ticket(); }
-
-  /** Nanoseconds from an arbitrary origin, never decreasing within a run. */
-  Ticket<i64> monotonicNanos(const this) { return this.core.monotonicNanos().ticket(); }
+  /** Nanoseconds from an arbitrary origin, never decreasing within a run; 0 where the host has no clock. */
+  async i64 monotonicNanos(this) { return (await this.clock().monotonicNanos()).orElse(0 as i64); }
 
   /** Settles after at least `ms` milliseconds. */
-  async void sleepMillis(const this, i32 ms) { await this.core.sleepMillis(ms).ticket(); }
+  async void sleepMillis(this, i32 ms) { await this.clock().sleepMillis(ms); }
 
-  /** `n` random bytes. */
-  Ticket<u8[]> randomBytes(const this, i32 n) { return this.core.randomBytes(n).ticket(); }
-
-  /** A file's bytes. A missing file, a directory or a missing grant is an `Err`. */
-  async Result<u8[], string> readFile(const this, string path) {
-    FileResult f = await this.cli.readFile(path).ticket();
-    if (!f.ok) { return Result.Err(f.error); }
-    return Result.Ok(f.bytes);
+  /** A file's bytes. A missing file, a directory or a missing grant is an `Err`, in the host's words. */
+  async Result<u8[], string> readFile(this, string path) {
+    match (await this.files().readFile(path)) {
+      Ok(b): { return Result.Ok(b); }
+      Err(e): { return Result.Err("\{e}"); }
+    }
   }
 
-  /** Write `bytes` to a file, replacing it. A missing grant is an `Err`. */
-  async Result<void, string> writeFile(const this, string path, u8[] bytes) {
-    Change c = await this.cli.writeFile(path, bytes).ticket();
-    if (!c.ok()) { return Result.Err(c.message); }
-    return Result.Ok();
+  /** Write `bytes` to a file, replacing it. A missing grant is an `Err`, in the host's words. */
+  async Result<void, string> writeFile(this, string path, u8[] bytes) {
+    match (await this.files().writeFile(path, bytes)) {
+      Ok(v): { return Result.Ok(); }
+      Err(e): { return Result.Err("\{e}"); }
+    }
   }
 
   /** This program's output (spec ch44). Needs no grant. */
   Output stdout(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.core.waitAny;
-    return Output((u8[] b) => hostWrite(cli, false, b), () => hostTicket(cli.closeOutput(false), wait, outputClosedOf));
+    __WacHost host = this.host;
+    return Output((u8[] b) => hostWrite(host, false, b),
+                  () => hostAsk(host, OP_CLOSE_OUTPUT(), 0 as i64, 0 as i64, "", u8[](), outputClosedOf));
   }
 
   /** This program's diagnostic output. Needs no grant. */
   Output stderr(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.core.waitAny;
-    return Output((u8[] b) => hostWrite(cli, true, b), () => hostTicket(cli.closeOutput(true), wait, outputClosedOf));
+    __WacHost host = this.host;
+    return Output((u8[] b) => hostWrite(host, true, b),
+                  () => hostAsk(host, OP_CLOSE_OUTPUT(), 1 as i64, 0 as i64, "", u8[](), outputClosedOf));
   }
 
   /** This program's input. Needs no grant. */
   Input stdin(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.core.waitAny;
-    return Input(() => hostChunk(cli, wait), () => hostReadAll(cli, wait), nothingToClose);
+    __WacHost host = this.host;
+    return Input(() => hostChunk(host), () => hostReadAll(host), nothingToClose);
   }
 
   /** The clocks. Needs no grant. */
-  Clock clock(this) { return Clock(this.core); }
+  Clock clock(this) { return Clock(this.host); }
 
   /** Random bytes. Needs no grant. */
-  Random random(this) { return Random(this.core); }
+  Random random(this) { return Random(this.host); }
 
   /**
    * Whether the user has asked to interrupt (`^C`) since the last time this asked — answered by whoever owns the
    * keyboard, so only a page says yes; Deno, Node and the native hosts own none and always say no. Needs no grant.
    * A long loop asks once per block of work and stops with 130, as a shell reports a program `^C` ended.
    */
-  bool interrupted(const this) { return this.core.interrupted(); }
+  bool interrupted(const this) { return this.host.interrupted(); }
 
   /** The environment. Each operation answers `NotGranted` when the host withheld it. */
-  Env env(this) { return Env(this.cli, this.core.waitAny); }
+  Env env(this) { return Env(this.host); }
 
   /**
    * The files this program was given: what its parent serves when it was spawned with a composed `Files` (spec ch44
@@ -2742,52 +783,52 @@ export struct Sys {
    */
   Files files(this) {
     if (this.parent.serves()) { return parentFiles(this.parent); }
-    return Files.host(this.cli, this.core.waitAny);
+    return Files.host(this.host);
   }
 
   /** The network. Each operation answers `NotGranted` when the host withheld it. */
-  Net net(this) { return Net(this.cli, this.core.waitAny); }
+  Net net(this) { return Net(this.host); }
 
   /** Starting other programs, this one included. Each operation answers `NotGranted` when the host withheld it. */
-  Procs procs(this) { return Procs(this.cli, this.core.waitAny); }
+  Procs procs(this) { return Procs(this.host); }
 
   /** Loading wasm modules into this instance. */
-  Modules modules(this) { return Modules(this.cli); }
+  Modules modules(this) { return Modules(this.host); }
 
   /** End the program now with status `code`, abandoning whatever is left. */
   never exit(const this, i32 code) {
-    this.core.exit(code);
+    this.host.exitWith(code);
     trap;
   }
 
   /**
-   * Run the continuations nobody awaited. Work that can never run — a continuation waiting on a ticket
-   * nothing will settle — leaves this waiting too, and a program waiting on nothing that can move is hung.
+   * `drain` for at most `millis`, answering how many waits answered — none is how a server tells it was idle. What
+   * is left over stays outstanding.
    */
-  /**
-   * `drain` for at most `millis`, answering how many continuations ran — none is how a server tells it was
-   * idle. What is left over stays outstanding.
-   */
-  i32 drainFor(this, i32 millis) { return this.core.drainFor(millis); }
+  i32 drainFor(this, i32 millis) { return this.host.drainUntil(millis, null); }
 
+  /**
+   * Run the continuations nobody awaited. Work that can never run — a continuation waiting on a ticket nothing will
+   * settle — leaves this waiting too, and a program waiting on nothing that can move is hung.
+   */
   async void drain(this) {
-    this.core.drain();
-    if (this.core.outstanding() > 0) {
+    this.host.drainUntil(0 - 1, null);
+    if (this.host.outstanding() > 0) {
       Ticket<void> stuck;
       await stuck;
     }
   }
 
   /**
-   * Run the program until `t` settles, with the work it left unawaited alongside — the program
-   * adapter's wait on an `async` main. False, having said so, when nothing can move it.
+   * Run the program until `t` settles, with the work it left unawaited alongside — the program adapter's wait on an
+   * `async` main. False, having said so, when nothing can move it.
    */
   bool __wacSettle(this, TicketBase t) {
-    this.core.sched.yielded = false;
-    this.core.drainUntil(0 - 1, t);
-    // **A host that cannot wait is yielded to, not reported as a hang**: the program is still running,
-    // and the host settles again once an answer has arrived (`__wacYielded`, design `system/0015`).
-    if (!t.done && !this.core.sched.yielded) {
+    this.host.yielded = false;
+    this.host.drainUntil(0 - 1, t);
+    // **A host that cannot wait is yielded to, not reported as a hang**: the program is still running, and the host
+    // settles again once an answer has arrived (`__wacYielded`, design `system/0015`).
+    if (!t.done && !this.host.yielded) {
       this.warn("main cannot finish: nothing that can run will settle what it waits on");
     }
     return t.done;
@@ -2800,13 +841,23 @@ export struct Sys {
   async void __wacGreet(this) { await this.parent.greet(); }
 
   /** Whether the last `__wacSettle` stopped because the host cannot wait, rather than because nothing could run. */
-  bool __wacYielded(const this) { return this.core.sched.yielded; }
+  bool __wacYielded(const this) { return this.host.yielded; }
 
   /** `main` answered an `Err`: say why, and exit 1. */
-  i32 __wacFailed(const this, string why) {
+  i32 __wacFailed(this, string why) {
     this.warn(why == "" ? "main answered an error" : "error: " + why);
     return 1;
   }
+}
+
+Result<i32, HostFault> countOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  return Result.Ok(a.n as~ i32);
+}
+
+Result<u8[], HostFault> argOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  return Result.Ok(a.bytes);
 }
 
 
@@ -3006,38 +1057,6 @@ HostFault hostFault(string m) { return Other(m); }
  * A write whose reader has gone answers `OutputClosed`, and an `OutputClosed` that reaches `main` unhandled ends
  * the program quietly with status 0 — `yes | head` (spec ch44 `§wac-std-output-closed-c9dspr3`).
  */
-/** The host's wait-for-any: block until one of `ids` answers, for at most `millis`; its index, or -1. */
-export type HostWait = fn<i32(i32[], i32)>;
-
-/**
- * The host's answer `p` as a ticket core can wait on beside others and cancel (design/system/0013): it
- * carries the host's id, `wait` and a release, so `Ticket.any` over several asks the host once and `cancel`
- * gives the host its slot back. `f` turns what the host answers into what the handle answers, so a handle's
- * operation is this ticket itself and not a machine parked on it. **Temporary with `Pending`**: step 6 has
- * the host's imports make these directly.
- */
-Ticket<U> hostTicket<T, U>(Pending<T> p, HostWait wait, fn<U(T)> f) {
-  Ticket<U> t;
-  i32 id = p.id;
-  if (p.settled(id)) {
-    t.resolve(f(p.resolve(id)));
-    return t;
-  }
-  Sched? s = p.sched;
-  if (s is not null) { s!.on(id, (i32 k) => { if (!t.done) { t.resolve(f(p.resolve(k))); } }, p.drop); }
-  t.hostId = id;
-  t.waitHost = wait;
-  t.release = () => {
-    if (s is not null) { s!.off(id); } else { p.drop(id); }
-  };
-  t.drive = () => {
-    if (s is not null) { s!.detach(id); }
-    if (!t.done) { t.resolve(f(p.wait())); }
-    return true;
-  };
-  return t;
-}
-
 export struct Output {
   fn<Ticket<Result<void, OutputFault>>(u8[])> write;
   /**
@@ -3060,32 +1079,50 @@ export struct Input {
   fn<Ticket<Result<void, HostFault>>()> close;
 }
 
-async Result<void, OutputFault> hostWrite(Cli cli, bool toErr, u8[] bytes) {
-  bool went = toErr ? cli.writeErr(bytes) : cli.write(bytes);
-  if (went) { return Result.Ok(); }
-  // `outputError` tells a departed reader ("") from a real failure (its sentence).
-  string why = await cli.outputError().ticket();
-  if (why == "") { return Result.Err(OutputClosed(toErr ? "the diagnostic output's reader has gone" : "the output's reader has gone")); }
-  return Result.Err(Other(why));
+/**
+ * A write to one of this program's two streams. **The host answers it before `request` returns** — the reason a
+ * write failed comes back in the same call (design/system/0013, settled before step 5) — so the ticket is
+ * settled when this returns, which is what lets a program ignore a write to stderr.
+ */
+Ticket<Result<void, OutputFault>> hostWrite(__WacHost host, bool toErr, u8[] bytes) {
+  return hostAsk(host, toErr ? OP_WRITE_STDERR() : OP_WRITE_STDOUT(), 0 as i64, 0 as i64, "", bytes,
+                  toErr ? wroteErrOf : wroteOutOf);
 }
 
-Result<Read, HostFault> readOf(Read c) {
-  match (c) {
-    Failed(why): { return Result.Err(Other(why)); }
-    default: { return Result.Ok(c); }
-  }
+Result<void, OutputFault> wroteOutOf(Answer a) { return wroteOf(a, "the output's reader has gone"); }
+Result<void, OutputFault> wroteErrOf(Answer a) { return wroteOf(a, "the diagnostic output's reader has gone"); }
+
+Result<void, OutputFault> wroteOf(Answer a, string gone) {
+  if (a.fault == FAULT_NONE()) { return Result.Ok(); }
+  // A reader that has gone is the host's empty sentence; anything else is its own words.
+  if (a.fault == WIRE_OUTPUT_CLOSED || a.text == "") { return Result.Err(OutputClosed(a.text == "" ? gone : a.text)); }
+  return Result.Err(outputFault(a.fault, a.text));
 }
 
-Ticket<Result<Read, HostFault>> hostChunk(Cli cli, HostWait wait) { return hostTicket(cli.readChunk(), wait, readOf); }
+/** A chunk of a stream: `flags` 1 is its end. */
+Result<Read, HostFault> readOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  if (a.flags == 1) { return Result.Ok(Read.End); }
+  return Result.Ok(Read.Data(a.bytes));
+}
 
-Result<u8[], HostFault> allOf(u8[] b) { return Result.Ok(b); }
+Ticket<Result<Read, HostFault>> hostChunk(__WacHost host) {
+  return hostAsk(host, OP_READ_CHUNK(), 0 as i64, 0 as i64, "", u8[](), readOf);
+}
 
-Ticket<Result<u8[], HostFault>> hostReadAll(Cli cli, HostWait wait) { return hostTicket(cli.readStdin(), wait, allOf); }
+Result<u8[], HostFault> allOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  return Result.Ok(a.bytes);
+}
+
+Ticket<Result<u8[], HostFault>> hostReadAll(__WacHost host) {
+  return hostAsk(host, OP_READ_STDIN(), 0 as i64, 0 as i64, "", u8[](), allOf);
+}
 
 async Result<void, HostFault> nothingToClose() { return Result.Ok(); }
 
-Result<void, OutputFault> outputClosedOf(bool went) {
-  if (!went) { return Result.Err(Other("the output could not be closed")); }
+Result<void, OutputFault> outputClosedOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(outputFault(a.fault, a.text)); }
   return Result.Ok();
 }
 
@@ -3093,17 +1130,17 @@ Result<void, OutputFault> outputClosedOf(bool went) {
 
 /** The clocks (spec ch44 `§wac-std-time-mzn6gvc`). Needs no grant. */
 export struct Clock {
-  Core core;
+  __WacHost host;
 
   /** Wall-clock time, in milliseconds since the epoch. */
-  Ticket<Result<i64, union<Unsupported>>> nowMillis(const this) { return hostTicket(this.core.nowMillis(), this.core.waitAny, timeOf); }
+  Ticket<Result<i64, union<Unsupported>>> nowMillis(const this) { return hostAsk(this.host, OP_NOW_MILLIS(), 0 as i64, 0 as i64, "", u8[](), timeOf); }
   /** Nanoseconds from an arbitrary origin, never decreasing within a run. */
   Ticket<Result<i64, union<Unsupported>>> monotonicNanos(const this) {
-    return hostTicket(this.core.monotonicNanos(), this.core.waitAny, timeOf);
+    return hostAsk(this.host, OP_MONOTONIC_NANOS(), 0 as i64, 0 as i64, "", u8[](), timeOf);
   }
   /** Settles after at least `ms` milliseconds. */
   Ticket<Result<void, union<Unsupported>>> sleepMillis(const this, i32 ms) {
-    return hostTicket(this.core.sleepMillis(ms), this.core.waitAny, sleptOf);
+    return hostAsk(this.host, OP_SLEEP_MILLIS(), ms as i64, 0 as i64, "", u8[](), sleptOf);
   }
 
   /**
@@ -3150,22 +1187,30 @@ export struct Clock {
 
 }
 
-Result<i64, union<Unsupported>> timeOf(i64 v) { return Result.Ok(v); }
-Result<void, union<Unsupported>> sleptOf(i64 v) { return Result.Ok(); }
+Result<i64, union<Unsupported>> timeOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Unsupported(a.text)); }
+  return Result.Ok(a.n);
+}
+Result<void, union<Unsupported>> sleptOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Unsupported(a.text)); }
+  return Result.Ok();
+}
 
 /** Random bytes. Needs no grant. */
 export struct Random {
-  Core core;
+  __WacHost host;
 
-  Ticket<Result<u8[], union<Unsupported>>> bytes(const this, i32 n) { return hostTicket(this.core.randomBytes(n), this.core.waitAny, bytesOk); }
+  Ticket<Result<u8[], union<Unsupported>>> bytes(const this, i32 n) { return hostAsk(this.host, OP_RANDOM_BYTES(), n as i64, 0 as i64, "", u8[](), bytesOk); }
 }
 
-Result<u8[], union<Unsupported>> bytesOk(u8[] b) { return Result.Ok(b); }
+Result<u8[], union<Unsupported>> bytesOk(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Unsupported(a.text)); }
+  return Result.Ok(a.bytes);
+}
 
 /** The environment's variables and the directory relative paths resolve from. */
 export struct Env {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
 
   /**
    * A variable's value, `Ok(null)` when it is not set (`§wac-std-env-unset-r4c8tqb`).
@@ -3173,14 +1218,22 @@ export struct Env {
    * **Not yet able to say `NotGranted`**: the hosts answer a withheld environment as an unset variable, and
    * which it was is `issues/system/0261c`, which the host half of design/system/0013 settles.
    */
-  Ticket<Result<u8[]?, GrantedFault>> get(const this, string name) { return hostTicket(this.cli.env(name), this.wait, envOf); }
+  Ticket<Result<u8[]?, GrantedFault>> get(const this, string name) { return hostAsk(this.host, OP_ENV(), 0 as i64, 0 as i64, name, u8[](), envOf); }
 
   /** Where relative paths resolve from. */
-  Ticket<Result<string, HostFault>> cwd(const this) { return hostTicket(this.cli.cwd(), this.wait, cwdOf); }
+  Ticket<Result<string, HostFault>> cwd(const this) { return hostAsk(this.host, OP_CWD(), 0 as i64, 0 as i64, "", u8[](), cwdOf); }
 }
 
-Result<u8[]?, GrantedFault> envOf(u8[]? v) { return Result.Ok(v); }
-Result<string, HostFault> cwdOf(string v) { return Result.Ok(v); }
+Result<u8[]?, GrantedFault> envOf(Answer a) {
+  if (a.fault == FAULT_NOT_GRANTED()) { return Result.Err(NotGranted(a.text)); }
+  if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
+  if (a.flags == 0) { return Result.Ok(null); }
+  return Result.Ok(a.bytes);
+}
+Result<string, HostFault> cwdOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  return Result.Ok(a.text);
+}
 
 // ── Files ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -3225,21 +1278,22 @@ export struct Files {
   string user;
 
   /** The host's filesystem, under whatever grants the host gave this program. */
-  Files host(Cli cli, HostWait wait) {
+  Files host(__WacHost host) {
+    i64 z = 0 as i64;
     return Files(
-      (string p) => hostTicket(cli.readFile(p), wait, readOfFile),
-      (string p, u8[] b) => hostTicket(cli.writeFile(p, b), wait, writtenOf),
-      (string p) => hostTicket(cli.openFile(p, OPEN_READ), wait, (HostSocket s) => openedToRead(cli, wait, p, s)),
-      (string p) => hostTicket(cli.openFile(p, OPEN_WRITE), wait, (HostSocket s) => openedToWrite(cli, wait, p, s)),
-      (string p) => hostTicket(cli.openFile(p, OPEN_APPEND), wait, (HostSocket s) => openedToWrite(cli, wait, p, s)),
-      (string p) => hostTicket(cli.stat(p), wait, (Stat s) => statOf(s, p)),
-      (string p) => hostTicket(cli.linkStat(p), wait, (Stat s) => statOf(s, p)),
-      (string p) => hostReadDir(cli, wait, p),
-      (string p, bool parents) => hostTicket(cli.mkdir(p, parents), wait, madeOf),
-      (string p, bool recursive) => hostTicket(cli.remove(p, recursive), wait, movedOf),
-      (string from, string to) => hostTicket(cli.rename(from, to), wait, movedOf),
-      (string p, i32 mode) => hostTicket(cli.chmod(p, mode), wait, modeOf),
-      (string p, bool on) => hostTicket(cli.setExecutable(p, on), wait, modeOf),
+      (string p) => hostAsk(host, OP_READ_FILE(), z, z, p, u8[](), readOfFile),
+      (string p, u8[] b) => hostAsk(host, OP_WRITE_FILE(), z, z, p, b, writtenOf),
+      (string p) => hostAsk(host, OP_OPEN_FILE(), OPEN_READ as i64, z, p, u8[](), (Answer o) => openedToRead(host, p, o)),
+      (string p) => hostAsk(host, OP_OPEN_FILE(), OPEN_WRITE as i64, z, p, u8[](), (Answer o) => openedToWrite(host, p, o)),
+      (string p) => hostAsk(host, OP_OPEN_FILE(), OPEN_APPEND as i64, z, p, u8[](), (Answer o) => openedToWrite(host, p, o)),
+      (string p) => hostAsk(host, OP_STAT(), z, z, p, u8[](), (Answer o) => statOf(o, p)),
+      (string p) => hostAsk(host, OP_LINK_STAT(), z, z, p, u8[](), (Answer o) => statOf(o, p)),
+      (string p) => hostAsk(host, OP_READ_DIR(), z, z, p, u8[](), (Answer o) => listedOf(o, p)),
+      (string p, bool parents) => hostAsk(host, OP_MKDIR(), parents ? 1 as i64 : z, z, p, u8[](), madeOf),
+      (string p, bool recursive) => hostAsk(host, OP_REMOVE(), recursive ? 1 as i64 : z, z, p, u8[](), movedOf),
+      (string from, string to) => hostAsk(host, OP_RENAME(), z, z, from, to.toBytes(), movedOf),
+      (string p, i32 mode) => hostAsk(host, OP_CHMOD(), mode as i64, z, p, u8[](), modeOf),
+      (string p, bool on) => hostAsk(host, OP_SET_EXECUTABLE(), on ? 1 as i64 : z, z, p, u8[](), modeOf),
       (string p, string owner) => hostChown(p),
       GRANT_READ | GRANT_WRITE, "");
   }
@@ -3910,45 +1964,46 @@ async Result<void, ModeFault> hostChown(string p) {
   return Result.Err(Unsupported(p + ": the host's owners are not names, so a file cannot be given to one"));
 }
 
-Result<u8[], ReadFault> readOfFile(FileResult f) {
-  if (!f.ok) { return Result.Err(readFault(f.fault, f.error)); }
-  return Result.Ok(f.bytes);
+Result<u8[], ReadFault> readOfFile(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(readFault(a.fault, a.text)); }
+  return Result.Ok(a.bytes);
 }
 
-Result<Input, ReadFault> openedToRead(Cli cli, HostWait wait, string p, HostSocket s) {
-  if (s.handle < 0) { return Result.Err(readFault(s.fault, s.error)); }
-  i32 h = s.handle;
+/** A stream on a handle the host opened: chunks by `OP_RECV`, all of it by reading to the end. */
+Input handleInput(__WacHost host, i32 h, fn<Ticket<Result<void, HostFault>>()> close) {
+  return Input(() => hostAsk(host, OP_RECV(), h as i64, 0 as i64, "", u8[](), readOf), () => streamAll(host, h), close);
+}
+
+Result<Input, ReadFault> openedToRead(__WacHost host, string p, Answer o) {
+  if (o.fault != FAULT_NONE()) { return Result.Err(readFault(o.fault, o.text)); }
+  i32 h = o.n as~ i32;
   bool[] shut = bool[].filled(1, false);
-  return Result.Ok(Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h),
-                         () => closeReadOnce(cli, wait, h, p, shut)));
+  return Result.Ok(handleInput(host, h, () => closeReadOnce(host, h, p, shut)));
 }
 
 /** Closing twice is not an error (`§wac-std-close-r4v8ndq`), so the second asks the host nothing. */
-Ticket<Result<void, HostFault>> closeReadOnce(Cli cli, HostWait wait, i32 h, string p, bool[] shut) {
+Ticket<Result<void, HostFault>> closeReadOnce(__WacHost host, i32 h, string p, bool[] shut) {
   if (shut[0]) { return nothingToClose(); }
   shut[0] = true;
-  return hostTicket(cli.closeFile(h), wait, (bool went) => readClosedOf(went, p));
+  return hostAsk(host, OP_CLOSE_FILE(), h as i64, 0 as i64, "", u8[](), (Answer o) => readClosedOf(o, p));
 }
 
-Result<void, HostFault> readClosedOf(bool went, string p) {
-  if (!went) { return Result.Err(Other(p + ": was not open")); }
+Result<void, HostFault> readClosedOf(Answer o, string p) {
+  if (o.fault != FAULT_NONE()) { return Result.Err(Other(o.text == "" ? p + ": was not open" : o.text)); }
   return Result.Ok();
 }
 
-/**
- * A failed write says only that it failed: `send` answers a bool, so the host's reason does not reach here yet
- * (design/system/0013 step 5 gives the reason in the same call).
- */
-Result<Output, WriteFault> openedToWrite(Cli cli, HostWait wait, string p, HostSocket s) {
-  if (s.handle < 0) { return Result.Err(writeFault(s.fault, s.error)); }
-  i32 h = s.handle;
+/** A write to a file the host opened, which answers its reason in the same call. */
+Result<Output, WriteFault> openedToWrite(__WacHost host, string p, Answer o) {
+  if (o.fault != FAULT_NONE()) { return Result.Err(writeFault(o.fault, o.text)); }
+  i32 h = o.n as~ i32;
   bool[] shut = bool[].filled(1, false);
-  return Result.Ok(Output((u8[] b) => writeUnlessClosed(cli, wait, h, p, shut, b), () => closeWriteOnce(cli, wait, h, p, shut)));
+  return Result.Ok(Output((u8[] b) => writeUnlessClosed(host, h, p, shut, b), () => closeWriteOnce(host, h, p, shut)));
 }
 
-Ticket<Result<void, OutputFault>> writeUnlessClosed(Cli cli, HostWait wait, i32 h, string p, bool[] shut, u8[] b) {
+Ticket<Result<void, OutputFault>> writeUnlessClosed(__WacHost host, i32 h, string p, bool[] shut, u8[] b) {
   if (shut[0]) { return writeAfterClose(p); }
-  return hostTicket(cli.send(h, b), wait, (bool went) => fileWrittenOf(went, p));
+  return hostAsk(host, OP_SEND(), h as i64, 0 as i64, "", b, (Answer o) => fileWrittenOf(o, p));
 }
 
 /** A write after `close` is `OutputClosed` (`§wac-std-close-r4v8ndq`): the handle is the host's again. */
@@ -3956,65 +2011,82 @@ async Result<void, OutputFault> writeAfterClose(string p) { return Result.Err(Ou
 
 async Result<void, OutputFault> closedAlready() { return Result.Ok(); }
 
-Ticket<Result<void, OutputFault>> closeWriteOnce(Cli cli, HostWait wait, i32 h, string p, bool[] shut) {
+Ticket<Result<void, OutputFault>> closeWriteOnce(__WacHost host, i32 h, string p, bool[] shut) {
   if (shut[0]) { return closedAlready(); }
   shut[0] = true;
-  return hostTicket(cli.closeFile(h), wait, (bool went) => fileClosedOf(went, p));
+  return hostAsk(host, OP_CLOSE_FILE(), h as i64, 0 as i64, "", u8[](), (Answer o) => fileClosedOf(o, p));
 }
 
-Result<void, OutputFault> fileWrittenOf(bool went, string p) {
-  if (!went) { return Result.Err(Other(p + ": the write failed")); }
+Result<void, OutputFault> fileWrittenOf(Answer o, string p) {
+  if (o.fault != FAULT_NONE()) { return Result.Err(outputFault(o.fault, o.text == "" ? p + ": the write failed" : o.text)); }
   return Result.Ok();
 }
 
-Result<void, OutputFault> fileClosedOf(bool went, string p) {
-  if (!went) { return Result.Err(Other(p + ": what was written could not be kept")); }
+Result<void, OutputFault> fileClosedOf(Answer o, string p) {
+  if (o.fault != FAULT_NONE()) { return Result.Err(Other(o.text == "" ? p + ": what was written could not be kept" : o.text)); }
   return Result.Ok();
 }
 
-Result<void, WriteFault> writtenOf(Change c) {
-  if (!c.ok()) { return Result.Err(writeFault(c.fault, c.message)); }
+Result<void, WriteFault> writtenOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(writeFault(a.fault, a.text)); }
   return Result.Ok();
 }
 
-Result<Stat, LookFault> statOf(Stat s, string p) {
-  if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
-  if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
-  return Result.Ok(s);
+/** `OP_STAT`'s `flags`: which of these the path is, with its mode bits in the high 16. */
+export static i32 STAT_EXISTS = 1;
+export static i32 STAT_FILE = 2;
+export static i32 STAT_DIR = 4;
+export static i32 STAT_LINK = 8;
+export static i32 STAT_EXEC = 16;
+
+Result<Stat, LookFault> statOf(Answer a, string p) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(lookFault(a.fault, a.text == "" ? p : a.text)); }
+  if ((a.flags & STAT_EXISTS) == 0) { return Result.Err(NotFound(p + ": No such file or directory")); }
+  return Result.Ok(Stat((a.flags & STAT_EXISTS) != 0, (a.flags & STAT_FILE) != 0, (a.flags & STAT_DIR) != 0, a.n, a.m,
+                        (a.flags & STAT_LINK) != 0, (a.flags & STAT_EXEC) != 0, FAULT_NONE(), (a.flags >> 16) & 65535,
+                        a.text));
 }
 
 /**
- * **A machine rather than a host ticket**, because a failure takes a second call: `readDir` answers null for
- * every failure and `stat` says which. So cancelling one leaves the host its slot until it answers.
+ * A directory's names, NUL-terminated in `bytes`. **The host says why a listing failed** — not a directory, not
+ * there, not allowed — so this needs no second question, which the old `readDir` did (it answered null for every
+ * failure and `stat` said which).
  */
-async Result<string[], LookFault> hostReadDir(Cli cli, HostWait wait, string p) {
-  string[]? names = await cli.readDir(p).ticket();
-  if (names is null) {
-    Stat s = await cli.stat(p).ticket();
-    if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
-    if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
-    if (!s.isDir) { return Result.Err(NotADir(p + ": Not a directory")); }
-    // **A directory that is there and will not list is a refusal.** The host's `readDir` answers no reason,
-    // and for something `stat` finds to be a directory the one that happens is a permission — `chmod 000 d;
-    // ls d` is GNU's "cannot open directory 'd': Permission denied". As `Other` this had no category, and
-    // every caller printed "cannot be listed", a phrase no real tool prints.
-    return Result.Err(Denied(p + ": cannot be listed"));
+Result<string[], LookFault> listedOf(Answer a, string p) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(lookFault(a.fault, a.text == "" ? p : a.text)); }
+  return Result.Ok(nulSplit(a.bytes));
+}
+
+/** Names each followed by a NUL, as a list. */
+string[] nulSplit(u8[] b) {
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 0) { n = n + 1; } }
+  string[] out = string[].defaulted(n);
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != 0) { continue; }
+    u8[] name = u8[].filled(i - from, 0);
+    name.copyFrom(b, from, 0, i - from);
+    out[at] = string.fromBytes(name);
+    at = at + 1;
+    from = i + 1;
   }
-  return Result.Ok(names!);
+  return out;
 }
 
-Result<void, MkdirFault> madeOf(Change c) {
-  if (!c.ok()) { return Result.Err(mkdirFault(c.fault, c.message)); }
+Result<void, MkdirFault> madeOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(mkdirFault(a.fault, a.text)); }
   return Result.Ok();
 }
 
-Result<void, MoveFault> movedOf(Change c) {
-  if (!c.ok()) { return Result.Err(moveFault(c.fault, c.message)); }
+Result<void, MoveFault> movedOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(moveFault(a.fault, a.text)); }
   return Result.Ok();
 }
 
-Result<void, ModeFault> modeOf(Change c) {
-  if (!c.ok()) { return Result.Err(modeFault(c.fault, c.message)); }
+Result<void, ModeFault> modeOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(modeFault(a.fault, a.text)); }
   return Result.Ok();
 }
 
@@ -4187,13 +2259,13 @@ WireReader brokenReader(string why) { return WireReader(u8[](), 0, true, why); }
 
 /** One end of a framed conversation on a handle. */
 struct WireLine {
-  Cli cli;
+  __WacHost host;
   i32 handle;
   /** Bytes received and not yet a whole frame. */
   Buf held;
   bool broken;
 
-  WireLine on(Cli cli, i32 handle) { return WireLine(cli, handle, Buf.create(), false); }
+  WireLine on(__WacHost host, i32 handle) { return WireLine(host, handle, Buf.create(), false); }
 
   /** Send `body` as one frame. */
   async bool put(this, Buf body) {
@@ -4201,7 +2273,7 @@ struct WireLine {
     Buf framed = Buf.create();
     framed.pushU32(body.len as@ u32);
     framed.pushAll(body.bytes());
-    bool went = await this.cli.send(this.handle, framed.bytes()).ticket();
+    bool went = await lineSend(this.host, this.handle, framed.bytes());
     if (!went) { this.broken = true; }
     return went;
   }
@@ -4211,7 +2283,7 @@ struct WireLine {
     while (!this.broken) {
       WireReader whole = this.take();
       if (!whole.bad) { return whole; }
-      Read c = await this.cli.recv(this.handle).ticket();
+      Read c = await lineRecv(this.host, this.handle);
       match (c) {
         Data(bytes): { this.held.pushAll(bytes); }
         End: { this.broken = true; }
@@ -4226,11 +2298,11 @@ struct WireLine {
    * parent serving a child's files waits on, so that stopping the child also ends the serving rather than
    * leaving a read of a dead channel registered.
    */
-  async WireReader nextUnless(this, HostWait wait, TicketBase stop) {
+  async WireReader nextUnless(this, TicketBase stop) {
     while (!this.broken) {
       WireReader whole = this.take();
       if (!whole.bad) { return whole; }
-      Ticket<Read> got = recvTicket(this.cli, wait, this.handle);
+      Ticket<Read> got = lineRecv(this.host, this.handle);
       i32 won = await Ticket.first([got, stop]);
       if (won != 0) {
         got.cancel();
@@ -4251,7 +2323,7 @@ struct WireLine {
     while (!this.broken) {
       WireReader whole = this.take();
       if (!whole.bad) { return whole; }
-      Read c = this.cli.recv(this.handle).wait();
+      Read c = lineRecv(this.host, this.handle).wait().orElse(Read.Failed("the line could not be read"));
       match (c) {
         Data(bytes): { this.held.pushAll(bytes); }
         End: { this.broken = true; }
@@ -4298,10 +2370,10 @@ struct ParentLine {
   /** Who the parent's files act as, from its answer to the hello. */
   string user;
 
-  ParentLine on(Cli cli) {
+  ParentLine on(__WacHost host) {
     Ticket<bool> open;
     open.resolve(true);
-    return ParentLine(WireLine.on(cli, PARENT_FS), open, 0, "");
+    return ParentLine(WireLine.on(host, PARENT_FS), open, 0, "");
   }
 
   /**
@@ -4332,7 +2404,7 @@ struct ParentLine {
       Buf framed = Buf.create();
       framed.pushU32(hello.len as@ u32);
       framed.pushAll(hello.bytes());
-      bool asked = this.line.cli.send(PARENT_FS, framed.bytes()).wait();
+      bool asked = lineSend(this.line.host, PARENT_FS, framed.bytes()).wait().orElse(false);
       WireReader r = asked ? this.line.nextNow() : brokenReader("not spawned");
       string said = r.text();
       this.served = !r.bad && said == servedHello() ? 1 : 2;
@@ -4517,9 +2589,24 @@ async Result<void, ModeFault> askMode(ParentLine l, i32 op, string p, i32 mode, 
 // ── The parent's end ──
 
 /** A read of `handle` as a ticket the host answers — one that `cancel` withdraws. */
-Ticket<Read> recvTicket(Cli cli, HostWait wait, i32 handle) { return hostTicket(cli.recv(handle), wait, sameRead); }
+/** A send on a channel handle: whether it went. */
+Ticket<bool> lineSend(__WacHost host, i32 handle, u8[] bytes) {
+  return hostAsk(host, OP_SEND(), handle as i64, 0 as i64, "", bytes, lineSentOf);
+}
 
-Read sameRead(Read r) { return r; }
+bool lineSentOf(Answer a) { return a.fault == FAULT_NONE(); }
+
+/** A chunk of a channel handle, its end, or why it stopped — as the `Read` a line takes apart. */
+Ticket<Read> lineRecv(__WacHost host, i32 handle) {
+  return hostAsk(host, OP_RECV(), handle as i64, 0 as i64, "", u8[](), lineRecvOf);
+}
+
+Read lineRecvOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Read.Failed(a.text); }
+  if (a.flags == 1) { return Read.End; }
+  return Read.Data(a.bytes);
+}
+
 
 /** The streams a served child has open, by the number it was given; a closed one keeps its number. */
 struct ServedStreams {
@@ -4534,12 +2621,12 @@ struct ServedStreams {
  * which is the child being stopped; then close what it left open. Runs as this program's scheduler does: nothing else
  * has to drive it.
  */
-async void serveFiles(Cli cli, HostWait wait, i32 handle, Files files, Ticket<bool> stop) {
-  WireLine line = WireLine.on(cli, handle);
+async void serveFiles(__WacHost host, i32 handle, Files files, Ticket<bool> stop) {
+  WireLine line = WireLine.on(host, handle);
   ServedStreams open = ServedStreams(Vec.create(), Vec.create(), Vec.create(), Vec.create());
   bool going = true;
   while (going) {
-    WireReader q = await line.nextUnless(wait, stop);
+    WireReader q = await line.nextUnless(stop);
     if (q.bad) {
       going = false;
     } else {
@@ -4712,14 +2799,12 @@ BindFault bindFault(i32 code, string m) {
 
 /** The network (spec ch44). Each operation answers `NotGranted` when the host withheld it. */
 export struct Net {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
 
   /** A connection to `host:port`. */
-  Ticket<Result<Socket, ConnectFault>> connect(this, string host, i32 port) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    return hostTicket(cli.connect(host, port), wait, (HostSocket s) => connectedOf(cli, wait, s));
+  Ticket<Result<Socket, ConnectFault>> connect(this, string to, i32 port) {
+    __WacHost h = this.host;
+    return hostAsk(h, OP_CONNECT(), port as i64, 0 as i64, to, u8[](), (Answer a) => connectedOf(h, a));
   }
 
   /**
@@ -4727,50 +2812,47 @@ export struct Net {
    * optional, so the surprising one is something somebody typed. Port 0 asks the host for any free one.
    */
   Ticket<Result<Listener, BindFault>> listen(this, string addr, i32 port) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    return hostTicket(cli.listen(addr, port), wait, (HostSocket s) => listeningOf(cli, wait, addr, s));
+    __WacHost h = this.host;
+    return hostAsk(h, OP_LISTEN(), port as i64, 0 as i64, addr, u8[](), (Answer a) => listeningOf(h, addr, a));
   }
 
   /** A datagram socket on `addr:port`, which one socket uses to talk to many peers. */
   Ticket<Result<Datagrams, BindFault>> bindDatagram(this, string addr, i32 port) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    return hostTicket(cli.bindDatagram(addr, port), wait, (HostSocket s) => boundOf(cli, wait, s));
+    __WacHost h = this.host;
+    return hostAsk(h, OP_BIND_DATAGRAM(), port as i64, 0 as i64, addr, u8[](), (Answer a) => boundOf(h, a));
   }
 }
 
-Result<Socket, ConnectFault> connectedOf(Cli cli, HostWait wait, HostSocket s) {
-  if (s.handle < 0) { return Result.Err(connectFault(s.fault, s.error)); }
-  return Result.Ok(Socket(cli, wait, s.handle, s.peer, s.port));
+Result<Socket, ConnectFault> connectedOf(__WacHost h, Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(connectFault(a.fault, a.text)); }
+  return Result.Ok(Socket(h, a.n as~ i32, a.text, a.m as~ i32));
 }
 
-Result<Listener, BindFault> listeningOf(Cli cli, HostWait wait, string addr, HostSocket s) {
-  if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
-  return Result.Ok(Listener(cli, wait, s.handle, addr + ":" + "\{s.port}", s.port));
+Result<Listener, BindFault> listeningOf(__WacHost h, string addr, Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(bindFault(a.fault, a.text)); }
+  i32 port = a.m as~ i32;
+  return Result.Ok(Listener(h, a.n as~ i32, addr + ":" + "\{port}", port));
 }
 
-Result<Datagrams, BindFault> boundOf(Cli cli, HostWait wait, HostSocket s) {
-  if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
-  return Result.Ok(Datagrams(cli, wait, s.handle, s.port));
+Result<Datagrams, BindFault> boundOf(__WacHost h, Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(bindFault(a.fault, a.text)); }
+  return Result.Ok(Datagrams(h, a.n as~ i32, a.m as~ i32));
 }
 
-Result<Socket, HostFault> acceptedOf(Cli cli, HostWait wait, HostSocket s) {
-  if (s.handle < 0) { return Result.Err(Other(s.error)); }
-  return Result.Ok(Socket(cli, wait, s.handle, s.peer, s.port));
+Result<Socket, HostFault> acceptedOf(__WacHost h, Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
+  return Result.Ok(Socket(h, a.n as~ i32, a.text, a.m as~ i32));
 }
 
-Result<Read, SocketFault> recvOf(Read c) {
-  match (c) {
-    Failed(why): { return Result.Err(Other(why)); }
-    default: { return Result.Ok(c); }
-  }
+Result<Read, SocketFault> recvOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
+  if (a.flags == 1) { return Result.Ok(Read.End); }
+  return Result.Ok(Read.Data(a.bytes));
 }
 
 /** A listening socket. */
 export struct Listener {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
   i32 handle;
   /** `"0.0.0.0:8080"`. */
   string addr;
@@ -4782,69 +2864,71 @@ export struct Listener {
    * a connection that ends before it is accepted is never reported.
    */
   Ticket<Result<Socket, HostFault>> accept(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    return hostTicket(cli.accept(this.handle), wait, (HostSocket s) => acceptedOf(cli, wait, s));
+    __WacHost h = this.host;
+    return hostAsk(h, OP_ACCEPT(), this.handle as i64, 0 as i64, "", u8[](), (Answer a) => acceptedOf(h, a));
   }
 
-  void close(this) { this.cli.closeSocket(this.handle); }
+  void close(this) { this.host.tell(OP_CLOSE_SOCKET(), this.handle as i64, 0 as i64, "", u8[]()); }
 }
 
 /** One connection (spec ch44 `§wac-std-socket-gs9parx`). */
 export struct Socket {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
   i32 handle;
   /** The other end's address, and its port. */
   string peer;
   i32 port;
 
   /** The next bytes, or the end. */
-  Ticket<Result<Read, SocketFault>> recv(this) { return hostTicket(this.cli.recv(this.handle), this.wait, recvOf); }
+  Ticket<Result<Read, SocketFault>> recv(this) {
+    return hostAsk(this.host, OP_RECV(), this.handle as i64, 0 as i64, "", u8[](), recvOf);
+  }
 
   /** Send `bytes`; a peer that has gone is `PeerClosed`, an ordinary fault a server handles. */
   Ticket<Result<void, SocketFault>> send(this, u8[] bytes) {
     string peer = this.peer;
-    return hostTicket(this.cli.send(this.handle, bytes), this.wait, (bool went) => sentOf(went, peer));
+    return hostAsk(this.host, OP_SEND(), this.handle as i64, 0 as i64, "", bytes, (Answer a) => sentOf(a, peer));
   }
 
   /** No more from this side; reading goes on. */
-  void closeSend(this) { this.cli.closeSend(this.handle); }
+  void closeSend(this) { this.host.tell(OP_CLOSE_SEND(), this.handle as i64, 0 as i64, "", u8[]()); }
 
-  void close(this) { this.cli.closeSocket(this.handle); }
+  void close(this) { this.host.tell(OP_CLOSE_SOCKET(), this.handle as i64, 0 as i64, "", u8[]()); }
 
   /** Whether the other end is this machine. */
   bool fromLoopback(const this) { return this.peer == "127.0.0.1" || this.peer == "::1" || this.peer == "localhost"; }
 }
 
-Result<void, SocketFault> sentOf(bool went, string peer) {
-  if (!went) { return Result.Err(PeerClosed(peer + ": the connection has closed")); }
+Result<void, SocketFault> sentOf(Answer a, string peer) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(PeerClosed(a.text == "" ? peer + ": the connection has closed" : a.text)); }
   return Result.Ok();
 }
 
 /** A datagram socket: no connection, the peer named on every send and arriving with every receive. */
 export struct Datagrams {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
   i32 handle;
   i32 port;
 
-  Ticket<Result<Datagram, HostFault>> receive(this) { return hostTicket(this.cli.receiveFrom(this.handle), this.wait, datagramOf); }
-
-  Ticket<Result<void, union<Unreachable, Unsupported, Other>>> sendTo(this, string host, i32 port, u8[] bytes) {
-    return hostTicket(this.cli.sendTo(this.handle, host, port, bytes), this.wait, (bool went) => sentToOf(went, host, port));
+  Ticket<Result<Datagram, HostFault>> receive(this) {
+    return hostAsk(this.host, OP_RECEIVE_FROM(), this.handle as i64, 0 as i64, "", u8[](), datagramOf);
   }
 
-  void close(this) { this.cli.closeSocket(this.handle); }
+  Ticket<Result<void, union<Unreachable, Unsupported, Other>>> sendTo(this, string to, i32 port, u8[] bytes) {
+    return hostAsk(this.host, OP_SEND_TO(), this.handle as i64, port as i64, to, bytes,
+                   (Answer a) => sentToOf(a, to, port));
+  }
+
+  void close(this) { this.host.tell(OP_CLOSE_SOCKET(), this.handle as i64, 0 as i64, "", u8[]()); }
 }
 
-Result<Datagram, HostFault> datagramOf(Datagram d) {
-  if (d.error != "") { return Result.Err(Other(d.error)); }
-  return Result.Ok(d);
+Result<Datagram, HostFault> datagramOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
+  return Result.Ok(Datagram(a.bytes, a.text, a.n as~ i32, ""));
 }
 
-Result<void, union<Unreachable, Unsupported, Other>> sentToOf(bool went, string host, i32 port) {
-  if (!went) { return Result.Err(Unreachable(host + ":" + "\{port}: the datagram was not sent")); }
+Result<void, union<Unreachable, Unsupported, Other>> sentToOf(Answer a, string to, i32 port) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(Unreachable(a.text == "" ? to + ":" + "\{port}: the datagram was not sent" : a.text)); }
   return Result.Ok();
 }
 
@@ -4943,25 +3027,22 @@ bool namedBy(string pair, string prefix) {
 
 /** Starting other programs (spec ch44). */
 export struct Procs {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
 
   /** Start the compiled module `wasm` with `args`, holding `given`. */
   Ticket<Result<Child, SpawnFault>> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
+    __WacHost h = this.host;
     Files? served = given.composedFiles() ? given.files : null;
-    return hostTicket(cli.spawn(wasm, bytesOf(args), given.grants(), how.cwd, how.flags(), served is not null), wait,
-                      (HostChild k) => childOf(cli, wait, k, served));
+    return hostAsk(h, OP_SPAWN(), given.grants() as i64, spawnFlags(how, served is not null) as i64, how.cwd,
+                   spawnBytes(wasm, args), (Answer a) => childOf(h, a, served));
   }
 
   /** Start another instance of this program — its `main`, with `args` — holding `given`. Needs the grant as `spawn` does. */
   Ticket<Result<Child, SpawnFault>> spawnSelf(this, string[] args, Authority given, Launch how) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
+    __WacHost h = this.host;
     Files? served = given.composedFiles() ? given.files : null;
-    return hostTicket(cli.spawnSelf(bytesOf(args), given.grants(), how.cwd, how.flags(), served is not null), wait,
-                      (HostChild k) => childOf(cli, wait, k, served));
+    return hostAsk(h, OP_SPAWN_SELF(), given.grants() as i64, spawnFlags(how, served is not null) as i64, how.cwd,
+                   spawnBytes(u8[](), args), (Answer a) => childOf(h, a, served));
   }
 
   /**
@@ -4969,21 +3050,73 @@ export struct Procs {
    * Its output comes back whole unless `how.inheritOut`, when it went to this program's own.
    */
   Ticket<Result<Exec, SpawnFault>> exec(this, string program, string[] args, u8[] input, ChildEnv env, Launch how) {
-    return hostTicket(this.cli.execWithIn(program, args, input, env.pairs, env.clean, how.inheritOut, how.cwd), this.wait, ranOf);
+    i64 flags = ((env.clean ? 1 : 0) | (how.inheritOut ? 2 : 0)) as i64;
+    return hostAsk(this.host, OP_EXEC(), flags, 0 as i64, how.cwd, execBytes(program, args, input, env.pairs), ranOf);
   }
 }
 
-/** The started child — and, when it was handed a composed `Files`, this program serving it from now until it ends. */
-Result<Child, SpawnFault> childOf(Cli cli, HostWait wait, HostChild k, Files? served) {
-  if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
-  if (served is null) { return Result.Ok(Child(cli, wait, k.handle, k.errHandle, null, null)); }
-  Ticket<bool> stopping;
-  return Result.Ok(Child(cli, wait, k.handle, k.errHandle, serveFiles(cli, wait, k.fsHandle, served!, stopping), stopping));
+/** `OP_SPAWN`'s and `OP_SPAWN_SELF`'s `b`: the launch flags, and whether this program serves the child files. */
+export static i32 SPAWN_SERVES = 256;
+
+i32 spawnFlags(Launch how, bool serves) { return how.flags() | (serves ? SPAWN_SERVES : 0); }
+
+/** A u32 length and that many bytes — how a payload of several parts is laid out in a request's `bytes`. */
+void putPart(Buf out, u8[] b) {
+  out.pushU32(b.len() as@ u32);
+  out.pushAll(b);
 }
 
-Result<Exec, SpawnFault> ranOf(Exec r) {
-  if (!r.ran()) { return Result.Err(r.error == faultWords(FAULT_NOT_GRANTED()) ? NotGranted(r.error) : Other(r.error)); }
-  return Result.Ok(r);
+/** `OP_SPAWN`'s and `OP_SPAWN_SELF`'s `bytes`: the module (empty for this program), then each argument. */
+u8[] spawnBytes(u8[] wasm, string[] args) {
+  Buf out = Buf.create();
+  putPart(out, wasm);
+  out.pushU32(args.len() as@ u32);
+  for (i32 i = 0; i < args.len(); i++) { putPart(out, args[i].toBytes()); }
+  return out.take();
+}
+
+/** `OP_EXEC`'s `bytes`: the program, its arguments, its input, and the `NAME=value` pairs set over its environment. */
+u8[] execBytes(string program, string[] args, u8[] input, string[] pairs) {
+  Buf out = Buf.create();
+  putPart(out, program.toBytes());
+  out.pushU32(args.len() as@ u32);
+  for (i32 i = 0; i < args.len(); i++) { putPart(out, args[i].toBytes()); }
+  putPart(out, input);
+  out.pushU32(pairs.len() as@ u32);
+  for (i32 i = 0; i < pairs.len(); i++) { putPart(out, pairs[i].toBytes()); }
+  return out.take();
+}
+
+/**
+ * The started child — and, when it was handed a composed `Files`, this program serving it from now until it ends.
+ * `m` packs the error stream's handle (low 32) and the served-files channel's (high 32).
+ */
+Result<Child, SpawnFault> childOf(__WacHost h, Answer a, Files? served) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(spawnFaultOf(a.fault, a.text)); }
+  i32 handle = a.n as~ i32;
+  i32 errHandle = (a.m & (4294967295 as i64)) as~ i32;
+  i32 fsHandle = (a.m >> 32) as~ i32;
+  if (served is null) { return Result.Ok(Child(h, handle, errHandle, null, null)); }
+  Ticket<bool> stopping;
+  return Result.Ok(Child(h, handle, errHandle, serveFiles(h, fsHandle, served!, stopping), stopping));
+}
+
+SpawnFault spawnFaultOf(i32 code, string m) {
+  if (code == FAULT_NOT_GRANTED()) { return NotGranted(m); }
+  if (code == FAULT_UNSUPPORTED()) { return Unsupported(m); }
+  return Other(m);
+}
+
+/** A run of a host program: `n` its status, `bytes` its output then its diagnostic output, split at `m`. */
+Result<Exec, SpawnFault> ranOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(spawnFaultOf(a.fault, a.text)); }
+  i32 split = a.m as~ i32;
+  if (split < 0 || split > a.bytes.len()) { split = a.bytes.len(); }
+  u8[] out = u8[].filled(split, 0);
+  out.copyFrom(a.bytes, 0, 0, split);
+  u8[] err = u8[].filled(a.bytes.len() - split, 0);
+  err.copyFrom(a.bytes, split, 0, a.bytes.len() - split);
+  return Result.Ok(Exec(a.n as~ i32, out, err, ""));
 }
 
 /**
@@ -4995,16 +3128,9 @@ Unsupported composedRefused() {
                      + "thread and so cannot be served; spawn it instead");
 }
 
-u8[][] bytesOf(string[] args) {
-  u8[][] out = u8[][].defaulted(args.len());
-  for (i32 i = 0; i < args.len(); i++) { out[i] = args[i].toBytes(); }
-  return out;
-}
-
 /** A running child (spec ch44). */
 export struct Child {
-  Cli cli;
-  HostWait wait;
+  __WacHost host;
   i32 handle;
   i32 errHandle;
   /** This program answering the child's file questions, when it was handed a composed `Files`; done once the child is. */
@@ -5013,32 +3139,22 @@ export struct Child {
   Ticket<bool>? stopServing;
 
   /** What it writes to its output, unless that was inherited. */
-  Input output(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    i32 h = this.handle;
-    return Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h), nothingToClose);
-  }
+  Input output(this) { return handleInput(this.host, this.handle, nothingToClose); }
 
   /** What it writes to its diagnostic output, unless that was inherited. */
-  Input errors(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    i32 h = this.errHandle;
-    return Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h), nothingToClose);
-  }
+  Input errors(this) { return handleInput(this.host, this.errHandle, nothingToClose); }
 
   /** Its input, unless inherited. Closing it ends the child's input without stopping the child. */
   Output input(this) {
-    Cli cli = this.cli;
-    HostWait wait = this.wait;
-    i32 h = this.handle;
-    return Output((u8[] b) => hostTicket(cli.send(h, b), wait, fedOf), () => endFeed(cli, h));
+    __WacHost h = this.host;
+    i32 handle = this.handle;
+    return Output((u8[] b) => hostAsk(h, OP_SEND(), handle as i64, 0 as i64, "", b, fedOf), () => endFeed(h, handle));
   }
 
   /** Its status when it ends — and, when this program serves it files, once the serving has ended too. */
   Ticket<Result<i32, HostFault>> exit(this) {
-    Ticket<Result<i32, HostFault>> code = hostTicket(this.cli.exitCode(this.handle), this.wait, exitedOf);
+    Ticket<Result<i32, HostFault>> code = hostAsk(this.host, OP_EXIT_CODE(), this.handle as i64, 0 as i64, "", u8[](),
+                                                  exitedOf);
     if (this.serving is null) { return code; }
     return exitAfterServing(code, this.serving!);
   }
@@ -5049,7 +3165,7 @@ export struct Child {
    * of the dead channel still registered, which the JavaScript hosts refuse (`stoppedserved_probe.wac`).
    */
   void stop(this) {
-    this.cli.closeSocket(this.handle);
+    this.host.tell(OP_CLOSE_SOCKET(), this.handle as i64, 0 as i64, "", u8[]());
     Ticket<bool>? s = this.stopServing;
     if (s is null || s!.settled()) { return; }
     s!.resolve(true);
@@ -5064,67 +3180,357 @@ async Result<i32, HostFault> exitAfterServing(Ticket<Result<i32, HostFault>> cod
   return status;
 }
 
-Result<i32, HostFault> exitedOf(i32 code) {
-  if (code < 0) { return Result.Err(Other("the child did not run to an end")); }
-  return Result.Ok(code);
+Result<i32, HostFault> exitedOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  if (a.n < 0 as i64) { return Result.Err(Other("the child did not run to an end")); }
+  return Result.Ok(a.n as~ i32);
 }
 
-async Result<u8[], HostFault> streamAll(Cli cli, i32 h) {
-  u8[] all = u8[]();
+async Result<u8[], HostFault> streamAll(__WacHost host, i32 h) {
+  Buf all = Buf.create();
   while (true) {
-    Read c = await cli.recv(h).ticket();
-    match (c) {
-      Data(bytes): {
-        u8[] grown = u8[].filled(all.len() + bytes.len(), 0);
-        grown.copyFrom(all, 0, 0, all.len());
-        grown.copyFrom(bytes, 0, all.len(), bytes.len());
-        all = grown;
-      }
-      End: { return Result.Ok(all); }
-      Failed(why): { return Result.Err(Other(why)); }
+    Result<Read, HostFault> c = await hostAsk(host, OP_RECV(), h as i64, 0 as i64, "", u8[](), readOf);
+    if (c.isErr()) { return Result.Err(c.err()!); }
+    match (c.unwrap()) {
+      Data(bytes): { all.pushAll(bytes); }
+      default: { return Result.Ok(all.take()); }
     }
   }
 }
 
-async Result<void, OutputFault> endFeed(Cli cli, i32 h) {
-  cli.closeFeed(h);
+async Result<void, OutputFault> endFeed(__WacHost host, i32 h) {
+  host.tell(OP_CLOSE_FEED(), h as i64, 0 as i64, "", u8[]());
   return Result.Ok();
 }
 
-Result<void, OutputFault> fedOf(bool went) {
-  if (!went) { return Result.Err(OutputClosed("the child's input has closed")); }
+Result<void, OutputFault> fedOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(OutputClosed(a.text == "" ? "the child's input has closed" : a.text)); }
   return Result.Ok();
 }
 
 /** Loading wasm modules into this instance (spec ch44 `§wac-std-module-same-thread-q8d2kzm`). */
 export struct Modules {
-  Cli cli;
+  __WacHost host;
 
   /** Load `wasm`, holding `given`. It runs on this thread when called. */
   Result<Module, union<Unsupported, Other>> load(this, u8[] wasm, Authority given) {
     if (given.composedFiles()) { return Result.Err(composedRefused()); }
-    LoadedModule m = this.cli.load(wasm, given.grants());
-    if (m.handle == 0 - 2) { return Result.Err(Unsupported(m.error)); }
-    if (m.handle < 0) { return Result.Err(Other(m.error)); }
-    return Result.Ok(Module(this.cli, m.handle));
+    __WacHost h = this.host;
+    fn<Result<Module, union<Unsupported, Other>>(Answer)> decode = (Answer a) => loadedOf(h, a);
+    Ticket<Result<Module, union<Unsupported, Other>>> t = hostAsk(h, OP_LOAD(), given.grants() as i64, 0 as i64, "", wasm, decode);
+    Result<Result<Module, union<Unsupported, Other>>, Stuck> r = t.wait();
+    if (r.isErr()) { return Result.Err(Other("this host answers a load later, and a load is answered at once")); }
+    return r.unwrap();
   }
 
   /** Whether `wasm` is a module this engine accepts; the engine's sentence when not. */
   Result<void, union<Unsupported, Other>> validate(this, u8[] wasm) {
-    string why = this.cli.validated(wasm);
-    if (why == "") { return Result.Ok(); }
-    if (why == faultWords(FAULT_UNSUPPORTED())) { return Result.Err(Unsupported(why)); }
-    return Result.Err(Other(why));
+    Result<Result<void, union<Unsupported, Other>>, Stuck> r =
+      hostAsk(this.host, OP_VALIDATE(), 0 as i64, 0 as i64, "", wasm, validatedOf).wait();
+    if (r.isErr()) { return Result.Err(Other("this host answers a validation later, and one is answered at once")); }
+    return r.unwrap();
   }
+}
+
+Result<Module, union<Unsupported, Other>> loadedOf(__WacHost h, Answer a) {
+  if (a.fault == FAULT_UNSUPPORTED()) { return Result.Err(Unsupported(a.text)); }
+  if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
+  return Result.Ok(Module(h, a.n as~ i32));
+}
+
+Result<void, union<Unsupported, Other>> validatedOf(Answer a) {
+  if (a.fault == FAULT_UNSUPPORTED()) { return Result.Err(Unsupported(a.text)); }
+  if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
+  return Result.Ok();
 }
 
 /** A loaded module. */
 export struct Module {
-  Cli cli;
+  __WacHost host;
   i32 handle;
 
-  /** Call the export `name` with `arg`. A trap is an answer (`CallResult.trapped`), not a fault. */
-  Result<CallResult, HostFault> call(this, string name, i32 arg) { return Result.Ok(this.cli.call(this.handle, name, arg)); }
+  /**
+   * Call the export `name` with `arg`. A trap is an answer (`CallResult.trapped`), not a fault: `flags` the status,
+   * `n` the value, `text` the message.
+   */
+  Result<CallResult, HostFault> call(this, string name, i32 arg) {
+    Result<Result<CallResult, HostFault>, Stuck> r =
+      hostAsk(this.host, OP_CALL(), this.handle as i64, arg as i64, name, u8[](), calledOf).wait();
+    if (r.isErr()) { return Result.Err(Other("this host answers a call later, and a call is answered at once")); }
+    return r.unwrap();
+  }
 
-  void unload(this) { this.cli.unload(this.handle); }
+  void unload(this) { this.host.tell(OP_UNLOAD(), this.handle as i64, 0 as i64, "", u8[]()); }
 }
+
+Result<CallResult, HostFault> calledOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Result.Err(hostFaultOf(a.fault, a.text)); }
+  return Result.Ok(CallResult(a.flags, a.text, a.n as~ i32));
+}
+
+
+/** What a host answers a request with: one shape for every request. `fault` is a `FAULT_*` category, 0 for none. */
+export struct Answer {
+  i32 fault;
+  string text;
+  u8[] bytes;
+  i64 n;
+  i64 m;
+  i32 flags;
+}
+
+/**
+ * The host's calls, and this program's requests in flight — what `__wacHost` hands the host to hold.
+ *
+ * **It holds no handle**, and must not: an exported type is kept whole, so a `Sys` here would carry every
+ * handle into every program. The handles are built over it inside `main`.
+ */
+export struct __WacHost {
+  /** Ask: `request(op, id, a, b, text, bytes)`. `id` is 0 for a request nobody answers. */
+  fn<void(i32, i32, i64, i64, string, u8[])> request;
+  /** Block until one of `ids` is answered — having delivered it through `answered` — and say which; -1 for none. */
+  fn<i32(i32[], i32)> waitAny;
+  fn<void(i32)> exitWith;
+  fn<bool()> interrupted;
+  /** Each request in flight, and what settles its ticket. */
+  Map<i32, fn<void(Answer)>> pending;
+  i32 last;
+  /** Whether the last wait stopped because the host cannot wait rather than because nothing answered. */
+  bool yielded;
+  /** The continuations nobody awaited — the program's schedule target (spec ch35), run by `drain`. */
+  Queue<Continuation> queued;
+
+  /**
+   * The host's four calls, as the program adapter's `__wacHost` is handed them — and the schedule target, set
+   * here once, so a machine that suspends with nobody awaiting it is queued rather than dropped.
+   */
+  __WacHost of(fn<void(i32, i32, i64, i64, string, u8[])> request, fn<i32(i32[], i32)> waitAny, fn<void(i32)> exitWith,
+               fn<bool()> interrupted) {
+    Queue<Continuation> queued;
+    __WacHost h = __WacHost(request, waitAny, exitWith, interrupted, Map.create(hashI32, i32Eq), 0, false, queued);
+    if (__wacScheduleTarget() is null) { __wacSetScheduleTarget(h.queued.push); }
+    return h;
+  }
+
+  /**
+   * Run continuations until none are outstanding, stopping early once `until` has settled (null: no such stop)
+   * or `millis` has passed (below zero: no bound). Ready continuations first; when none could run, one wait over
+   * every request in flight, which delivers what has arrived through `answered`. Answers how many waits answered.
+   */
+  i32 drainUntil(this, i32 millis, TicketBase? until) {
+    bool bounded = millis >= 0;
+    i64 deadline = 0 as i64;
+    if (bounded) { deadline = this.nanos() + millisToNanos(millis); }
+    i32 ran = 0;
+    while (true) {
+      if (until is not null && until!.done) { return ran; }
+      Queue<Continuation> later;
+      bool moved = false;
+      while (true) {
+        Continuation? c = this.queued.pop();
+        if (c is null) { break; }
+        // One a `wait` already ran past does nothing when called, and is not work left.
+        if (!c!.current()) { continue; }
+        TicketBase? on = c!.t;
+        if (on is null || on!.done) {
+          c!.call();
+          moved = true;
+        } else {
+          later.push(c!);
+        }
+      }
+      while (true) {
+        Continuation? back = later.pop();
+        if (back is null) { break; }
+        this.queued.push(back!);
+      }
+      if (moved) { continue; }
+      if (this.pending.len() == 0) { return ran; }
+      i32 budget = 0 - 1;
+      if (bounded) {
+        i64 left = deadline - this.nanos();
+        if (left <= 0 as i64) { return ran; }
+        budget = (left / (1000000 as i64)) as! i32;
+      }
+      if (this.waitFor(this.inFlight(), budget) < 0) { return ran; }
+      ran = ran + 1;
+    }
+    return ran;
+  }
+
+  /** The monotonic clock, for a drain's deadline; 0 where the host has none. */
+  i64 nanos(this) {
+    Result<Result<i64, union<Unsupported>>, Stuck> r = hostAsk(this, OP_MONOTONIC_NANOS(), 0 as i64, 0 as i64, "", u8[](), timeOf).wait();
+    if (r.isErr()) { return 0 as i64; }
+    return r.unwrap().orElse(0 as i64);
+  }
+
+  /** How many queued continuations are still current, dropping the ones a `wait` ran past. */
+  i32 liveQueued(this) {
+    Queue<Continuation> kept;
+    i32 live = 0;
+    while (true) {
+      Continuation? c = this.queued.pop();
+      if (c is null) { break; }
+      if (!c!.current()) { continue; }
+      kept.push(c!);
+      live = live + 1;
+    }
+    while (true) {
+      Continuation? c = kept.pop();
+      if (c is null) { break; }
+      this.queued.push(c!);
+    }
+    return live;
+  }
+
+  /** How much work is outstanding — what the program adapter asks when `main` returns. */
+  i32 outstanding(this) { return this.pending.len() + this.liveQueued(); }
+
+
+
+  /** A request nobody answers — a write to a stream, a close. */
+  void tell(this, i32 op, i64 a, i64 b, string text, u8[] bytes) { this.request(op, 0, a, b, text, bytes); }
+
+  /** `waitAny`, noting a host that cannot wait. */
+  i32 waitFor(this, i32[] ids, i32 millis) {
+    i32 which = this.waitAny(ids, millis);
+    if (which == HOST_CANNOT_WAIT()) { this.yielded = true; }
+    return which;
+  }
+
+  /** The ids in flight, for a wait over all of them. */
+  i32[] inFlight(const this) { return this.pending.keys(); }
+}
+
+/**
+ * Ask the host, and answer a ticket of what `decode` makes of the answer. A host that can answer at once
+ * does so from inside `request`, so the ticket can be settled before this returns.
+ */
+Ticket<U> hostAsk<U>(__WacHost host, i32 op, i64 a, i64 b, string text, u8[] bytes, fn<U(Answer)> decode) {
+  host.last = host.last + 1;
+  i32 id = host.last;
+  Ticket<U> t;
+  __WacHost h = host;
+  host.pending.set(id, (Answer x) => { if (!t.done) { t.resolve(decode(x)); } });
+  t.hostId = id;
+  t.waitHost = (i32[] ids, i32 millis) => h.waitFor(ids, millis);
+  // **An answer nobody has read is still the host's** (operator, 2026-10-28): dropping a request the host
+  // has answered closes what it answered — the socket, the child — rather than leaving it to leak.
+  t.release = () => {
+    h.pending.remove(id);
+    h.request(OP_DROP(), id, 0 as i64, 0 as i64, "", u8[]());
+  };
+  t.drive = () => {
+    while (!t.done) {
+      if (h.waitFor([id], 0 - 1) < 0) { return false; }
+    }
+    return true;
+  };
+  host.request(op, id, a, b, text, bytes);
+  return t;
+}
+/** The host answered request `id`. Called by the host, only from inside `request` or `waitAny`. */
+export void answered(__WacHost h, i32 id, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
+  fn<void(Answer)>? settle = h.pending.get(id);
+  // A request dropped since it was asked: the host closed what it answered, and nothing waits for it.
+  if (settle is null) { return; }
+  h.pending.remove(id);
+  settle!(Answer(fault, text, bytes, n, m, flags));
+}
+
+/** Withdraw request `id`: the host closes what it answered if the program has not read it. */
+export i32 OP_DROP() { return 0; }
+
+// The requests, numbered as the JavaScript hosts' bridge has always numbered them (`host/ops.ts`), with what each
+// takes in `a`, `b`, `text` and `bytes` and what its answer carries. A host implements exactly this table.
+// Every answer may instead carry a `fault` with the host's words in `text`.
+
+/** → `n`: wall-clock milliseconds since the epoch. */
+export i32 OP_NOW_MILLIS() { return 1; }
+/** → `n`: nanoseconds from an arbitrary origin, never decreasing. */
+export i32 OP_MONOTONIC_NANOS() { return 2; }
+/** `a` count → `bytes`: that many random bytes. */
+export i32 OP_RANDOM_BYTES() { return 3; }
+/** → `n`: how many arguments. */
+export i32 OP_ARG_COUNT() { return 6; }
+/** `a` index → `bytes`: that argument, exactly as given. */
+export i32 OP_ARG() { return 7; }
+/** `text` name → `bytes` its value, `flags` 1 when set. */
+export i32 OP_ENV() { return 8; }
+/** `text` path → `bytes`: the file. */
+export i32 OP_READ_FILE() { return 9; }
+/** `text` path, `bytes` contents. */
+export i32 OP_WRITE_FILE() { return 10; }
+/** → `bytes`: standard input, to its end. */
+export i32 OP_READ_STDIN() { return 11; }
+/** `bytes`: written to standard output. → nothing, or a `fault` when it could not be. */
+export i32 OP_WRITE_STDOUT() { return 12; }
+/** `text` path → `n` size, `m` modified ms, `flags` kind bits (`STAT_*`) with the mode in the high 16, `text` owner. */
+export i32 OP_STAT() { return 13; }
+/** `text` path → `bytes`: the names, each followed by a NUL. */
+export i32 OP_READ_DIR() { return 14; }
+/** `text` path, `a` 1 for every missing parent too. */
+export i32 OP_MKDIR() { return 15; }
+/** `text` path, `a` 1 for a whole tree. */
+export i32 OP_REMOVE() { return 16; }
+/** `text` from, `bytes` to. */
+export i32 OP_RENAME() { return 17; }
+/** → `bytes` the next chunk of standard input, `flags` 1 at its end. */
+export i32 OP_READ_CHUNK() { return 19; }
+/** `text` host, `a` port → `n` handle, `m` port, `text` peer. */
+export i32 OP_CONNECT() { return 21; }
+/** `text` address, `a` port → `n` handle, `m` the port bound. */
+export i32 OP_LISTEN() { return 22; }
+/** `a` listener → `n` handle, `m` port, `text` peer. */
+export i32 OP_ACCEPT() { return 23; }
+/** `a` handle → `bytes` the next chunk, `flags` 1 at its end. */
+export i32 OP_RECV() { return 24; }
+/** `a` handle, `bytes` → nothing, or `PeerClosed`. */
+export i32 OP_SEND() { return 25; }
+/** `a` handle. Nobody answers. */
+export i32 OP_CLOSE_SOCKET() { return 26; }
+/** `bytes` the module then the arguments (`spawnBytes`), `text` cwd, `a` grants, `b` flags → as `OP_SPAWN_SELF`. */
+export i32 OP_SPAWN() { return 27; }
+/** `a` child → `n`: its exit status. */
+export i32 OP_EXIT_CODE() { return 28; }
+/** `a` child: its input ends. Nobody answers. */
+export i32 OP_CLOSE_FEED() { return 29; }
+/** `a` milliseconds → `n`: the monotonic clock when it woke. */
+export i32 OP_SLEEP_MILLIS() { return 30; }
+/** → `text`: the directory relative paths resolve from. */
+export i32 OP_CWD() { return 41; }
+/** `text` path → as `OP_STAT`, of a link itself rather than what it names. */
+export i32 OP_LINK_STAT() { return 47; }
+/** `bytes`: written to standard error. → nothing, or a `fault`. */
+export i32 OP_WRITE_STDERR() { return 48; }
+/** `bytes` the arguments (`spawnBytes`), `text` cwd, `a` grants, `b` flags → `n` handle, `m` the error stream's handle and the served-files channel's, packed. */
+export i32 OP_SPAWN_SELF() { return 49; }
+/** `text` path, `a` 1 to set. */
+export i32 OP_SET_EXECUTABLE() { return 52; }
+/** `text` address, `a` port → `n` handle, `m` the port bound. */
+export i32 OP_BIND_DATAGRAM() { return 53; }
+/** `a` handle → `bytes`, `text` peer, `n` its port. */
+export i32 OP_RECEIVE_FROM() { return 54; }
+/** `a` handle, `b` port, `text` host, `bytes`. */
+export i32 OP_SEND_TO() { return 55; }
+/** `a` handle: this side sends no more. Nobody answers. */
+export i32 OP_CLOSE_SEND() { return 57; }
+/** `bytes` program, arguments, input and environment (`execBytes`), `text` cwd, `a` flags → `n` status, `bytes` stdout then stderr, `m` where stderr starts. */
+export i32 OP_EXEC() { return 59; }
+/** `text` path, `a` mode bits. */
+export i32 OP_CHMOD() { return 60; }
+/** `text` path, `a` how (0 read, 1 write, 2 append) → `n` handle. */
+export i32 OP_OPEN_FILE() { return 61; }
+/** `a` handle. */
+export i32 OP_CLOSE_FILE() { return 62; }
+/** `a` 1 for standard error: that stream ends while the program runs on. */
+export i32 OP_CLOSE_OUTPUT() { return 63; }
+/** `bytes` a module, `a` grants → `n` its handle. Answered at once. */
+export i32 OP_LOAD() { return 64; }
+/** `a` handle, `b` the argument, `text` the export → `flags` status, `n` value, `text` message. Answered at once. */
+export i32 OP_CALL() { return 65; }
+/** `a` handle. Nobody answers. */
+export i32 OP_UNLOAD() { return 66; }
+/** `bytes` a module → nothing, or the engine's sentence as a fault. Answered at once. */
+export i32 OP_VALIDATE() { return 67; }

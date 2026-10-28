@@ -24,7 +24,7 @@
 // test writing the real path would be a second writer on the file the run around it is about to
 // write.
 
-import { Change, Exec, execReason, ChildEnv, Env, Files, Procs, Sys, Launch } from "std";
+import { Exec, execReason, ChildEnv, Env, Files, Procs, Sys, Launch } from "std";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, freshDir } from "../../packages/wactest/src/host.wac";
 import { contains, splitLines, startsWith, trimmed } from "../../packages/wactest/src/strings.wac";

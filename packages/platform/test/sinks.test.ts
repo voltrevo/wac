@@ -93,10 +93,8 @@ function world(which: (typeof HOSTS)[number], sinks: Sinks): Handlers {
 Deno.test("a world waits for the sink it was given, so a rejection is the op's and not the process's", async () => {
   const refuse = () => Promise.reject(new Error("the child's output is not being read"));
   for (const which of HOSTS) {
-    const w = world(which, { log: refuse, warn: refuse, write: refuse, writeErr: refuse });
+    const w = world(which, { warn: refuse, write: refuse, writeErr: refuse });
     for (const [op, payload, why] of [
-      [OP.LOG, str("a line"), "log"],
-      [OP.WARN, str("a warning"), "warn"],
       [OP.WRITE_STDOUT, new Uint8Array([0x61]), "write"],
       [OP.WRITE_STDERR, new Uint8Array([0x61]), "writeErr"],
     ] as Array<[number, Uint8Array, string]>) {

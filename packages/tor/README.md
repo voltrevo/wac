@@ -712,7 +712,7 @@ fetch that failed cannot report success. Progress goes to the error channel and 
 what the work produced — so the redirection above yields the fetched document and nothing else. On a
 quiet machine the whole thing takes about a second.
 
-**It cannot start a C tor.** `Cli.spawn` takes a worker bundle and this world has deliberately no
+**It cannot start a C tor.** `Procs.spawn` takes a wasm module and this world has deliberately no
 capability for running an arbitrary binary, so the C tor half of the interop matrix stays a shell
 script. What this covers is a network with no C in it, which is step 5's condition:
 

@@ -16,7 +16,7 @@
 // variables the fixture set are gone with the environment, and nothing here reads a commit's date.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 import { flatten } from "core";

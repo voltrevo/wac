@@ -37,7 +37,7 @@
 // nothing else — which is what `issues/system/0182` argued for and what closed it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Launch, Procs } from "std";
+import { Exec, ChildEnv, Launch, Procs } from "std";
 import { Buf, flatten } from "core";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";

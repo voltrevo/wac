@@ -15,7 +15,7 @@
 // replay keeps a handful of cases live as a canary, which is what a wholesale change of environment would
 // trip; a subtler one is caught when somebody re-runs this and reads the diff.
 
-import { Change, Cli, Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
+import { Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
 import { Buf, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { ErrCase, Fixture, cases, fixtures, operandCases, operandErrorCases, operandErrorFixtures,

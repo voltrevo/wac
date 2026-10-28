@@ -22,14 +22,15 @@ import {
   test_the_bridge_chunks_in_both_directions as chun__the_bridge_chunks_in_both_directions,
 } from "./wac/chunking_test.wac";
 import {
-  test_the_readmes_capability_table_lists_every_capability_there_is as conf__the_readmes_capability_table_lists_every_capability_there_is,
-  test_every_capability_the_language_declares_the_host_with_no_js_supplies as conf__every_capability_the_language_declares_the_host_with_no_js_supplies,
+  test_the_readmes_request_table_lists_every_request_there_is as conf__the_readmes_request_table_lists_every_request_there_is,
+  test_the_bridge_numbers_every_request_as_std_does as conf__the_bridge_numbers_every_request_as_std_does,
+  test_every_request_std_numbers_the_host_with_no_js_answers as conf__every_request_std_numbers_the_host_with_no_js_answers,
   test_every_opcode_on_the_two_host_surface_is_accounted_for as conf__every_opcode_on_the_two_host_surface_is_accounted_for,
   test_the_ledger_says_how_much_of_the_surface_is_actually_compared as conf__the_ledger_says_how_much_of_the_surface_is_actually_compared,
 } from "./wac/conformance_test.wac";
 import {
   test_a_program_handed_sys_is_described_by_the_world as decl__a_program_handed_sys_is_described_by_the_world,
-  test_and_one_that_asks_for_two_is_described_by_two as decl__and_one_that_asks_for_two_is_described_by_two,
+  test_and_a_program_that_takes_nothing_is_handed_nothing as decl__and_a_program_that_takes_nothing_is_handed_nothing,
 } from "./wac/declared_test.wac";
 import {
   test_a_wac_program_echoes_datagrams_on_the_deno_host as echo__a_wac_program_echoes_datagrams_on_the_deno_host,
@@ -89,7 +90,7 @@ import {
 } from "./wac/native_shell_test.wac";
 import {
   test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not as nati5__the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not,
-  test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy as nati5__the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy,
+  test_the_manifest_carries_the_host_calls_in_their_order as nati5__the_manifest_carries_the_host_calls_in_their_order,
   test_running_a_host_program_agrees_between_the_two_native_hosts as nati5__running_a_host_program_agrees_between_the_two_native_hosts,
 } from "./wac/native_test.wac";
 import {
@@ -104,9 +105,6 @@ import {
   test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one as opti__an_optimised_build_is_a_different_artifact_not_a_cache_hit_on_the_plain_one,
   test_a_coverage_build_refuses_to_be_optimised as opti__a_coverage_build_refuses_to_be_optimised,
 } from "./wac/optimize_test.wac";
-import {
-  test_clis_fields_and_the_providers_arguments_are_in_the_same_order as orde__clis_fields_and_the_providers_arguments_are_in_the_same_order,
-} from "./wac/order_test.wac";
 import {
   test_a_peer_that_says_nothing_no_longer_wedges_the_application as pati__a_peer_that_says_nothing_no_longer_wedges_the_application,
   test_a_peer_that_speaks_late_is_still_heard as pati__a_peer_that_speaks_late_is_still_heard,
@@ -129,25 +127,6 @@ import {
   test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take as runt__and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take,
   test_the_two_runtimes_agree_about_running_a_host_program as runt__the_two_runtimes_agree_about_running_a_host_program,
 } from "./wac/runtimes_test.wac";
-import {
-  test_dispatch_in_the_order_answered as sche__dispatch_in_the_order_answered,
-  test_a_handler_can_register_more as sche__a_handler_can_register_more,
-  test_a_deadline_returns_what_ran as sche__a_deadline_returns_what_ran,
-  test_a_budget_shrinks_across_waits as sche__a_budget_shrinks_across_waits,
-  test_a_spent_budget_stops_the_loop as sche__a_spent_budget_stops_the_loop,
-  test_drain_for_leaves_the_rest_outstanding as sche__drain_for_leaves_the_rest_outstanding,
-  test_drop_all_releases_each_ticket as sche__drop_all_releases_each_ticket,
-  test_drop_all_clears_before_it_drops as sche__drop_all_clears_before_it_drops,
-  test_the_handler_carries_the_type as sche__the_handler_carries_the_type,
-} from "./wac/sched_test.wac";
-import {
-  test_then_returns_now_and_the_continuations_run_inside_drain as sche2__then_returns_now_and_the_continuations_run_inside_drain,
-  test_leaving_with_work_outstanding_is_an_error as sche2__leaving_with_work_outstanding_is_an_error,
-  test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest as sche2__a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest,
-  test_a_continuation_on_an_ordinary_capabilitys_ticket as sche2__a_continuation_on_an_ordinary_capabilitys_ticket,
-  test_dropall_makes_leaving_deliberate as sche2__dropall_makes_leaving_deliberate,
-  test_waitany_answers_the_first_ready_ticket_in_the_callers_list as sche2__waitany_answers_the_first_ready_ticket_in_the_callers_list,
-} from "./wac/scheduled_test.wac";
 import {
   test_platform_wacs_call_slots_is_the_rings_real_size as slot__platform_wacs_call_slots_is_the_rings_real_size,
 } from "./wac/slots_test.wac";
@@ -223,12 +202,16 @@ export i32 main(Sys sys) {
     err.line("error: FAILED chunking_test test_the_bridge_chunks_in_both_directions");
     bad = bad + 1;
   }
-  if (conf__the_readmes_capability_table_lists_every_capability_there_is(sys).len() > 0) {
-    err.line("error: FAILED conformance_test test_the_readmes_capability_table_lists_every_capability_there_is");
+  if (conf__the_readmes_request_table_lists_every_request_there_is(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_the_readmes_request_table_lists_every_request_there_is");
     bad = bad + 1;
   }
-  if (conf__every_capability_the_language_declares_the_host_with_no_js_supplies(sys).len() > 0) {
-    err.line("error: FAILED conformance_test test_every_capability_the_language_declares_the_host_with_no_js_supplies");
+  if (conf__the_bridge_numbers_every_request_as_std_does(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_the_bridge_numbers_every_request_as_std_does");
+    bad = bad + 1;
+  }
+  if (conf__every_request_std_numbers_the_host_with_no_js_answers(sys).len() > 0) {
+    err.line("error: FAILED conformance_test test_every_request_std_numbers_the_host_with_no_js_answers");
     bad = bad + 1;
   }
   if (conf__every_opcode_on_the_two_host_surface_is_accounted_for(sys).len() > 0) {
@@ -243,8 +226,8 @@ export i32 main(Sys sys) {
     err.line("error: FAILED declared_test test_a_program_handed_sys_is_described_by_the_world");
     bad = bad + 1;
   }
-  if (decl__and_one_that_asks_for_two_is_described_by_two(sys).len() > 0) {
-    err.line("error: FAILED declared_test test_and_one_that_asks_for_two_is_described_by_two");
+  if (decl__and_a_program_that_takes_nothing_is_handed_nothing(sys).len() > 0) {
+    err.line("error: FAILED declared_test test_and_a_program_that_takes_nothing_is_handed_nothing");
     bad = bad + 1;
   }
   if (echo__a_wac_program_echoes_datagrams_on_the_deno_host(sys).len() > 0) {
@@ -395,8 +378,8 @@ export i32 main(Sys sys) {
     err.line("error: FAILED native_test test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not");
     bad = bad + 1;
   }
-  if (nati5__the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(sys).len() > 0) {
-    err.line("error: FAILED native_test test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy");
+  if (nati5__the_manifest_carries_the_host_calls_in_their_order(sys).len() > 0) {
+    err.line("error: FAILED native_test test_the_manifest_carries_the_host_calls_in_their_order");
     bad = bad + 1;
   }
   if (nati5__running_a_host_program_agrees_between_the_two_native_hosts(sys).len() > 0) {
@@ -425,10 +408,6 @@ export i32 main(Sys sys) {
   }
   if (opti__a_coverage_build_refuses_to_be_optimised(sys).len() > 0) {
     err.line("error: FAILED optimize_test test_a_coverage_build_refuses_to_be_optimised");
-    bad = bad + 1;
-  }
-  if (orde__clis_fields_and_the_providers_arguments_are_in_the_same_order(sys).len() > 0) {
-    err.line("error: FAILED order_test test_clis_fields_and_the_providers_arguments_are_in_the_same_order");
     bad = bad + 1;
   }
   if (pati__a_peer_that_says_nothing_no_longer_wedges_the_application(sys).len() > 0) {
@@ -477,66 +456,6 @@ export i32 main(Sys sys) {
   }
   if (runt__the_two_runtimes_agree_about_running_a_host_program(sys).len() > 0) {
     err.line("error: FAILED runtimes_test test_the_two_runtimes_agree_about_running_a_host_program");
-    bad = bad + 1;
-  }
-  if (sche__dispatch_in_the_order_answered().len() > 0) {
-    err.line("error: FAILED sched_test test_dispatch_in_the_order_answered");
-    bad = bad + 1;
-  }
-  if (sche__a_handler_can_register_more().len() > 0) {
-    err.line("error: FAILED sched_test test_a_handler_can_register_more");
-    bad = bad + 1;
-  }
-  if (sche__a_deadline_returns_what_ran().len() > 0) {
-    err.line("error: FAILED sched_test test_a_deadline_returns_what_ran");
-    bad = bad + 1;
-  }
-  if (sche__a_budget_shrinks_across_waits().len() > 0) {
-    err.line("error: FAILED sched_test test_a_budget_shrinks_across_waits");
-    bad = bad + 1;
-  }
-  if (sche__a_spent_budget_stops_the_loop().len() > 0) {
-    err.line("error: FAILED sched_test test_a_spent_budget_stops_the_loop");
-    bad = bad + 1;
-  }
-  if (sche__drain_for_leaves_the_rest_outstanding().len() > 0) {
-    err.line("error: FAILED sched_test test_drain_for_leaves_the_rest_outstanding");
-    bad = bad + 1;
-  }
-  if (sche__drop_all_releases_each_ticket().len() > 0) {
-    err.line("error: FAILED sched_test test_drop_all_releases_each_ticket");
-    bad = bad + 1;
-  }
-  if (sche__drop_all_clears_before_it_drops().len() > 0) {
-    err.line("error: FAILED sched_test test_drop_all_clears_before_it_drops");
-    bad = bad + 1;
-  }
-  if (sche__the_handler_carries_the_type().len() > 0) {
-    err.line("error: FAILED sched_test test_the_handler_carries_the_type");
-    bad = bad + 1;
-  }
-  if (sche2__then_returns_now_and_the_continuations_run_inside_drain(sys).len() > 0) {
-    err.line("error: FAILED scheduled_test test_then_returns_now_and_the_continuations_run_inside_drain");
-    bad = bad + 1;
-  }
-  if (sche2__leaving_with_work_outstanding_is_an_error(sys).len() > 0) {
-    err.line("error: FAILED scheduled_test test_leaving_with_work_outstanding_is_an_error");
-    bad = bad + 1;
-  }
-  if (sche2__a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest(sys).len() > 0) {
-    err.line("error: FAILED scheduled_test test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest");
-    bad = bad + 1;
-  }
-  if (sche2__a_continuation_on_an_ordinary_capabilitys_ticket(sys).len() > 0) {
-    err.line("error: FAILED scheduled_test test_a_continuation_on_an_ordinary_capabilitys_ticket");
-    bad = bad + 1;
-  }
-  if (sche2__dropall_makes_leaving_deliberate(sys).len() > 0) {
-    err.line("error: FAILED scheduled_test test_dropall_makes_leaving_deliberate");
-    bad = bad + 1;
-  }
-  if (sche2__waitany_answers_the_first_ready_ticket_in_the_callers_list(sys).len() > 0) {
-    err.line("error: FAILED scheduled_test test_waitany_answers_the_first_ready_ticket_in_the_callers_list");
     bad = bad + 1;
   }
   if (slot__platform_wacs_call_slots_is_the_rings_real_size(sys).len() > 0) {

@@ -20,7 +20,7 @@
 // `buildApp` becomes `wac run --allow-net`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Sys } from "std";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Sys } from "std";
 import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLogWithin }
   from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

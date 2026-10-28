@@ -21,7 +21,7 @@
 // is exactly why `ethbalance` does long division over the bytes.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, Clock, Env, Files, Net, Output, Procs, Sys } from "std";
+import { Exec, Clock, Env, Files, Net, Output, Procs, Sys } from "std";
 import { Node, anvil, anvilPath, castRpc, haveAnvil, runExample, stopAnvil, toDec }
   from "./anvil_probe.wac";
 

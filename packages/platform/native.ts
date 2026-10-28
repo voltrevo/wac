@@ -77,13 +77,11 @@ export type CallbackSpec = {
 /**
  * A struct the boundary carries, with its fields **in construction order**.
  *
- * This is the part a native host would otherwise have to hardcode, and the reason it must not: the
- * order of `Core`'s seven funcrefs is `platform.wac`'s, and a host with its own copy of that order
- * keeps working — wrongly — the day a capability is inserted in the middle. `provider.ts` does hold
- * such a copy, in a `Core.of(...)` call bindgen generated for it; the native host reads this instead.
+ * No JavaScript host reads these since design/system/0013 step 6: a host hands `__wacHost` four
+ * functions and builds no wac value, so the struct a program is handed is std's business.
  */
 export type StructSpec = {
-  /** As written in wac: `Core`, `Pending<i32>`. */
+  /** As written in wac: `Stat`, `Map<string, i32>`. */
   name: string;
   /** The mangled stem the `$bind$` exports use. */
   bind: string;
@@ -91,13 +89,6 @@ export type StructSpec = {
   methods: { name: string; isStatic: boolean; params: string[]; ret: string; export: string }[];
   /**
    * An enum's variants, with the export that builds each one.
-   *
-   * **Absent until 2026-08-12, and both hosts paid for it.** `Read` is `enum Read { Data(u8[]),
-   * End, Failed(string) }` — what every `readChunk` answers with — and a host that has to build one
-   * had nothing here to read, so `native/src/main.rs` and `native/v8/src/main.rs` each spelled
-   * `$bind$e_Read_Data_new` themselves. That is exactly what this file's `StructSpec` comment says
-   * must not happen, for exactly the reason it gives: three copies of one convention, two of which
-   * keep working wrongly the day it changes. `issues/system/0141`.
    *
    * Empty for a struct, which is how a reader tells the two apart without a `kind` field.
    */

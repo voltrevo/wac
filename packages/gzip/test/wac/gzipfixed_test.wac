@@ -8,7 +8,7 @@
 // could run `gunzip`. `Cli.exec` runs it now, and `external.wac` is the shared half.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Procs, Sys } from "std";
+import { Procs, Sys } from "std";
 import { gzipFixed } from "../../src/gzip.wac";
 import { External, gunzip, roundTrip } from "./external.wac";
 

@@ -16,7 +16,7 @@
 // `tools/lane.test.ts` caps the lane to stop a sequential suite accumulating inside it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Datagram, FAULT_OTHER, Pending, HostSocket, Clock, Env, Files, Net, Output, Procs, Sys, Datagrams } from "std";
+import { Datagram, FAULT_OTHER, Clock, Env, Files, Net, Output, Procs, Sys, Datagrams } from "std";
 import { flatten } from "core";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { alertAt, cookieAt, describeAt, epochAt, handshakeKindAt, hello, hClientHello,
