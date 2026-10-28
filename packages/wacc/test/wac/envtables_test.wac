@@ -25,6 +25,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Env } from "../../src/emit.wac";
+import { emitDeclineFiles } from "../../src/api.wac";
 
 /**
  * The eight arrays `funcCount` indexes, by name, so a failure says which one disagreed.
@@ -65,5 +66,38 @@ export string test_and_it_is_big_enough_for_the_largest_program_here() {
     t.fail("the function table holds " + itoa(got) + ", which is under the 16384 the unified " +
            "`wac` command needed — see issues/system/0257c");
   }
+  return t.report();
+}
+
+/**
+ * `pair<A, B>` at every ordered pair of `n` struct types: `n * n` instantiations of one generic function,
+ * and only `n` structs and no arrays — so what fills up is the instantiation table and nothing else.
+ */
+string manyInstantiations(i32 n) {
+  string src = "i32 pair<A, B>(A a, B b) { return 1; }\n";
+  for (i32 i = 0; i < n; i++) { src = src + "struct S" + itoa(i) + " { i32 v; }\n"; }
+  src = src + "export i32 main() {\n  i32 t = 0;\n";
+  for (i32 i = 0; i < n; i++) {
+    for (i32 j = 0; j < n; j++) {
+      src = src + "  t = t + pair<S" + itoa(i) + ", S" + itoa(j) + ">(S" + itoa(i) + "(1), S" + itoa(j) + "(2));\n";
+    }
+  }
+  return src + "  return t;\n}\n";
+}
+
+/**
+ * **The instantiation table grows; a large program is not a wrong one.** It was a fixed 512, and a module
+ * naming more was declined — *"the emitter ran out of room for generic instantiations"* — about a program
+ * with nothing wrong in it. A desktop page that carries box's shell reached it. The lambda capture tables
+ * already double when full, and this one does too.
+ *
+ * 34 × 34 = 1156 is past the old size by more than twice, so a table sized just above today's programs would not
+ * pass by accident.
+ */
+export string test_a_module_with_more_instantiations_than_the_table_starts_with_builds() {
+  T t = T.create();
+  // The decline's reason, not the module's length: a declined module still has bytes.
+  t.eqStr(emitDeclineFiles(["/t/many.wac"], [manyInstantiations(34)], "/t/many.wac"), "",
+          "1156 instantiations of one generic function: the emitter declined the module");
   return t.report();
 }

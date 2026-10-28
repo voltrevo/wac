@@ -2172,9 +2172,20 @@ export struct Env {
     for (i32 i = 0; i < this.instCount; i++) {
       if (this.instName[i] == inst) { return; }
     }
+    // **Doubled when full, like the lambda capture tables**: a module that names many instantiations is a
+    // large program rather than a wrong one, and this declined it — "ran out of room for generic
+    // instantiations" — once a page carried box's shell. `instName` and `instOf` are the two arrays
+    // `instCount` indexes, so they grow together.
     if (this.instCount >= this.instName.len()) {
-      this.ranOut("generic instantiations");
-      return;
+      i32 size = this.instName.len() * 2 + 64;
+      string[] names = string[].defaulted(size);
+      string[] ofs = string[].defaulted(size);
+      for (i32 i = 0; i < this.instCount; i++) {
+        names[i] = this.instName[i];
+        ofs[i] = this.instOf[i];
+      }
+      this.instName = names;
+      this.instOf = ofs;
     }
     this.instName[this.instCount] = inst;
     this.instOf[this.instCount] = of;
