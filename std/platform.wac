@@ -2793,6 +2793,12 @@ export struct Sys {
     return t.done;
   }
 
+  /**
+   * Learn, without waiting, whether this program's parent serves it files — the program adapter's first step for an
+   * `async` `main` (`ParentLine.greet`).
+   */
+  async void __wacGreet(this) { await this.parent.greet(); }
+
   /** Whether the last `__wacSettle` stopped because the host cannot wait, rather than because nothing could run. */
   bool __wacYielded(const this) { return this.core.sched.yielded; }
 
@@ -4298,7 +4304,28 @@ struct ParentLine {
     return ParentLine(WireLine.on(cli, PARENT_FS), open, 0, "");
   }
 
-  /** Whether the parent serves files — asked once, the first time, and remembered. */
+  /**
+   * Ask the parent whether it serves files, **without waiting** — what the program adapter does before an `async`
+   * `main`, so that `serves` already knows by the time a program asks. A page cannot wait for the parent's
+   * answer, and asking it the first time `files()` was called waited: every spawned applet in the browser
+   * terminal trapped there.
+   */
+  async void greet(this) {
+    if (this.served != 0) { return; }
+    if (!(await this.line.put(wireAsk(ASK_HELLO)))) {
+      this.served = 2;
+      return;
+    }
+    WireReader r = await this.line.next();
+    string said = r.text();
+    this.served = !r.bad && said == servedHello() ? 1 : 2;
+    if (this.served == 1) { this.user = r.text(); }
+  }
+
+  /**
+   * Whether the parent serves files — asked once, the first time, and remembered. An `async` program has already
+   * asked (`greet`); a synchronous one asks here, waiting for the answer.
+   */
   bool serves(this) {
     if (this.served == 0) {
       Buf hello = wireAsk(ASK_HELLO);

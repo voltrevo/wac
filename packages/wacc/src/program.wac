@@ -125,7 +125,12 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   string body = finish;
   string yielding = "";
   if (isAsync) {
-    body = "  Ticket<" + ret + "> __wacT = " + call + ";\n"
+    // **Greeted first**: the program learns whether its parent serves it files before `main` runs, without
+    // waiting — a page cannot wait, and asking on the first `files()` did, so every applet the browser terminal
+    // spawned trapped. Settled as a ticket of its own rather than through a generated function returning
+    // `main`'s type, which cannot always be written: an error type `try` gathered is not spelled in the text.
+    body = "  if (!__wacSys.__wacSettle(__wacSys.__wacGreet())) { return 1; }\n"
+         + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
          + "  if (!__wacSys.__wacSettle(__wacT)) { return 1; }\n"
          + finish;
     yielding = asyncAdapter(ret, call, finish);
@@ -175,18 +180,32 @@ string asyncAdapter(string ret, string call, string finish) {
   return "struct __WacRun { fn<bool()> advance; bool done; i32 status; }\n"
        + "export __WacRun __wacStart(Core __wacCore, Cli __wacCli) {\n"
        + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n"
-       + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
-       + "  fn<i32()> __wacFinish = () => {\n" + finish + "  };\n"
+       // The greeting first, then `main` — started once the greeting has settled, since `main` may ask for the
+       // files the greeting decides.
+       + "  Ticket<void> __wacG = __wacSys.__wacGreet();\n"
+       + "  fn<bool()>? __wacStep = null;\n"
+       + "  fn<i32()>? __wacFinish = null;\n"
        + "  __WacRun r = __WacRun(() => true, false, 0);\n"
        + "  r.advance = () => {\n"
        + "    if (r.done) { return true; }\n"
-       + "    if (!__wacSys.__wacSettle(__wacT)) {\n"
+       + "    if (!__wacSys.__wacSettle(__wacG)) {\n"
        + "      if (__wacSys.__wacYielded()) { return false; }\n"
        + "      r.status = 1;\n"
        + "      r.done = true;\n"
        + "      return true;\n"
        + "    }\n"
-       + "    r.status = __wacFinish();\n"
+       + "    if (__wacStep is null) {\n"
+       + "      Ticket<" + ret + "> __wacT = " + call + ";\n"
+       + "      __wacStep = () => __wacSys.__wacSettle(__wacT);\n"
+       + "      __wacFinish = () => {\n" + finish + "      };\n"
+       + "    }\n"
+       + "    if (!__wacStep!()) {\n"
+       + "      if (__wacSys.__wacYielded()) { return false; }\n"
+       + "      r.status = 1;\n"
+       + "      r.done = true;\n"
+       + "      return true;\n"
+       + "    }\n"
+       + "    r.status = __wacFinish!();\n"
        + "    r.done = true;\n"
        + "    return true;\n"
        + "  };\n"

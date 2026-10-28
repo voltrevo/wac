@@ -94,6 +94,13 @@ export struct System {
    * what `packages/box`'s `openStream` does with a host path.
    */
   fn<void(i32, string)> openInput;
+  /**
+   * A file as a stream of its own, `how` being std's `OPEN_*` (read 0, write 1, append 2). Answers `n`
+   * a handle, which `recv` reads or `send` writes — or a `fault`.
+   */
+  fn<void(i32, string, i32)> openFile;
+  /** Finish with a handle `openFile` answered: what was sent to it becomes the file's. Answers `flags` 1 if it did. */
+  fn<void(i32, i32)> closeFile;
 
   /**
    * A browser that does nothing: no request is ever answered, the clocks stand at zero, output is
@@ -108,7 +115,7 @@ export struct System {
       (u8[] b) => { }, (i32 code) => { }, () => 0, (i32 i) => u8[](), () => "/", (i32 req) => { },
       (i32 req, u8[] args, i32 grants, string cwd, bool serveFs) => { }, (i32 req, i32 h) => { },
       (i32 req, i32 h, u8[] b) => { }, (i32 h) => { }, (i32 h) => { }, (i32 req, i32 h) => { },
-      (i32 req, string p) => { }
+      (i32 req, string p) => { }, (i32 req, string p, i32 how) => { }, (i32 req, i32 h) => { }
     );
   }
 }
@@ -270,8 +277,10 @@ Pending<Change> refusedChange(string grant) { return ready(Change.of(FAULT_NOT_G
  */
 Pending<Change> unsupported(string what) { return ready(Change.of(FAULT_UNSUPPORTED(), what)); }
 Pending<HostSocket> noSocket() { return ready(HostSocket.of(0 - 1, "a page has no sockets", "", 0, FAULT_UNSUPPORTED())); }
-Pending<HostSocket> noFileStream() {
-  return ready(HostSocket.of(0 - 1, "a page cannot open a file as a stream yet", "", 0, FAULT_UNSUPPORTED()));
+/** What `openFile` answered: the handle, or the browser's fault and its words. */
+HostSocket fileOpenedOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return HostSocket.of(0 - 1, a.text, "", 0, a.fault); }
+  return HostSocket.of(a.n as! i32, "", "", 0, FAULT_NONE());
 }
 
 /** A program's world in a page: the answers it waits for, and the `Sys` its `main` is handed. */
@@ -412,9 +421,19 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
     system.closeSocket,
     // Half-closing a child's input is `closeFeed`; a page has no sockets to half-close.
     (i32 h) => { },
-    // No file streams in a page yet: `openFile` is refused as `openOutput` is above, and nothing is open to close.
-    (string path, i32 how) => noFileStream(),
-    (i32 h) => ready(false),
+    // A file as a stream: `how` 0 is a read and anything else a write, each needing its grant.
+    (string path, i32 how) => {
+      if (!(how == 0 ? read : write)) { return ready(HostSocket.of(0 - 1, notGranted(how == 0 ? "read" : "write"), "", 0, FAULT_NOT_GRANTED())); }
+      i32 req = answers.ask();
+      system.openFile(req, path, how);
+      return answers.pending<HostSocket>(req, fileOpenedOf);
+    },
+    (i32 h) => {
+      if (h < 2) { return ready(false); }
+      i32 req = answers.ask();
+      system.closeFile(req, h);
+      return answers.pending<bool>(req, (Answer a) => a.fault == FAULT_NONE() && a.flags == 1);
+    },
     (bool toErr) => {
       closed[toErr ? 1 : 0] = true;
       return ready(true);

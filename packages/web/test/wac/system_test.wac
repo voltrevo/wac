@@ -4,8 +4,8 @@
 // every order the answers can arrive, is tested here.
 
 import { Check } from "./check.wac";
-import { Ticket } from "core";
-import { FAULT_NOT_FOUND, FAULT_NOT_GRANTED, GRANT_READ, GRANT_WRITE, Stat, Sys } from "std";
+import { Buf, Ticket } from "core";
+import { FAULT_NOT_FOUND, FAULT_NOT_GRANTED, Files, GRANT_READ, GRANT_WRITE, Stat, Sys } from "std";
 import { Dom, Page, STAT_EXISTS, STAT_FILE, System, World, answered } from "../../src/page.wac";
 
 /** What the fake browser was asked, one line per request. */
@@ -182,5 +182,140 @@ export string test_a_page_holds_a_system_before_the_build_gives_it_one() {
   // answers nothing and refuses what needs a grant, until the build's wrapper sets the browser's.
   Page page = Page.create(Dom.inert());
   t.eqI32(page.sys.cli.readFile("x").wait().fault, FAULT_NOT_GRANTED(), "a read is refused");
+  return t.report();
+}
+
+/** A page whose browser records the line to a parent, and answers it only when told to. */
+System withParent(Asked asked) {
+  System s = recording(asked);
+  s.send = (i32 req, i32 h, u8[] b) => { asked.log = asked.log + "send \{req}\n"; };
+  s.recv = (i32 req, i32 h) => { asked.log = asked.log + "recv \{req}\n"; };
+  return s;
+}
+
+/** What a parent serving files answers the hello with: one frame, the greeting and who its files act as. */
+u8[] servedAnswer(string user) {
+  Buf body = Buf.create();
+  for (string part in ["wac files 1", user]) {
+    u8[] b = part.toBytes();
+    body.pushU32(b.len() as@ u32);
+    body.pushAll(b);
+  }
+  Buf framed = Buf.create();
+  framed.pushU32(body.len as@ u32);
+  framed.pushAll(body.bytes());
+  return framed.bytes();
+}
+
+/** A spawned page program as the adapter starts it: greet the parent, then ask for the files. */
+async string greetsThenAsks(Page page) {
+  Sys sys = page.sys;
+  await sys.__wacGreet();
+  return sys.files().user;
+}
+
+/**
+ * **A page program learns whether its parent serves it files without waiting.** It asked the first time `files()`
+ * was called, and waited for the answer — which a page cannot do, so every applet the browser terminal spawned
+ * trapped (`Uncaught RuntimeError: unreachable`, then `[exit 134]`). The adapter greets the parent before an `async`
+ * `main` instead, and the answer runs it on.
+ */
+export string test_a_page_program_learns_it_is_served_without_waiting() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(withParent(asked), GRANT_READ | GRANT_WRITE);
+  page.sys = w.sys;
+  schedule page.take;
+  Ticket<string> user = greetsThenAsks(page);
+  page.drain();
+  t.eqStr(asked.log, "send 1\n", "it said hello, and waits");
+  t.isFalse(user.settled(), "nothing has answered");
+  answered(page, w, 1, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  t.eqStr(asked.log, "send 1\nrecv 2\n", "the hello went, so it listens for the answer");
+  answered(page, w, 2, 0, "", servedAnswer("ada"), 0 as i64, 0 as i64, 0);
+  t.isTrue(user.settled(), "the answer ran it on");
+  t.eqStr(user.value(), "ada", "and its files are the parent's, acting as the parent's user");
+  return t.report();
+}
+
+/** The fake browser for streams: each open, read, write and close it was asked, one line each. */
+System streaming(Asked asked) {
+  System s = recording(asked);
+  s.openFile = (i32 req, string p, i32 how) => { asked.log = asked.log + "open \{req} " + p + " \{how}\n"; };
+  s.recv = (i32 req, i32 h) => { asked.log = asked.log + "recv \{req} \{h}\n"; };
+  s.send = (i32 req, i32 h, u8[] b) => { if (h != 1) { asked.log = asked.log + "send \{req} \{h} \{b.len()}\n"; } };
+  s.closeFile = (i32 req, i32 h) => { asked.log = asked.log + "close \{req} \{h}\n"; };
+  return s;
+}
+
+/** `copies` again, through streams: what `cat f` and `echo x > f` do in a page's shell. */
+async i32 streams(Page page) {
+  await page.sys.__wacGreet();
+  Files files = page.sys.files();
+  u8[] bytes = u8[]();
+  match (await files.openRead("in.txt")) {
+    Ok(input): {
+      match (await input.readAll()) {
+        Ok(b): { bytes = b; }
+        Err(why): { return 0 - 1; }
+      }
+      match (await input.close()) {
+        Ok(): { }
+        Err(why): { return 0 - 2; }
+      }
+    }
+    Err(why): { return 0 - 3; }
+  }
+  match (await files.openWrite("out.txt")) {
+    Ok(out): {
+      match (await out.write(bytes)) {
+        Ok(): { }
+        Err(why): { return 0 - 4; }
+      }
+      match (await out.close()) {
+        Ok(): { return bytes.len(); }
+        Err(why): { return 0 - 5; }
+      }
+    }
+    Err(why): { return 0 - 6; }
+  }
+}
+
+export string test_a_page_opens_a_file_as_a_stream_to_read_and_to_write() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(streaming(asked), GRANT_READ | GRANT_WRITE);
+  page.sys = w.sys;
+  schedule page.take;
+  Ticket<i32> done = streams(page);
+  page.drain();
+  // The greeting, refused as a page with no parent refuses it: nothing was sent.
+  answered(page, w, 1, 0, "", u8[](), 0 as i64, 0 as i64, 0);
+  t.eqStr(asked.log, "open 2 in.txt 0\n", "the page asked the browser to open it");
+  answered(page, w, 2, 0, "", u8[](), 5 as i64, 0 as i64, 0);
+  t.eqStr(asked.log, "open 2 in.txt 0\nrecv 3 5\n", "and read from the handle it was given");
+  give(page, w, 3, "hello");
+  answered(page, w, 4, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  t.eqStr(asked.log, "open 2 in.txt 0\nrecv 3 5\nrecv 4 5\nclose 5 5\n", "to the end, then closed it");
+  answered(page, w, 5, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  answered(page, w, 6, 0, "", u8[](), 6 as i64, 0 as i64, 0);
+  answered(page, w, 7, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  answered(page, w, 8, 0, "", u8[](), 0 as i64, 0 as i64, 1);
+  t.eqStr(asked.log, "open 2 in.txt 0\nrecv 3 5\nrecv 4 5\nclose 5 5\nopen 6 out.txt 1\nsend 7 6 5\nclose 8 6\n",
+          "a write opens, sends and closes the same way");
+  t.isTrue(done.settled(), "the last close finished it");
+  t.eqI32(done.value(), 5, "with what it read");
+  return t.report();
+}
+
+export string test_a_page_refuses_to_open_a_stream_it_was_not_granted() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  World w = World.create(streaming(asked), 0);
+  t.eqI32(w.sys.cli.openFile("x", 0).wait().fault, FAULT_NOT_GRANTED(), "a read is refused");
+  t.eqI32(w.sys.cli.openFile("x", 1).wait().fault, FAULT_NOT_GRANTED(), "and a write");
+  t.eqStr(asked.log, "", "without asking the browser");
   return t.report();
 }

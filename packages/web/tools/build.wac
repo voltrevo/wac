@@ -166,7 +166,8 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
            + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, located, timerFired, valueArrived"
            + (spawn != "" ? ", Process, processAnswered" : "")
-           + " } from \"\{pageSpec}\";\n\n"
+           + " } from \"\{pageSpec}\";\n"
+           + (spawn != "" ? "import { Sys } from \"std\";\n" : "") + "\n"
            + "export struct PageHost {\n"
            + "  private Page page;\n";
   // **The page's world is made inside the page's schedule**, so the scheduler it builds does not become
@@ -193,12 +194,20 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
         + "  }\n";
   // **A copy of the page started by `spawnSelf` is a process, not a page**: no document, a `Sys` holding
   // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `PageHost` is.
-  string spawned = spawn == "" ? "" : "\nexport struct Spawned {\n"
+  //
+  // **Greeted before the program runs**, as the program adapter greets before an `async` `main`: a spawned process
+  // learns whether its parent serves it files without waiting, which a page cannot do. Asked on the program's first
+  // `files()` instead, every applet the browser terminal spawned trapped there.
+  string spawned = spawn == "" ? "" : "\nasync i32 __wacSpawned(Sys sys) {\n"
+    + "  await sys.__wacGreet();\n"
+    + "  return await \{spawn}(sys);\n"
+    + "}\n"
+    + "\nexport struct Spawned {\n"
     + "  private Process p;\n\n"
     + "  Spawned create(System system, i32 grants) { return Spawned(Process.create(system, grants)); }\n\n"
     + "  void start(this) {\n"
     + "    schedule this.p.runner.take;\n"
-    + "    this.p.started(\{spawn}(this.p.world.sys));\n"
+    + "    this.p.started(__wacSpawned(this.p.world.sys));\n"
     + "  }\n\n"
     + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
     + "    processAnswered(this.p, req, fault, text, bytes, n, m, flags);\n"
@@ -454,11 +463,16 @@ export string systemSide() {
           () => me.cwd,
           (req) => input === null ? read(req, me.stdin) : chunkOf(req),
           (req, argBytes, grants, cwd, serveFs) => spawn(req, argBytes, grants, cwd, serveFs),
-          (req, h) => read(req, h === 1 && me.child ? me.fsIn : handles.get(h)?.q),
+          (req, h) => read(req, h === 1 && me.served ? me.fsIn : handles.get(h)?.q),
           (req, h, bytes) => {
             const to = handles.get(h);
-            if (h === 1 && me.child) me.post(["fs", bytes], wacOwn(bytes));
-            else if (to === undefined || to.child.gone) return answer(req, 0, "", NONE, 0n, 0n, 0);
+            // The line to a parent exists only when the parent serves this child files: anything else is a
+            // send that did not go, as on every other host, so a child that asks is told at once.
+            if (h === 1 && me.served) me.post(["fs", bytes], wacOwn(bytes));
+            else if (to !== undefined && to.kind === "write") {
+              return to.w.write(bytes).then(() => ok(req, NONE, 0n, 0n, 1), () => ok(req));
+            }
+            else if (to === undefined || to.child === undefined || to.child.gone) return answer(req, 0, "", NONE, 0n, 0n, 0);
             else if (to.kind === "out") to.child.worker.postMessage(["stdin", bytes], wacOwn(bytes));
             else if (to.kind === "fs") to.child.worker.postMessage(["fs", bytes], wacOwn(bytes));
             answer(req, 0, "", NONE, 0n, 0n, 1);
@@ -476,6 +490,33 @@ export string systemSide() {
               input = { bytes: new Uint8Array(await (await fileOf(path)).arrayBuffer()), at: 0 };
               ok(req);
             });
+          },
+          // A file as a handle of its own. A read takes the whole file at once and queues it in pieces, so
+          // `recv` serves it as it serves a child; a write goes to the browser's writable stream, which keeps
+          // nothing until it is closed — so a file half-written by a program that stopped is not left behind.
+          (req, path, how) => run(req, true, async () => {
+            const h = nextHandle++;
+            if (how === 0) {
+              const bytes = new Uint8Array(await (await fileOf(path)).arrayBuffer());
+              const q = wacQueue();
+              for (let at = 0; at < bytes.length; at += 65536) q.push(bytes.slice(at, at + 65536));
+              q.end();
+              handles.set(h, { kind: "file", q });
+            } else {
+              const [dir, name] = await parentOf(path, false);
+              const fh = await dir.getFileHandle(name, { create: true });
+              const w = await fh.createWritable({ keepExistingData: how === 2 });
+              if (how === 2) await w.seek((await fh.getFile()).size);
+              handles.set(h, { kind: "write", w });
+            }
+            ok(req, NONE, BigInt(h));
+          }),
+          (req, h) => {
+            const f = handles.get(h);
+            if (f === undefined || (f.kind !== "file" && f.kind !== "write")) return ok(req);
+            handles.delete(h);
+            if (f.kind === "file") return ok(req, NONE, 0n, 0n, 1);
+            f.w.close().then(() => ok(req, NONE, 0n, 0n, 1), (e) => fail(req, e, true));
           },
         );
 
@@ -540,7 +581,7 @@ export string childSide() {
   return """
       const wacChild = (init) => {
         const stdin = wacQueue(), fsIn = wacQueue();
-        const me = { child: true, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
+        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
                      post: (m, transfer) => postMessage(m, transfer ?? []) };
         let p = null;
         p = Spawned.create(wacSystem((...a) => p.answer(...a), me), init.grants);
