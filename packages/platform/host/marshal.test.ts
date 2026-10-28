@@ -62,6 +62,26 @@ const boxsh = (): Promise<string> => {
   return building;
 };
 
+/**
+ * A module whose boundary carries `string[]`, `u8[][]` and `i32[]`, built once — `arrays_fixture.wac` says why a
+ * program no longer does.
+ */
+let buildingArrays: Promise<string> | null = null;
+const arrays = (): Promise<string> => {
+  buildingArrays ??= (async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-marshal-arrays-" });
+    globalThis.addEventListener("unload", () => {
+      try {
+        Deno.removeSync(dir, { recursive: true });
+      } catch { /* already gone */ }
+    });
+    const stem = `${dir}/arrays`;
+    await buildNative("packages/platform/host/arrays_fixture.wac", stem);
+    return stem;
+  })();
+  return buildingArrays;
+};
+
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
@@ -183,7 +203,7 @@ function stubInstance(bytes: Uint8Array): Bound {
 }
 
 Deno.test("values really cross: a string, bytes, and an array of them", async () => {
-  const stem = await boxsh();
+  const stem = await arrays();
   {
     const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
     const call = (n: string, ...a: unknown[]) => (b.exports[n] as CallableFunction)(...a);
@@ -234,7 +254,7 @@ Deno.test("values really cross: a string, bytes, and an array of them", async ()
 });
 
 Deno.test("and back again: what goes in comes out, for every shape that converts", async () => {
-  const stem = await boxsh();
+  const stem = await arrays();
   {
     const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
     /** The property worth having: converting out and back in is the identity. */

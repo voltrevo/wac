@@ -6,7 +6,10 @@
 // and which pinned the method in place. `main(Sys sys) { sys.log("hi"); }` was 598,156 bytes in 6,219 functions,
 // 777 of them exported, where the code that runs is 58 functions and 2.6 KB.
 //
-// Each case builds with the command, as a user would, runs what it built, and then reads the module.
+// Each case builds with the command, as a user would, runs what it built, and then reads the module. On 2026-10-28,
+// after `packages/wacc/src/shake.wac`: 17,794 bytes in 172 functions for the line, and 126,664 in 905 for the file —
+// whose difference is not dead code: `sys.files()` holds a closure for every file operation, each wired to the host
+// and to a parent that may serve it files, so one `readFile` keeps both clients whole.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
@@ -81,8 +84,8 @@ export string test_a_program_that_logs_a_line_carries_what_logging_needs(Sys sys
   // The binders `__wacHost`'s four callbacks need, and the string and array helpers their signatures move:
   // a handful, where it was 777.
   t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
-  t.isTrue(s.functions <= 400, "functions: " + itoa(s.functions));
-  t.isTrue(w!.len() <= 100000, "bytes: " + itoa(w!.len()));
+  t.isTrue(s.functions <= 200, "functions: " + itoa(s.functions));
+  t.isTrue(w!.len() <= 24000, "bytes: " + itoa(w!.len()));
   return t.report();
 }
 
@@ -100,6 +103,6 @@ export string test_reading_a_file_adds_what_reading_needs(Sys sys) {
   Shape s = shapeOf(w!);
   t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
   t.isTrue(s.functions <= 1000, "functions: " + itoa(s.functions));
-  t.isTrue(w!.len() <= 200000, "bytes: " + itoa(w!.len()));
+  t.isTrue(w!.len() <= 150000, "bytes: " + itoa(w!.len()));
   return t.report();
 }

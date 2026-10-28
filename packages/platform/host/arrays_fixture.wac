@@ -1,0 +1,12 @@
+// A module whose boundary carries every array shape the marshaller converts — `string[]`, `u8[][]`, `i32[]`, and
+// the text and bytes inside them — for `marshal.test.ts` and `test/driver.test.ts`.
+//
+// They used a program for this, box's shell or `wc`, while a program's boundary was its capabilities. Since
+// design/system/0013 step 6 it is the host ABI, which carries `string`, `u8[]` and `i32[]` and nothing else, and a
+// module is given glue only for what crosses (`issues/lang/0398a`) — so the shapes are named here, where they cross.
+
+export string[] words(string[] w) { return w; }
+export u8[][] chunks(u8[][] c) { return c; }
+export i32[] ids(i32[] x) { return x; }
+export string text(string s) { return s; }
+export u8[] bytes(u8[] b) { return b; }

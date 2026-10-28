@@ -20776,7 +20776,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
     // **Only an instance a host can be handed.** Every instance the module built was exported, and
     // with them every method of every `Ticket<Result<…>>` — 409 exports for a program that logs one
     // line, each pinning a function nothing calls. `issues/lang/0398a`.
-    if (!listHas(bindStructs, bindStructCount, inst)) { continue; }
+    if (!onBindList(bindStructs, bindStructCount, inst)) { continue; }
     Decl[] w15d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
     u8[] w15s = src; Lexed w15l = lexed; i32 w15f = env.curFile;
     for (i32 d = 0; d < w15d.len(); d++) {
@@ -21959,14 +21959,14 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
 }
 
 /** Whether `name` is among the first `n` of `xs`. */
-bool listHas(string[] xs, i32 n, string name) {
+bool onBindList(string[] xs, i32 n, string name) {
   for (i32 i = 0; i < n && i < xs.len(); i++) { if (xs[i] == name) { return true; } }
   return false;
 }
 
 /** An array type a host may hold: one bindgen can write helpers for, at the boundary. */
 bool bindsArray(Env env, string at, string[] boundary) {
-  return bindableArray(env, at) && listHas(boundary, boundary.len(), at);
+  return bindableArray(env, at) && onBindList(boundary, boundary.len(), at);
 }
 
 /**
@@ -22032,7 +22032,7 @@ i32 noteArrays(Env env, string[] out, i32 n, string t) {
     a = core.toBytes();
   }
   if (!isArrayType(core)) { return n; }
-  if (!listHas(out, n, core) && n < out.len()) {
+  if (!onBindList(out, n, core) && n < out.len()) {
     out[n] = core;
     n = n + 1;
   }
