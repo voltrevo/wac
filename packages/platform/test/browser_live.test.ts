@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // The browser target, in an actual browser. wac-mono issue 0016.
 //
 // `browser.test.ts` drives the handlers over an in-memory Origin Private File System, which is
@@ -852,11 +853,11 @@ Deno.test({
       await desk(2, "pwd", "\n/\n");
       await desk(0, "echo from-the-first > /shared", "$ echo from-the-first > /shared");
       await desk(2, "cat /shared", "from-the-first");
-      // **A file run as a program, in a page.** A page starts copies of itself and nothing else, so a
-      // path names a program it cannot execute, and the shell says so with the page's own sentence —
+      // **A file run as a program, in a page.** A page starts wasm modules (design/system/0015), and this
+      // file is text, so it is refused at `spawn` and the shell says so with the page's own sentence —
       // rather than looking `./shared` up as an applet and answering "command not found" for a file
-      // the previous line just read.
-      await desk(2, "./shared", "this page cannot start programs");
+      // the previous line just read, or starting a worker that fails to compile it.
+      await desk(2, "./shared", "a page starts wasm modules, and that is not one");
       assertEquals(
         ((await page2.textContent("#scr2")) ?? "").includes("from-the-first"),
         true,

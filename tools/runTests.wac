@@ -19,12 +19,13 @@
 //   2. the nested-suite refusal, exit 2: something running under the suite invoking a whole suite
 //      recurses without bound (`wac-mono 0077`)
 //   3. discovery — every directory under `packages/` and `core/` holding a `*_test.wac`, every
-//      `*.test.ts`, and every `// test-lane: exclusive|heavy — why` in either kind
+//      `*.test.ts`, and every `// test-lane: exclusive|heavy — why` in either kind (and
+//      `browser` in a `.test.ts`)
 //   4. the gate, exit 75 — another suite running, the machine's own readings, or your cooldown
 //   5. housekeeping — Deno's code cache over its bound, `/tmp/wac-*` from killed runs, transpiles of
 //      sources that no longer exist
 //   6. the Deno pass at `jobs` workers, then the `.test.ts` files that declared themselves exclusive,
-//      alone
+//      alone, then the ones that declared `browser`, with `-A`
 //   7. the `wac test` lane — directories chunked at 12 files, run as a queue at `jobs` workers, then
 //      the wac files that declared themselves exclusive, alone
 //   8. the report: per lane, the longest single runs, the lane's own file count, a killed lane's
@@ -412,7 +413,9 @@ Declared[] declarations(Files fs, string[] files) {
         continue;
       }
       why = laneOf(line, "heavy");
-      if (why != "") { found.push(files[i]); lanes.push("heavy"); whys.push(why); }
+      if (why != "") { found.push(files[i]); lanes.push("heavy"); whys.push(why); continue; }
+      why = laneOf(line, "browser");
+      if (why != "") { found.push(files[i]); lanes.push("browser"); whys.push(why); }
     }
   }
   string[] paths = found.all();
@@ -894,6 +897,7 @@ struct Found {
   i32 tsFiles;
   string[] tsHeavy;
   string[] tsAlone;
+  string[] tsBrowser;
   Chunk[] queue;
   string[] skip;
 }
@@ -967,6 +971,7 @@ Found discover(Env env, Files fs, Opts o) {
   // live tests — 29s of relays and an authority on real ports — for a package with no Deno tests.
   string[] tsAlone = underTargets(o.targets, filesDeclaring(tsDeclared, "exclusive"));
   string[] tsHeavyAll = underTargets(o.targets, filesDeclaring(tsDeclared, "heavy"));
+  string[] tsBrowser = underTargets(o.targets, filesDeclaring(tsDeclared, "browser"));
 
   // **A named target runs the heavy files too**, and `WAC_HEAVY=1` puts them in the broad pass: the
   // exclusion is for the run that discovers everything, which is the push.
@@ -979,7 +984,7 @@ Found discover(Env env, Files fs, Opts o) {
   for (i32 i = 0; i < alone.len(); i++) { skip.push(alone[i]); }
 
   return Found(allDirs, dirs, everyFile.n, declared, skippedHeavy, alone, tsDeclared, tsFiles.n,
-               tsHeavy, tsAlone, chunksOf(env, fs, dirs, skip.all()), skip.all());
+               tsHeavy, tsAlone, tsBrowser, chunksOf(env, fs, dirs, skip.all()), skip.all());
 }
 
 /**
@@ -1107,6 +1112,7 @@ i32 lanes(Output err, Output out, Clock clock, Env env, Files fs, Procs procs, O
     ignore.push(wacDriver());
     for (i32 i = 0; i < f.tsAlone.len(); i++) { ignore.push(f.tsAlone[i]); }
     for (i32 i = 0; i < f.tsHeavy.len(); i++) { ignore.push(f.tsHeavy[i]); }
+    for (i32 i = 0; i < f.tsBrowser.len(); i++) { ignore.push(f.tsBrowser[i]); }
     args.push("--ignore=" + joined(ignore.all(), ","));
     string[] perms = denoPerms();
     for (i32 i = 0; i < perms.len(); i++) { args.push(perms[i]); }
@@ -1148,6 +1154,33 @@ i32 lanes(Output err, Output out, Clock clock, Env env, Files fs, Procs procs, O
       if (aloneCode != 0 && code == 0) { code = aloneCode; }
       spentLane.push("run alone");
       spentMs.push(itoa((nowMs(clock) - started2) as! i32));
+    }
+
+    // **Then the browser lane, with `-A` and nothing narrower** (operator, 2026-10-28). Playwright's
+    // own startup reads `/proc/sys/fs/binfmt_misc/WSLInterop`, which Deno opens only under
+    // `--allow-all`, so `--allow-sys` was not enough: every one of these skipped itself in the pass
+    // above. The grant goes to the files that drive Chromium and to no other, so a test elsewhere
+    // that leans on a permission it was not given is still caught. In parallel, since each starts
+    // its own browser on its own port.
+    if (f.tsBrowser.len() > 0) {
+      i64 started3 = nowMs(clock);
+      out.line("\n" + itoa(f.tsBrowser.len()) + " `.test.ts` file(s) drive Chromium, run with -A:");
+      for (i32 i = 0; i < f.tsDeclared.len(); i++) {
+        if (f.tsDeclared[i].lane == "browser" && has(f.tsBrowser, f.tsDeclared[i].file)) {
+          out.line("  " + f.tsDeclared[i].file + " —" + f.tsDeclared[i].why);
+        }
+      }
+      Names web = Names.create();
+      web.push("test");
+      web.push("--parallel");
+      web.push("-A");
+      web.push("--unstable-net");
+      for (i32 i = 0; i < o.extra.len(); i++) { web.push(o.extra[i]); }
+      for (i32 i = 0; i < f.tsBrowser.len(); i++) { web.push(f.tsBrowser[i]); }
+      i32 browserCode = denoPass(err, env, procs, web.all(), o.jobs);
+      if (browserCode != 0 && code == 0) { code = browserCode; }
+      spentLane.push("in Chromium");
+      spentMs.push(itoa((nowMs(clock) - started3) as! i32));
     }
   }
 

@@ -324,6 +324,8 @@ export string systemSide() {
         let ended = false;
         return {
           push(b) { if (waiters.length) waiters.shift()({ bytes: b }); else items.push(b); },
+          // Put a piece back at the front: read on a reader's behalf, and not wanted after all.
+          unshift(b) { if (waiters.length) waiters.shift()({ bytes: b }); else items.unshift(b); },
           end() { ended = true; while (waiters.length) waiters.shift()({ end: true }); },
           next() {
             if (items.length) return Promise.resolve({ bytes: items.shift() });
@@ -332,10 +334,27 @@ export string systemSide() {
           },
         };
       };
+      // Why `bytes` cannot be started as a program, or "": a wasm module carrying the manifest that describes it.
+      const wacNotRunnable = (bytes) => {
+        if (!WebAssembly.validate(bytes)) {
+          return bytes.length >= 4 && bytes[0] === 0 && bytes[1] === 97 && bytes[2] === 115 && bytes[3] === 109
+            ? "that is not a valid wasm module" : "a page starts wasm modules, and that is not one";
+        }
+        return WebAssembly.Module.customSections(new WebAssembly.Module(bytes), "wac.manifest").length > 0 ? ""
+          : "that module carries no wac.manifest section, so a page cannot describe it";
+      };
       const wacOwn = (b) => b.byteOffset === 0 && b.byteLength === b.buffer.byteLength ? [b.buffer] : [];
       // `me` is who this program is: a page (no arguments, no input, its output on the console), or a
-      // copy of one started by `spawnSelf`, whose arguments, directory and streams its parent supplied.
+      // copy of one started by `spawnSelf`, or a module started by `spawn`, whose arguments, directory and
+      // streams its parent supplied.
+      //
+      // `wacServer` is the requests as plain JavaScript, `request` and `exit`: what a module the page was
+      // handed is driven with (`wacModule`), and what `wacSystem` wraps as the page's own `System`.
       const wacSystem = (answer, me) => {
+        const s = wacServer(answer, me);
+        return System.of(s.request, s.exit);
+      };
+      const wacServer = (answer, me) => {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
         let rootP = null;
@@ -345,6 +364,9 @@ export string systemSide() {
         const root = () => (rootP ??= navigator.storage.getDirectory());
         // Handles below 2 are reserved, as on every host: 0 is standard input, 1 the parent's files.
         const handles = new Map();
+        // Modules loaded into this worker, by handle.
+        const loaded = new Map();
+        let nextLoaded = 1;
         let nextHandle = 2;
         const parts = (path) => {
           const out = [];
@@ -395,7 +417,12 @@ export string systemSide() {
           else if (toErr) console.warn(new TextDecoder().decode(bytes));
           else console.log(new TextDecoder().decode(bytes));
         };
-        // `OP_SPAWN_SELF`'s bytes: the module (empty: this program), then the arguments, each length-prefixed.
+        // `OP_SPAWN`'s and `OP_SPAWN_SELF`'s bytes: the module (empty: this program), then the arguments, each
+        // length-prefixed. `moduleOf` is the first part, `partsOf` the rest.
+        const moduleOf = (b) => {
+          const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+          return b.slice(4, 4 + v.getUint32(0, true));
+        };
         const partsOf = (b) => {
           const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
           let at = 4 + v.getUint32(0, true);
@@ -478,7 +505,8 @@ export string systemSide() {
             case 12: case 48: emit(op === 48, bytes); return ok(id, NONE, 0n, 0n, 1);
             case 19: return read(id, me.stdin);
             case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(performance.now() * 1e6))), n); return;
-            case 49: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0);
+            case 27: return spawn(id, partsOf(bytes), n, text, Number(b), moduleOf(bytes));
+            case 49: return spawn(id, partsOf(bytes), n, text, Number(b), null);
             case 24: return read(id, n === 1 && me.served ? me.fsIn : handles.get(n)?.q);
             case 25: {
               const to = handles.get(n);
@@ -489,11 +517,11 @@ export string systemSide() {
                 return to.w.write(bytes).then(() => ok(id, NONE, 0n, 0n, 1), () => answer(id, 5, "", NONE, 0n, 0n, 0));
               }
               else if (to === undefined || to.child === undefined || to.child.gone) return answer(id, 5, "", NONE, 0n, 0n, 0);
-              else if (to.kind === "out") to.child.worker.postMessage(["stdin", bytes], wacOwn(bytes));
-              else if (to.kind === "fs") to.child.worker.postMessage(["fs", bytes], wacOwn(bytes));
+              else if (to.kind === "out") to.child.send(["stdin", bytes], wacOwn(bytes));
+              else if (to.kind === "fs") to.child.send(["fs", bytes], wacOwn(bytes));
               return ok(id, NONE, 0n, 0n, 1);
             }
-            case 29: { const c = handles.get(n)?.child; if (c && !c.gone) c.worker.postMessage(["stdinEnd"]); return; }
+            case 29: { const c = handles.get(n)?.child; if (c && !c.gone) c.send(["stdinEnd"]); return; }
             case 26: { const to = handles.get(n); if (to && to.kind === "out") stop(to.child, 143); return; }
             case 28: {
               const c = handles.get(n)?.child;
@@ -532,14 +560,31 @@ export string systemSide() {
               f.w.close().then(() => ok(id, NONE, 0n, 0n, 1), (e) => fail(id, e, true));
               return;
             }
+            // **A module in this worker, called by name** (`wacLoad`) — how `wac test` runs tests. Answered at once, as
+            // on every host; what it holds was narrowed before it got here.
+            case 67: { const why = wacNotRunnable(bytes); return answer(id, why === "" ? 0 : 5, why, NONE, 0n, 0n, 0); }
+            case 64: {
+              const why = wacNotRunnable(bytes);
+              if (why !== "") return answer(id, 5, why, NONE, 0n, 0n, 0);
+              const h = nextLoaded++;
+              loaded.set(h, wacLoad(me, bytes.slice(), n));
+              return ok(id, NONE, BigInt(h));
+            }
+            case 65: {
+              const m = loaded.get(n);
+              if (m === undefined) return answer(id, 0, "no module loaded as " + n, NONE, 0n, 0n, 2);
+              const [status, said, value] = m.call(text, Number(b));
+              return answer(id, 0, said, NONE, BigInt(value), 0n, status);
+            }
+            case 66: loaded.delete(n); return;
             default: return answer(id, 9, "a page does not serve request " + op, NONE, 0n, 0n, 0);
           }
         };
-        return System.of(request, (code) => {
+        return { request, exit: (code) => {
           if (!me.child) throw new Error("the program exited with " + code);
           me.post(["exit", code]);
           close();
-        });
+        } };
 
         // ── Programs started from this one ───────────────────────────────────────────────────────
         // A child is a worker on this very script, told who it is by its first message. Its output,
@@ -549,42 +594,87 @@ export string systemSide() {
           if (q === undefined) return answer(req, 0, "", NONE, 0n, 0n, 1);
           q.next().then((r) => r.end ? answer(req, 0, "", NONE, 0n, 0n, 1) : answer(req, 0, "", r.bytes, 0n, 0n, 0));
         }
+        // Only the page's thread, which started the child, can end it: asked to, it stops the child and whatever the
+        // child started.
         function stop(c, code) {
           if (c.gone) return;
           c.gone = true;
-          c.worker.terminate();
+          if (c.id >= 0) { wacTellPage(["stop", c.id]); wacChildFailed.delete(c.id); }
+          c.port?.close();
           c.out.end(); c.err.end(); c.fs.end();
           c.settle(code);
         }
-        function spawn(req, args, grants, cwd, serveFs) {
+        // `wasm` is a module to run (`OP_SPAWN`), or null for another copy of this page (`OP_SPAWN_SELF`). Either
+        // way the child is a worker on this very script; its first message says which it is.
+        // `flags` is `Launch`'s: 1 the child reads this program's input, 2 it writes this program's output and
+        // errors, and 256 this program serves it files.
+        function spawn(req, args, grants, cwd, flags, wasm) {
+          const serveFs = (flags & 256) !== 0, inheritIn = (flags & 1) !== 0, inheritOut = (flags & 2) !== 0;
           if (typeof WorkerGlobalScope === "undefined") {
             return answer(req, 9, "a page built --in-page cannot start programs", NONE, 0n, 0n, 0);
           }
-          const worker = new Worker(self.location.href);
+          // **A module is checked before anything starts**, as the other hosts check one: a file that is not a wac
+          // program is refused here, at `spawn`, rather than started in a worker that then fails to compile it.
+          if (wasm !== null) {
+            const why = wacNotRunnable(wasm);
+            if (why !== "") return answer(req, 5, why, NONE, 0n, 0n, 0);
+          }
+          // **The page's own thread starts it** (design/system/0015 decision 3), and hands this program one end of a
+          // channel and the child the other: they talk directly, and the page is involved only to start and to stop.
+          // A page opened from a file may not start a worker from a worker, and its own thread may — so this is one
+          // route on `http://` and `file://` alike.
           let settle;
-          const c = { worker, out: wacQueue(), err: wacQueue(), fs: wacQueue(), gone: false,
+          const c = { id: -1, port: null, waiting: [], out: wacQueue(), err: wacQueue(), fs: wacQueue(), gone: false,
                       exit: new Promise((r) => { settle = r; }) };
           c.settle = settle;
+          // What this program sends before the channel arrives waits for it.
+          c.send = (m, transfer) => { if (c.port !== null) c.port.postMessage(m, transfer ?? []); else c.waiting.push([m, transfer]); };
           const h = nextHandle++, eh = nextHandle++, fh = serveFs ? nextHandle++ : -1;
           handles.set(h, { kind: "out", child: c, q: c.out });
           handles.set(eh, { kind: "err", child: c, q: c.err });
           if (fh >= 0) handles.set(fh, { kind: "fs", child: c, q: c.fs });
-          worker.onmessage = (e) => {
+          // **Inherited output is written as it arrives**, to this program's own streams, which keeps the order
+          // between the two; the child's queues are left empty, and end when it does.
+          const heard = (e) => {
             const [k, v] = e.data;
-            if (k === "out") c.out.push(v);
-            else if (k === "err") c.err.push(v);
+            if (k === "out") { if (inheritOut) emit(false, v); else c.out.push(v); }
+            else if (k === "err") { if (inheritOut) emit(true, v); else c.err.push(v); }
             else if (k === "fs") c.fs.push(v);
             else if (k === "exit") stop(c, v);
           };
-          worker.onerror = (e) => {
-            e.preventDefault();
-            c.err.push(enc.encode((e.message || "the program stopped") + "\\n"));
-            stop(c, 134);
-          };
-          worker.postMessage(["init", { args, grants, cwd, serveFs }]);
-          if (dropped.delete(req)) return stop(c, 143);
-          // `m` packs the error stream's handle (low 32 bits) and the served-files channel's (high 32).
-          ok(req, NONE, BigInt(h), (BigInt(eh) & 0xffffffffn) | (BigInt(fh) << 32n));
+          // **Inherited input is read for the child while it runs** — from this program's input, which a page has
+          // none of — and a piece read after it ended goes back for whoever reads next.
+          if (inheritIn && me.stdin !== undefined) {
+            (async () => {
+              while (!c.gone) {
+                const r = await me.stdin.next();
+                if (c.gone) { if (!r.end) me.stdin.unshift(r.bytes); return; }
+                if (r.end) { c.send(["stdinEnd"]); return; }
+                c.send(["stdin", r.bytes]);
+              }
+            })();
+          }
+          const init = wasm === null ? ["init", { args, grants, cwd, serveFs }] : ["module", { wasm, args, grants, cwd, serveFs }];
+          wacAskPage(["start", ...init], wasm === null ? [] : wacOwn(wasm)).then(([id, port, why]) => {
+            if (port === null) {
+              if (dropped.delete(req)) return;
+              return answer(req, 5, "the program could not be started: " + why, NONE, 0n, 0n, 0);
+            }
+            c.id = id;
+            c.port = port;
+            port.onmessage = heard;
+            // A child that dies without saying so — a trap the browser reports, not an exit — is heard of from the
+            // page's thread, which saw it.
+            wacChildFailed.set(id, (why) => {
+              c.err.push(enc.encode((why || "the program stopped") + "\\n"));
+              stop(c, 134);
+            });
+            for (const [m, t] of c.waiting) port.postMessage(m, t ?? []);
+            c.waiting = [];
+            if (dropped.delete(req)) return stop(c, 143);
+            // `m` packs the error stream's handle (low 32 bits) and the served-files channel's (high 32).
+            ok(req, NONE, BigInt(h), (BigInt(eh) & 0xffffffffn) | (BigInt(fh) << 32n));
+          });
         }
       };
       """;
@@ -596,18 +686,307 @@ export string systemSide() {
  */
 export string childSide() {
   return """
-      const wacChild = (init) => {
+      // `port` is this child's end of the channel to its parent, which the page's thread made when it started it.
+      const wacChild = (init, port) => {
         const stdin = wacQueue(), fsIn = wacQueue();
         const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
-                     post: (m, transfer) => postMessage(m, transfer ?? []) };
+                     post: (m, transfer) => port.postMessage(m, transfer ?? []) };
+        port.onmessage = (e) => wacFromParent(e.data, stdin, fsIn);
         let p = null;
         p = Spawned.create(wacSystem((...a) => p.answer(...a), me), init.grants);
         p.start();
-        return (m) => {
-          if (m[0] === "stdin") stdin.push(m[1]);
-          else if (m[0] === "stdinEnd") stdin.end();
-          else if (m[0] === "fs") fsIn.push(m[1]);
+      };
+      """;
+}
+
+/**
+ * A module the page was handed, run in a worker of its own (design/system/0015): `OP_SPAWN`'s other half.
+ *
+ * **Driven from its manifest**, as `packages/platform/host/driver.ts` drives one on Deno and Node: the module
+ * describes its own boundary in a `wac.manifest` section, and since design/system/0013 step 6 that boundary is a
+ * handful of plain values — `__wacHost` takes the host's four calls, `__wacAnswered` takes an answer, and the rest
+ * are opaque references handed straight back. So the conversions are strings, arrays and functions, and they are
+ * `marshal.ts`'s, written again here because a page carries no TypeScript.
+ *
+ * **Its requests are served by `wacServer`**, the same switch that serves the page's own program and a copy of the
+ * page — one implementation of what a request means in a browser.
+ *
+ * **It never blocks.** Its `waitAny` answers `HOST_CANNOT_WAIT` (-2); an `async` program then hands control back,
+ * and is run on with `__wacAdvance` once an answer has arrived. An answer the browser has at once — the clock, an
+ * argument, a write to a stream — is delivered inside the request that asked, as on every host; anything else is
+ * delivered between turns, when the module is running nothing. A program whose `main` is not `async` blocks on its
+ * first wait for the browser, and stops saying so.
+ *
+ * **It holds what it was handed and no more**: the browser half decides nothing, so what a page's own program has
+ * refused for it by `system.wac`, a module has refused for it here (`wacServe`). And it may `load` a module into
+ * its own worker and call it by name (`wacLoad`), answered at once as on every host — which is how `wac test`
+ * runs tests.
+ */
+export string moduleSide() {
+  return """
+      // ── A module, driven from its manifest: `marshal.ts`'s conversions, by the shape of a type string. ──────
+      const wacDrive = (mod, manifest) => {
+        let ex = null;
+        const call = (name, ...a) => {
+          if (typeof ex[name] !== "function") throw new Error("the module exports no " + name);
+          return ex[name](...a);
         };
+        const mem = () => new Uint8Array(ex["$bind$mem"].buffer);
+        const SCALARS = new Set(["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "bool"]);
+        const bindName = (n) => n.replace(/[^A-Za-z0-9_]+/g, "$").replace(/^[$]+|[$]+$/g, "");
+        const shapeOf = (type) => {
+          const t = type.trim();
+          if (t.endsWith("?")) return shapeOf(t.slice(0, -1));
+          if (t === "void" || t === "") return { kind: "void" };
+          if (t === "string") return { kind: "string" };
+          if (SCALARS.has(t)) return { kind: "scalar", name: t };
+          if (t.endsWith("[]")) {
+            const elem = shapeOf(t.slice(0, -2));
+            const suffix = elem.kind === "scalar" ? elem.name : elem.kind === "string" ? "string"
+              : elem.kind === "array" ? elem.suffix + "Arr" : bindName(elem.name ?? "void");
+            return { kind: "array", elem, suffix };
+          }
+          return { kind: "ref", name: t };
+        };
+        const give = (make, data) => {
+          call("$bind$mem_ensure", data.length);
+          mem().set(data, 0);
+          return call(make, data.length);
+        };
+        const fromWasm = (sh, w) => {
+          if (w === null || w === undefined) return null;
+          switch (sh.kind) {
+            case "void": return undefined;
+            case "scalar": return sh.name === "bool" ? w !== 0 : w;
+            case "ref": return w;
+            case "string": {
+              const n = call("$bind$str_len", w);
+              call("$bind$mem_ensure", n);
+              call("$bind$str_to_mem", w);
+              return new TextDecoder().decode(mem().slice(0, n));
+            }
+            case "array": {
+              if (sh.elem.kind === "scalar" && sh.elem.name === "u8") {
+                const n = call("$bind$arr_u8_len", w);
+                call("$bind$mem_ensure", n);
+                call("$bind$arr_u8_to_mem", w);
+                return mem().slice(0, n);
+              }
+              const n = call("$bind$arr_" + sh.suffix + "_len", w);
+              const out = [];
+              for (let i = 0; i < n; i++) out.push(fromWasm(sh.elem, call("$bind$arr_" + sh.suffix + "_get", w, i)));
+              return out;
+            }
+          }
+        };
+        // A function becomes a funcref, made by the module from a slot — the one conversion a host cannot do.
+        const slots = manifest.callbacks.map(() => []);
+        const toWasm = (type, v) => {
+          const base = type.endsWith("?") ? type.slice(0, -1) : type;
+          if (base.startsWith("fn[") && typeof v === "function") {
+            const j = manifest.callbacks.findIndex((c) => c.type === base);
+            if (j < 0) throw new Error(base + " has no dispatcher in this module");
+            let slot = slots[j].indexOf(v);
+            if (slot < 0) { slot = slots[j].length; slots[j].push(v); }
+            return call(manifest.callbacks[j].helper, slot);
+          }
+          const sh = shapeOf(base);
+          if (v === null || v === undefined) return sh.kind === "void" ? undefined : null;
+          switch (sh.kind) {
+            case "void": return undefined;
+            case "scalar": return sh.name === "bool" ? (v ? 1 : 0) : v;
+            case "ref": return v;
+            case "string": return give("$bind$str_from_mem", new TextEncoder().encode(String(v)));
+            case "array": {
+              if (sh.elem.kind === "scalar" && sh.elem.name === "u8") return give("$bind$arr_u8_from_mem", Uint8Array.from(v));
+              const elem = base.slice(0, -2);
+              const filled = typeof ex["$bind$arr_" + sh.suffix + "_new0"] === "function";
+              if (filled && v.length === 0) return call("$bind$arr_" + sh.suffix + "_new0");
+              const arr = filled ? call("$bind$arr_" + sh.suffix + "_new", v.length, toWasm(elem, v[0]))
+                                 : call("$bind$arr_" + sh.suffix + "_new", v.length);
+              for (let i = filled ? 1 : 0; i < v.length; i++) call("$bind$arr_" + sh.suffix + "_set", arr, i, toWasm(elem, v[i]));
+              return arr;
+            }
+          }
+        };
+        const wac = {};
+        manifest.callbacks.forEach((cb, j) => {
+          wac[cb.field] = (slot, ...rest) => {
+            const f = slots[j][slot];
+            if (f === undefined) throw new Error("no function in slot " + slot + " of " + cb.type);
+            const out = f(...(cb.params ?? []).map((t, i) => fromWasm(shapeOf(t), rest[i])));
+            return cb.ret === "void" ? undefined : toWasm(cb.ret, out);
+          };
+        });
+        ex = new WebAssembly.Instance(mod, { wac }).exports;
+        const app = {};
+        for (const sig of manifest.exports) {
+          if (typeof ex[sig.name] !== "function") continue;
+          app[sig.name] = (...a) => {
+            const out = ex[sig.name](...sig.params.map((t, i) => toWasm(t, a[i])));
+            return sig.ret === "" || sig.ret === "void" ? undefined : fromWasm(shapeOf(sig.ret), out);
+          };
+        }
+        // What `trap "…"` left behind, or "" — asked of a module that has just trapped, so it may trap itself.
+        const trapSaid = () => {
+          try { return typeof ex["$trap$message"] === "function" ? fromWasm({ kind: "string" }, ex["$trap$message"]()) ?? "" : ""; }
+          catch { return ""; }
+        };
+        return { app, manifest, trapSaid };
+      };
+      const wacManifestOf = (mod) => {
+        const section = WebAssembly.Module.customSections(mod, "wac.manifest");
+        return section.length === 0 ? null : JSON.parse(new TextDecoder().decode(section[0]));
+      };
+
+      // ── Serving a module: one `wacServer` per module, so each keeps its own requests and handles. ────────────
+      //
+      // `wasm` is the module's bytes, for its `spawnSelf`; `grants` is what it was handed; `deliver` gives it an
+      // answer. **What it was not handed is refused here**, as `system.wac`'s `refusal` refuses what the page was
+      // not built with: its requests come straight to `wacServer`, which does what it is asked and decides nothing.
+      // Files need `GRANT_READ` (1) to look and `GRANT_WRITE` (2) to change, and what it starts or loads holds no
+      // more than it does. A program with no files of its own is served its parent's over handle 1, and asks
+      // nothing here. Answers the browser has at once — the clock, randomness, an argument, the directory, a write
+      // to a stream, and the module calls — are delivered inside the request that asked; the rest when `later`
+      // says, which is between turns, when the module is running nothing.
+      const AT_ONCE = new Set([1, 2, 3, 6, 7, 41, 12, 48, 64, 65, 66, 67]);
+      const wacServe = (me, wasm, grants, deliver, later) => {
+        const NONE = new Uint8Array(0);
+        let asking = -1;
+        const answer = (...a) => {
+          if (asking >= 0 && AT_ONCE.has(asking)) deliver(a);
+          else later(a);
+        };
+        const server = wacServer(answer, me);
+        const looks = (op, a) => op === 9 || op === 13 || op === 47 || op === 14 || (op === 61 && Number(a) === 0);
+        const changes = (op) => op === 10 || op === 15 || op === 16 || op === 17 || op === 61 || op === 52 || op === 60;
+        const notHanded = (what) => "Not granted to this application: the program that started it did not hand it `" + what + "`";
+        const ok = (id) => answer(id, 0, "", NONE, 0n, 0n, 0);
+        const request = (op, id, a, b, text, bytes) => {
+          const was = asking;
+          asking = op;
+          try {
+            if (looks(op, a) && (grants & 1) === 0) return answer(id, 7, notHanded("read"), NONE, 0n, 0n, 0);
+            if (!looks(op, a) && changes(op) && (grants & 2) === 0) return answer(id, 7, notHanded("write"), NONE, 0n, 0n, 0);
+            // No environment and no standard input to read whole, as for the page's own program.
+            if (op === 8 || op === 11) return ok(id);
+            if (op === 27) return server.request(op, id, BigInt(Number(a) & grants), b, text, bytes);
+            // **Itself again is this module again**, not a copy of the page whose script the worker runs on.
+            if (op === 49) {
+              const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+              const rest = bytes.slice(4 + v.getUint32(0, true));
+              const whole = new Uint8Array(4 + wasm.length + rest.length);
+              new DataView(whole.buffer).setUint32(0, wasm.length, true);
+              whole.set(wasm, 4);
+              whole.set(rest, 4 + wasm.length);
+              return server.request(27, id, BigInt(Number(a) & grants), b, text, whole);
+            }
+            if (op === 64) return server.request(op, id, BigInt(Number(a) & grants), b, text, bytes);
+            server.request(op, id, a, b, text, bytes);
+          } finally { asking = was; }
+        };
+        return { request, exit: server.exit };
+      };
+
+      // A module loaded into this worker: driven, given a host of its own, and called by name — the native host's
+      // `call_loaded`. An export taking nothing, an `i32` or its `__WacHost`, and answering nothing, an `i32` or a
+      // `string`: status 0 with the answer, 1 for a trap with what it said, 2 for no such export, 3 for one this
+      // cannot call.
+      const wacLoad = (me, wasm, grants) => {
+        const mod = new WebAssembly.Module(wasm);
+        const d = wacDrive(mod, wacManifestOf(mod));
+        let host = null;
+        const deliver = (a) => d.app.__wacAnswered(host, ...a);
+        const s = wacServe(me, wasm, grants, deliver, (a) => setTimeout(() => deliver(a), 0));
+        if (typeof d.app.__wacHost === "function") {
+          host = d.app.__wacHost(s.request, (ids, millis) => -2, (code) => { throw new Error("exited with " + code); }, () => false);
+        }
+        return {
+          call(name, arg) {
+            const sig = d.manifest.exports.find((e) => e.name === name);
+            if (sig === undefined || typeof d.app[name] !== "function") return [2, "no export named " + name, 0];
+            const takesInt = sig.params.length === 1 && sig.params[0] === "i32";
+            const takesHost = sig.params.length === 1 && sig.params[0] === "__WacHost";
+            if (sig.params.length > 0 && !takesInt && !takesHost) return [3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0];
+            if (takesHost && host === null) return [3, name + " takes a __WacHost and this module exports no __wacHost", 0];
+            const ret = sig.ret === "" ? "void" : sig.ret;
+            if (ret !== "void" && ret !== "i32" && ret !== "string") return [3, name + " answers " + ret, 0];
+            let out;
+            try { out = d.app[name](...(takesInt ? [arg] : takesHost ? [host] : [])); }
+            catch { return [1, d.trapSaid(), 0]; }
+            return ret === "string" ? [0, out ?? "", 0] : [0, "", ret === "i32" ? out : 0];
+          },
+        };
+      };
+
+      // ── A module the page was handed, as a process: `OP_SPAWN`'s other half. ─────────────────────────────────
+      const wacModule = (init, port) => {
+        const stdin = wacQueue(), fsIn = wacQueue();
+        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
+                     post: (m, transfer) => port.postMessage(m, transfer ?? []) };
+        port.onmessage = (e) => wacFromParent(e.data, stdin, fsIn);
+        const said = (text) => me.post(["err", new TextEncoder().encode(text + String.fromCharCode(10))]);
+        const wasm = init.wasm;
+        const mod = new WebAssembly.Module(wasm);
+        const manifest = wacManifestOf(mod);
+        if (manifest === null) {
+          said("this is not a wac program: it carries no wac.manifest section");
+          me.post(["exit", 126]);
+          close();
+          return;
+        }
+        const { app } = wacDrive(mod, manifest);
+        let host = null, run = null, finished = false, turning = false;
+        const arrived = [];
+        const deliver = (a) => { if (!finished) app.__wacAnswered(host, ...a); };
+        const turn = () => {
+          turning = false;
+          if (finished) return;
+          while (arrived.length > 0) deliver(arrived.shift());
+          if (run === null) return;
+          run = app.__wacAdvance(run);
+          settle();
+        };
+        const later = (a) => {
+          if (finished) return;
+          arrived.push(a);
+          if (!turning) { turning = true; setTimeout(turn, 0); }
+        };
+        const s = wacServe(me, wasm, Number(init.grants), deliver, later);
+        const settle = () => {
+          if (finished || run === null || !app.__wacDone(run)) return;
+          finished = true;
+          s.exit(app.__wacStatus(run));
+        };
+        // A page cannot wait: `HOST_CANNOT_WAIT`, and an `async` program yields.
+        const waitAny = (ids, millis) => -2;
+        const exitWith = (code) => {
+          finished = true;
+          s.exit(code);
+          throw new Error("exited");
+        };
+        const interrupted = () => false;
+        try {
+          // **A program that takes nothing has no host**: its `main` has no parameter and the module exports no
+          // `__wacHost`, so there is nothing to make and nothing it will ask.
+          if (typeof app.__wacHost === "function") host = app.__wacHost(s.request, waitAny, exitWith, interrupted);
+          if (typeof app.__wacStart === "function") {
+            run = app.__wacStart(host);
+            settle();
+          } else {
+            const sig = manifest.exports.find((e) => e.name === "main");
+            if (sig === undefined) throw new Error("the module has no main");
+            const code = app.main(...(sig.params.length > 0 ? [host] : []));
+            finished = true;
+            s.exit(code ?? 0);
+          }
+        } catch (e) {
+          if (!finished) {
+            said(String(e?.message ?? e));
+            finished = true;
+            s.exit(134);
+          }
+        }
       };
       """;
 }
@@ -845,6 +1224,94 @@ export string documentSide() {
 }
 
 /**
+ * **The page's thread starts every program** (design/system/0015 decision 3), for every worker that asks: the
+ * page's own program, a copy of the page it started, a module, and anything those start in turn. It makes a
+ * `MessageChannel` and hands one end to the worker that asked and the other to the new one, so the two talk
+ * directly; the page's thread hears from them only to start a child and to stop one.
+ *
+ * **Why the page's thread**: a page opened from a file has an opaque origin, and a worker there may not start a
+ * worker — while the page's own thread may. One route for `http://` and `file://` alike, so the tests over `http://`
+ * exercise what a page from a file depends on. And only the thread that started a worker can end it, which is
+ * what `^C` needs: asked to stop a child, it stops it and everything it started, as ending a worker that had
+ * started its own used to.
+ *
+ * `broker(from, message)` answers whether the message was the broker's: `["broker", n, "start", kind, init]`, answered
+ * `["brokered", n, id, port]` (or `null` and why), or `["broker", 0, "stop", id]`. A child that dies without exiting —
+ * a trap the browser reports — is told to its parent as `["childFailed", id, why]`.
+ */
+export string brokerSide() {
+  return """
+      const wacBroker = (script) => {
+        const kids = new Map();
+        let next = 0;
+        const stop = (id) => {
+          const k = kids.get(id);
+          if (k === undefined) return;
+          kids.delete(id);
+          k.worker.terminate();
+          for (const [other, o] of kids) if (o.parent === k.worker) stop(other);
+        };
+        const broker = (from, m) => {
+          if (!Array.isArray(m) || m[0] !== "broker") return false;
+          const [, n, op, ...rest] = m;
+          if (op === "stop") { stop(rest[0]); return true; }
+          const [kind, init] = rest;
+          let worker;
+          try { worker = new Worker(script); }
+          catch (e) { from.postMessage(["brokered", n, -1, null, String(e?.message ?? e)]); return true; }
+          const id = ++next;
+          kids.set(id, { worker, parent: from });
+          worker.onmessage = (e) => { broker(worker, e.data); };
+          worker.onerror = (e) => {
+            e.preventDefault();
+            if (kids.has(id)) from.postMessage(["childFailed", id, e.message || "the program stopped"]);
+          };
+          const channel = new MessageChannel();
+          worker.postMessage([kind, init, channel.port2], [channel.port2, ...(init.wasm ? [init.wasm.buffer] : [])]);
+          from.postMessage(["brokered", n, id, channel.port1], [channel.port1]);
+          return true;
+        };
+        return broker;
+      };
+      """;
+}
+
+/**
+ * A worker's side of `brokerSide`: `wacAskPage` asks the page's thread to start a child and answers its id and this
+ * worker's end of the channel; `wacTellPage` asks it to stop one; `wacFromPage` takes the answers, and says whether a
+ * message was one. `wacFromParent` is what a child's parent sends down the channel.
+ */
+export string brokerClient() {
+  return """
+      const wacAsked = new Map();
+      let wacAskedNext = 0;
+      const wacChildFailed = new Map();
+      const wacAskPage = (m, transfer) => new Promise((done) => {
+        const n = ++wacAskedNext;
+        wacAsked.set(n, done);
+        postMessage(["broker", n, ...m], transfer ?? []);
+      });
+      const wacTellPage = (m) => postMessage(["broker", 0, ...m]);
+      const wacFromPage = (m) => {
+        if (!Array.isArray(m)) return false;
+        if (m[0] === "brokered") {
+          const done = wacAsked.get(m[1]);
+          wacAsked.delete(m[1]);
+          if (done) done([m[2], m[3], m[4] ?? ""]);
+          return true;
+        }
+        if (m[0] === "childFailed") { wacChildFailed.get(m[1])?.(m[2]); return true; }
+        return false;
+      };
+      const wacFromParent = (m, stdin, fsIn) => {
+        if (m[0] === "stdin") stdin.push(m[1]);
+        else if (m[0] === "stdinEnd") stdin.end();
+        else if (m[0] === "fs") fsIn.push(m[1]);
+      };
+      """;
+}
+
+/**
  * The page, with the program in a worker: the glue and the program's half in a script the browser
  * does not run, and the document's half starting a worker from that script's text. A blob rather than
  * a second file, so the page stays one file that also works from a `file://` URL — and a **classic**
@@ -855,20 +1322,26 @@ export string workerIndexFor(string title, string module, bool spawn) {
   return head(title)
        + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + systemSide()
        + programSide()
-       + (spawn ? childSide() : "")
-       // The first message says who this worker is: the page's program, or a copy started by one.
+       + (spawn ? childSide() : "") + moduleSide()
+       // The first message says who this worker is: the page's program, a copy started by one, or a module one
+       // was handed.
+       + brokerClient()
        + "let receive = null;\n"
        + "onmessage = (e) => {\n"
+       + "  if (wacFromPage(e.data)) return;\n"
        + "  if (receive !== null) return receive(e.data);\n"
-       + "  receive = e.data[0] === \"init\" ? wacChild(e.data[1])\n"
-       + "    : wacProgram((m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
+       + "  if (e.data[0] === \"init\") { receive = () => {}; return wacChild(e.data[1], e.data[2]); }\n"
+       + "  if (e.data[0] === \"module\") { receive = () => {}; return wacModule(e.data[1], e.data[2]); }\n"
+       + "  receive = wacProgram((m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
        + "};\n</script>\n"
-       + documentScript(documentSide()
+       + documentScript(documentSide() + brokerSide()
        + """
          const source = document.getElementById("wac-program").textContent;
-         const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+         const script = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+         const worker = new Worker(script);
+         const broker = wacBroker(script);
          const apply = wacDocument(document.getElementById("app"), (m, transfer) => worker.postMessage(m, transfer ?? []));
-         worker.onmessage = (e) => apply(e.data);
+         worker.onmessage = (e) => { if (!broker(worker, e.data)) apply(e.data); };
          worker.onerror = (e) => console.error(e.message);
          worker.postMessage(["page", location.hash]);
          """)
@@ -878,7 +1351,7 @@ export string workerIndexFor(string title, string module, bool spawn) {
 /** The page, with the program on the page's own thread: the two halves joined directly. */
 export string inPageIndexFor(string title, string module) {
   return head(title)
-       + documentScript(module + "\n" + systemSide() + programSide() + documentSide()
+       + documentScript(module + "\n" + systemSide() + moduleSide() + programSide() + documentSide()
        + """
          let receive = null;
          const apply = wacDocument(document.getElementById("app"), (m) => receive(m));

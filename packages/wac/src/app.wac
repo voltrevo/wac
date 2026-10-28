@@ -227,5 +227,5 @@ export async i32 appRun(Output err, Env env, Files fs, Net net, Procs procs, i32
   }
   u8[] wasm = u8[].filled(f!.len() - at, 0);
   for (i32 i = at; i < f!.len(); i++) { wasm[i - at] = f![i]; }
-  return runBytes(err, fs, net, env, procs, wasm, args, path);
+  return await runBytes(err, fs, net, env, procs, wasm, args, path);
 }

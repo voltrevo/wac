@@ -1,0 +1,21 @@
+// A program the page in `spawnpage.wac` finds on its disk and runs: what the live test in
+// `packages/web/test/spawn_live.test.ts` checks a page can start.
+//
+// It uses each way a module talks to the page that starts it: its arguments and the clock, answered as they
+// are asked; a file read, which the browser answers later, so the program yields and is run on; standard output
+// and error; and a status of its own.
+
+import { Sys } from "std";
+
+export async i32 main(Sys sys) {
+  string[] args = sys.args();
+  string said = "";
+  for (i32 i = 0; i < args.len(); i++) { said = said + (i == 0 ? "" : " ") + args[i]; }
+  sys.stdout().line("args: \{said}");
+  match (await sys.files().readFile("note.txt")) {
+    Ok(b): { sys.stdout().line("note: \{string.fromBytes(b)}"); }
+    Err(e): { sys.stdout().line("note: \{e}"); }
+  }
+  sys.stderr().line("to standard error");
+  return 7;
+}

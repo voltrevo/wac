@@ -1,0 +1,119 @@
+// A page that runs modules from its own disk (design/system/0015): `child.wasm`, `plain.wasm` and `load.wasm`, which
+// are `spawnchild.wac`, `spawnplain.wac` and `spawnload.wac` built and put in the page's storage by the live test in
+// `packages/web/test/spawn_live.test.ts`, each started with `procs().spawn` and its output shown as it was written.
+
+import { Sys, Authority, Launch } from "std";
+import { Node, Page, State, Ui, html.pre } from "../../web";
+
+export async i32 main(Page page) {
+  page.mount((Ui ui) => shows(ui, page));
+  return 0;
+}
+
+Node shows(Ui ui, Page page) {
+  auto shown = ui.state("starting");
+  ui.effect("", () => {
+    run(page.sys, shown);
+    return () => { };
+  });
+  return <pre id="out">{shown.get()}</pre>;
+}
+
+/**
+ * What a copy of this page runs, started by `spawnSelf` (the page is built `--spawn spin`): a loop that never ends,
+ * so the only way it stops is being stopped — which a worker cannot do to itself, and a page from a file could not
+ * do at all while each worker started its own children.
+ */
+export async i32 spin(Sys sys) {
+  i32 n = 0;
+  while (true) { n = n + 1; }
+  return n;
+}
+
+/** `file` loaded into this page's worker, and its `main` called: what that answered. */
+async string loaded(Sys sys, string file) {
+  match (await sys.files().readFile(file)) {
+    Ok(bytes): {
+      match (sys.modules().load(bytes, Authority.none())) {
+        Ok(m): {
+          string said = "";
+          match (m.call("main", 0)) {
+            Ok(c): { said = "page called: status \{c.status}, value \{c.value}"; }
+            Err(e): { said = "page call: \{e}"; }
+          }
+          m.unload();
+          return said;
+        }
+        Err(e): { return "page load: \{e}"; }
+      }
+    }
+    Err(e): { return "page read: \{e}"; }
+  }
+}
+
+/** Start a copy of this page spinning, stop it, and say how it ended. */
+async string stopsACopy(Sys sys) {
+  match (await sys.procs().spawnSelf(string[](), Authority.none(), Launch.plain())) {
+    Ok(child): {
+      await sys.clock().sleepMillis(300);
+      child.stop();
+      match (await child.exit()) {
+        Ok(c): { return "stopped: \{c}"; }
+        Err(e): { return "stopped: \{e}"; }
+      }
+    }
+    Err(e): { return "did not start: \{e}"; }
+  }
+}
+
+async void run(Sys sys, State<string> shown) {
+  // From a file the page has no storage, so nothing to read modules from: it starts copies of itself instead.
+  if ((await sys.files().stat("child.wasm")).isErr()) {
+    shown.set("from a file\n" + (await stopsACopy(sys)));
+    return;
+  }
+  string child = await ran(sys, "child.wasm", false, Authority(sys.files(), null, null, null));
+  string plain = await ran(sys, "plain.wasm", false, Authority(sys.files(), null, null, null));
+  // Writing this page's own streams instead — the page's console — as `wac run` has the program it starts do.
+  string inherited = await ran(sys, "child.wasm", true, Authority(sys.files(), null, null, null));
+  // Handed nothing: it may not read the page's storage, however it asks.
+  string bare = await ran(sys, "child.wasm", false, Authority.none());
+  // A module that loads another and calls it.
+  string loads = await ran(sys, "load.wasm", false, Authority(sys.files(), null, null, null));
+  // And the page itself loading one into its own worker, and calling it by name.
+  string itself = await loaded(sys, "plain.wasm");
+  shown.set("\{child}\n\{plain}\n\{inherited}\n\{bare}\n\{loads}\n\{itself}");
+}
+
+/**
+ * What the module in `file` wrote, its errors, and its status — or why it did not run. `inherit`: it writes this
+ * page's own streams, so there is nothing here to read but its status.
+ */
+async string ran(Sys sys, string file, bool inherit, Authority given) {
+  u8[] module;
+  match (await sys.files().readFile(file)) {
+    Ok(b): { module = b; }
+    Err(e): { return "no module: \{e}"; }
+  }
+  match (await sys.procs().spawn(module, ["one", "two"], given, Launch("", false, inherit, false))) {
+    Ok(child): {
+      string out = "";
+      match (await child.output().readAll()) {
+        Ok(b): { out = string.fromBytes(b); }
+        Err(e): { out = "output: \{e}"; }
+      }
+      string err = "";
+      match (await child.errors().readAll()) {
+        Ok(b): { err = string.fromBytes(b); }
+        Err(e): { err = "errors: \{e}"; }
+      }
+      string code = "";
+      match (await child.exit()) {
+        Ok(c): { code = "\{c}"; }
+        Err(e): { code = "\{e}"; }
+      }
+      return "\{out}err: \{err}exit: \{code}";
+    }
+    Err(e): { return "did not start: \{e}"; }
+  }
+}

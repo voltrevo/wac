@@ -100,12 +100,29 @@ page is built with `--grant read,write`; without one they are refused, saying wh
 and so is `sys.cli`, which is no way around the grants. The clock, randomness and output need none. [`packages/platform/example/notes.wac`](../platform/example/notes.wac)
 keeps a note that survives a reload.
 
-A page built with `--spawn <export>` can start copies of itself: `sys.cli.spawnSelf(args, …)` runs
+A page built with `--spawn <export>` can start copies of itself: `sys.procs().spawnSelf(args, …)` runs
 `export async i32 <export>(Sys sys)` in a worker of its own, with those arguments, its input fed by the
 parent, its output and errors read back on handles, and — when asked — its files reached through the
 parent's. That is how a shell's pipeline stages are processes in a page.
 [`packages/platform/example/procs.wac`](../platform/example/procs.wac) is the smallest one: a page that
 starts a copy of itself, streams text into it and reads it back upper-cased.
+
+**And any page can start a module it holds** (design/system/0015): `sys.procs().spawn(wasm, args, …)` with a
+module `wac build` wrote — read from the page's disk, say — runs it in a worker of its own, the same way, so a
+shell on a page runs a program from its disk as it does anywhere else. The worker drives the module from the
+`wac.manifest` section it carries and serves its requests as it serves the page's; a page cannot wait, so an
+`async` program hands control back at each wait and is run on when the answer arrives, and one whose `main` is not
+`async` stops at its first wait for the browser. A file that is not a wac module is refused at `spawn`. Such a
+module holds what it was handed and no more, and can itself `load` a module and call it by name — so the `wac`
+command, run that way, can `check`, `build`, `run` and `test`.
+[`packages/platform/example/spawnpage.wac`](../platform/example/spawnpage.wac) runs
+[`spawnchild.wac`](../platform/example/spawnchild.wac), built, from its storage. A page's own program can `load`
+a module too.
+
+**The page's own thread starts every program**, for whichever worker asks — the page's program, a copy, a module,
+or anything those start — and hands the two ends of a `MessageChannel` to parent and child, which then talk
+directly. That is because a page opened from `file://` may not start a worker from a worker, while its own thread
+may; so processes, and stopping one with `^C`, work from a file as they do over `http://`.
 
 Nothing waits for the browser: each call that reaches it returns a ticket at once, and the browser
 calls back when the work is done. So a host ticket is `await`ed — `await cli.readFile(p).ticket()` —

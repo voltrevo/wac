@@ -76,9 +76,7 @@ string unsupported(i32 op) {
       || op == OP_RECEIVE_FROM() || op == OP_SEND_TO()) {
     return "a page has no sockets";
   }
-  if (op == OP_SPAWN()) { return "this page cannot start programs"; }
   if (op == OP_EXEC()) { return "a page cannot run a host program"; }
-  if (op == OP_LOAD() || op == OP_CALL() || op == OP_UNLOAD() || op == OP_VALIDATE()) { return "a page cannot do this"; }
   return "";
 }
 
@@ -123,9 +121,9 @@ void pageRequest(PageLine line, i32 op, i32 id, i64 a, i64 b, string text, u8[] 
     answered(h, id, 5, "", u8[](), 0 as i64, 0 as i64, 0);
     return;
   }
-  // **No grant, and none kept**, as on a command line: what is started is this program again, so it reaches
-  // nothing new, and what it may do is what it is given -- never more than this holds.
-  i64 asked = op == OP_SPAWN_SELF() ? a & (line.grants as i64) : a;
+  // **No grant, and none kept**, as on a command line: what is started is this program again, or a module this
+  // program holds (design/system/0015), and what it may do is what it is given -- never more than this holds.
+  i64 asked = op == OP_SPAWN_SELF() || op == OP_SPAWN() || op == OP_LOAD() ? a & (line.grants as i64) : a;
   line.asking = true;
   line.system.request(op, id, asked, b, text, bytes);
   line.asking = false;

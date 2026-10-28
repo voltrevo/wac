@@ -1,0 +1,4 @@
+// A program that takes nothing — no `Sys`, so no host — run by the page in `spawnpage.wac`: its status is all it
+// has to say. A module like this exports no `__wacHost`, and a page starting it must not ask for one.
+
+export i32 main() { return 3; }

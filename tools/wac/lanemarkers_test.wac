@@ -38,7 +38,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { Files, Output, Procs, Sys } from "std";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
-import { startsWith } from "../../packages/wactest/src/strings.wac";
+import { endsWith, startsWith } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { flatten } from "core";
 
@@ -204,6 +204,9 @@ export string test_every_tree_the_runner_walks_for_markers_still_exists(Sys sys)
  * true of `// test-lane: heavyish`, so a lane that merely begins with a known one is read as that one
  * — the opposite failure, and quieter, because the file does get treated as *something*.
  *
+ * `browser` is a lane only in a `.test.ts`: `tools/runTests.wac` runs those files on their own, with
+ * `-A`, because Playwright needs it.
+ *
  * `normal` is a lane and is deliberately in the list. It is the default, so `declarations` is right
  * to ignore it, and `packages/wacc/test/wac/checked_test.wac` says it on purpose: that file *was*
  * heavy, and the marker is how a reader learns it was demoted rather than never considered. A guard
@@ -214,7 +217,7 @@ export string test_every_lane_marker_names_a_lane_the_runner_knows(Sys sys) {
   Files fs = sys.files();
   Procs procs = sys.procs();
   T t = T.create();
-  string[] known = ["heavy", "exclusive", "normal"];
+  string[] known = ["heavy", "exclusive", "normal", "browser"];
 
   // Both halves of the suite declare lanes, so both are read: `.test.ts` for the Deno pass and
   // `.wac` for the wac one.
@@ -239,6 +242,9 @@ export string test_every_lane_marker_names_a_lane_the_runner_knows(Sys sys) {
       string lane = sp < 0 ? rest : rest.slice(0, sp);
       bool ok = false;
       for (i32 j = 0; j < known.len(); j++) { if (known[j] == lane) { ok = true; } }
+      // `browser` is the Deno pass's alone: the `wac test` lane has no Chromium to run it in, and
+      // would put such a file in the parallel queue.
+      if (lane == "browser" && !endsWith(files[i], ".ts")) { ok = false; }
       if (ok) { continue; }
       bad = bad + 1;
       if (first == "") { first = files[i] + ": `" + lane + "`"; }
