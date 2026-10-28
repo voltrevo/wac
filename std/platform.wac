@@ -109,6 +109,13 @@ i64 millisToNanos(i32 millis) { return (millis as i64) * (1000000 as i64); }
  *
  * Plain arrays rather than `Vec`, so `platform` keeps its one import and depends on no package.
  */
+/**
+ * What a host's `waitAny` answers when it **cannot wait** — a page, which may not block until an answer
+ * arrives. Distinct from `-1`, "nothing answered in time": this one means "return to me, and I will call
+ * you again when something has". Design `system/0015`, decision 4.
+ */
+export i32 HOST_CANNOT_WAIT() { return 0 - 2; }
+
 export struct Sched {
   i32[] ids;
   fn<void(i32)>[] handlers;
@@ -121,11 +128,18 @@ export struct Sched {
    * with `create` and marshals `Core` field by field.
    */
   Queue<Continuation> queued;
+  /**
+   * Whether the last wait was refused by a host that cannot wait — a page, which has no way to sleep
+   * until an answer arrives, and whose `waitAny` answers `HOST_CANNOT_WAIT` instead. The program then
+   * yields to the host rather than failing, and is resumed when an answer has arrived (design
+   * `system/0015`, decision 4). Hosts that can wait never set it.
+   */
+  bool yielded;
 
   Sched create() {
     Queue<Continuation> queued;
     return Sched(i32[].filled(8, 0), fn<void(i32)>[].filled(8, schedIdle), fn<void(i32)>[].filled(8, schedIdle), 0,
-                 queued);
+                 queued, false);
   }
 
   /** How much work is outstanding — what the host asks before deciding a clean exit. */
@@ -310,6 +324,7 @@ export struct Sched {
     i32[] live = i32[].filled(this.n, 0);
     for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
     i32 which = core.waitAny(live, millis);
+    if (which == HOST_CANNOT_WAIT()) { this.yielded = true; }
     if (which < 0) { return 0; }
     i32 id = this.ids[which];
     fn<void(i32)> handler = this.handlers[which];
@@ -2683,10 +2698,18 @@ export struct Sys {
    * adapter's wait on an `async` main. False, having said so, when nothing can move it.
    */
   bool __wacSettle(this, TicketBase t) {
+    this.core.sched.yielded = false;
     this.core.drainUntil(0 - 1, t);
-    if (!t.done) { this.warn("main cannot finish: nothing that can run will settle what it waits on"); }
+    // **A host that cannot wait is yielded to, not reported as a hang**: the program is still running,
+    // and the host settles again once an answer has arrived (`__wacYielded`, design `system/0015`).
+    if (!t.done && !this.core.sched.yielded) {
+      this.warn("main cannot finish: nothing that can run will settle what it waits on");
+    }
     return t.done;
   }
+
+  /** Whether the last `__wacSettle` stopped because the host cannot wait, rather than because nothing could run. */
+  bool __wacYielded(const this) { return this.core.sched.yielded; }
 
   /** `main` answered an `Err`: say why, and exit 1. */
   i32 __wacFailed(const this, string why) {

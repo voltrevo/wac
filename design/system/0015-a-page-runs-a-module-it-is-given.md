@@ -66,6 +66,23 @@ One route everywhere, so the `http://` tests exercise what a `file://` page depe
 only where a direct start fails (two routes, one exercised only from `file://`), and relaying every
 message through the main thread (a hop per message, which is what made the fallback look necessary).
 
+### 4. A page never blocks; an `async` program yields to it, and one that blocks aborts (operator, 2026-10-28)
+
+A module `wac build` writes for a command line expects to block: `.wait()` sleeps until the host answers,
+and even an `async` program's adapter ends in `core.waitAny`, which sleeps until something has. The Deno
+and Node hosts do that with `SharedArrayBuffer` and `Atomics.wait`; a `packages/web` page has neither, by
+`0011`'s design. The operator's rule: programs are written `async`, and **a program that asks a page to
+block aborts** with a sentence saying so.
+
+For that to be enough, the standard adapter learns to yield (option A of three — not JSPI, not a separate
+`--page` build). A host that cannot wait answers `waitAny` with `HOST_CANNOT_WAIT` (`-2`); the scheduler
+records it and returns; `Sys.__wacSettle` reports the program still running rather than stuck; and an
+`async` program exports, beside `main`, `__wacStart` / `__wacAdvance` / `__wacDone` / `__wacStatus`, which
+keep where it got to in a value the host holds — module statics are compile-time (spec ch27), so the state
+cannot be a global. The host calls `__wacAdvance` when an answer has arrived. Hosts that can wait never
+answer `-2` and call `main` as they always did, so **one `.wasm` runs on every host**. A `.wait()` on an
+answer that has not arrived is still a block, and in a page it aborts.
+
 ## What it does not do
 
 - **No module from the network.** The runner instantiates bytes a program already holds: read from its disk

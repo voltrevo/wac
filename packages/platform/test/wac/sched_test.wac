@@ -14,7 +14,8 @@
 // script is an ordinary value.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Pending, Sched } from "std";
+import { Cli, Core, Pending, Sched, Sys } from "std";
+import { Ticket } from "core";
 
 /**
  * A `Core` whose `waitAny` answers with the indices in `script`, in order, then `-1` for ever.
@@ -330,5 +331,41 @@ export string test_fire_runs_what_is_registered_for_one_id() {
   t.eqI32(ran[1], 0, "and what it registered did not run in the same answer");
   t.eqI32(s.fire(5), 1, "it runs on the next one");
   t.eqI32(ran[1], 10, "once");
+  return t.report();
+}
+
+/**
+ * **A host that cannot wait says so, and the program yields to it rather than failing** — design
+ * `system/0015`, decision 4. A page has no way to sleep until an answer arrives, so its `waitAny`
+ * answers `-2`: *I cannot wait; call me again when something has answered.* The scheduler records that
+ * and returns, `__wacSettle` says the program is still running rather than "main cannot finish", and a
+ * second settle — after the host has the answer — finishes it.
+ *
+ * The scripted `Core`'s `warn` traps, so a settle that reported the program stuck fails this test.
+ */
+export string test_a_host_that_cannot_wait_is_yielded_to(Core real, Cli cli) {
+  T t = T.create();
+  Sched s = Sched.create();
+  bool[] answered = bool[].filled(1, false);
+  // Typed locals rather than lambdas in the call: the emitter does not yet type a lambda passed straight
+  // to a generic struct's constructor in a chained call, and declines the module.
+  fn<i64(i32)> resolve = (i32 id) => 42 as i64;
+  fn<bool(i32)> settled = (i32 id) => answered[0];
+  fn<void(i32)> drop = (i32 id) => { };
+  Pending<i64> p = Pending<i64>.of(7, resolve, settled, drop).on(s);
+  Ticket<i64> waiting = p.ticket();
+
+  // First the host cannot wait; then, called again, the ticket has answered.
+  Core core = scripted(s, [0 - 2, 0] as i32[], i32[].filled(1, 0), i32[].filled(8, 0));
+  Sys sys = Sys.__wacOf(core, cli);
+
+  t.isTrue(!sys.__wacSettle(waiting), "the first settle cannot finish: nothing has answered");
+  t.isTrue(sys.__wacYielded(), "and it says it yielded, rather than that the program is stuck");
+  t.isTrue(!waiting.done, "the ticket is still waiting");
+
+  answered[0] = true;
+  t.isTrue(sys.__wacSettle(waiting), "called again once the host has the answer, it finishes");
+  t.isTrue(!sys.__wacYielded(), "and has not yielded this time");
+  t.isTrue(waiting.done && waiting.value() == 42 as i64, "with the host's answer");
   return t.report();
 }

@@ -110,19 +110,25 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   string out = head + "__wacMain" + text.slice(at + 4, text.len());
 
   string call = "__wacMain(" + (takesSys ? "__wacSys" : "") + ")";
-  string body = "";
-  if (isAsync) {
-    body = body + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
-         + "  if (!__wacSys.__wacSettle(__wacT)) { return 1; }\n";
-    call = "__wacT.value()";
-  }
-  if (a == NOTHING()) { body = body + "  " + call + ";\n  return 0;\n"; }
-  else if (a == NEVER()) { body = body + "  " + call + ";\n"; }
-  else if (a == STATUS()) { body = body + "  return " + call + ";\n"; }
+  // What turns `main`'s answer into a status, given the answer as `answer` — the same for a `main` that
+  // answers at once and for an `async` one, once its ticket has settled.
+  string answer = isAsync ? "__wacT.value()" : call;
+  string finish = "";
+  if (a == NOTHING()) { finish = "  " + answer + ";\n  return 0;\n"; }
+  else if (a == NEVER()) { finish = "  " + answer + ";\n"; }
+  else if (a == STATUS()) { finish = "  return " + answer + ";\n"; }
   else {
     string ok = a == OK_STATUS() ? "Ok(v): { return v; }" : "Ok(_): { return 0; }";
     string err = quietOnClosedOutput(ret, errArm(ret), closedNameFor(text));
-    body = body + "  match (" + call + ") {\n    " + ok + "\n    " + err + "\n  }\n";
+    finish = "  match (" + answer + ") {\n    " + ok + "\n    " + err + "\n  }\n";
+  }
+  string body = finish;
+  string yielding = "";
+  if (isAsync) {
+    body = "  Ticket<" + ret + "> __wacT = " + call + ";\n"
+         + "  if (!__wacSys.__wacSettle(__wacT)) { return 1; }\n"
+         + "  return __wacFinish(__wacSys, __wacT);\n";
+    yielding = asyncAdapter(ret, call, finish);
   }
 
   string imports = "";
@@ -141,9 +147,46 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
     }
   }
   out = out + "\n\n// wac:program — the entry as a host starts it (packages/wacc/src/program.wac).\n" + imports
+      + yielding
       + "export i32 main(Core __wacCore, Cli __wacCli) {\n"
       + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n" + body + "}\n";
   return ProgramEntry("", out);
+}
+
+/**
+ * **An `async` program a host that cannot wait can run** — design `system/0015`, decision 4.
+ *
+ * A host that blocks calls `main`, and the program's waits sleep the thread until an answer arrives. A
+ * page cannot sleep: its `waitAny` answers `HOST_CANNOT_WAIT`, and the program must hand control back
+ * and be called again. So beside `main` an `async` program exports a second way in, which keeps where
+ * it got to in a value the host holds: `__wacStart` runs it until it finishes or yields, `__wacAdvance`
+ * runs it on once an answer has arrived, and `__wacDone` and `__wacStatus` read the outcome. Module
+ * statics are compile-time values (spec ch27), which is why the state is a value and not a global.
+ *
+ * `finish` is what `main` does with the settled ticket, shared through `__wacFinish` so the two entries
+ * cannot disagree about a status.
+ */
+string asyncAdapter(string ret, string call, string finish) {
+  return "struct __WacRun { Sys sys; Ticket<" + ret + "> t; bool done; i32 status; }\n"
+       + "i32 __wacFinish(Sys __wacSys, Ticket<" + ret + "> __wacT) {\n" + finish + "}\n"
+       + "export __WacRun __wacStart(Core __wacCore, Cli __wacCli) {\n"
+       + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n"
+       + "  return __wacAdvance(__WacRun(__wacSys, " + call + ", false, 0));\n"
+       + "}\n"
+       + "export __WacRun __wacAdvance(__WacRun r) {\n"
+       + "  if (r.done) { return r; }\n"
+       + "  if (!r.sys.__wacSettle(r.t)) {\n"
+       + "    if (r.sys.__wacYielded()) { return r; }\n"
+       + "    r.done = true;\n"
+       + "    r.status = 1;\n"
+       + "    return r;\n"
+       + "  }\n"
+       + "  r.done = true;\n"
+       + "  r.status = __wacFinish(r.sys, r.t);\n"
+       + "  return r;\n"
+       + "}\n"
+       + "export bool __wacDone(__WacRun r) { return r.done; }\n"
+       + "export i32 __wacStatus(__WacRun r) { return r.status; }\n";
 }
 
 /**
