@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // A page runs a module from its own disk, in Chromium (design/system/0015): `packages/platform/example/spawnpage.wac` reads
 // `child.wasm` from the page's storage, starts it with `procs().spawn`, and shows what it wrote and its status.
 //
