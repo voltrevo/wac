@@ -83,7 +83,11 @@ async Drained drain(Child kid) {
   Ticket<Result<Read, HostFault>> errT = complained.chunk();
   while (reading || complaining) {
     TicketBase[] parts = reading && complaining ? [outT, errT] : (reading ? [outT] : [errT]);
-    bool fromOut = reading && (await Ticket.first(parts)) == 0;
+    // **The `await` on a line of its own**, never on the right of `&&`: written that way, a loaded machine
+    // took the wrong stream about one run in four, read a ticket that had not settled, and trapped —
+    // `seq 1 300000 & wait` lost all its output (`issues/lang/0419a`).
+    i32 won = await Ticket.first(parts);
+    bool fromOut = reading && won == 0;
     u8[] got = chunkOf(fromOut ? outT : errT);
     if (fromOut) {
       if (got.len() > 0) { out.pushAll(got); outT = said.chunk(); } else { reading = false; }
