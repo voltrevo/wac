@@ -75,7 +75,7 @@ export struct TicketBase {
    * knows which of its tickets settled first, which driving them later cannot tell.
    */
   void whenSettled(this, fn<void()> f) {
-    if (this.watchers is null) { this.watchers = Vec.create(); }
+    if (this.watchers is null) { this.watchers = Vec<fn<void()>>.create(); }
     this.watchers!.push(f);
   }
 

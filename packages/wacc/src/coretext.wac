@@ -1387,7 +1387,7 @@ export string coreSource() {
     "   * knows which of its tickets settled first, which driving them later cannot tell.\n",
     "   */\n",
     "  void whenSettled(this, fn<void()> f) {\n",
-    "    if (this.watchers is null) { this.watchers = Vec.create(); }\n",
+    "    if (this.watchers is null) { this.watchers = Vec<fn<void()>>.create(); }\n",
     "    this.watchers!.push(f);\n",
     "  }\n",
     "\n",
