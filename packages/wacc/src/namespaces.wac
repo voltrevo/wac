@@ -528,9 +528,18 @@ string itoaNs(i32 n) {
 struct NsExports {
   /** Names exported by declarations — a dotted one is a namespace member. */
   NsStrs names;
-  /** `export * as X from "s"`: each `X`, and the key `s` resolves to. */
+  /** `export * as X from "s"`: each `X`, the module `s` resolves to as `index + 2`, and its key. */
   NsStrs starNames;
   NsStrs starTargets;
+  NsStrs starKeys;
+  /**
+   * **A module that is not here yet**, standing in for the target of an `export * as` whose file has not
+   * been read — only when lowering for declarations (`loose`). It answers every name as a declaration
+   * of its own, so `import { ns.m }` through it is spelled as an import of `m` from that file's path,
+   * and whoever reads the result learns which file to read next (`missingForBuild`). Nothing is
+   * compiled from it: a build lowers again once the file is here.
+   */
+  bool open;
 }
 
 /**
@@ -576,11 +585,44 @@ string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool
     locals[i] = NsLocal(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create());
     flat[i] = i < sources.len() ? flattenInline(reads, sources[i], locals[i]) : "";
   }
-  NsExports[] exports = NsExports[].filled(n, NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create()));
+  NsExports[] exports = NsExports[].filled(n, emptyExports());
   for (i32 i = 0; i < n; i++) { exports[i] = exportsOfFlat(reads, paths, flat, res, i); }
 
+  // **The targets of `export * as` that are not here, as open modules** — `loose` only. A namespace
+  // re-export of a file not yet read resolved to no module at all, so an import through it stopped there
+  // and stayed as written, and a build reading only what is needed could never learn it needed the file.
+  string[] all = paths;
+  if (loose) {
+    NsStrs absent = NsStrs.create();
+    for (i32 i = 0; i < n; i++) {
+      for (i32 k = 0; k < exports[i].starTargets.n; k++) {
+        string key = exports[i].starKeys.items[k];
+        if (exports[i].starTargets.items[k] == "1" && key != "" && !absent.has(key)) { absent.push(key); }
+      }
+    }
+    if (absent.n > 0) {
+      all = string[].filled(n + absent.n, "");
+      for (i32 i = 0; i < n; i++) { all[i] = paths[i]; }
+      for (i32 k = 0; k < absent.n; k++) { all[n + k] = absent.items[k]; }
+      string[] flatAll = string[].filled(n + absent.n, "");
+      for (i32 i = 0; i < n; i++) { flatAll[i] = flat[i]; }
+      flat = flatAll;
+      NsLocal[] localsAll = NsLocal[].filled(n + absent.n, NsLocal(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create()));
+      for (i32 i = 0; i < n; i++) { localsAll[i] = locals[i]; }
+      locals = localsAll;
+      NsExports[] exportsAll = NsExports[].filled(n + absent.n, emptyExports());
+      for (i32 i = 0; i < n; i++) { exportsAll[i] = exportsOfFlat(reads, all, flat, res, i); }
+      for (i32 k = 0; k < absent.n; k++) {
+        NsExports open = emptyExports();
+        open.open = true;
+        exportsAll[n + k] = open;
+      }
+      exports = exportsAll;
+    }
+  }
+
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(reads, paths, flat, res, exports, locals, i, loose); }
+  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(reads, all, flat, res, exports, locals, i, loose); }
   return out;
 }
 
@@ -670,8 +712,12 @@ i32 targetOf(string[] paths, const Res res, i32 f, string spec) {
 /** The unquoted text of a string token. */
 string unquote(string q) { return q.len() >= 2 ? q.slice(1, q.len() - 1) : q; }
 
+NsExports emptyExports() {
+  return NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create(), false);
+}
+
 NsExports exportsOfFlat(Reads reads, string[] paths, string[] flat, const Res res, i32 f) {
-  NsExports ex = NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create());
+  NsExports ex = emptyExports();
   NsFile src = NsFile.via(reads, flat[f]);
   i32 depth = 0;
   for (i32 t = 0; t < src.count(); t++) {
@@ -680,6 +726,7 @@ NsExports exportsOfFlat(Reads reads, string[] paths, string[] flat, const Res re
       if (src.kind(t + 1) == kStar() && src.kind(t + 2) == kAs() && src.word(t + 4, "from")) {
         ex.starNames.push(src.text(t + 3));
         ex.starTargets.push(itoaNs(targetOf(paths, res, f, unquote(src.text(t + 5))) + 2));
+        ex.starKeys.push(resolveVia(res, paths, paths[f], unquote(src.text(t + 5))));
         t = t + 5;
         continue;
       }
@@ -738,6 +785,7 @@ bool exportsDecl(NsExports[] exports, i32 m, string name) {
     return false;
   }
   if (m < 0) { return false; }
+  if (exports[m].open) { return true; }
   return exports[m].names.has(name);
 }
 

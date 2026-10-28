@@ -84,6 +84,58 @@ struct Names {
   }
 }
 
+/**
+ * Files parsed by their text, for a build that reads in rounds (`neededMissing`): a file whose text is
+ * unchanged since the last round is not lexed or parsed again. A walk only reads a `Frontend`, so one may
+ * be shared by every walk that sees the same text.
+ */
+export struct Parsed {
+  string[] keys;
+  Frontend?[] fes;
+  bool[] used;
+  i32 count;
+
+  Parsed create() { return Parsed(string[].filled(64, ""), Frontend?[].defaulted(64), bool[].filled(64, false), 0); }
+
+  Frontend of(this, string path, string text) {
+    i32 mask = this.keys.len() - 1;
+    i32 h = hashOf(text) & mask;
+    while (this.used[h]) {
+      if (this.keys[h] == text) { return this.fes[h]!; }
+      h = (h + 1) & mask;
+    }
+    Frontend fe = frontendOf(path, text.toBytes());
+    if ((this.count + 1) * 2 > this.keys.len()) { this.grow(); }
+    mask = this.keys.len() - 1;
+    h = hashOf(text) & mask;
+    while (this.used[h]) { h = (h + 1) & mask; }
+    this.used[h] = true;
+    this.keys[h] = text;
+    this.fes[h] = fe;
+    this.count = this.count + 1;
+    return fe;
+  }
+
+  void grow(this) {
+    string[] oldKeys = this.keys;
+    Frontend?[] oldFes = this.fes;
+    bool[] oldUsed = this.used;
+    i32 size = oldKeys.len() * 2;
+    this.keys = string[].filled(size, "");
+    this.fes = Frontend?[].defaulted(size);
+    this.used = bool[].filled(size, false);
+    i32 mask = size - 1;
+    for (i32 i = 0; i < oldKeys.len(); i++) {
+      if (!oldUsed[i]) { continue; }
+      i32 h = hashOf(oldKeys[i]) & mask;
+      while (this.used[h]) { h = (h + 1) & mask; }
+      this.used[h] = true;
+      this.keys[h] = oldKeys[i];
+      this.fes[h] = oldFes[i];
+    }
+  }
+}
+
 i32 hashOf(string k) {
   i32 h = 5381;
   u8[] b = k.toBytes();
@@ -137,8 +189,8 @@ bool declExported(Decl d) {
   };
 }
 
-Unit unitOf(string path, string source) {
-  Frontend fe = frontendOf(path, source.toBytes());
+Unit unitOf(Parsed parsed, string path, string source) {
+  Frontend fe = parsed.of(path, source);
   Decl[] ds = fe.prog.decls;
   i32 n = ds.len();
   i32[] starts = i32[].filled(n, 0);
@@ -195,9 +247,16 @@ struct Walk {
   Res res;
   Unit?[] units;
   bool[] needed;
+  /**
+   * The files a retained declaration needs that the graph does not hold — what a build reads next
+   * (`neededMissing`). Every lookup of a file goes through `target`, and only for a name already found
+   * to be needed, so this is exactly the next layer of the demand.
+   */
+  Names absent;
+  Parsed parsed;
 
   Unit unit(this, i32 f) {
-    if (this.units[f] is null) { this.units[f] = unitOf(this.paths[f], this.sources[f]); }
+    if (this.units[f] is null) { this.units[f] = unitOf(this.parsed, this.paths[f], this.sources[f]); }
     return this.units[f]!;
   }
 
@@ -216,7 +275,9 @@ struct Walk {
       i32 named = this.indexOf("std");
       return named >= 0 ? named : this.indexOf(" std");
     }
-    return this.indexOf(key);
+    i32 at = this.indexOf(key);
+    if (at < 0 && key != "") { this.absent.add(key); }
+    return at;
   }
 
   void retain(this, i32 f, i32 d) {
@@ -299,12 +360,10 @@ struct Walk {
 }
 
 /**
- * The graph a build of `entry` compiles: the files it needs, with dropped declarations blanked.
- *
- * Answers the graph unchanged where it cannot do better — no entry among the paths, or a file that does
- * not parse, whose diagnostics belong to the checker downstream and which reachability must not hide.
+ * The walk `pruneFor` makes over a graph, to its fixed point — or null where it answers the graph unchanged:
+ * no entry among the paths, or an entry that does not parse.
  */
-export Pruned pruneFor(string[] givenPaths, string[] givenSources, Res res, string entry) {
+Walk? walkFor(string[] givenPaths, string[] givenSources, Res res, string entry, Parsed parsed) {
   // **`std` joins the walk even when the caller did not supply it** — it is carried — so it is pruned like the
   // rest and what goes on is the part the program reaches (`builtinKey`). Unreached, it is not handed on at all.
   string[] paths = givenPaths;
@@ -317,12 +376,13 @@ export Pruned pruneFor(string[] givenPaths, string[] givenSources, Res res, stri
     for (i32 i = 0; i < givenPaths.len(); i++) { paths[i] = givenPaths[i]; sources[i] = givenSources[i]; }
   }
   i32 n = paths.len();
-  Walk w = Walk(paths, sources, res, Unit?[].defaulted(n), bool[].filled(n, false));
+  Walk w = Walk(paths, sources, res, Unit?[].defaulted(n), bool[].filled(n, false),
+                Names(string[].filled(64, ""), bool[].filled(64, false), 0), parsed);
   i32 e = w.indexOf(entry);
-  if (e < 0) { return Pruned(givenPaths, givenSources, res); }
+  if (e < 0) { return null; }
   w.needed[e] = true;
   Unit eu = w.unit(e);
-  if (eu.fe.errorCount > 0 || eu.fe.lexed.errorCount > 0) { return Pruned(givenPaths, givenSources, res); }
+  if (eu.fe.errorCount > 0 || eu.fe.lexed.errorCount > 0) { return null; }
 
   // The roots: every export of the entry module, `§wac-reach-export-type-root-svpqwtw`.
   Decl[] eds = eu.fe.prog.decls;
@@ -352,6 +412,43 @@ export Pruned pruneFor(string[] givenPaths, string[] givenSources, Res res, stri
       }
     }
   }
+
+  return w;
+}
+
+/**
+ * The files a build of `entry` needs that `givenPaths` does not hold — spec ch05
+ * `§wac-reach-import-lazy-2jhptfk`: *a file is read only when a retained declaration needs a name it
+ * exports.* A build reads the entry, asks this, reads what it answers, and asks again until it answers
+ * nothing new; what it never answers is never read. A file that cannot be read keeps being answered, and
+ * the caller stops when a round adds nothing. `parsed` is the caller's, kept across those rounds.
+ */
+export string[] neededMissing(string[] givenPaths, string[] givenSources, Res res, string entry,
+                              Parsed parsed) {
+  Walk? walked = walkFor(givenPaths, givenSources, res, entry, parsed);
+  if (walked is null) { return string[](); }
+  Names absent = walked!.absent;
+  string[] out = string[].filled(absent.count, "");
+  i32 k = 0;
+  for (i32 i = 0; i < absent.keys.len(); i++) {
+    if (absent.used[i]) { out[k] = absent.keys[i]; k = k + 1; }
+  }
+  return out;
+}
+
+/**
+ * The graph a build of `entry` compiles: the files it needs, with dropped declarations blanked.
+ *
+ * Answers the graph unchanged where it cannot do better — no entry among the paths, or a file that does
+ * not parse, whose diagnostics belong to the checker downstream and which reachability must not hide.
+ */
+export Pruned pruneFor(string[] givenPaths, string[] givenSources, Res res, string entry) {
+  Walk? walked = walkFor(givenPaths, givenSources, res, entry, Parsed.create());
+  if (walked is null) { return Pruned(givenPaths, givenSources, res); }
+  Walk w = walked!;
+  string[] paths = w.paths;
+  string[] sources = w.sources;
+  i32 n = paths.len();
 
   // **Two declarations of one name are a fault of the file**, not of whatever reaches it (spec ch01
   // `§wac-dup-any-kind-ctguh44`), so pruning one away must not hide it: both are kept to be refused.
@@ -415,7 +512,7 @@ export Pruned pruneFor(string[] givenPaths, string[] givenSources, Res res, stri
  * module that imports `Buf` were not.
  */
 export string pruneCoreMembers(string core, string[] paths, string[] sources) {
-  Unit u = unitOf(" core", core);
+  Unit u = unitOf(Parsed.create(), " core", core);
   if (u.fe.errorCount > 0 || u.fe.lexed.errorCount > 0) { return core; }
   bool tickets = wantsTickets(paths, sources);
   for (i32 d = 0; d < u.names.len(); d++) {

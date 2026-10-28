@@ -229,4 +229,4 @@ surprises you.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
