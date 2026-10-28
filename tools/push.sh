@@ -244,6 +244,27 @@ if ! wasmtime_host; then
   exit 1
 fi
 
+# **And the two other things the suite's tests need built, on the same rule.** A checkout that had never
+# built them failed two tests after a whole suite: `bootstrap/ts/differential.test.ts` needs the Rust
+# assembler (`bootstrap/rust`, no dependencies, seconds), and `packages/ts/test/stripDifferential.test.ts`
+# needs the TypeScript compiler from `site/node_modules`. Every long-lived checkout had both, so only a
+# fresh clone or a new worktree found out. The assembler is built every time, a no-op when it is current;
+# `npm ci` runs only when `node_modules` is missing or older than `package-lock.json`, because it reaches
+# the registry.
+if ! (cd bootstrap/rust && cargo build --release >/dev/null 2>&1); then
+  echo "== the Rust assembler will not build: not running the suite ==" >&2
+  echo "   Run \`cd bootstrap/rust && cargo build --release\` by hand to see why." >&2
+  exit 1
+fi
+if [ ! -d site/node_modules ] || [ site/package-lock.json -nt site/node_modules ]; then
+  echo "== site/node_modules is missing or older than package-lock.json — npm ci =="
+  if ! (cd site && npm ci >"$log.npm" 2>&1); then
+    echo "== npm ci failed in site/: not running the suite ==" >&2
+    tail -20 "$log.npm" | sed 's/^/   /' >&2
+    exit 1
+  fi
+fi
+
 if ! "$WAC" test --allow-read --allow-env tools/wac/seedfresh_test.wac >/dev/null 2>&1; then
   echo "== the seed is older than the tree — rebuilding before the suite =="
   # **Kept, not discarded.** This was `>/dev/null 2>&1` and the advice below was "run it by hand to
