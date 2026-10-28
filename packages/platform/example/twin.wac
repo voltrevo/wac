@@ -17,58 +17,71 @@
 // and nowhere to draw; `packages/box/example/term.wac` is both a terminal and the programs it runs
 // for exactly that reason.
 
-import { HostChild, Cli, Core, GRANT_NONE, Sys } from "std";
-import { argvOf } from "../src/stream.wac";
-import { Read } from "core";
+import { Authority, Child, Input, Launch, Sys, Output, Procs, Unsupported } from "std";
+import { Read, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Procs procs = sys.procs();
+  i32 n = argv.len();
 
   // With arguments, this *is* the child: shout them and stop. One `main`, two behaviours, chosen by
   // argv — which is what a multi-call program is.
-  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "shout") {
+  if (n > 0 && argv[0] == "shout") {
     string said = "";
     for (i32 i = 1; i < n; i++) {
-      said = said + (i > 1 ? " " : "") + string.fromBytes(cli.arg(i).wait());
+      said = said + (i > 1 ? " " : "") + argv[i];
     }
-    cli.write("SHOUT: \{upper(said)}\n".toBytes());
+    out.write("SHOUT: \{upper(said)}\n".toBytes());
     return 0;
   }
 
-  core.log("parent: about to run myself");
+  out.line("parent: about to run myself");
 
-  // No source, no path, no grant: the same program, with different arguments. `GRANT_NONE` because
-  // shouting needs nothing — and a child could not have more than this program has anyway.
-  HostChild kid = cli.spawnSelf(argvOf(["shout", "hello", "twin"]), GRANT_NONE, "", 0, false).wait();
-  if (kid.unavailable()) {
-    core.warn("twin: this world cannot spawn: \{kid.error}");
-    return 2;
-  }
-  if (kid.handle < 0) {
-    core.warn("twin: \{kid.error}");
+  // No source, no path, no grant: the same program, with different arguments. `Authority.none()`
+  // because shouting needs nothing — and a child could not have more than this program has anyway.
+  auto started = flatten(procs.spawnSelf(["shout", "hello", "twin"], Authority.none(), Launch.plain()).wait());
+  if (started.isErr()) {
+    auto why = started.err()!;
+    if (why is Unsupported) {
+      err.line("twin: this world cannot spawn: \{why}");
+      return 2;
+    }
+    err.line("twin: \{why}");
     return 1;
   }
+  Child kid = started.unwrap();
 
-  // A child is a handle, so reading it is `recv` — the same call a socket takes. Nothing here knows
+  // A child's output is an `Input`, the same as a file's or this program's own. Nothing here knows
   // it is talking to a copy of itself.
-  cli.closeFeed(kid.handle);
+  kid.input().close().wait();
+  Input heard = kid.output();
   bool reading = true;
   while (reading) {
-    match (cli.recv(kid.handle).wait()) {
-      Data(bytes): { cli.write(bytes); }
+    auto chunk = flatten(heard.chunk().wait());
+    if (chunk.isErr()) {
+      err.line("twin: reading the child: \{chunk.err()!}");
+      return 1;
+    }
+    match (chunk.unwrap()) {
+      Data(bytes): { flatten(out.write(bytes).wait()).isOk(); }
       End: { reading = false; }
       Failed(why): {
-        core.warn("twin: reading the child: \{why}");
+        err.line("twin: reading the child: \{why}");
         return 1;
       }
     }
   }
 
-  i32 code = cli.exitCode(kid.handle).wait();
-  cli.closeSocket(kid.handle);
-  core.log("parent: the child exited \{code}");
+  auto exited = flatten(kid.exit().wait());
+  if (exited.isErr()) {
+    err.line("twin: \{exited.err()!}");
+    return 1;
+  }
+  i32 code = exited.unwrap();
+  out.line("parent: the child exited \{code}");
   return code;
 }
 

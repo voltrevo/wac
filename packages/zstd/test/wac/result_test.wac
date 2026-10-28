@@ -12,7 +12,7 @@ import { Result } from "core";
 import { decompressResult } from "../../src/frame.wac";
 import { compress } from "../../src/encode.wac";
 import { Block, compressed, firstCompressedBlock, literalsHeader } from "./frames.wac";
-import { Cli, Core } from "std";
+import { Procs, Sys } from "std";
 
 u8[] text(string s, i32 times) {
   u8[] b = s.toBytes();
@@ -110,10 +110,11 @@ export string test_noise_answers() {
  * reader and the four-stream decoder are inside the sweep too. Asserted rather than assumed: a frame
  * whose literals came out raw would make this test pass while reaching none of that.
  */
-export string test_a_reference_frame_with_huffman_literals_is_refused_or_harmless(Core core, Cli cli) {
+export string test_a_reference_frame_with_huffman_literals_is_refused_or_harmless(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] want = text("Huffman literals, then sequences, then a checksum over all of it. 0123456789 ", 40);
-  u8[] zst = compressed(t, cli, want, 3, true);
+  u8[] zst = compressed(t, procs, want, 3, true);
   t.isTrue(zst.len() > 0, "the reference encoder answered");
   if (zst.len() == 0) { return t.report(); }
   Block blk = firstCompressedBlock(zst);

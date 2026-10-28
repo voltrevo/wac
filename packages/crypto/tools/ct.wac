@@ -28,8 +28,9 @@
 // so a pair written with different shapes parts at event 1, which is the driver and not the routine.
 // Every driver here comes from one template with one array literal substituted.
 
-import { Core, Cli, Exec, Change, FileResult, execReason, Sys } from "std";
+import { Exec, Change, execReason, Sys, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
 import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
+import { flatten } from "core";
 
 static string CACHE = ".cache/ct-table";
 
@@ -175,7 +176,7 @@ Case[] cases() {
   ] as Case[];
 }
 
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
 /**
  * The `n`th whitespace-separated word of a line.
@@ -239,15 +240,15 @@ string grouped(i32 n) {
 }
 
 /** Build one traced driver at a given journal size; the stem, or "" when it did not build. */
-string build(Core core, Cli cli, Case c, i32 which, i32 slots, string tag) {
-  string dir = "\{cli.cwd().wait()}/\{CACHE}";
+string build(Output err, Env env, Files fs, Procs procs, Case c, i32 which, i32 slots, string tag) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/\{CACHE}";
   string program = "import { " + c.name + " } from \"../../" + c.src + "\";\n" +
                    "export i32 main() {\n" +
                    "  return " + replaceKey(c.call, literal(keyOf(which, c.keyLen))) + ".len();\n" +
                    "}\n";
   string entry = "\{dir}/\{tag}.wac";
-  Change wrote = cli.writeFile(entry, program.toBytes()).wait();
-  if (!wrote.ok()) { core.warn("ct: cannot write \{entry} — \{wrote.message}"); return ""; }
+  auto wrote = flatten(fs.writeFile(entry, program.toBytes()).wait());
+  if (wrote.isErr()) { err.line("ct: cannot write \{entry} — \{wrote.isErr() ? "\{wrote.err()!}" : ""}"); return ""; }
 
   string[] argv = slots > 0
     ? [
@@ -255,9 +256,10 @@ string build(Core core, Cli cli, Case c, i32 which, i32 slots, string tag) {
                "--quiet"
     ]
     : ["build", entry, "--trace", "-o", "\{dir}/\{tag}", "--quiet"];
-  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("ct: \{c.name} did not build — \{execReason(r)}");
+  auto rRan = flatten(procs.exec(binary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("ct: \{c.name} did not build — \{(r is null ? "\{rRan.err()!}" : execReason(r!))}");
     return "";
   }
   return "\{dir}/\{tag}";
@@ -275,21 +277,22 @@ string replaceKey(string call, string lit) {
 /** `events`, `wanted` and `slots` for one built module. */
 struct TraceStat { i32 events; i32 wanted; i32 slots; bool ok; }
 
-TraceStat statOf(Core core, Cli cli, string stem) {
-  Exec r = cli.exec(binary(cli), ["tracestat", "\{stem}.wasm"], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("ct: tracestat — \{execReason(r)}");
+TraceStat statOf(Output err, Env env, Procs procs, string stem) {
+  auto rRan = flatten(procs.exec(binary(env), ["tracestat", "\{stem}.wasm"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("ct: tracestat — \{(r is null ? "\{rRan.err()!}" : execReason(r!))}");
     return TraceStat(0, 0, 0, false);
   }
-  string line = string.fromBytes(r.stdout);
+  string line = string.fromBytes(r!.stdout);
   return TraceStat(numberOf(word(line, 1)), numberOf(word(line, 3)), numberOf(word(line, 5)), true);
 }
 
 /** `kind` and `file:line` for a site, out of the table beside the module. */
 struct Site { string kind; string at; bool ok; }
 
-Site siteOf(Cli cli, string stem, i32 site) {
-  TraceSite t = traceSite(cli, stem, site);
+Site siteOf(Env env, Files fs, string stem, i32 site) {
+  TraceSite t = traceSite(env, fs, stem, site);
   if (!t.ok) { return Site("", "", false); }
   // The table prints a leak's home without its directory, as the README does. The *repository* cut
   // is `traceSite`'s and is not optional — see its header for the absolute path that reached a
@@ -303,25 +306,28 @@ bool listed(string[] all, i32 n, string want) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  string dir = "\{cli.cwd().wait()}/\{CACHE}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/\{CACHE}";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
 
-  core.log("| routine | events per run | result |");
-  core.log("|---|---:|---|");
+  out.line("| routine | events per run | result |");
+  out.line("|---|---:|---|");
 
   Case[] all = cases();
   for (i32 ci = 0; ci < all.len(); ci++) {
     Case c = all[ci];
-    string base = build(core, cli, c, c.keys[0], 0, "base");
+    string base = build(err, env, fs, procs, c, c.keys[0], 0, "base");
     if (base == "") { return 1; }
-    TraceStat s = statOf(core, cli, base);
+    TraceStat s = statOf(err, env, procs, base);
     if (!s.ok) { return 1; }
     // An empty journal is not a clean routine, it is a call that never happened.
     if (s.events == 0) {
-      core.warn("ct: \{c.name}: no events — did the call happen?");
+      err.line("ct: \{c.name}: no events — did the call happen?");
       return 1;
     }
 
@@ -329,15 +335,15 @@ export i32 main(Sys sys) {
     i32 slots = 0;
     if (s.wanted * 2 > s.slots) {
       slots = 2 * s.wanted + 8;
-      core.warn("  \{c.name}: \{grouped(s.wanted)} events — retracing with " +
+      err.line("  \{c.name}: \{grouped(s.wanted)} events — retracing with " +
                 "\{grouped(slots)} slots");
-      base = build(core, cli, c, c.keys[0], slots, "base");
+      base = build(err, env, fs, procs, c, c.keys[0], slots, "base");
       if (base == "") { return 1; }
-      s = statOf(core, cli, base);
+      s = statOf(err, env, procs, base);
       if (!s.ok) { return 1; }
     }
     if (s.wanted * 2 > s.slots) {
-      core.log("| `\{c.name}` | >\{grouped(s.slots)}" +
+      out.line("| `\{c.name}` | >\{grouped(s.slots)}" +
                " | **not measured** — the journal could not be made large enough |");
       continue;
     }
@@ -348,16 +354,15 @@ export i32 main(Sys sys) {
     bool stopped = false;
     string splitAt = "";
     for (i32 k = 1; k < c.keys.len(); k++) {
-      string other = build(core, cli, c, c.keys[k], slots, "other");
+      string other = build(err, env, fs, procs, c, c.keys[k], slots, "other");
       if (other == "") { return 1; }
-      Exec r = cli.exec(binary(cli),
-                        ["ctcompare", "--all", "\{base}.wasm", "\{other}.wasm"],
-                        u8[]()).wait();
-      if (!r.ran() || r.status != 0) {
-        core.warn("ct: ctcompare — \{execReason(r)}");
+      auto rRan = flatten(procs.exec(binary(env), ["ctcompare", "--all", "\{base}.wasm", "\{other}.wasm"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+      Exec? r = rRan.ok();
+      if ((r is null) || r!.status != 0) {
+        err.line("ct: ctcompare — \{(r is null ? "\{rRan.err()!}" : execReason(r!))}");
         return 1;
       }
-      string[] rows = linesOf(string.fromBytes(r.stdout));
+      string[] rows = linesOf(string.fromBytes(r!.stdout));
       for (string row in rows) {
         if (startsWith(row, "split ")) {
           stopped = true;
@@ -368,13 +373,13 @@ export i32 main(Sys sys) {
           // that a reader wants it; the wording is what keeps it honest.
           if (splitAt == "") {
             // `split <event> <siteA> <siteB>` — the site is the third field, not the second.
-            Site sp = siteOf(cli, base, numberOf(word(row, 2)));
+            Site sp = siteOf(env, fs, base, numberOf(word(row, 2)));
             if (sp.ok) { splitAt = sp.at; }
           }
           continue;
         }
         if (!startsWith(row, "site ")) { continue; }
-        Site st = siteOf(cli, base, numberOf(word(row, 2)));
+        Site st = siteOf(env, fs, base, numberOf(word(row, 2)));
         if (!st.ok) { continue; }
         if (!listed(sites, nSites, st.at) && nSites < 64) {
           sites[nSites] = st.at;
@@ -386,7 +391,7 @@ export i32 main(Sys sys) {
 
     string n = grouped(s.events);
     if (nSites == 0 && !stopped) {
-      core.log("| `\{c.name}` | \{n} | uniform |");
+      out.line("| `\{c.name}` | \{n} | uniform |");
       continue;
     }
     // Two different claims: an index leak is located exactly, a path split only says where one run
@@ -405,8 +410,8 @@ export i32 main(Sys sys) {
               (splitAt == "" ? "" : " where one run stood at `\{splitAt}`") +
               "; not examined past that";
     }
-    core.log("| `\{c.name}` | \{n} | **leaks** — \{parts} |");
+    out.line("| `\{c.name}` | \{n} | **leaks** — \{parts} |");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return 0;
 }

@@ -4,22 +4,22 @@
 // works where `box sort f > f` cannot: the shell truncates `f` before `sort` has read it,
 // and this does not touch the target until every byte has arrived.
 
-import { Change, Cli, Core, reasonOf } from "std";
+import { Files, Input, Output, Random } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream } from "../lib/input.wac";
+import { Opened, openStream } from "../lib/input.wac";
 import { streamAtomic } from "../lib/safe.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
+import { reason } from "../../../fs/src/words.wac";
 
-export async i32 sponge(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() < 1) { core.warn("usage: \{a.name} <file>"); return 2; }
-  Input in = await openStream(core, cli, fs, a, 1, -1);   // index 1: the file is the destination
+export async i32 sponge(Input stdin, Output err, Random rnd, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (a.rest.len() < 1) { err.line("usage: \{a.name} <file>"); return 2; }
+  Opened in = await openStream(stdin, err, fs, a, 1);   // index 1: the file is the destination
   if (!in.ok) { return 1; }
   Feed fed = in.fed;
-  Change wrote = await streamAtomic(core, cli, fs, fed, a.rest[0]);
-  if (wrote.ok()) { return 0; }
-  core.warn("\{a.name}: \{a.rest[0]}: \{reasonOf(wrote)}");
+  auto wrote = await streamAtomic(rnd, fs, fed, a.rest[0]);
+  if (wrote.isOk()) { return 0; }
+  err.line("\{a.name}: \{a.rest[0]}: \{reason(wrote.err()!)}");
   return 1;
 }

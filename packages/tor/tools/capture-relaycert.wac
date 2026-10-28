@@ -24,8 +24,9 @@
 // and both must reproduce the committed `test/data/relaycert_vectors.json`.
 // `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
-import { Core, Cli, FileResult, Stat, Sys } from "std";
+import { Stat, Sys, Env, Files, Output } from "std";
 import { field, hex } from "./capturejson.wac";
+import { flatten } from "core";
 
 /** Each key file is a 32-byte NUL-padded tag followed by the key material. */
 static i32 TAG_LEN = 32;
@@ -39,8 +40,8 @@ static i32 TAG_LEN = 32;
  * directory instead, the same way `tools/suiteGate.ts` does it, and overridable by the first
  * argument.
  */
-string defaultNodesDir(Cli cli) {
-  string cwd = cli.cwd().wait();
+string defaultNodesDir(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   u8[] b = cwd.toBytes();
   // The first `/agent-…/` segment, which is what the layout is arranged around.
   for (i32 i = 0; i + 7 < b.len(); i++) {
@@ -50,7 +51,7 @@ string defaultNodesDir(Cli cli) {
     while (end < b.len() && b[end] != '/') { end = end + 1; }
     return "\{cwd.slice(0, end)}/workspaces/chutney/net/nodes";
   }
-  u8[]? home = cli.env("HOME").wait();
+  u8[]? home = flatten(env.get("HOME").wait()).orElse(null);
   return (home is null ? "/root" : string.fromBytes(home!)) + "/chutney/net/nodes";
 }
 
@@ -60,29 +61,30 @@ string defaultNodesDir(Cli cli) {
  * `expect` is checked rather than assumed: these files are found by name in a directory chutney
  * laid out, and a name that has moved would otherwise be read as key material of the wrong kind.
  */
-u8[] readTagged(Core core, Cli cli, string path, string expect) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
-    core.warn("capture-relaycert: cannot read \{path} — \{r.error}");
+u8[] readTagged(Output err, Files fs, string path, string expect) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("capture-relaycert: cannot read \{path} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  if (r.bytes.len() < TAG_LEN) {
-    core.warn("capture-relaycert: \{path} is \{r.bytes.len()} bytes, shorter than a tag");
+  if (r!.len() < TAG_LEN) {
+    err.line("capture-relaycert: \{path} is \{r!.len()} bytes, shorter than a tag");
     trap;
   }
   // Latin-1, and the NUL padding stripped, which is how the tag is written.
   i32 end = TAG_LEN;
-  while (end > 0 && r.bytes[end - 1] == 0) { end = end - 1; }
+  while (end > 0 && r![end - 1] == 0) { end = end - 1; }
   u8[] tagBytes = u8[].filled(end, 0);
-  for (i32 i = 0; i < end; i++) { tagBytes[i] = r.bytes[i]; }
+  for (i32 i = 0; i < end; i++) { tagBytes[i] = r![i]; }
   string tag = string.fromBytes(tagBytes);
   if (tag.indexOf(expect) < 0) {
-    core.warn("capture-relaycert: \{path}: tag is '\{tag}', expected something " +
+    err.line("capture-relaycert: \{path}: tag is '\{tag}', expected something " +
               "containing '\{expect}'");
     trap;
   }
-  u8[] body = u8[].filled(r.bytes.len() - TAG_LEN, 0);
-  for (i32 i = 0; i < body.len(); i++) { body[i] = r.bytes[TAG_LEN + i]; }
+  u8[] body = u8[].filled(r!.len() - TAG_LEN, 0);
+  for (i32 i = 0; i < body.len(); i++) { body[i] = r![TAG_LEN + i]; }
   return body;
 }
 
@@ -103,15 +105,18 @@ string[] sorted(string[] names) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  string nodesDir = cli.argCount().wait() > 0
-    ? string.fromBytes(cli.arg(0).wait())
-    : defaultNodesDir(cli);
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output stdout = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  string nodesDir = argv.len() > 0
+    ? argv[0]
+    : defaultNodesDir(env);
 
-  string[]? listing = cli.readDir(nodesDir).wait();
+  string[]? listing = flatten(fs.readDir(nodesDir).wait()).ok();
   if (listing is null) {
-    core.warn("capture-relaycert: no directory at \{nodesDir}");
+    err.line("capture-relaycert: no directory at \{nodesDir}");
     return 1;
   }
   string[] names = sorted(listing!);
@@ -121,18 +126,16 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < names.len() && n < 4; i++) {
     string keys = "\{nodesDir}/\{names[i]}/keys";
     string cert = "\{keys}/ed25519_signing_cert";
-    Stat st = cli.stat(cert).wait();
-    if (!st.exists || !st.isFile) { continue; }
+    Stat? st = flatten(fs.stat(cert).wait()).ok();
+    if ((st is null) || !(st is not null && st!.isFile)) { continue; }
 
-    u8[] masterPub = readTagged(core, cli, "\{keys}/ed25519_master_id_public_key",
-                                "ed25519v1-public");
+    u8[] masterPub = readTagged(err, fs, "\{keys}/ed25519_master_id_public_key", "ed25519v1-public");
     // The secret file holds an *expanded* key: 32 bytes of scalar and 32 of nonce, not a seed. Our
     // `ed25519Sign` takes a seed, so the master secret cannot be used to re-sign — which is why the
     // vector records the signing key's own secret instead, and why the rebuild check uses a keypair
     // we generate rather than tor's.
-    u8[] signingSecret = readTagged(core, cli, "\{keys}/ed25519_signing_secret_key",
-                                    "ed25519v1-secret");
-    u8[] body = readTagged(core, cli, cert, "ed25519v1-cert");
+    u8[] signingSecret = readTagged(err, fs, "\{keys}/ed25519_signing_secret_key", "ed25519v1-secret");
+    u8[] body = readTagged(err, fs, cert, "ed25519v1-cert");
 
     if (n > 0) { cases = cases + ",\n"; }
     cases = cases + "    {\n";
@@ -145,7 +148,7 @@ export i32 main(Sys sys) {
   }
 
   if (n == 0) {
-    core.warn("capture-relaycert: no relay in \{nodesDir} has an ed25519_signing_cert");
+    err.line("capture-relaycert: no relay in \{nodesDir} has an ed25519_signing_cert");
     return 1;
   }
 
@@ -168,7 +171,7 @@ export i32 main(Sys sys) {
                     "test therefore uses a keypair of our own and checks the encoding against a " +
                     "cert we can re-derive, while the verification tests use tor's.", false);
   out = out + "  \"cases\": [\n\{cases}\n  ]\n}\n";
-  cli.write(out.toBytes());
-  core.warn("\{n} relay certificates");
+  stdout.write(out.toBytes());
+  err.line("\{n} relay certificates");
   return 0;
 }

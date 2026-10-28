@@ -27,70 +27,76 @@
 // acknowledgements and no loss detection, so a dropped datagram ends this program rather than being
 // retransmitted — steps 5 and 6 of the design note.
 
-import { Cli, Core, Datagram, HostSocket, Sys } from "std";
+import { Datagram, Sys, Net, Output, Random, Datagrams } from "std";
 import { Client } from "../src/client.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: handshake <host> <port> [server-name]");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Random rnd = sys.random();
+  Net net = sys.net();
+  if (argv.len() < 2) {
+    err.line("usage: handshake <host> <port> [server-name]");
     return 2;
   }
-  string host = string.fromBytes(cli.arg(0).wait());
-  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
+  string host = argv[0];
+  i32 port = atoi(argv[1]);
   // The name in SNI, which a server with a certificate for `localhost` needs to be `localhost` rather
   // than `127.0.0.1`. They are separable on purpose: what you dial and what you claim to be dialling
   // are different facts, and a client that conflates them cannot talk to a host by address.
-  string serverName = cli.argCount().wait() > 2 ? string.fromBytes(cli.arg(2).wait()) : host;
+  string serverName = argv.len() > 2 ? argv[2] : host;
 
   // **Fresh, from the host's own entropy, and this is the whole security of the exchange.** The
   // scalar is the one secret in a QUIC handshake: a peer that knows it can compute the shared secret
   // and read everything. `hello_probe.wac` uses a constant so a test can compare two runs, and says so
   // in its first paragraph for exactly the reason that this line is different.
-  u8[] scalar = core.randomBytes(32).wait();
-  u8[] random = core.randomBytes(32).wait();
+  u8[] scalar = flatten(rnd.bytes(32).wait()).unwrap();
+  u8[] random = flatten(rnd.bytes(32).wait()).unwrap();
   // The connection ids. The destination is one we invent — the server has not chosen its own yet, and
   // this one is what both sides' Initial keys are salted with. The source is ours, and the server will
   // address it. RFC 9000 allows 0 to 20 bytes; 8 and 4 are what quinn itself picks.
-  u8[] dcid = core.randomBytes(8).wait();
-  u8[] scid = core.randomBytes(4).wait();
+  u8[] dcid = flatten(rnd.bytes(8).wait()).unwrap();
+  u8[] scid = flatten(rnd.bytes(4).wait()).unwrap();
 
   Client c = Client.of(scalar, random, dcid, scid, serverName);
 
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) {
-    core.warn("handshake: cannot bind: \{sock.error}");
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) {
+    err.line("handshake: cannot bind: \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
     return 1;
   }
 
-  if (!cli.sendTo(sock.handle, host, port, c.initial()).wait()) {
-    core.warn("handshake: cannot send the first flight");
-    cli.closeSocket(sock.handle);
+  if (flatten(sock!.sendTo(host, port, c.initial()).wait()).isErr()) {
+    err.line("handshake: cannot send the first flight");
+    sock!.close();
     return 1;
   }
-  core.log("sent an Initial: ClientHello, padded to \{c.initial().len()} bytes");
+  out.line("sent an Initial: ClientHello, padded to \{c.initial().len()} bytes");
 
-  Datagram reply = cli.receiveFrom(sock.handle).wait();
-  if (reply.error != "") {
-    core.warn("handshake: \{reply.error}");
-    cli.closeSocket(sock.handle);
+  auto replied = flatten(sock!.receive().wait());
+  if (replied.isErr()) {
+    err.line("handshake: \{replied.err()!}");
+    sock!.close();
     return 1;
   }
-  core.log("the server answered with \{reply.bytes.len()} bytes from " +
+  Datagram reply = replied.unwrap();
+  out.line("the server answered with \{reply.bytes.len()} bytes from " +
            "\{reply.peer}:\{reply.port}");
 
   // Read what came back before answering it. A server that asked for a different group, or that is not
   // speaking TLS 1.3, is not a server this client can continue with — and saying which is the whole
   // difference between a diagnosis and "it did not work".
   if (c.serverAskedRetry(reply.bytes)) {
-    core.warn("handshake: the server asked for another group; this client offers only x25519");
-    cli.closeSocket(sock.handle);
+    err.line("handshake: the server asked for another group; this client offers only x25519");
+    sock!.close();
     return 1;
   }
   if (!c.serverIsTls13(reply.bytes)) {
-    core.warn("handshake: the server did not say TLS 1.3 in supported_versions");
-    cli.closeSocket(sock.handle);
+    err.line("handshake: the server did not say TLS 1.3 in supported_versions");
+    sock!.close();
     return 1;
   }
 
@@ -101,39 +107,40 @@ export i32 main(Sys sys) {
   // It does *not* say the server is who it claims — that is the certificate, and this client does not
   // check one. `src/client.wac` says so where somebody might otherwise assume it did.
   if (!c.serverFinishedVerifies(reply.bytes)) {
-    core.warn("handshake: the server's Finished does not verify — our transcript is not its transcript");
-    cli.closeSocket(sock.handle);
+    err.line("handshake: the server's Finished does not verify — our transcript is not its transcript");
+    sock!.close();
     return 1;
   }
-  core.log("the server's Finished verifies: same transcript, same secret");
+  out.line("the server's Finished verifies: same transcript, same secret");
 
   u8[] finished = c.finished(reply.bytes);
   if (finished.len() == 0) {
-    core.warn("handshake: could not build our Finished");
-    cli.closeSocket(sock.handle);
+    err.line("handshake: could not build our Finished");
+    sock!.close();
     return 1;
   }
-  if (!cli.sendTo(sock.handle, host, port, finished).wait()) {
-    core.warn("handshake: cannot send our Finished");
-    cli.closeSocket(sock.handle);
+  if (flatten(sock!.sendTo(host, port, finished).wait()).isErr()) {
+    err.line("handshake: cannot send our Finished");
+    sock!.close();
     return 1;
   }
-  core.log("sent a Handshake packet carrying our Finished: \{finished.len()} bytes");
+  out.line("sent a Handshake packet carrying our Finished: \{finished.len()} bytes");
 
   // Having completed, a server moves to the application epoch, whose packets have **short headers** —
   // no version, no source id. Seeing one is the server saying the handshake is behind it, and it is
   // the only acknowledgement this client is able to read. Nothing here can open it: that is step 5.
-  Datagram after = cli.receiveFrom(sock.handle).wait();
-  cli.closeSocket(sock.handle);
-  if (after.error != "") {
-    core.warn("handshake: sent, but the server said nothing after: \{after.error}");
+  auto next = flatten(sock!.receive().wait());
+  sock!.close();
+  if (next.isErr()) {
+    err.line("handshake: sent, but the server said nothing after: \{next.err()!}");
     return 1;
   }
+  Datagram after = next.unwrap();
   if (after.bytes.len() == 0 || (after.bytes[0] & 128) != 0) {
-    core.warn("handshake: the server's next packet is not a short header — it did not complete");
+    err.line("handshake: the server's next packet is not a short header — it did not complete");
     return 1;
   }
-  core.log("the server replied with a short header: the handshake is complete");
+  out.line("the server replied with a short header: the handshake is complete");
   return 0;
 }
 

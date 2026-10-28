@@ -22,7 +22,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { x25519, x25519Base, x25519Shared } from "../../src/x25519.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify, ed25519ExpandedSecret,
          ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519SignBit,
@@ -79,11 +79,12 @@ static string ORACLE = "packages/crypto/test/oracle.mjs";
  * callbacks at all until 2026-08-17. They are a batched subprocess now, so nothing about this file
  * needs a host lane. `issues/system/0161`.
  */
-void checkCurve(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", [ORACLE], lines, what);
+void checkCurve(T t, Procs procs, Lines lines, string what) {
+  check(t, procs, "node", [ORACLE], lines, what);
 }
 
-export string test_x25519_agrees_with_the_host(Core core, Cli cli) {
+export string test_x25519_agrees_with_the_host(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Lines lines = Lines.create();
   for (i32 i = 0; i < 12; i++) {
@@ -99,7 +100,7 @@ export string test_x25519_agrees_with_the_host(Core core, Cli cli) {
     t.eqBytes(ours, x25519(other, pub), "both ends agree at round \{i as i64}");
   }
   t.eqI32(lines.n, 24, "a base point and a shared secret per round");
-  checkCurve(t, cli, lines, "x25519");
+  checkCurve(t, procs, lines, "x25519");
   return t.report();
 }
 
@@ -124,7 +125,8 @@ export string test_x25519_clamps_its_scalar() {
   return t.report();
 }
 
-export string test_ed25519_is_byte_identical_to_the_host(Core core, Cli cli) {
+export string test_ed25519_is_byte_identical_to_the_host(Sys sys) {
+  Procs procs = sys.procs();
   // Ed25519 is deterministic, so this compares signatures byte for byte rather than
   // settling for "they accept ours" — a stronger claim, and available only because the
   // scheme fixes its nonce from the key and message.
@@ -142,11 +144,12 @@ export string test_ed25519_is_byte_identical_to_the_host(Core core, Cli cli) {
     lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(msg)} 1");
   }
   t.eqI32(lines.n, 24, "a key, a signature and a verification per round");
-  checkCurve(t, cli, lines, "ed25519");
+  checkCurve(t, procs, lines, "ed25519");
   return t.report();
 }
 
-export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
+export string test_ed25519_rejects_what_it_should(Sys sys) {
+  Procs procs = sys.procs();
   // Verification is the half an attacker touches, so tampering is checked at every point:
   // the message, each half of the signature, and the key.
   T t = T.create();
@@ -181,7 +184,7 @@ export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
   }
   lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(otherMsg)} 0");
   lines.add("edverify \{hex(otherPub)} \{hex(sig)} \{hex(msg)} 0");
-  checkCurve(t, cli, lines, "the tamperings");
+  checkCurve(t, procs, lines, "the tamperings");
   return t.report();
 }
 

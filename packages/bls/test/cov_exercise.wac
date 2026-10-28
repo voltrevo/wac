@@ -21,7 +21,7 @@
 //
 // None of the fifty-three tests expects a trap.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Files, Output, Procs } from "std";
 import {
   test_valid_points_decompress_to_the_coordinates_python_computed as cu__valid_points_decompress_to_the_coordinates_python_computed,
   test_compression_round_trips_so_there_is_one_encoding_per_point as cu__compression_round_trips_so_there_is_one_encoding_per_point,
@@ -104,229 +104,230 @@ import {
 } from "./wac/group_edges_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   i32 bad = 0;
   if (ge__the_real_entry_point_refuses_what_the_probe_refuses().len() > 0) {
-    core.warn("error: FAILED group_edges_test test_the_real_entry_point_refuses_what_the_probe_refuses");
+    err.line("error: FAILED group_edges_test test_the_real_entry_point_refuses_what_the_probe_refuses");
     bad = bad + 1;
   }
   if (ge__infinity_is_the_identity_of_addition_and_equals_only_itself().len() > 0) {
-    core.warn("error: FAILED group_edges_test test_infinity_is_the_identity_of_addition_and_equals_only_itself");
+    err.line("error: FAILED group_edges_test test_infinity_is_the_identity_of_addition_and_equals_only_itself");
     bad = bad + 1;
   }
   if (ge__the_identity_has_no_affine_coordinates().len() > 0) {
-    core.warn("error: FAILED group_edges_test test_the_identity_has_no_affine_coordinates");
+    err.line("error: FAILED group_edges_test test_the_identity_has_no_affine_coordinates");
     bad = bad + 1;
   }
   if (fe__a_square_root_squares_back_or_does_not_exist().len() > 0) {
-    core.warn("error: FAILED field_edges_test test_a_square_root_squares_back_or_does_not_exist");
+    err.line("error: FAILED field_edges_test test_a_square_root_squares_back_or_does_not_exist");
     bad = bad + 1;
   }
   if (fe__zero_and_the_purely_real_values().len() > 0) {
-    core.warn("error: FAILED field_edges_test test_zero_and_the_purely_real_values");
+    err.line("error: FAILED field_edges_test test_zero_and_the_purely_real_values");
     bad = bad + 1;
   }
   if (fe__sgn0_falls_through_to_c1_and_inv0_maps_zero_to_zero().len() > 0) {
-    core.warn("error: FAILED field_edges_test test_sgn0_falls_through_to_c1_and_inv0_maps_zero_to_zero");
+    err.line("error: FAILED field_edges_test test_sgn0_falls_through_to_c1_and_inv0_maps_zero_to_zero");
     bad = bad + 1;
   }
   if (re__a_real_signature_still_verifies().len() > 0) {
-    core.warn("error: FAILED refusals_test test_a_real_signature_still_verifies");
+    err.line("error: FAILED refusals_test test_a_real_signature_still_verifies");
     bad = bad + 1;
   }
   if (re__an_infinity_signature_is_refused_at_every_entry_point().len() > 0) {
-    core.warn("error: FAILED refusals_test test_an_infinity_signature_is_refused_at_every_entry_point");
+    err.line("error: FAILED refusals_test test_an_infinity_signature_is_refused_at_every_entry_point");
     bad = bad + 1;
   }
   if (re__an_infinity_public_key_is_refused().len() > 0) {
-    core.warn("error: FAILED refusals_test test_an_infinity_public_key_is_refused");
+    err.line("error: FAILED refusals_test test_an_infinity_public_key_is_refused");
     bad = bad + 1;
   }
   if (re__a_key_or_signature_that_is_not_a_point_is_refused_not_skipped().len() > 0) {
-    core.warn("error: FAILED refusals_test test_a_key_or_signature_that_is_not_a_point_is_refused_not_skipped");
+    err.line("error: FAILED refusals_test test_a_key_or_signature_that_is_not_a_point_is_refused_not_skipped");
     bad = bad + 1;
   }
   if (re__the_parallel_lists_must_be_the_same_length().len() > 0) {
-    core.warn("error: FAILED refusals_test test_the_parallel_lists_must_be_the_same_length");
+    err.line("error: FAILED refusals_test test_the_parallel_lists_must_be_the_same_length");
     bad = bad + 1;
   }
   if (re__a_batch_of_one_agrees_with_verifying_one().len() > 0) {
-    core.warn("error: FAILED refusals_test test_a_batch_of_one_agrees_with_verifying_one");
+    err.line("error: FAILED refusals_test test_a_batch_of_one_agrees_with_verifying_one");
     bad = bad + 1;
   }
   if (re__a_batch_weight_is_two_words_and_never_zero().len() > 0) {
-    core.warn("error: FAILED refusals_test test_a_batch_weight_is_two_words_and_never_zero");
+    err.line("error: FAILED refusals_test test_a_batch_weight_is_two_words_and_never_zero");
     bad = bad + 1;
   }
-  if (cu__valid_points_decompress_to_the_coordinates_python_computed(core, cli).len() > 0) {
-    core.warn("error: FAILED curve_test test_valid_points_decompress_to_the_coordinates_python_computed");
+  if (cu__valid_points_decompress_to_the_coordinates_python_computed(sys).len() > 0) {
+    err.line("error: FAILED curve_test test_valid_points_decompress_to_the_coordinates_python_computed");
     bad = bad + 1;
   }
-  if (cu__compression_round_trips_so_there_is_one_encoding_per_point(core, cli).len() > 0) {
-    core.warn("error: FAILED curve_test test_compression_round_trips_so_there_is_one_encoding_per_point");
+  if (cu__compression_round_trips_so_there_is_one_encoding_per_point(sys).len() > 0) {
+    err.line("error: FAILED curve_test test_compression_round_trips_so_there_is_one_encoding_per_point");
     bad = bad + 1;
   }
-  if (cu__every_malformed_encoding_is_refused_and_refused_as_malformed(core, cli).len() > 0) {
-    core.warn("error: FAILED curve_test test_every_malformed_encoding_is_refused_and_refused_as_malformed");
+  if (cu__every_malformed_encoding_is_refused_and_refused_as_malformed(sys).len() > 0) {
+    err.line("error: FAILED curve_test test_every_malformed_encoding_is_refused_and_refused_as_malformed");
     bad = bad + 1;
   }
   if (cu__the_generators_have_order_r_and_the_degenerate_additions_are_right().len() > 0) {
-    core.warn("error: FAILED curve_test test_the_generators_have_order_r_and_the_degenerate_additions_are_right");
+    err.line("error: FAILED curve_test test_the_generators_have_order_r_and_the_degenerate_additions_are_right");
     bad = bad + 1;
   }
-  if (cu__scalar_multiples_of_the_generators_match_python(core, cli).len() > 0) {
-    core.warn("error: FAILED curve_test test_scalar_multiples_of_the_generators_match_python");
+  if (cu__scalar_multiples_of_the_generators_match_python(sys).len() > 0) {
+    err.line("error: FAILED curve_test test_scalar_multiples_of_the_generators_match_python");
     bad = bad + 1;
   }
   if (cu__the_group_order_is_r_exactly_not_merely_a_multiple_of_it().len() > 0) {
-    core.warn("error: FAILED curve_test test_the_group_order_is_r_exactly_not_merely_a_multiple_of_it");
+    err.line("error: FAILED curve_test test_the_group_order_is_r_exactly_not_merely_a_multiple_of_it");
     bad = bad + 1;
   }
-  if (fp__addition_subtraction_and_multiplication_agree_with_python(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_addition_subtraction_and_multiplication_agree_with_python");
+  if (fp__addition_subtraction_and_multiplication_agree_with_python(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_addition_subtraction_and_multiplication_agree_with_python");
     bad = bad + 1;
   }
-  if (fp__negation_and_squaring_agree_with_python(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_negation_and_squaring_agree_with_python");
+  if (fp__negation_and_squaring_agree_with_python(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_negation_and_squaring_agree_with_python");
     bad = bad + 1;
   }
-  if (fp__montgomery_form_does_not_leak_one_is_one_and_every_value_round_trips(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_montgomery_form_does_not_leak_one_is_one_and_every_value_round_trips");
+  if (fp__montgomery_form_does_not_leak_one_is_one_and_every_value_round_trips(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_montgomery_form_does_not_leak_one_is_one_and_every_value_round_trips");
     bad = bad + 1;
   }
-  if (fp__a_value_at_or_above_p_is_refused_not_reduced(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_a_value_at_or_above_p_is_refused_not_reduced");
+  if (fp__a_value_at_or_above_p_is_refused_not_reduced(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_a_value_at_or_above_p_is_refused_not_reduced");
     bad = bad + 1;
   }
-  if (fp__inversion_agrees_with_python_and_zero_has_none(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_inversion_agrees_with_python_and_zero_has_none");
+  if (fp__inversion_agrees_with_python_and_zero_has_none(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_inversion_agrees_with_python_and_zero_has_none");
     bad = bad + 1;
   }
-  if (fp__square_roots_are_found_where_they_exist_and_refused_where_they_do_not(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_square_roots_are_found_where_they_exist_and_refused_where_they_do_not");
+  if (fp__square_roots_are_found_where_they_exist_and_refused_where_they_do_not(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_square_roots_are_found_where_they_exist_and_refused_where_they_do_not");
     bad = bad + 1;
   }
-  if (fp__fp2_arithmetic_agrees_with_python(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_fp2_arithmetic_agrees_with_python");
+  if (fp__fp2_arithmetic_agrees_with_python(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_fp2_arithmetic_agrees_with_python");
     bad = bad + 1;
   }
-  if (fp__fp6_arithmetic_and_frobenius_agree_with_the_python_tower(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_fp6_arithmetic_and_frobenius_agree_with_the_python_tower");
+  if (fp__fp6_arithmetic_and_frobenius_agree_with_the_python_tower(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_fp6_arithmetic_and_frobenius_agree_with_the_python_tower");
     bad = bad + 1;
   }
-  if (fp__fp12_arithmetic_and_frobenius_agree_with_the_python_tower(core, cli).len() > 0) {
-    core.warn("error: FAILED fp_test test_fp12_arithmetic_and_frobenius_agree_with_the_python_tower");
+  if (fp__fp12_arithmetic_and_frobenius_agree_with_the_python_tower(sys).len() > 0) {
+    err.line("error: FAILED fp_test test_fp12_arithmetic_and_frobenius_agree_with_the_python_tower");
     bad = bad + 1;
   }
   if (fp__the_modulus_constants_and_the_modulus_array_are_the_same_p().len() > 0) {
-    core.warn("error: FAILED fp_test test_the_modulus_constants_and_the_modulus_array_are_the_same_p");
+    err.line("error: FAILED fp_test test_the_modulus_constants_and_the_modulus_array_are_the_same_p");
     bad = bad + 1;
   }
   if (fl__the_three_multiplication_representations_agree_over_a_long_chain().len() > 0) {
-    core.warn("error: FAILED flat_test test_the_three_multiplication_representations_agree_over_a_long_chain");
+    err.line("error: FAILED flat_test test_the_three_multiplication_representations_agree_over_a_long_chain");
     bad = bad + 1;
   }
   if (fl__the_addition_representations_agree_over_a_long_chain().len() > 0) {
-    core.warn("error: FAILED flat_test test_the_addition_representations_agree_over_a_long_chain");
+    err.line("error: FAILED flat_test test_the_addition_representations_agree_over_a_long_chain");
     bad = bad + 1;
   }
-  if (ha__hash_to_field_matches_every_cfrg_vector(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_hash_to_field_matches_every_cfrg_vector");
+  if (ha__hash_to_field_matches_every_cfrg_vector(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_hash_to_field_matches_every_cfrg_vector");
     bad = bad + 1;
   }
-  if (ha__expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range");
+  if (ha__expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range");
     bad = bad + 1;
   }
-  if (ha__map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector");
+  if (ha__map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector");
     bad = bad + 1;
   }
-  if (ha__the_maps_output_is_on_the_real_curve_not_the_isogenous_one(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one");
+  if (ha__the_maps_output_is_on_the_real_curve_not_the_isogenous_one(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one");
     bad = bad + 1;
   }
-  if (ha__hash_to_g2_matches_p_in_every_cfrg_vector(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_hash_to_g2_matches_p_in_every_cfrg_vector");
+  if (ha__hash_to_g2_matches_p_in_every_cfrg_vector(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_hash_to_g2_matches_p_in_every_cfrg_vector");
     bad = bad + 1;
   }
-  if (ha__hash_to_g2_lands_in_the_order_r_subgroup(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_hash_to_g2_lands_in_the_order_r_subgroup");
+  if (ha__hash_to_g2_lands_in_the_order_r_subgroup(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_hash_to_g2_lands_in_the_order_r_subgroup");
     bad = bad + 1;
   }
-  if (ha__hash_to_g2_matches_the_ethereum_fixtures_too(core, cli).len() > 0) {
-    core.warn("error: FAILED hash_test test_hash_to_g2_matches_the_ethereum_fixtures_too");
+  if (ha__hash_to_g2_matches_the_ethereum_fixtures_too(sys).len() > 0) {
+    err.line("error: FAILED hash_test test_hash_to_g2_matches_the_ethereum_fixtures_too");
     bad = bad + 1;
   }
-  if (pa__the_miller_loop_matches_coefficient_by_coefficient(core, cli).len() > 0) {
-    core.warn("error: FAILED pairing_test test_the_miller_loop_matches_coefficient_by_coefficient");
+  if (pa__the_miller_loop_matches_coefficient_by_coefficient(sys).len() > 0) {
+    err.line("error: FAILED pairing_test test_the_miller_loop_matches_coefficient_by_coefficient");
     bad = bad + 1;
   }
-  if (pa__e_p_q_times_e_minus_p_q_is_one_so_the_final_exponentiation_is_a_homomorphism(core, cli).len() > 0) {
-    core.warn("error: FAILED pairing_test test_e_p_q_times_e_minus_p_q_is_one_so_the_final_exponentiation_is_a_homomorphism");
+  if (pa__e_p_q_times_e_minus_p_q_is_one_so_the_final_exponentiation_is_a_homomorphism(sys).len() > 0) {
+    err.line("error: FAILED pairing_test test_e_p_q_times_e_minus_p_q_is_one_so_the_final_exponentiation_is_a_homomorphism");
     bad = bad + 1;
   }
-  if (pa__the_pairing_refuses_the_identity_rather_than_returning_one(core, cli).len() > 0) {
-    core.warn("error: FAILED pairing_test test_the_pairing_refuses_the_identity_rather_than_returning_one");
+  if (pa__the_pairing_refuses_the_identity_rather_than_returning_one(sys).len() > 0) {
+    err.line("error: FAILED pairing_test test_the_pairing_refuses_the_identity_rather_than_returning_one");
     bad = bad + 1;
   }
-  if (pa__cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it(core, cli).len() > 0) {
-    core.warn("error: FAILED pairing_test test_cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it");
+  if (pa__cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it(sys).len() > 0) {
+    err.line("error: FAILED pairing_test test_cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it");
     bad = bad + 1;
   }
-  if (pa__the_two_pair_miller_loop_equals_the_product_of_two_single_loops(core, cli).len() > 0) {
-    core.warn("error: FAILED pairing_test test_the_two_pair_miller_loop_equals_the_product_of_two_single_loops");
+  if (pa__the_two_pair_miller_loop_equals_the_product_of_two_single_loops(sys).len() > 0) {
+    err.line("error: FAILED pairing_test test_the_two_pair_miller_loop_equals_the_product_of_two_single_loops");
     bad = bad + 1;
   }
-  if (ag__g1_deser(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_every_ethereum_g1_deserialization_fixture_agrees");
+  if (ag__g1_deser(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_every_ethereum_g1_deserialization_fixture_agrees");
     bad = bad + 1;
   }
-  if (ag__g2_deser(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_every_ethereum_g2_deserialization_fixture_agrees");
+  if (ag__g2_deser(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_every_ethereum_g2_deserialization_fixture_agrees");
     bad = bad + 1;
   }
-  if (ag__every_ethereum_fast_aggregate_verify_fixture_agrees(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_every_ethereum_fast_aggregate_verify_fixture_agrees");
+  if (ag__every_ethereum_fast_aggregate_verify_fixture_agrees(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_every_ethereum_fast_aggregate_verify_fixture_agrees");
     bad = bad + 1;
   }
-  if (ag__every_ethereum_aggregate_verify_fixture_agrees(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_every_ethereum_aggregate_verify_fixture_agrees");
+  if (ag__every_ethereum_aggregate_verify_fixture_agrees(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_every_ethereum_aggregate_verify_fixture_agrees");
     bad = bad + 1;
   }
-  if (ag__every_ethereum_batch_verify_fixture_agrees(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_every_ethereum_batch_verify_fixture_agrees");
+  if (ag__every_ethereum_batch_verify_fixture_agrees(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_every_ethereum_batch_verify_fixture_agrees");
     bad = bad + 1;
   }
-  if (ag__the_batch_weights_are_what_reject_a_forged_set(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_the_batch_weights_are_what_reject_a_forged_set");
+  if (ag__the_batch_weights_are_what_reject_a_forged_set(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_the_batch_weights_are_what_reject_a_forged_set");
     bad = bad + 1;
   }
-  if (ag__entropy_changes_the_weights_but_not_the_verdict(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_entropy_changes_the_weights_but_not_the_verdict");
+  if (ag__entropy_changes_the_weights_but_not_the_verdict(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_entropy_changes_the_weights_but_not_the_verdict");
     bad = bad + 1;
   }
-  if (ag__aggregation_refuses_an_empty_list_and_a_bad_member_and_round_trips_otherwise(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_aggregation_refuses_an_empty_list_and_a_bad_member_and_round_trips_otherwise");
+  if (ag__aggregation_refuses_an_empty_list_and_a_bad_member_and_round_trips_otherwise(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_aggregation_refuses_an_empty_list_and_a_bad_member_and_round_trips_otherwise");
     bad = bad + 1;
   }
-  if (ag__a_batch_weight_depends_on_the_whole_batch_not_just_its_position(core, cli).len() > 0) {
-    core.warn("error: FAILED aggregate_test test_a_batch_weight_depends_on_the_whole_batch_not_just_its_position");
+  if (ag__a_batch_weight_depends_on_the_whole_batch_not_just_its_position(sys).len() > 0) {
+    err.line("error: FAILED aggregate_test test_a_batch_weight_depends_on_the_whole_batch_not_just_its_position");
     bad = bad + 1;
   }
-  if (ve__every_ethereum_verify_fixture_agrees(core, cli).len() > 0) {
-    core.warn("error: FAILED verify_test test_every_ethereum_verify_fixture_agrees");
+  if (ve__every_ethereum_verify_fixture_agrees(sys).len() > 0) {
+    err.line("error: FAILED verify_test test_every_ethereum_verify_fixture_agrees");
     bad = bad + 1;
   }
-  if (ve__every_ethereum_deserialization_fixture_agrees_g1_and_g2(core, cli).len() > 0) {
-    core.warn("error: FAILED verify_test test_every_ethereum_deserialization_fixture_agrees_g1_and_g2");
+  if (ve__every_ethereum_deserialization_fixture_agrees_g1_and_g2(sys).len() > 0) {
+    err.line("error: FAILED verify_test test_every_ethereum_deserialization_fixture_agrees_g1_and_g2");
     bad = bad + 1;
   }
-  if (fk__src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(core, cli).len() > 0) {
-    core.warn("error: FAILED fpkernel_generated_test test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel");
+  if (fk__src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(sys).len() > 0) {
+    err.line("error: FAILED fpkernel_generated_test test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("bls: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("bls: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

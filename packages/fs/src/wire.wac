@@ -1,17 +1,16 @@
-// The byte codec `packages/fs` writes its own formats with.
+// The byte codec `packages/fs` writes its image with (`image.wac`).
 //
-// Two of them: an **image** — a filesystem written down (`image.wac`) — and the **requests a child
-// sends its parent** about a filesystem it cannot reach (`remote.wac`). They are different formats
-// for different purposes, and they had no business having two readers.
+// It had a second caller until design/system/0013 step 5 — the requests a spawned stage sent its parent
+// about a filesystem it could not reach, which std's served files now carry — and it was shared so the two
+// formats would not grow two readers.
 //
 // The conventions are the image's, because it had them first and they are the right ones:
 // little-endian, since `Buf.pushU32` is; a string is its length in bytes then its bytes, because a
 // name is bytes and not text (design/0001 D-byte-exact-paths); a length that does not fit in a
 // signed `i32` is refused rather than wrapped.
 //
-// `Reader` carries its failure rather than trapping, which matters for both callers and for
-// different reasons: an image is a file somebody hands you, and a request arrives over a channel
-// from another process. Neither is a reason to end the program that is reading.
+// `Reader` carries its failure rather than trapping: an image is a file somebody hands you, and a
+// damaged one is not a reason to end the program that is reading it.
 
 import { Buf } from "core";
 

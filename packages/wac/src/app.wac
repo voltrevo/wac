@@ -29,8 +29,10 @@
 // environment variable stays the seam; there is simply no host filling it, and a caller who exports one
 // is passed through — which is how `packages/wac/test/wac/app_test.wac` still exercises the refusal.
 
-import { Change, Cli, Core, FileResult, Stat } from "std";
+import { Change, Cli, Env, Files, Net, Output, Procs, Stat } from "std";
+import { reason } from "../../fs/src/words.wac";
 import { runBytes } from "./runprog.wac";
+import { flatten } from "core";
 
 /**
  * The line that says a file was built by `wac app`, and by which version.
@@ -41,8 +43,8 @@ import { runBytes } from "./runprog.wac";
 export static string APP_MARK = "# wac-app ";
 
 /** This host's version, or "" if it did not say — see the note at the top of this file. */
-export string wacVersion(Cli cli) {
-  u8[]? v = cli.env("WAC_VERSION").wait();
+export string wacVersion(Env env) {
+  u8[]? v = flatten(env.get("WAC_VERSION").wait()).orElse(null);
   if ((v is null) || v!.len() == 0) { return ""; }
   return string.fromBytes(v!);
 }
@@ -151,22 +153,22 @@ export string builtBy(string head) {
  * be — owner-only would make an `scp` to a shared machine produce a file nobody there can run. That
  * is `setExecutable`'s whole surface, and it is the reason one bit was enough.
  */
-export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWords) {
-  u8[] head = preamble(wacVersion(cli)).toBytes();
+export i32 writeApp(Output err, Env env, Files fs, u8[] whole, string dest, string grantWords) {
+  u8[] head = preamble(wacVersion(env)).toBytes();
   u8[] out = u8[].filled(head.len() + whole.len(), 0);
   out.copyFrom(head, 0, 0, head.len());
   for (i32 i = 0; i < whole.len(); i++) { out[head.len() + i] = whole[i]; }
-  Change wrote = cli.writeFile(dest, out).wait();
-  if (!wrote.ok()) {
-    core.warn("wac: cannot write \{dest} — \{wrote.message}");
+  auto wrote = flatten(fs.writeFile(dest, out).wait());
+  if (wrote.isErr()) {
+    err.line("wac: cannot write \{dest} — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  Change made = cli.setExecutable(dest, true).wait();
-  if (!made.ok()) {
-    core.warn("wac: cannot make \{dest} executable — \{made.message}");
+  auto made = flatten(fs.setExecutable(dest, true).wait());
+  if (made.isErr()) {
+    err.line("wac: cannot make \{dest} executable — \{made.isErr() ? "\{made.err()!}" : ""}");
     return 1;
   }
-  core.warn(dest + "  \{out.len() / 1024} KB  ["
+  err.line(dest + "  \{out.len() / 1024} KB  ["
             + (grantWords == "" ? "no capabilities" : grantWords) + "]");
   return 0;
 }
@@ -182,30 +184,31 @@ export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWor
  * happens to produce — a missing export, a world built in the wrong order, or nothing at all until
  * the program is halfway through. Refusing by name costs one comparison and says what to do.
  */
-export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) {
-    core.warn("wac: cannot read \{path} — \{f.error}");
+export async i32 appRun(Output err, Env env, Files fs, Net net, Procs procs, i32 argc, string path, string[] args) {
+  auto fRead = await fs.readFile(path);
+  u8[]? f = fRead.ok();
+  if ((f is null)) {
+    err.line("wac: cannot read \{path} — \{reason(fRead.err()!)}");
     return 1;
   }
-  i32 at = moduleAt(f.bytes);
+  i32 at = moduleAt(f!);
   if (at < 0) {
-    core.warn("wac: \{path} carries no wasm module — is it a `wac app` executable?");
+    err.line("wac: \{path} carries no wasm module — is it a `wac app` executable?");
     return 1;
   }
   u8[] headBytes = u8[].filled(at, 0);
-  headBytes.copyFrom(f.bytes, 0, 0, at);
+  headBytes.copyFrom(f!, 0, 0, at);
   string head = string.fromBytes(headBytes);
   // **Presence, not content** — `hasAppMark` rather than `builtBy(head) == ""`, which was the same
   // test for a file nobody built with `wac app` and for one built by a host that publishes no
   // version. See `hasAppMark`.
   if (!hasAppMark(head)) {
-    core.warn("wac: \{path} has a module in it but no `\{APP_MARK}` line — not built by "
+    err.line("wac: \{path} has a module in it but no `\{APP_MARK}` line — not built by "
               + "`wac app`");
     return 1;
   }
   string was = builtBy(head);
-  string mine = wacVersion(cli);
+  string mine = wacVersion(env);
   // **A host that does not say its version cannot refuse for it.** Both sides read the same variable,
   // so an empty `mine` means this host published nothing rather than that the file is unmarked —
   // reporting a mismatch there would blame the artefact for the host's silence.
@@ -217,12 +220,12 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
   // exist can differ.** A stamp is missing on every host but `native/v8` today, so this is the case
   // rather than the corner — see `hasAppMark`, and `issues/system/0230a` for the stamp itself.
   if (mine != "" && was != "" && was != mine) {
-    core.warn("wac: \{path} was built by wac \{was} and this is wac \{mine}");
-    core.warn("     wac is unstable by choice, so a manifest from another version is not read");
-    core.warn("     the same way. Rebuild it: wac app <entry.wac> -o \{path}");
+    err.line("wac: \{path} was built by wac \{was} and this is wac \{mine}");
+    err.line("     wac is unstable by choice, so a manifest from another version is not read");
+    err.line("     the same way. Rebuild it: wac app <entry.wac> -o \{path}");
     return 1;
   }
-  u8[] wasm = u8[].filled(f.bytes.len() - at, 0);
-  for (i32 i = at; i < f.bytes.len(); i++) { wasm[i - at] = f.bytes[i]; }
-  return runBytes(core, cli, wasm, args, path);
+  u8[] wasm = u8[].filled(f!.len() - at, 0);
+  for (i32 i = at; i < f!.len(); i++) { wasm[i - at] = f![i]; }
+  return runBytes(err, fs, net, env, procs, wasm, args, path);
 }

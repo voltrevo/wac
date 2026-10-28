@@ -12,9 +12,10 @@
 // is busy, and this machine has three agents on it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Clock, Output } from "std";
 import { diagnoseFiles, emitFiles, blockedFiles } from "../../src/api.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /** `n` one-function files, plus an entry importing all of them — the issue's program. */
 string[] pathsFor(i32 n) {
@@ -38,11 +39,11 @@ string[] sourcesFor(i32 n) {
   return out;
 }
 
-i64 millisSince(Core core, i64 startNanos) {
-  return (core.monotonicNanos().wait() - startNanos) / (1000000 as i64);
+i64 millisSince(Clock clock, i64 startNanos) {
+  return (flatten(clock.monotonicNanos().wait()).unwrap() - startNanos) / (1000000 as i64);
 }
 
-export string test_the_curve(Core core, Cli cli) {
+export string test_the_curve(Output err, Clock clock) {
   T t = T.create();
   // Stepped finely across the reported wall, so a step and a curve look different. Kept under 600
   // because the issue's own figure there is twenty seconds and this runs on a shared machine.
@@ -53,13 +54,13 @@ export string test_the_curve(Core core, Cli cli) {
     string[] paths = pathsFor(n);
     string[] sources = sourcesFor(n);
 
-    i64 t0 = core.monotonicNanos().wait();
+    i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
     string diags = diagnoseFiles(paths, sources, "/main.wac");
-    i64 checkMs = millisSince(core, t0);
+    i64 checkMs = millisSince(clock, t0);
 
-    i64 t1 = core.monotonicNanos().wait();
+    i64 t1 = flatten(clock.monotonicNanos().wait()).unwrap();
     u8[] wasm = emitFiles(paths, sources, "/main.wac");
-    i64 emitMs = millisSince(core, t1);
+    i64 emitMs = millisSince(clock, t1);
 
     string blocked = blockedFiles(paths, sources, "/main.wac");
     rows = rows + "    blockedFiles: " + (blocked == "" ? "(none)" : blocked) + "\n";
@@ -81,6 +82,6 @@ export string test_the_curve(Core core, Cli cli) {
     rows = rows + "  " + itoa(n) + " files but only 10 imports: module " + itoa(wasm2.len())
         + " bytes\n";
   }
-  core.warn("import-count curve, `issues/lang/0158`:\n" + rows);
+  err.line("import-count curve, `issues/lang/0158`:\n" + rows);
   return t.report();
 }

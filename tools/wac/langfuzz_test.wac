@@ -6,7 +6,7 @@
  * module reports nothing, and an oracle that agrees by construction reports nothing — so both are
  * pinned here rather than left to a green sweep, which is what either failure looks like.
  */
-import { Cli, Core } from "std";
+import { Modules, Sys } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Vec } from "core";
 import { Outcome, Ran, runProgram, sweep, wrapTo, TY_I32, TY_I64 } from "./langfuzz.wac";
@@ -21,8 +21,9 @@ import { Outcome, Ran, runProgram, sweep, wrapTo, TY_I32, TY_I64 } from "./langf
  * bytes and `wac build` is what wraps them. Finding that here cost three lines; finding it under a
  * finished generator would have looked like the generator emitting something unloadable.
  */
-export string test_the_spine_compiles_loads_and_calls(Core core, Cli cli) {
-  Ran r = runProgram(cli, "export i32 main() { return 6 * 7; }");
+export string test_the_spine_compiles_loads_and_calls(Sys sys) {
+  Modules mods = sys.modules();
+  Ran r = runProgram(mods, "export i32 main() { return 6 * 7; }");
   if (!r.ok) { return "the spine did not run: " + r.why; }
   if (r.value != 42) { return "the spine ran and answered " + itoa(r.value) + ", wanted 42"; }
   return "";
@@ -62,8 +63,9 @@ bool has(i32[] xs, i32 v) {
   return false;
 }
 
-export string test_a_small_sweep_agrees_with_its_oracle(Core core, Cli cli) {
-  Vec<Outcome> bad = sweep(cli, 200, 1);
+export string test_a_small_sweep_agrees_with_its_oracle(Sys sys) {
+  Modules mods = sys.modules();
+  Vec<Outcome> bad = sweep(mods, 200, 1);
   string unexplained = "";
   i32 n = 0;
   for (i32 i = 0; i < bad.len(); i++) {
@@ -92,7 +94,7 @@ export string test_a_small_sweep_agrees_with_its_oracle(Core core, Cli cli) {
  * cast, this stays green *and* the fuzzer quietly starts agreeing with whatever the compiler does —
  * so the value below is one that a wrong narrowing gets wrong.
  */
-export string test_the_oracle_narrows_without_asking_the_compiler(Core core, Cli cli) {
+export string test_the_oracle_narrows_without_asking_the_compiler() {
   // 2^31 as an i64: the first value that is not an i32. Sign-extending its low 32 bits gives the
   // minimum, which is what a wrapping narrow must produce and a clamping one must not.
   i64 justPast = 2147483648;

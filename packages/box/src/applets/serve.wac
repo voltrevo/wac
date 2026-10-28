@@ -8,55 +8,55 @@
 // the connection is served to its end before the next is taken. That is the honest limit
 // of a synchronous capability world and it is written here rather than hidden.
 
-import { Cli, Core, HostSocket } from "std";
+import { Clock, Net, Output, Listener, Socket } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { concat } from "../lib/bytes.wac";
 import { Served, serve as handle } from "../../../server/src/serve.wac";
-import { Read } from "core";
+import { Read, flatten } from "core";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 serve(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export i32 serve(Output err, Clock clock, Net net, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   i32 port = a.num == 0 ? 8080 : a.num;
-  // Every interface: `serve` exists to hand a file to another machine. Issue 0025.
-  HostSocket l = cli.listen("", port).wait();
-  if (l.handle < 0) { core.warn("\{a.name}: \{port}: \{l.error}"); return 1; }
-  core.warn("\{a.name}: listening on port \{port}");
+  auto lBind = flatten(net.listen("", port).wait());
+  Listener? l = lBind.ok();
+  if (l is null) { err.line("\{a.name}: \{port}: \{lBind.isErr() ? "\{lBind.err()!}" : ""}"); return 1; }
+  err.line("\{a.name}: listening on port \{port}");
 
-  // `-o` serves one connection and exits, which is what the tests use and what makes this
-  // runnable without something to stop it. Not `-1`: a leading digit is how this argument
-  // parser spells a number, so `serve -8080 -1` set the port to 1.
   bool once = has(a, 'o');
   while (true) {
-    HostSocket c = cli.accept(l.handle).wait();
-    if (c.handle < 0) { core.warn("\{a.name}: accept: \{c.error}"); break; }
-    connection(core, cli, c.handle);
-    cli.closeSocket(c.handle);
+    auto took = flatten(l!.accept().wait());
+    Socket? c = took.ok();
+    if (c is null) { err.line("\{a.name}: accept: \{took.isErr() ? "\{took.err()!}" : ""}"); break; }
+    connection(err, clock, c!);
+    c!.close();
     if (once) { break; }
   }
-  cli.closeSocket(l.handle);
+  l!.close();
   return 0;
 }
 
 /** One connection, to its end: read, answer, repeat while it wants to be kept alive. */
-void connection(Core core, Cli cli, i32 sock) {
+void connection(Output err, Clock clock, Socket sock) {
   u8[] buffered = u8[]();
   while (true) {
-    Served s = handle(buffered, core.nowMillis().wait());
+    Served s = handle(buffered, flatten(clock.nowMillis().wait()).unwrap());
     if (!s.ready) {
-      // Not a whole request yet. More bytes, or the peer has gone.
-      match (cli.recv(sock).wait()) {
-        Data(bytes): { buffered = concat(buffered, bytes); }
-        End: { return; }
-        Failed(why): { core.warn("serve: \{why}"); return; }
+      match (flatten(sock.recv().wait())) {
+        Ok(r): {
+          match (r) {
+            Data(bytes): { buffered = concat(buffered, bytes); }
+            End: { return; }
+            Failed(why): { err.line("serve: \{why}"); return; }
+          }
+        }
+        Err(e): { err.line("serve: \{e}"); return; }
       }
       continue;
     }
-    if (!cli.send(sock, s.response).wait()) { return; }
+    if (flatten(sock.send(s.response).wait()).isErr()) { return; }
     if (!s.keepAlive) { return; }
-    // Whatever the client pipelined after this request stays in the buffer.
     buffered = slice(buffered, s.consumed, buffered.len());
   }
 }

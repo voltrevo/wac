@@ -22,11 +22,12 @@
 // assertions loudly rather than agreeing with a mistake.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Core, Cli, Exec, FileResult, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { customSection } from "./section.wac";
 import { has } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 /** The struct names and callback count a built program's manifest declares. */
 struct Boundary {
@@ -35,22 +36,24 @@ struct Boundary {
   string error;
 }
 
-Boundary manifestOf(Cli cli, string entry, string stem) {
-  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
-  string out = "\{cli.cwd().wait()}/.cache/declared/\{stem}";
-  cli.mkdir("\{cli.cwd().wait()}/.cache/declared", true).wait();
-  Exec built = cli.exec(wac, ["build", entry, "-o", out, "--quiet"], u8[]()).wait();
-  if (!built.ran()) { return Boundary(string[].filled(0, ""), -1, "the wac binary did not run"); }
-  if (built.status != 0) {
+Boundary manifestOf(Env env, Files fs, Procs procs, string entry, string stem) {
+  string wac = "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
+  string out = "\{flatten(env.cwd().wait()).unwrap()}/.cache/declared/\{stem}";
+  fs.mkdir("\{flatten(env.cwd().wait()).unwrap()}/.cache/declared", true).wait();
+  auto builtRan = flatten(procs.exec(wac, ["build", entry, "-o", out, "--quiet"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if ((built is null)) { return Boundary(string[].filled(0, ""), -1, "the wac binary did not run"); }
+  if (built!.status != 0) {
     return Boundary(string[].filled(0, ""), -1,
-                    "\{entry} did not build: \{string.fromBytes(built.stderr)}");
+                    "\{entry} did not build: \{string.fromBytes(built!.stderr)}");
   }
-  FileResult f = cli.readFile("\{out}.wasm").wait();
-  if (!f.ok) { return Boundary(string[].filled(0, ""), -1, "the build wrote no module: \{f.error}"); }
+  auto fRead = flatten(fs.readFile("\{out}.wasm").wait());
+  u8[]? f = fRead.ok();
+  if ((f is null)) { return Boundary(string[].filled(0, ""), -1, "the build wrote no module: \{fRead.isErr() ? "\{fRead.err()!}" : ""}"); }
 
   // The manifest is a `wac.manifest` section inside the module — it was a `.json` beside it until
   // 2026-08-20.
-  string text = customSection(f.bytes, "wac.manifest");
+  string text = customSection(f!, "wac.manifest");
   if (text.len() == 0) {
     return Boundary(string[].filled(0, ""), -1, "the module carries no `wac.manifest` section");
   }
@@ -96,15 +99,19 @@ string joinedWith(string[] all, string sep) {
   return out;
 }
 
-export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli cli) {
+export string test_a_program_handed_sys_is_described_by_the_world(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Boundary m = manifestOf(cli, "native/v8/example/hello.wac", "hello");
+  Boundary m = manifestOf(env, fs, procs, "native/v8/example/hello.wac", "hello");
   t.eqStr(m.error, "", "the manifest was read");
   if (m.error != "") { return t.report(); }
 
   // `main(Sys)` — the one authority a program is handed (spec ch07), which is `Core` and `Cli`
   // and the ticket shapes their methods answer with, and the `Sched` and continuation queue a world
-  // carries. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
+  // carries — and the watcher list each ticket keeps (`Vec<fn[void()]>`), since `TicketBase` is on the
+  // boundary. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
   // today's capabilities says nothing about the one added next week.
   //
   // It was `main(Core)` and a third of this until `Sys`: a program could ask for less than the world,
@@ -116,7 +123,7 @@ export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli
             + "Pending<FileResult>, Pending<HostChild>, Pending<HostSocket>, Pending<Read>, Pending<Stat>, "
             + "Pending<bool>, Pending<i32>, Pending<i64>, Pending<string>, Pending<string[]>, "
             + "Pending<string[]?>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Read, Sched, "
-            + "Stat, TicketBase, Vec<Continuation>",
+            + "Stat, TicketBase, Vec<Continuation>, Vec<fn[void()]>",
           "hello.wac's declared boundary");
 
   // The callback signatures are the other half of the same boundary: each is a dispatcher the host
@@ -127,11 +134,14 @@ export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli
   return t.report();
 }
 
-export string test_and_one_that_asks_for_two_is_described_by_two(Core core, Cli cli) {
+export string test_and_one_that_asks_for_two_is_described_by_two(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The canary. A rule that bound nothing would pass the test above and fail here, and this is also
   // where a `Cli` is *supposed* to arrive: the program said so in its signature.
   T t = T.create();
-  Boundary m = manifestOf(cli, "packages/platform/example/wc.wac", "wc");
+  Boundary m = manifestOf(env, fs, procs, "packages/platform/example/wc.wac", "wc");
   t.eqStr(m.error, "", "the manifest was read");
   if (m.error != "") { return t.report(); }
 

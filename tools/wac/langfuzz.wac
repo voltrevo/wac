@@ -165,7 +165,7 @@
 // run out of reach, not that the compiler is right. Widening it is the work; a green sweep is the
 // signal to do so.
 //
-import { CallResult, Cli, Core, LoadedModule, Sys } from "std";
+import { Authority, CallResult, Module, Sys, Modules, Output, Unsupported } from "std";
 import { Map, Vec, hashString, stringEq } from "core";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Rng } from "../../packages/wactest/src/rng.wac";
@@ -264,8 +264,8 @@ export struct Ran {
   string why;
 }
 
-export Ran runProgram(Cli cli, string src) {
-  return runGraph(cli, [entryName()], [src]);
+export Ran runProgram(Modules mods, string src) {
+  return runGraph(mods, [entryName()], [src]);
 }
 
 /**
@@ -275,7 +275,7 @@ export Ran runProgram(Cli cli, string src) {
  * nothing but naming it — and it buys the family of bugs that only exists once a name can be defined
  * twice in one program. `issues/system/0161`'s roadmap ranks that second.
  */
-export Ran runGraph(Cli cli, string[] paths, string[] texts) {
+export Ran runGraph(Modules mods, string[] paths, string[] texts) {
   Res res = Res.empty();
 
   // **Diagnosed before it is emitted.** wacc's emitter is asked separately from its checker, and a
@@ -305,14 +305,23 @@ export Ran runGraph(Cli cli, string[] paths, string[] texts) {
   // reason a sweep of thousands of them is safe to run in this process.
   u8[] wasm = withManifestSection(
     built.wasm, manifestWire(built.wasm, types, sigs, entryName(), "m.wasm", 0));
-  LoadedModule m = cli.load(wasm, 0);
-  if (m.unavailable()) { return Ran(false, 0, "this host has no `load`, so nothing was checked"); }
-  if (m.handle < 0) { return Ran(false, 0, "the module did not load: " + m.error); }
+  Module m;
+  match (mods.load(wasm, Authority.none())) {
+    Ok(loaded): { m = loaded; }
+    Err(e): {
+      match (e) {
+        Unsupported(u): { return Ran(false, 0, "this host has no `load`, so nothing was checked"); }
+        default: { return Ran(false, 0, "the module did not load: \{e}"); }
+      }
+    }
+  }
 
-  // The third argument feeds an `i32 f(i32)` and is ignored by every other shape in the closed set;
+  // The argument feeds an `i32 f(i32)` and is ignored by every other shape in the closed set;
   // `main` takes nothing, so it goes unread.
-  CallResult r = cli.call(m.handle, "main", 0);
-  cli.unload(m.handle);
+  auto called = m.call("main", 0);
+  m.unload();
+  if (called.isErr()) { return Ran(false, 0, "the call failed: \{called.err()!}"); }
+  CallResult r = called.ok()!;
   if (r.status == 1) { return Ran(false, 0, "trapped: " + (r.text == "" ? "no message" : r.text)); }
   if (r.status == 2) { return Ran(false, 0, "the module exports no `main`"); }
   if (r.status == 3) { return Ran(false, 0, "`main` has a signature the boundary cannot call"); }
@@ -1311,12 +1320,12 @@ export struct Outcome {
 }
 
 /** Generate and check `count` programs from `seed`, and return only the ones that disagreed. */
-export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
+export Vec<Outcome> sweep(Modules mods, i32 count, i32 seed) {
   Vec<Outcome> bad = Vec<Outcome>.create();
   for (i32 k = 0; k < count; k++) {
     i32 s = seed + k;
     Program p = Gen.create(s).program();
-    Ran r = runGraph(cli, [entryName(), "s.wac"], [p.src, p.side]);
+    Ran r = runGraph(mods, [entryName(), "s.wac"], [p.src, p.side]);
     if (!r.ok) {
       bad.push(Outcome(s, p.src, p.want, r.why));
     } else if ((r.value as i64) != p.want) {
@@ -1329,18 +1338,18 @@ export Vec<Outcome> sweep(Cli cli, i32 count, i32 seed) {
 
 // ── The command line ─────────────────────────────────────────────────────────────────────────────
 
-string flagValue(Cli cli, string name, string fallback) {
-  i32 n = cli.argCount().wait();
+string flagValue(string[] argv, string name, string fallback) {
+  i32 n = argv.len();
   for (i32 i = 0; i + 1 < n; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == name) { return string.fromBytes(cli.arg(i + 1).wait()); }
+    if (argv[i] == name) { return argv[i + 1]; }
   }
   return fallback;
 }
 
-bool hasFlag(Cli cli, string name) {
-  i32 n = cli.argCount().wait();
+bool hasFlag(string[] argv, string name) {
+  i32 n = argv.len();
   for (i32 i = 0; i < n; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == name) { return true; }
+    if (argv[i] == name) { return true; }
   }
   return false;
 }
@@ -1364,24 +1373,26 @@ i32 numberOr(string s, i32 fallback) {
  * and the generator changes. The text does not go stale.
  */
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 count = numberOr(flagValue(cli, "--count", ""), 200);
-  i32 seed = numberOr(flagValue(cli, "--seed", ""), 1);
-  bool verbose = hasFlag(cli, "--verbose");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Modules mods = sys.modules();
+  i32 count = numberOr(flagValue(argv, "--count", ""), 200);
+  i32 seed = numberOr(flagValue(argv, "--seed", ""), 1);
+  bool verbose = hasFlag(argv, "--verbose");
 
-  Vec<Outcome> bad = sweep(cli, count, seed);
+  Vec<Outcome> bad = sweep(mods, count, seed);
   if (verbose) {
-    core.log("swept " + itoa(count) + " program(s) from seed " + itoa(seed));
+    out.line("swept " + itoa(count) + " program(s) from seed " + itoa(seed));
   }
   if (bad.len() == 0) {
-    core.log("no disagreements in " + itoa(count) + " program(s) from seed " + itoa(seed));
+    out.line("no disagreements in " + itoa(count) + " program(s) from seed " + itoa(seed));
     return 0;
   }
   for (i32 i = 0; i < bad.len(); i++) {
     Outcome o = bad.get(i);
-    core.warn("seed " + itoa(o.seed) + ": " + o.why + "\n" + o.src);
+    err.line("seed " + itoa(o.seed) + ": " + o.why + "\n" + o.src);
   }
-  core.warn(itoa(bad.len()) + " of " + itoa(count) + " disagreed");
+  err.line(itoa(bad.len()) + " of " + itoa(count) + " disagreed");
   return 1;
 }

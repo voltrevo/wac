@@ -21,7 +21,7 @@
 // is exactly why `ethbalance` does long division over the bytes.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, Clock, Env, Files, Net, Output, Procs, Sys } from "std";
 import { Node, anvil, anvilPath, castRpc, haveAnvil, runExample, stopAnvil, toDec }
   from "./anvil_probe.wac";
 
@@ -34,29 +34,34 @@ string firstLine(string s) {
   return nl < 0 ? s : s.slice(0, nl);
 }
 
-export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us(
-    Core core, Cli cli) {
+export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  if (!haveAnvil(cli)) {
-    core.warn("ethbalance live test: skipped — anvil not found at \{anvilPath(cli)}");
+  if (!haveAnvil(env, fs)) {
+    err.line("ethbalance live test: skipped — anvil not found at \{anvilPath(env)}");
     return t.report();
   }
-  Node node = anvil(core, cli);
+  Node node = anvil(clock, env, fs, net, procs);
   t.isTrue(node.ok(), "anvil came up — \{node.why}");
   if (!node.ok()) { return t.report(); }
 
   // Mine once first. At block zero anvil serves proofs against a state whose root is not the one block
   // zero declares, so the root check refuses — correctly, and it is the check earning its keep on the
   // first thing that ran into it. A real chain is never at genesis when someone asks it a question.
-  castRpc(cli, node.port, ["evm_mine"]);
+  castRpc(env, procs, node.port, ["evm_mine"]);
 
-  string asked = castRpc(cli, node.port, ["eth_getBalance", FUNDED, "latest"]);
+  string asked = castRpc(env, procs, node.port, ["eth_getBalance", FUNDED, "latest"]);
   t.isTrue(asked.len() > 2, "the node answered eth_getBalance: \"\{asked}\"");
-  string want = toDec(cli, asked);
+  string want = toDec(env, procs, asked);
   t.isTrue(want.len() > 0, "cast converted \{asked} to decimal");
-  if (want.len() == 0) { stopAnvil(cli, node); return t.report(); }
+  if (want.len() == 0) { stopAnvil(fs, procs, node); return t.report(); }
 
-  Exec got = runExample(cli, ENTRY, [FUNDED, "127.0.0.1", "\{node.port}"]);
+  Exec got = runExample(env, procs, ENTRY, [FUNDED, "127.0.0.1", "\{node.port}"]);
   t.eqI32(got.status, 0, "exit \{got.status}: \{string.fromBytes(got.stderr)}");
   string out = string.fromBytes(got.stdout);
   t.eqStr(firstLine(out), "\{want} wei", "the proved balance");
@@ -64,17 +69,16 @@ export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_
 
   // A balance set to something that is not round, so a conversion that dropped digits shows.
   string odd = "0x00000000000000000000000000000000000000aa";
-  castRpc(cli, node.port, ["anvil_setBalance", odd, "0x1234567890abcdef"]);
-  castRpc(cli, node.port, ["evm_mine"]);
-  string oddWant = toDec(cli, "0x1234567890abcdef");
-  Exec oddGot = runExample(cli, ENTRY, [odd, "127.0.0.1", "\{node.port}"]);
+  castRpc(env, procs, node.port, ["anvil_setBalance", odd, "0x1234567890abcdef"]);
+  castRpc(env, procs, node.port, ["evm_mine"]);
+  string oddWant = toDec(env, procs, "0x1234567890abcdef");
+  Exec oddGot = runExample(env, procs, ENTRY, [odd, "127.0.0.1", "\{node.port}"]);
   t.eqStr(firstLine(string.fromBytes(oddGot.stdout)), "\{oddWant} wei",
           "a balance that is not round");
 
   // An address nothing has ever touched is *absent* from the state trie, which is a proof that it
   // holds nothing — not the same as a zero that was written, and the output says which.
-  Exec nobody = runExample(cli, ENTRY,
-                           [
+  Exec nobody = runExample(env, procs, ENTRY, [
                                     "0x00000000000000000000000000000000deadbeef", "127.0.0.1",
                                     "\{node.port}"
                            ]);
@@ -86,6 +90,6 @@ export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_
   t.isTrue(string.fromBytes(got.stderr).indexOf("state root this node also supplied") >= 0,
            "the caveat is not printed: \{string.fromBytes(got.stderr)}");
 
-  stopAnvil(cli, node);
+  stopAnvil(fs, procs, node);
   return t.report();
 }

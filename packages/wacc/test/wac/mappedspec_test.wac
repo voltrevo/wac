@@ -27,7 +27,8 @@ import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
-import { Change, Cli, Core, Exec, FileResult } from "std";
+import { Change, Exec, Env, Files, Procs, Sys } from "std";
+import { flatten } from "core";
 
 static string REPO = "https://example.invalid/dep.git";
 static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -45,30 +46,25 @@ static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
  * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
  * not for these. `issues/system/0229`.
  */
-bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
+bool put(Files fs, string path, string text) { return putFile(fs, path, text) == ""; }
 
 /** `wac <cmd> …` with `$WAC_HOME` pointed at the fixture's cache. */
-Exec wacc(Cli cli, string home, string dir, string cmd, string entry) {
-  return withEnv(cli, ["WAC_HOME"], [home],
-                 "/bin/sh",
-                 ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd + " " + entry]);
+Exec wacc(Env env, Procs procs, string home, string dir, string cmd, string entry) {
+  return withEnv(procs, ["WAC_HOME"], [home], "/bin/sh", ["-c", "cd " + dir + " && exec " + binaryPath(env) + " " + cmd + " " + entry]);
 }
 
 /** A project that maps `dep` at `subdir: "./src"`, with the manifest written but no lock yet. */
-string project(Cli cli, T t, string dir) {
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n    \"dep\": { git: \"" + REPO +
+string project(Files fs, T t, string dir) {
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n    \"dep\": { git: \"" + REPO +
                "\", ref: \"main\", subdir: \"./src\" },\n  },\n}\n"), "the manifest");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { two } from \"dep\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { two } from \"dep\";\n" +
                "export i32 main() { return two() + 5; }\n"), "the entry");
   return dir;
 }
 
 /** The lockfile pinning `dep` to a commit. */
-bool lockAt(Cli cli, string dir, string commit) {
-  return put(cli, dir + "/wac.lock",
-             "{\n  imports: {\n    \"dep\": {\n      git: \"" + REPO + "\",\n" +
+bool lockAt(Files fs, string dir, string commit) {
+  return put(fs, dir + "/wac.lock", "{\n  imports: {\n    \"dep\": {\n      git: \"" + REPO + "\",\n" +
              "      ref: \"main\",\n      subdir: \"./src\",\n      commit: \"" + commit + "\",\n" +
              "    },\n  },\n}\n");
 }
@@ -77,38 +73,41 @@ bool lockAt(Cli cli, string dir, string commit) {
  * The dependency's own checkout, where `cachePath` says it goes: the package directory `src` with its
  * manifest naming `lib.wac` as what it exports, and `lib.wac` holding `body`.
  */
-bool checkout(Cli cli, string home, string commit, string body) {
+bool checkout(Files fs, string home, string commit, string body) {
   string pkg = home + "/cache/git/" + escapeRepo(REPO) + "/" + commit + "/src";
-  return put(cli, pkg + "/wac.json5", "{ exports: \"./lib.wac\" }\n") &&
-         put(cli, pkg + "/lib.wac", body);
+  return put(fs, pkg + "/wac.json5", "{ exports: \"./lib.wac\" }\n") &&
+         put(fs, pkg + "/lib.wac", body);
 }
 
 /** Any file in the dependency's checkout, by its repository-relative path. */
-bool checkoutFile(Cli cli, string home, string commit, string rel, string body) {
-  return put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + commit + "/" + rel, body);
+bool checkoutFile(Files fs, string home, string commit, string rel, string body) {
+  return put(fs, home + "/cache/git/" + escapeRepo(REPO) + "/" + commit + "/" + rel, body);
 }
 
-export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Core core, Cli cli) {
+export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "mapped-ok");
+  string dir = scratch(env, "mapped-ok");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir1 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
-  project(cli, t, dir);
-  t.isTrue(lockAt(cli, dir, COMMIT), "the lockfile");
-  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
+  project(fs, t, dir);
+  t.isTrue(lockAt(fs, dir, COMMIT), "the lockfile");
+  t.isTrue(checkout(fs, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
 
-  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     // `two()` came from the mapped dependency; 5 is the entry's own. The answer is the evidence
     // that the *right* file was found, which "it compiled" would not be.
     t.eqI32(r.status, 7, "answered " + itoa(r.status) + ", want 7: " + string.fromBytes(r.stderr));
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
@@ -129,30 +128,29 @@ export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Core 
  *
  * `b.wac` rather than the entry, because that is the half that was broken next door.
  */
-export string test_a_mistake_in_a_mapped_dependency_is_reported(Core core, Cli cli) {
+export string test_a_mistake_in_a_mapped_dependency_is_reported(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "mapped-badfield");
+  string dir = scratch(env, "mapped-badfield");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir = madeDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n    \"dep\": { git: \"" + REPO +
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n    \"dep\": { git: \"" + REPO +
                "\", ref: \"main\", subdir: \"./src\" },\n  },\n}\n"), "the manifest");
   // The entry reaches the mapping only through `b.wac`.
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { take } from \"./b.wac\";\nexport i32 main() { return take(); }\n"), "the entry");
-  t.isTrue(put(cli, dir + "/src/b.wac",
-               "import { Thing } from \"dep\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { take } from \"./b.wac\";\nexport i32 main() { return take(); }\n"), "the entry");
+  t.isTrue(put(fs, dir + "/src/b.wac", "import { Thing } from \"dep\";\n" +
                "export i32 take() { Thing x = Thing.create(); return x.nofield; }\n"), "b");
-  t.isTrue(lockAt(cli, dir, COMMIT), "the lockfile");
-  t.isTrue(checkout(cli, home, COMMIT,
-                    "export struct Thing {\n  i32 v;\n" +
+  t.isTrue(lockAt(fs, dir, COMMIT), "the lockfile");
+  t.isTrue(checkout(fs, home, COMMIT, "export struct Thing {\n  i32 v;\n" +
                     "  Thing create() { return Thing(1); }\n}\n"), "the checkout");
 
-  Exec bad = wacc(cli, home, dir, "check", "src/main.wac");
+  Exec bad = wacc(env, procs, home, dir, "check", "src/main.wac");
   t.isTrue(bad.ran(), "wac did not run — " + bad.error);
   if (bad.ran()) {
     string said = string.fromBytes(bad.stdout) + string.fromBytes(bad.stderr);
@@ -162,35 +160,37 @@ export string test_a_mistake_in_a_mapped_dependency_is_reported(Core core, Cli c
   }
 
   // The same program with the field it does have, so the above is not met by refusing the mapping.
-  t.isTrue(put(cli, dir + "/src/b.wac",
-               "import { Thing } from \"dep\";\n" +
+  t.isTrue(put(fs, dir + "/src/b.wac", "import { Thing } from \"dep\";\n" +
                "export i32 take() { Thing x = Thing.create(); return x.v; }\n"), "b, corrected");
-  Exec ok = wacc(cli, home, dir, "check", "src/main.wac");
+  Exec ok = wacc(env, procs, home, dir, "check", "src/main.wac");
   t.isTrue(ok.ran(), "wac did not run — " + ok.error);
   if (ok.ran()) {
     t.eqI32(ok.status, 0, "refused a correct program: " +
             string.fromBytes(ok.stdout) + string.fromBytes(ok.stderr));
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
-export string test_a_mapping_with_no_lock_entry_says_to_update(Core core, Cli cli) {
+export string test_a_mapping_with_no_lock_entry_says_to_update(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // D10: an ordinary command does not fetch and does not invent a pin. The refusal has to name the
   // command that would fix it, or the reader is left with "cannot read dep" and no idea
   // that a lockfile is the missing thing.
   T t = T.create();
-  string dir = scratch(cli, "mapped-nolock");
+  string dir = scratch(env, "mapped-nolock");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir2 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir2 = madeDir(fs, dir);
   t.isTrue(whyDir2 == "", whyDir2);
-  project(cli, t, dir);
-  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
+  project(fs, t, dir);
+  t.isTrue(checkout(fs, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
 
-  Exec r = wacc(cli, home, dir, "check", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "check", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -199,29 +199,32 @@ export string test_a_mapping_with_no_lock_entry_says_to_update(Core core, Cli cl
     // Backquoted: `dep` bare is in the repository's URL and in every path the message could print.
     t.isTrue(contains(said, "`dep`"), "it did not name the mapping: " + said);
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
-export string test_a_commit_that_is_not_in_the_cache_says_where_it_looked(Core core, Cli cli) {
+export string test_a_commit_that_is_not_in_the_cache_says_where_it_looked(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The canary for the first case.** A resolution that fell back to *anything* — the working
   // directory, the project root, the first checkout it found — would pass that test and this one,
   // so this pins a lock to a commit nothing has fetched and requires the refusal. Naming the path
   // is what separates a wrong commit from a wrong subdir from an empty cache, which are three
   // different things to do about it.
   T t = T.create();
-  string dir = scratch(cli, "mapped-nocache");
+  string dir = scratch(env, "mapped-nocache");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir3 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir3 = madeDir(fs, dir);
   t.isTrue(whyDir3 == "", whyDir3);
-  project(cli, t, dir);
-  t.isTrue(lockAt(cli, dir, "89abcdef0123456789abcdef0123456789abcdef"), "a lock on another commit");
-  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the other commit's checkout");
+  project(fs, t, dir);
+  t.isTrue(lockAt(fs, dir, "89abcdef0123456789abcdef0123456789abcdef"), "a lock on another commit");
+  t.isTrue(checkout(fs, home, COMMIT, "export i32 two() { return 2; }\n"), "the other commit's checkout");
 
-  Exec r = wacc(cli, home, dir, "check", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "check", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -229,12 +232,15 @@ export string test_a_commit_that_is_not_in_the_cache_says_where_it_looked(Core c
     t.isTrue(contains(said, "wac update"), "it did not name the command to run: " + said);
     t.isTrue(contains(said, "89abcdef"), "it did not say which commit it wanted: " + said);
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
-export string test_two_mappings_at_one_commit_are_one_module(Core core, Cli cli) {
+export string test_two_mappings_at_one_commit_are_one_module(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **D8, through the half that mappings make reachable.** Identity is the repository, the resolved
   // commit and the repository-relative path — so a file reached through two different mapping
   // *names* at the same commit is one module, and in wac that is load-bearing: types are nominal,
@@ -253,52 +259,49 @@ export string test_two_mappings_at_one_commit_are_one_module(Core core, Cli cli)
   // because there is no canonicalisation to have a bug in. Worth saying, because a case named after
   // D8 that cannot fail for D8's reason is exactly the kind of test that reads as coverage.
   T t = T.create();
-  string dir = scratch(cli, "mapped-onemodule");
+  string dir = scratch(env, "mapped-onemodule");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir4 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir4 = madeDir(fs, dir);
   t.isTrue(whyDir4 == "", whyDir4);
 
   // Two names, one repository, one commit, one subdir — `§wac-package-identity-uskz3mi`.
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n" +
                "    \"one\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"./src\" },\n" +
                "    \"two\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"./src\" },\n" +
                "  },\n}\n"), "a manifest with two names for one repository");
-  t.isTrue(put(cli, dir + "/wac.lock",
-               "{\n  imports: {\n" +
+  t.isTrue(put(fs, dir + "/wac.lock", "{\n  imports: {\n" +
                "    \"one\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"./src\", commit: \"" + COMMIT + "\" },\n" +
                "    \"two\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"./src\", commit: \"" + COMMIT + "\" },\n" +
                "  },\n}\n"), "both pinned to one commit");
-  t.isTrue(checkout(cli, home, COMMIT,
-                    "export struct Two { i32 v; i32 get(const this) { return this.v; } }\n" +
+  t.isTrue(checkout(fs, home, COMMIT, "export struct Two { i32 v; i32 get(const this) { return this.v; } }\n" +
                     "export Two make() { return Two(2); }\n"), "the checkout");
   // One file reaches it as `one`, the other as `two`, and a value crosses between them.
-  t.isTrue(put(cli, dir + "/src/a.wac",
-               "import { Two, make } from \"one\";\n" +
+  t.isTrue(put(fs, dir + "/src/a.wac", "import { Two, make } from \"one\";\n" +
                "export Two mk() { return make(); }\n"), "a");
-  t.isTrue(put(cli, dir + "/src/b.wac",
-               "import { Two } from \"two\";\n" +
+  t.isTrue(put(fs, dir + "/src/b.wac", "import { Two } from \"two\";\n" +
                "export i32 take(Two x) { return x.get(); }\n"), "b");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { mk } from \"./a.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { mk } from \"./a.wac\";\n" +
                "import { take } from \"./b.wac\";\n" +
                "export i32 main() { return take(mk()) + 5; }\n"), "main");
 
-  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     t.eqI32(r.status, 7,
             "answered " + itoa(r.status) + ", want 7 — one repository at one commit is one module " +
             "however many mappings name it: " + string.fromBytes(r.stderr));
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
-export string test_update_is_the_only_command_that_reaches_the_network(Core core, Cli cli) {
+export string test_update_is_the_only_command_that_reaches_the_network(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // `[§wac-cli-update-2rq7knp]` — the half of D10 that can be checked without a network.
   //
   // **What this asserts is a refusal, and that is the point.** `wac update` fetching is exercised
@@ -312,18 +315,18 @@ export string test_update_is_the_only_command_that_reaches_the_network(Core core
   // payload in the binary, so there is no code path from compiling to a socket at all. A test can
   // only show the behaviour; `native/v8/build.rs` is where the absence lives.
   T t = T.create();
-  string dir = scratch(cli, "mapped-offline");
+  string dir = scratch(env, "mapped-offline");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir5 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir5 = madeDir(fs, dir);
   t.isTrue(whyDir5 == "", whyDir5);
-  string whyDir6 = madeDir(cli, home);
+  string whyDir6 = madeDir(fs, home);
   t.isTrue(whyDir6 == "", whyDir6);
-  project(cli, t, dir);
-  t.isTrue(lockAt(cli, dir, COMMIT), "a lock naming a commit nothing has fetched");
+  project(fs, t, dir);
+  t.isTrue(lockAt(fs, dir, COMMIT), "a lock naming a commit nothing has fetched");
 
-  Exec r = wacc(cli, home, dir, "build", "src/main.wac -o " + dir + "/out");
+  Exec r = wacc(env, procs, home, dir, "build", "src/main.wac -o " + dir + "/out");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -331,8 +334,8 @@ export string test_update_is_the_only_command_that_reaches_the_network(Core core
     t.isTrue(contains(said, "wac update"),
              "the refusal did not name the command that fetches: " + said);
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
@@ -351,20 +354,21 @@ export string test_update_is_the_only_command_that_reaches_the_network(Core core
  * hand rather than here: `wac update` then `wac run` against `github.com/voltrevo/wac` answers 3.
  * Saying which half is guarded matters, because a green case here is not that demonstration.
  */
-export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
+export string test_update_caches_where_the_compiler_looks(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "updatehome");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
-  project(cli, t, dir);
+  string dir = scratch(env, "updatehome");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
+  project(fs, t, dir);
 
   // Neither variable set, so there is no cache root to derive. Empty rather than absent is the
   // spelling `withEnv` can express, and `wac_home` treats them the same for exactly this reason.
-  Exec r = withEnv(cli, ["WAC_HOME", "HOME"], ["", ""],
-                   "/bin/sh",
-                   ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"]);
+  Exec r = withEnv(procs, ["WAC_HOME", "HOME"], ["", ""], "/bin/sh", ["-c", "cd " + dir + " && exec " + binaryPath(env) + " update"]);
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -374,9 +378,9 @@ export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
   }
 
   // And it must not have quietly made one beside the project, which is the old behaviour.
-  FileResult stray = cli.readFile(dir + "/.wac/cache").wait();
-  t.isFalse(stray.ok, "update created a cache inside the project rather than under $WAC_HOME");
-  cli.remove(dir, true).wait();
+  u8[]? stray = flatten(fs.readFile(dir + "/.wac/cache").wait()).ok();
+  t.isFalse((stray is not null), "update created a cache inside the project rather than under $WAC_HOME");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -400,34 +404,34 @@ export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
  * subdirectory"*) is reached. Either is a correct refusal and both say `leaves`; what this pins is
  * that the package's code does not get out, not which of two layers is the one that says no.
  */
-export string test_a_package_cannot_import_outside_its_directory(Core core, Cli cli) {
+export string test_a_package_cannot_import_outside_its_directory(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "confine");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "confine");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
   string home = dir + "/home";
-  project(cli, t, dir);
-  t.isTrue(lockAt(cli, dir, COMMIT), "the lock");
+  project(fs, t, dir);
+  t.isTrue(lockAt(fs, dir, COMMIT), "the lock");
 
   // A manifest at the *repository* root as well, so the file outside the package is a real module of
   // a real project — the escape has somewhere legitimate-looking to land, rather than failing for want
   // of a project.
-  t.isTrue(checkoutFile(cli, home, COMMIT, "wac.json5", "{}\n"), "the repository's manifest");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "src/wac.json5", "{ exports: \"./lib.wac\" }\n"),
+  t.isTrue(checkoutFile(fs, home, COMMIT, "wac.json5", "{}\n"), "the repository's manifest");
+  t.isTrue(checkoutFile(fs, home, COMMIT, "src/wac.json5", "{ exports: \"./lib.wac\" }\n"),
            "the package's manifest");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "outside/bad.wac",
-                        "export i32 bad() { return 66; }\n"), "the file outside the package");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "src/inside.wac",
-                        "export i32 good() { return 2; }\n"), "a file inside it");
+  t.isTrue(checkoutFile(fs, home, COMMIT, "outside/bad.wac", "export i32 bad() { return 66; }\n"), "the file outside the package");
+  t.isTrue(checkoutFile(fs, home, COMMIT, "src/inside.wac", "export i32 good() { return 2; }\n"), "a file inside it");
 
   string[] escapes = ["@/../outside/bad.wac", "../outside/bad.wac"];
   for (i32 i = 0; i < escapes.len(); i++) {
-    t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                          "import { bad } from \"" + escapes[i] + "\";\n" +
+    t.isTrue(checkoutFile(fs, home, COMMIT, "src/lib.wac", "import { bad } from \"" + escapes[i] + "\";\n" +
                           "export i32 two() { return bad(); }\n"), "lib importing " + escapes[i]);
-    Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+    Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
     t.isTrue(r.ran(), "wac did not run — " + r.error);
     if (r.ran()) {
       string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -443,17 +447,16 @@ export string test_a_package_cannot_import_outside_its_directory(Core core, Cli 
   // ordinary import within the package, in either spelling.
   string[] inside = ["@/inside.wac", "./inside.wac"];
   for (i32 i = 0; i < inside.len(); i++) {
-    t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                          "import { good } from \"" + inside[i] + "\";\n" +
+    t.isTrue(checkoutFile(fs, home, COMMIT, "src/lib.wac", "import { good } from \"" + inside[i] + "\";\n" +
                           "export i32 two() { return good(); }\n"), "lib importing " + inside[i]);
-    Exec ok = wacc(cli, home, dir, "run", "src/main.wac");
+    Exec ok = wacc(env, procs, home, dir, "run", "src/main.wac");
     t.isTrue(ok.ran(), "wac did not run — " + ok.error);
     if (ok.ran()) {
       t.eqI32(ok.status, 7, inside[i] + " inside the package was refused: " +
                             string.fromBytes(ok.stderr));
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -475,29 +478,31 @@ export string test_a_package_cannot_import_outside_its_directory(Core core, Cli 
  * `core` and in a different line — `wacc.wac` records that omission — so one passing says little
  * about the other.
  */
-export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cli) {
+export string test_a_mapped_dependency_may_import_the_builtins(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "builtin");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "builtin");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
   string home = dir + "/home";
-  project(cli, t, dir);
-  t.isTrue(lockAt(cli, dir, COMMIT), "the lock");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "src/wac.json5", "{ exports: \"./lib.wac\" }\n"),
+  project(fs, t, dir);
+  t.isTrue(lockAt(fs, dir, COMMIT), "the lock");
+  t.isTrue(checkoutFile(fs, home, COMMIT, "src/wac.json5", "{ exports: \"./lib.wac\" }\n"),
            "the package's manifest");
 
   // `hashString` rather than `Map` itself: `core/map.wac` is what `packages/json` reaches for and is
   // the import this is about, and `core/hash.wac` is one of the three the issue names — so importing
   // both proves the resolution without the fixture having to build a generic container correctly.
   // What is being tested is whether a mapped file may *reach* a built-in, not what it does with one.
-  t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                        "import { Map } from \"core\";\n" +
+  t.isTrue(checkoutFile(fs, home, COMMIT, "src/lib.wac", "import { Map } from \"core\";\n" +
                         "import { hashString } from \"core\";\n" +
                         "export i32 two() { return hashString(\"a\") == 0 ? 0 : 2; }\n"),
            "lib importing core/map.wac and core/hash.wac");
-  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     t.eqI32(r.status, 7, "a mapped file could not import `core/map.wac`: " +
@@ -505,13 +510,12 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
   }
 
   // And `std`, whose serving arrived separately.
-  t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                        "import { Read } from \"core\";\n" +
+  t.isTrue(checkoutFile(fs, home, COMMIT, "src/lib.wac", "import { Read } from \"core\";\n" +
                         "import { Stat } from \"std\";\n" +
                         "export i32 two() { Read r = Read.End; match (r) { End: { return 2; } " +
                         "default: { return 0; } } }\n"),
            "lib importing std/platform.wac and core's root");
-  Exec std = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec std = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(std.ran(), "wac did not run — " + std.error);
   if (std.ran()) {
     t.eqI32(std.status, 7, "a mapped file could not import `std/platform.wac`: " +
@@ -525,17 +529,16 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
   // mapped subdirectory"*. (It was `core/result.wac` importing `./option.wac` until `Option` left
   // `core`; the row needs some built-in file with a relative import, and this is one.) Every import in `core/map.wac` is itself a built-in specifier, which is
   // why the reported case is silent about this and why this row is here.
-  t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                        "import { Ticket } from \"core\";\n" +
+  t.isTrue(checkoutFile(fs, home, COMMIT, "src/lib.wac", "import { Ticket } from \"core\";\n" +
                         "export i32 two() { Ticket<i32> t; t.resolve(2); return t.value(); }\n"),
            "lib importing core/ticket.wac, whose own imports are relative");
-  Exec rel = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec rel = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(rel.ran(), "wac did not run — " + rel.error);
   if (rel.ran()) {
     t.eqI32(rel.status, 7, "a mapped file could not import `core/ticket.wac`, whose own imports are " +
                            "relative: " + string.fromBytes(rel.stderr) + string.fromBytes(rel.stdout));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -549,40 +552,39 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
  * at the repository root here and its `exports` reaches into `lib/`, which is the other way round from
  * the case above.
  */
-export string test_a_whole_repository_mapping_may_import_the_builtins(Core core, Cli cli) {
+export string test_a_whole_repository_mapping_may_import_the_builtins(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "builtin-whole");
+  string dir = scratch(env, "builtin-whole");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir7 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir7 = madeDir(fs, dir);
   t.isTrue(whyDir7 == "", whyDir7);
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n    \"dep\": { git: \"" + REPO + "\", ref: \"main\" },\n  },\n}\n"),
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n    \"dep\": { git: \"" + REPO + "\", ref: \"main\" },\n  },\n}\n"),
            "a mapping with no subdir");
-  t.isTrue(put(cli, dir + "/wac.lock",
-               "{\n  imports: {\n    \"dep\": { git: \"" + REPO + "\", ref: \"main\", commit: \"" +
+  t.isTrue(put(fs, dir + "/wac.lock", "{\n  imports: {\n    \"dep\": { git: \"" + REPO + "\", ref: \"main\", commit: \"" +
                COMMIT + "\" },\n  },\n}\n"), "the lock");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { two } from \"dep\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { two } from \"dep\";\n" +
                "export i32 main() { return two() + 5; }\n"), "the entry");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "wac.json5", "{ exports: \"./lib/dep.wac\" }\n"),
+  t.isTrue(checkoutFile(fs, home, COMMIT, "wac.json5", "{ exports: \"./lib/dep.wac\" }\n"),
            "the package's manifest, at the repository root");
   // Both providers and the relative-import case in one file: what is under test is the `confine`
   // value, and a second manifest shape is what makes it different from the case above.
-  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/dep.wac",
-                        "import { Result } from \"core\";\n" +
+  t.isTrue(checkoutFile(fs, home, COMMIT, "lib/dep.wac", "import { Result } from \"core\";\n" +
                         "import { Stat } from \"std\";\n" +
                         "export i32 two() { Result<i32, bool> r = Result.Ok(2); return r.orElse(0); }\n"),
            "the dependency, reaching both providers");
-  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     t.eqI32(r.status, 7, "a whole-repository mapping could not import the built-ins: " +
                          string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
@@ -603,56 +605,53 @@ export string test_a_whole_repository_mapping_may_import_the_builtins(Core core,
  * `projectspec_test.wac`'s relative-against-`@/` case and the different-commits case below, all four
  * are asserted.
  */
-export string test_a_whole_repo_and_a_subdir_mapping_meet_at_one_module(Core core, Cli cli) {
+export string test_a_whole_repo_and_a_subdir_mapping_meet_at_one_module(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "mapped-twoshapes");
+  string dir = scratch(env, "mapped-twoshapes");
   string home = dir + "-home";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir8 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir8 = madeDir(fs, dir);
   t.isTrue(whyDir8 == "", whyDir8);
 
   // `whole` takes the repository as its package; `part` takes `lib` out of the same commit.
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n" +
                "    \"whole\": { git: \"" + REPO + "\", ref: \"main\" },\n" +
                "    \"part\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"./lib\" },\n" +
                "  },\n}\n"), "one whole-repository mapping and one subdir mapping");
-  t.isTrue(put(cli, dir + "/wac.lock",
-               "{\n  imports: {\n" +
+  t.isTrue(put(fs, dir + "/wac.lock", "{\n  imports: {\n" +
                "    \"whole\": { git: \"" + REPO + "\", ref: \"main\", commit: \"" + COMMIT + "\" },\n" +
                "    \"part\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"./lib\", commit: \"" +
                COMMIT + "\" },\n" +
                "  },\n}\n"), "both pinned to one commit");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "wac.json5", "{ exports: \"./lib/item.wac\" }\n"),
+  t.isTrue(checkoutFile(fs, home, COMMIT, "wac.json5", "{ exports: \"./lib/item.wac\" }\n"),
            "the repository's manifest");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/wac.json5", "{ exports: \"./item.wac\" }\n"),
+  t.isTrue(checkoutFile(fs, home, COMMIT, "lib/wac.json5", "{ exports: \"./item.wac\" }\n"),
            "lib's manifest");
-  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/item.wac",
-                        "export struct Item { i32 v; i32 get(const this) { return this.v; } }\n" +
+  t.isTrue(checkoutFile(fs, home, COMMIT, "lib/item.wac", "export struct Item { i32 v; i32 get(const this) { return this.v; } }\n" +
                         "export Item make() { return Item(4); }\n"), "the one file, under lib/");
 
   // The two packages are named differently and their entries are the same path.
-  t.isTrue(put(cli, dir + "/src/a.wac",
-               "import { Item, make } from \"whole\";\n" +
+  t.isTrue(put(fs, dir + "/src/a.wac", "import { Item, make } from \"whole\";\n" +
                "export Item mk() { return make(); }\n"), "reached through the whole repository");
-  t.isTrue(put(cli, dir + "/src/b.wac",
-               "import { Item } from \"part\";\n" +
+  t.isTrue(put(fs, dir + "/src/b.wac", "import { Item } from \"part\";\n" +
                "export i32 take(Item x) { return x.get(); }\n"), "reached through the subdir");
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { mk } from \"./a.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { mk } from \"./a.wac\";\n" +
                "import { take } from \"./b.wac\";\n" +
                "export i32 main() { return take(mk()) + 3; }\n"), "main");
 
-  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     t.eqI32(r.status, 7,
             "answered " + itoa(r.status) + ", want 7 — a whole-repository package and a subdir " +
             "package whose entries are one file are one module: " + string.fromBytes(r.stderr));
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
@@ -672,23 +671,24 @@ export string test_a_whole_repo_and_a_subdir_mapping_meet_at_one_module(Core cor
  * the resolver no longer accepts, say — would satisfy "refused" while proving nothing about identity.
  * The canary at the end is the same program with one type, which must run.
  */
-export string test_two_mappings_at_different_commits_are_two_modules(Core core, Cli cli) {
+export string test_two_mappings_at_different_commits_are_two_modules(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "mapped-twocommits");
+  string dir = scratch(env, "mapped-twocommits");
   string home = dir + "-home";
   string other = "89abcdef0123456789abcdef0123456789abcdef";
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
-  string whyDir9 = madeDir(cli, dir);
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
+  string whyDir9 = madeDir(fs, dir);
   t.isTrue(whyDir9 == "", whyDir9);
 
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n" +
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n" +
                "    \"old\": { git: \"" + REPO + "\", ref: \"v1\" },\n" +
                "    \"new\": { git: \"" + REPO + "\", ref: \"v2\" },\n" +
                "  },\n}\n"), "two names for one repository at two refs");
-  t.isTrue(put(cli, dir + "/wac.lock",
-               "{\n  imports: {\n" +
+  t.isTrue(put(fs, dir + "/wac.lock", "{\n  imports: {\n" +
                "    \"old\": { git: \"" + REPO + "\", ref: \"v1\", commit: \"" + COMMIT + "\" },\n" +
                "    \"new\": { git: \"" + REPO + "\", ref: \"v2\", commit: \"" + other + "\" },\n" +
                "  },\n}\n"), "pinned to two different commits");
@@ -699,18 +699,17 @@ export string test_two_mappings_at_different_commits_are_two_modules(Core core, 
                 "export Item make() { return Item(4); }\n";
   string[] commits = [COMMIT, other];
   for (i32 i = 0; i < commits.len(); i++) {
-    t.isTrue(checkoutFile(cli, home, commits[i], "wac.json5", "{ exports: \"./item.wac\" }\n"),
+    t.isTrue(checkoutFile(fs, home, commits[i], "wac.json5", "{ exports: \"./item.wac\" }\n"),
              "a checkout's manifest");
-    t.isTrue(checkoutFile(cli, home, commits[i], "item.wac", decl), "a checkout's item.wac");
+    t.isTrue(checkoutFile(fs, home, commits[i], "item.wac", decl), "a checkout's item.wac");
   }
 
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { make } from \"old\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { make } from \"old\";\n" +
                "import { Item } from \"new\";\n" +
                "export i32 main() { Item x = make(); return x.get(); }\n"),
            "a value from one commit into the other's type");
 
-  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec r = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -723,16 +722,15 @@ export string test_two_mappings_at_different_commits_are_two_modules(Core core, 
   }
 
   // The canary: one package, one type, and the same resolution has to succeed.
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { make, Item } from \"old\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { make, Item } from \"old\";\n" +
                "export i32 main() { Item x = make(); return x.get(); }\n"), "one commit only");
-  Exec ok = wacc(cli, home, dir, "run", "src/main.wac");
+  Exec ok = wacc(env, procs, home, dir, "run", "src/main.wac");
   t.isTrue(ok.ran(), "wac did not run — " + ok.error);
   if (ok.ran()) {
     t.eqI32(ok.status, 4, "the one-commit program did not run: " + string.fromBytes(ok.stderr));
   }
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }
 
@@ -740,20 +738,20 @@ export string test_two_mappings_at_different_commits_are_two_modules(Core core, 
  * A fixture: the project mapping `dep` at `src`, locked, and the main program importing it. What is
  * in the checkout's `src` is the caller's, since that is what each refusal below is about.
  */
-string lockedProject(Cli cli, T t, string label) {
-  string dir = scratch(cli, label);
-  cli.remove(dir, true).wait();
-  cli.remove(dir + "-home", true).wait();
-  string why = madeDir(cli, dir);
+string lockedProject(Env env, Files fs, T t, string label) {
+  string dir = scratch(env, label);
+  fs.remove(dir, true).wait();
+  fs.remove(dir + "-home", true).wait();
+  string why = madeDir(fs, dir);
   t.isTrue(why == "", why);
-  project(cli, t, dir);
-  t.isTrue(lockAt(cli, dir, COMMIT), "the lock");
+  project(fs, t, dir);
+  t.isTrue(lockAt(fs, dir, COMMIT), "the lock");
   return dir;
 }
 
 /** `wac check src/main.wac`, all it said, and whether it refused. */
-string refusal(T t, Cli cli, string dir, string what) {
-  Exec r = wacc(cli, dir + "-home", dir, "check", "src/main.wac");
+string refusal(T t, Env env, Procs procs, string dir, string what) {
+  Exec r = wacc(env, procs, dir + "-home", dir, "check", "src/main.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (!r.ran()) { return ""; }
   string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -770,7 +768,10 @@ string refusal(T t, Cli cli, string dir, string what) {
  * The refusals have to name what is missing, because "cannot resolve dep" sends the reader to the
  * lock and the cache, which are both fine.
  */
-export string test_a_package_with_no_usable_exports_is_refused(Core core, Cli cli) {
+export string test_a_package_with_no_usable_exports_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] labels = ["no manifest", "no exports", "an exports map", "an exports that is not there"];
   string[] manifests = [
@@ -783,29 +784,29 @@ export string test_a_package_with_no_usable_exports_is_refused(Core core, Cli cl
   string[] says = ["has no wac.json5", "names no `exports`", "`exports` is not one module path",
                    "which is not there"];
   for (i32 i = 0; i < labels.len(); i++) {
-    string dir = lockedProject(cli, t, "mapped-exports-" + itoa(i));
+    string dir = lockedProject(env, fs, t, "mapped-exports-" + itoa(i));
     string home = dir + "-home";
     string body = "export i32 two() { return 2; }\n";
-    t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac", body), labels[i] + ": lib.wac");
-    t.isTrue(checkoutFile(cli, home, COMMIT, "src/index.wac", body), labels[i] + ": index.wac");
+    t.isTrue(checkoutFile(fs, home, COMMIT, "src/lib.wac", body), labels[i] + ": lib.wac");
+    t.isTrue(checkoutFile(fs, home, COMMIT, "src/index.wac", body), labels[i] + ": index.wac");
     if (manifests[i] != "") {
-      t.isTrue(checkoutFile(cli, home, COMMIT, "src/wac.json5", manifests[i]), labels[i] + ": manifest");
+      t.isTrue(checkoutFile(fs, home, COMMIT, "src/wac.json5", manifests[i]), labels[i] + ": manifest");
     }
-    string said = refusal(t, cli, dir, labels[i]);
+    string said = refusal(t, env, procs, dir, labels[i]);
     t.isTrue(contains(said, says[i]), labels[i] + ": the refusal did not say \"" + says[i] + "\" — " + said);
-    cli.remove(dir, true).wait();
-    cli.remove(home, true).wait();
+    fs.remove(dir, true).wait();
+    fs.remove(home, true).wait();
   }
 
   // The canary: the same fixture with a usable manifest compiles, so the four above are about the
   // manifest and not about the fixture.
-  string dir = lockedProject(cli, t, "mapped-exports-ok");
-  t.isTrue(checkout(cli, dir + "-home", COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
-  Exec ok = wacc(cli, dir + "-home", dir, "run", "src/main.wac");
+  string dir = lockedProject(env, fs, t, "mapped-exports-ok");
+  t.isTrue(checkout(fs, dir + "-home", COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
+  Exec ok = wacc(env, procs, dir + "-home", dir, "run", "src/main.wac");
   t.isTrue(ok.ran(), "wac did not run — " + ok.error);
   if (ok.ran()) { t.eqI32(ok.status, 7, "the usable package was refused: " + string.fromBytes(ok.stderr)); }
-  cli.remove(dir, true).wait();
-  cli.remove(dir + "-home", true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(dir + "-home", true).wait();
   return t.report();
 }
 
@@ -818,25 +819,26 @@ export string test_a_package_with_no_usable_exports_is_refused(Core core, Cli cl
  * manifest that still says `dep/` is refused for the trailing slash, by a message that says why,
  * rather than matching nothing and leaving the reader to wonder.
  */
-export string test_a_package_is_named_whole(Core core, Cli cli) {
+export string test_a_package_is_named_whole(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = lockedProject(cli, t, "mapped-whole");
+  string dir = lockedProject(env, fs, t, "mapped-whole");
   string home = dir + "-home";
-  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
+  t.isTrue(checkout(fs, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
 
-  t.isTrue(put(cli, dir + "/src/main.wac",
-               "import { two } from \"dep/lib.wac\";\n" +
+  t.isTrue(put(fs, dir + "/src/main.wac", "import { two } from \"dep/lib.wac\";\n" +
                "export i32 main() { return two() + 5; }\n"), "a subpath import");
-  string said = refusal(t, cli, dir, "a subpath of a package");
+  string said = refusal(t, env, procs, dir, "a subpath of a package");
   t.isTrue(contains(said, "dep/lib.wac"), "the refusal did not name the specifier — " + said);
 
   // The old spelling of the key, with the import that would have gone through it.
-  t.isTrue(put(cli, dir + "/wac.json5",
-               "{\n  imports: {\n    \"dep/\": { git: \"" + REPO +
+  t.isTrue(put(fs, dir + "/wac.json5", "{\n  imports: {\n    \"dep/\": { git: \"" + REPO +
                "\", ref: \"main\", subdir: \"./src\" },\n  },\n}\n"), "a key ending in /");
-  string slashed = refusal(t, cli, dir, "a key ending in /");
+  string slashed = refusal(t, env, procs, dir, "a key ending in /");
   t.isTrue(contains(slashed, "ends in `/`"), "the refusal did not say what is wrong with the key — " + slashed);
-  cli.remove(dir, true).wait();
-  cli.remove(home, true).wait();
+  fs.remove(dir, true).wait();
+  fs.remove(home, true).wait();
   return t.report();
 }

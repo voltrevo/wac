@@ -11,10 +11,10 @@
 // bound `packages/json/src/json.wac` and drove it from JavaScript; the crossing was one call per
 // ~1 MiB document, so moving the harness into wac does not move the numbers. `issues/system/0161`.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Clock, Output } from "std";
 import { canonicalize, parse } from "../src/json.wac";
 import { JsonError } from "../src/parse.wac";
-import { Result } from "core";
+import { Result, flatten } from "core";
 import { Buf } from "core";
 import { JsonValue } from "../src/value.wac";
 
@@ -101,28 +101,29 @@ i64 mbpsTenths(i32 bytes, i64 nanos) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
   string[] labels = shapeLabels();
 
-  core.log("| shape | MB/s | ms |");
-  core.log("|---|---:|---:|");
+  out.line("| shape | MB/s | ms |");
+  out.line("|---|---:|---:|");
   for (i32 s = 0; s < labels.len(); s++) {
     u8[] bytes = corpus(shapeUnit(s));
     for (i32 i = 0; i < 3; i++) { canonicalize(bytes); }
     i64 best = 0;
     for (i32 i = 0; i < 7; i++) {
-      i64 t0 = core.monotonicNanos().wait();
+      i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
       Result<u8[], JsonError> out = canonicalize(bytes);
-      i64 dt = core.monotonicNanos().wait() - t0;
+      i64 dt = flatten(clock.monotonicNanos().wait()).unwrap() - t0;
       JsonError? refused = out.err();
       if (refused is not null) {
-        core.warn("\{labels[s]}: parse failed: \{refused!.text()}");
+        err.line("\{labels[s]}: parse failed: \{refused!.text()}");
         return 1;
       }
       if (i == 0 || dt < best) { best = dt; }
     }
-    core.log("| " + labels[s] + " | " + oneDecimal(mbpsTenths(bytes.len(), best))
+    out.line("| " + labels[s] + " | " + oneDecimal(mbpsTenths(bytes.len(), best))
              + " | " + oneDecimal(best / 100000) + " |");
   }
 
@@ -133,23 +134,23 @@ export i32 main(Sys sys) {
   // There is no scan-only path left to measure, because `parseDocument` always builds the tree, so
   // the honest comparison is against the other thing you might do with it: the ratio between the
   // two columns is emitting canonical bytes versus allocating a tree.
-  core.log("\n| shape | parse-to-tree MB/s |");
-  core.log("|---|---:|");
+  out.line("\n| shape | parse-to-tree MB/s |");
+  out.line("|---|---:|");
   for (i32 s = 0; s < labels.len(); s++) {
     u8[] bytes = corpus(shapeUnit(s));
     for (i32 i = 0; i < 3; i++) { parse(bytes); }
     i64 best = 0;
     for (i32 i = 0; i < 7; i++) {
-      i64 t0 = core.monotonicNanos().wait();
+      i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
       Result<JsonValue, JsonError> v = parse(bytes);
-      i64 dt = core.monotonicNanos().wait() - t0;
+      i64 dt = flatten(clock.monotonicNanos().wait()).unwrap() - t0;
       if (v.isErr()) {
-        core.warn("\{labels[s]}: parse failed: \{v.err()!.text()}");
+        err.line("\{labels[s]}: parse failed: \{v.err()!.text()}");
         return 1;
       }
       if (i == 0 || dt < best) { best = dt; }
     }
-    core.log("| " + labels[s] + " | " + oneDecimal(mbpsTenths(bytes.len(), best)) + " |");
+    out.line("| " + labels[s] + " | " + oneDecimal(mbpsTenths(bytes.len(), best)) + " |");
   }
   return 0;
 }

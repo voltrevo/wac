@@ -16,7 +16,8 @@
 // `tools/lane.test.ts` caps the lane to stop a sequential suite accumulating inside it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, FAULT_OTHER, Pending, HostSocket } from "std";
+import { Datagram, FAULT_OTHER, Pending, HostSocket, Clock, Env, Files, Net, Output, Procs, Sys, Datagrams } from "std";
+import { flatten } from "core";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { alertAt, cookieAt, describeAt, epochAt, handshakeKindAt, hello, hClientHello,
          hServerHello, hVerifyRequest, kAlert, kHandshake, kindAt, messageSeqAt, seqAt, sizeAt,
@@ -38,20 +39,17 @@ u8[] random32() {
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 
 /** One datagram out, one back. Empty when nothing came within the deadline. */
-u8[] exchange(Core core, Cli cli, HostSocket sock, i32 port, u8[] msg, i32 ms) {
-  cli.sendTo(sock.handle, "127.0.0.1", port, msg).wait();
-  return receiveWithin(core, cli, sock, ms);
+u8[] exchange(Clock clock, Datagrams sock, i32 port, u8[] msg, i32 ms) {
+  sock.sendTo("127.0.0.1", port, msg).wait();
+  return receiveWithin(clock, sock, ms);
 }
 
 /** The next datagram, or empty. The deadline is on the wait — `issues/system/0206`. */
-u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
-  Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny([p.id], ms) < 0) {
-    p.drop(p.id);
-    return u8[]();
+u8[] receiveWithin(Clock clock, Datagrams sock, i32 ms) {
+  match (flatten(clock.within(sock.receive(), ms).wait())) {
+    Ok(d): { return d.bytes; }
+    Err(e): { return u8[](); }
   }
-  Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[]();
 }
 
 /**
@@ -63,27 +61,29 @@ u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
 struct Bench {
   bool ok;
   Dtls server;
-  HostSocket sock;
+  /** Null when the bench did not come up. */
+  Datagrams? sock;
 }
 
-Bench bench(T t, Cli cli, string name) {
-  Dtls s = startServer(t, cli, name);
+Bench bench(T t, Output err, Clock clock, Env env, Files fs, Net net, Procs procs, string name) {
+  Dtls s = startServer(t, err, clock, env, fs, net, procs, name);
   if (!s.ok) {
     t.fail("the DTLS server did not start — \{s.error}");
-    return Bench(false, s, HostSocket.of(-1, "", "", 0, FAULT_OTHER()));
+    return Bench(false, s, null);
   }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) {
-    t.fail("our socket did not bind — \{sock.error}");
-    stopServer(cli, s);
-    return Bench(false, s, sock);
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) {
+    t.fail("our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+    stopServer(procs, s);
+    return Bench(false, s, null);
   }
-  return Bench(true, s, sock);
+  return Bench(true, s, sock!);
 }
 
-void release(Cli cli, Bench b) {
-  if (b.sock.handle >= 0) { cli.closeSocket(b.sock.handle); }
-  stopServer(cli, b.server);
+void release(Net net, Procs procs, Bench b) {
+  if (b.sock is not null) { b.sock!.close(); }
+  stopServer(procs, b.server);
 }
 
 /**
@@ -98,17 +98,23 @@ void release(Cli cli, Bench b) {
  * so `b.sock` cannot be replaced per attempt the way `stun_test.wac`'s can, and a retry loop on it
  * lost the answer to a reader abandoned by the previous deadline.
  */
-u8[] firstVerify(T t, Core core, Cli cli, Bench b, u8[] first) {
-  if (!waitForBind(cli, b.server, 200)) {
-    t.fail("openssl never bound \{b.server.port} — \{b.server.said(cli)}");
+u8[] firstVerify(T t, Clock clock, Files fs, Net net, Procs procs, Bench b, u8[] first) {
+  if (!waitForBind(procs, b.server, 200)) {
+    t.fail("openssl never bound \{b.server.port} — \{b.server.said(fs)}");
     return u8[]();
   }
-  return exchange(core, cli, b.sock, b.server.port, first, 5000);
+  return exchange(clock, b.sock!, b.server.port, first, 5000);
 }
 
-export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Core core, Cli cli) {
+export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Bench b = bench(t, cli, "dtls-cookie");
+  Bench b = bench(t, err, clock, env, fs, net, procs, "dtls-cookie");
   if (!b.ok) { return t.report(); }
 
   // **The first hello, with no cookie.** A server that allocated state for this would be an
@@ -118,10 +124,10 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
   t.eqI32(handshakeKindAt(first, 0), hClientHello(), "and a ClientHello");
   t.eqStr(hexOf(slice(first, 0, 3)), "16fefd", "a handshake record, DTLS 1.2");
 
-  u8[] verify = firstVerify(t, core, cli, b, first);
+  u8[] verify = firstVerify(t, clock, fs, net, procs, b, first);
   t.isTrue(verify.len() > 0, "the DTLS server did not answer our first ClientHello — " +
-                             b.server.said(cli));
-  if (verify.len() == 0) { release(cli, b); return t.report(); }
+                             b.server.said(fs));
+  if (verify.len() == 0) { release(net, procs, b); return t.report(); }
 
   t.eqI32(kindAt(verify, 0), kHandshake(),
           "expected a handshake record, got: \{describeAt(verify, 0)}");
@@ -138,9 +144,9 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
   t.eqI32(messageSeqAt(second, 0), 1,
           "message_seq advances — a retransmission would reuse 0 and this is a new message");
 
-  u8[] answer = exchange(core, cli, b.sock, b.server.port, second, 5000);
+  u8[] answer = exchange(clock, b.sock!, b.server.port, second, 5000);
   t.isTrue(answer.len() > 0, "the DTLS server did not answer our cookied ClientHello");
-  if (answer.len() == 0) { release(cli, b); return t.report(); }
+  if (answer.len() == 0) { release(net, procs, b); return t.report(); }
 
   t.eqI32(alertAt(answer, 0), -1,
           "the server sent an alert rather than a ServerHello. A 2/47 is illegal_parameter, 2/40 a " +
@@ -180,7 +186,7 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
             "datagram \{datagrams}: the records did not exactly fill it, \{at}" +
             " of \{current.len()}");
     if (sawDone) { break; }
-    current = receiveWithin(core, cli, b.sock, 5000);
+    current = receiveWithin(clock, b.sock!, 5000);
     if (current.len() == 0) {
       t.fail("the flight stopped after \{datagrams} datagram(s) without a " +
              "ServerHelloDone; handshake types seen: \{kinds}");
@@ -192,27 +198,33 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
   t.isTrue(sawKeyExchange, "and a ServerKeyExchange, since the suite is ECDHE: \{kinds}");
   t.isTrue(sawDone, "and ServerHelloDone ends it: \{kinds}");
 
-  release(cli, b);
+  release(net, procs, b);
   return t.report();
 }
 
-export string test_a_clienthello_with_a_wrong_cookie_is_refused(Core core, Cli cli) {
+export string test_a_clienthello_with_a_wrong_cookie_is_refused(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The canary. The test above is satisfied by a server that ignores cookies entirely — which is a
   // real configuration — and this is what says it does not.
   T t = T.create();
-  Bench b = bench(t, cli, "dtls-badcookie");
+  Bench b = bench(t, err, clock, env, fs, net, procs, "dtls-badcookie");
   if (!b.ok) { return t.report(); }
 
-  u8[] verify = firstVerify(t, core, cli, b, hello(random32(), u8[](), 0, 0));
-  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — \{b.server.said(cli)}");
-  if (verify.len() == 0) { release(cli, b); return t.report(); }
+  u8[] verify = firstVerify(t, clock, fs, net, procs, b, hello(random32(), u8[](), 0, 0));
+  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — \{b.server.said(fs)}");
+  if (verify.len() == 0) { release(net, procs, b); return t.report(); }
 
   u8[] wrong = cookieAt(verify, 0);
   t.isTrue(wrong.len() > 0, "the HelloVerifyRequest carried no cookie to corrupt");
-  if (wrong.len() == 0) { release(cli, b); return t.report(); }
+  if (wrong.len() == 0) { release(net, procs, b); return t.report(); }
   wrong[0] = wrong[0] ^ 0xFF;
 
-  u8[] answer = exchange(core, cli, b.sock, b.server.port, hello(random32(), wrong, 1, 1), 3000);
+  u8[] answer = exchange(clock, b.sock!, b.server.port, hello(random32(), wrong, 1, 1), 3000);
   // OpenSSL answers a bad cookie with another HelloVerifyRequest rather than an alert — it has no
   // state to be offended with, which is the point of the mechanism. Either way, what it must not do
   // is proceed.
@@ -220,7 +232,7 @@ export string test_a_clienthello_with_a_wrong_cookie_is_refused(Core core, Cli c
             "a cookie with one byte changed took the handshake forward, so the server is not " +
             "checking cookies and the test above proves less than it says");
 
-  release(cli, b);
+  release(net, procs, b);
   return t.report();
 }
 
@@ -244,14 +256,14 @@ export string test_the_framing_round_trips_and_says_when_a_record_is_not_whole()
   return t.report();
 }
 
-export string test_the_abandoned_server_pattern_discriminates(Core core, Cli cli) {
+export string test_the_abandoned_server_pattern_discriminates(Sys sys) {
+  Procs procs = sys.procs();
   // **A reaper that matches nothing is indistinguishable from a clean machine, and one that matches
   // too much kills somebody else's server.** `packages/tls` runs its own `s_server` for TLS 1.3;
   // that one is spawned correctly and is not this module's to kill, so the pattern needs both
   // `s_server` *and* `-dtls1_2`.
   T t = T.create();
-  t.isTrue(wouldReap(cli,
-    "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:20001 -cert x.pem -key x.key"),
+  t.isTrue(wouldReap(procs, "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:20001 -cert x.pem -key x.key"),
     "the pattern does not match one of ours");
   string[] others = [
     "openssl s_server -tls1_3 -accept 127.0.0.1:4433 -cert x.pem -key x.key",
@@ -259,7 +271,7 @@ export string test_the_abandoned_server_pattern_discriminates(Core core, Cli cli
     "/usr/sbin/sshd -D"
   ];
   for (i32 i = 0; i < others.len(); i++) {
-    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not: \{others[i]}");
+    t.isFalse(wouldReap(procs, others[i]), "the pattern matches something it must not: \{others[i]}");
   }
   return t.report();
 }

@@ -14,7 +14,8 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 static string GENERATED = "packages/bls/src/fpkernel.wac";
 static string GENERATOR = "packages/bls/tools/genfpkernel.py";
@@ -40,19 +41,23 @@ i32 lineCount(string text) {
   return text.len() > 0 && text.slice(text.len() - 1, text.len()) != "\n" ? n + 1 : n;
 }
 
-export string test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(Core core, Cli cli) {
+export string test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec("python3", [GENERATOR, "--stdout"], u8[]()).wait();
-  t.isTrue(r.ran(), "genfpkernel.py could not be run: \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "genfpkernel.py failed:\n\{string.fromBytes(r.stderr)}");
-  if (r.status != 0) { return t.report(); }
+  auto rRan = flatten(procs.exec("python3", [GENERATOR, "--stdout"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "genfpkernel.py could not be run: \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0, "genfpkernel.py failed:\n\{string.fromBytes(r!.stderr)}");
+  if (r!.status != 0) { return t.report(); }
 
-  string want = string.fromBytes(r.stdout);
-  FileResult f = cli.readFile(GENERATED).wait();
-  t.isTrue(f.ok, "\{GENERATED} could not be read: \{f.error}");
-  if (!f.ok) { return t.report(); }
-  string have = string.fromBytes(f.bytes);
+  string want = string.fromBytes(r!.stdout);
+  auto fRead = flatten(fs.readFile(GENERATED).wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{GENERATED} could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  string have = string.fromBytes(f!);
   if (have == want) { return t.report(); }
 
   // Point at the first difference: a whole-file diff of unrolled arithmetic tells you nothing.

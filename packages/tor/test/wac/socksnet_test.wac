@@ -41,8 +41,8 @@
 // hands control back. A test that wants to *talk to* the proxy while it is up cannot use it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending, HostSocket } from "std";
-import { Read } from "core";
+import { Exec, Pending, HostSocket, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Random, Sys, Listener, Socket } from "std";
+import { Read, flatten } from "core";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir } from "../../../wactest/src/host.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
@@ -67,12 +67,11 @@ struct Built {
   string why;
 }
 
-Built programs(Cli cli) {
+Built programs(Env env, Files fs, Procs procs) {
   string[] net = ["--allow-read", "--allow-write", "--allow-net"];
-  string relayd = builtProgram(cli, "packages/tor/src/relayd.wac", "relayd", net);
-  string gendesc = builtProgram(cli, "packages/tor/src/gendesc.wac", "gendesc",
-                                ["--allow-read", "--allow-write"]);
-  string socks = builtProgram(cli, "packages/tor/src/socks.wac", "socks", net);
+  string relayd = builtProgram(env, fs, procs, "packages/tor/src/relayd.wac", "relayd", net);
+  string gendesc = builtProgram(env, fs, procs, "packages/tor/src/gendesc.wac", "gendesc", ["--allow-read", "--allow-write"]);
+  string socks = builtProgram(env, fs, procs, "packages/tor/src/socks.wac", "socks", net);
   string why = "";
   if (relayd == "") { why = "relayd did not build"; }
   if (gendesc == "") { why = "gendesc did not build"; }
@@ -81,8 +80,8 @@ Built programs(Cli cli) {
 }
 
 /** `<binary> <module> <args>`, which is how a built program is run. */
-string line(Cli cli, string mod, string args) {
-  return "\{quoted(binaryPath(cli))} \{quoted(mod)} \{args}";
+string line(Env env, string mod, string args) {
+  return "\{quoted(binaryPath(env))} \{quoted(mod)} \{args}";
 }
 
 /** What came back through the proxy, or why nothing did. */
@@ -108,7 +107,8 @@ struct Carried {
 struct Opened {
   bool ok;
   string why;
-  i32 handle;
+  /** Null unless `ok`. */
+  Socket? sock;
 }
 
 /**
@@ -122,85 +122,84 @@ struct Opened {
  * authentication", a CONNECT naming an IPv4 address, and a ten-byte reply whose second byte is the
  * verdict. `socksReply` in `socks5.wac` is what builds that reply, so the two halves meet here.
  */
-Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
-  i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
-  if (h < 0) { return Opened(false, "could not connect to the proxy on \{proxy}", -1); }
+Opened opened(Clock clock, Net net, i32 proxy, i32 target) {
+  Socket? h = flatten(net.connect("127.0.0.1", proxy).wait()).ok();
+  if (h is null) { return Opened(false, "could not connect to the proxy on \{proxy}", null); }
 
-  cli.send(h, [0x05, 0x01, 0x00] as u8[]).wait();
-  u8[] hello = readSome(core, cli, h, 2);
+  h!.send( [0x05, 0x01, 0x00] as u8[]).wait();
+  u8[] hello = readSome(clock, h!, 2);
   if (hello.len() < 2 || hello[0] != 0x05 || hello[1] != 0x00) {
-    cli.closeSocket(h);
-    return Opened(false, "the proxy did not accept a no-auth greeting", -1);
+    h!.close();
+    return Opened(false, "the proxy did not accept a no-auth greeting", null);
   }
 
-  cli.send(h, [
+  h!.send( [
                    0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
                    (((target / 256) & 0xFF) as@ u8), ((target & 0xFF) as@ u8)
   ] as u8[]).wait();
-  u8[] reply = readSome(core, cli, h, 10);
+  u8[] reply = readSome(clock, h!, 10);
   if (reply.len() < 2 || reply[0] != 0x05) {
-    cli.closeSocket(h);
-    return Opened(false, "the proxy answered no reply, or one that was not SOCKS5", -1);
+    h!.close();
+    return Opened(false, "the proxy answered no reply, or one that was not SOCKS5", null);
   }
   if (reply[1] != 0x00) {
-    cli.closeSocket(h);
-    return Opened(false, "the proxy refused the CONNECT with reply code \{reply[1] as i32}", -1);
+    h!.close();
+    return Opened(false, "the proxy refused the CONNECT with reply code \{reply[1] as i32}", null);
   }
   return Opened(true, "", h);
 }
 
 /** Send a request on an already-open connection and read the answer to its end. */
-Carried answered(Core core, Cli cli, i32 h, string request) {
-  cli.send(h, request.toBytes()).wait();
+Carried answered(Clock clock, Socket h, string request) {
+  h.send(request.toBytes()).wait();
   string all = "";
   bool reading = true;
   while (reading) {
-    Pending<Read> p = cli.recv(h);
-    if (core.waitAny([p.id], READ_MS) < 0) {
-      p.cancel();
-      cli.closeSocket(h);
+    auto pGot = flatten(clock.within(h.recv(), READ_MS).wait());
+    if (pGot.isErr()) {
+      h.close();
       return Carried(false, "went quiet after \{all.len()} byte(s)", all);
     }
-    match (p.wait()) {
+    match (pGot.unwrap()) {
       Data(got): { all = all + string.fromBytes(got); }
       End: { reading = false; }
       Failed(why): { reading = false; }
     }
   }
-  cli.closeSocket(h);
+  h.close();
   return Carried(true, "", all);
 }
 
-Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
-  i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
-  if (h < 0) { return Carried(false, "could not connect to the proxy on \{proxy}", ""); }
+Carried carry(Clock clock, Net net, i32 proxy, i32 target, string request) {
+  Socket? h = flatten(net.connect("127.0.0.1", proxy).wait()).ok();
+  if (h is null) { return Carried(false, "could not connect to the proxy on \{proxy}", ""); }
 
   // VER 5, one method, and that method is 0 — no authentication.
-  cli.send(h, [0x05, 0x01, 0x00] as u8[]).wait();
-  u8[] hello = readSome(core, cli, h, 2);
+  h!.send( [0x05, 0x01, 0x00] as u8[]).wait();
+  u8[] hello = readSome(clock, h!, 2);
   if (hello.len() < 2 || hello[0] != 0x05 || hello[1] != 0x00) {
-    cli.closeSocket(h);
+    h!.close();
     return Carried(false, "the proxy did not accept a no-auth greeting", "");
   }
 
   // VER, CONNECT, reserved, ATYP 1 (IPv4), 127.0.0.1, then the port big-endian.
-  cli.send(h, [
+  h!.send( [
                    0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
                    (((target / 256) & 0xFF) as@ u8), ((target & 0xFF) as@ u8)
   ] as u8[]).wait();
-  u8[] reply = readSome(core, cli, h, 10);
+  u8[] reply = readSome(clock, h!, 10);
   if (reply.len() < 2 || reply[0] != 0x05) {
-    cli.closeSocket(h);
+    h!.close();
     return Carried(false, "the proxy answered no reply, or one that was not SOCKS5", "");
   }
   if (reply[1] != 0x00) {
-    cli.closeSocket(h);
+    h!.close();
     // The reply code is the *reason*, and it travels: `replyForEndReason` maps a relay's END byte
     // onto exactly these, so a failure here names which end refused rather than saying "no".
     return Carried(false, "the proxy refused the CONNECT with reply code \{reply[1] as i32}", "");
   }
 
-  cli.send(h, request.toBytes()).wait();
+  h!.send( request.toBytes()).wait();
   string all = "";
   bool reading = true;
   while (reading) {
@@ -209,20 +208,19 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
     // finishes has no output at all — not a partial log, not the assertion it was in. The same trap
     // cost ten minutes on `dird_test.wac`, whose `servedWithin` is this shape and this comment's
     // reason for existing. A deadline turns a hang into a failed assertion that says where it was.
-    Pending<Read> p = cli.recv(h);
-    if (core.waitAny([p.id], READ_MS) < 0) {
-      p.cancel();
-      cli.closeSocket(h);
+    auto pGot = flatten(clock.within(h!.recv(), READ_MS).wait());
+    if (pGot.isErr()) {
+      h!.close();
       return Carried(false, "the proxy went quiet after \{all.len()}" +
                             " byte(s) of the response", all);
     }
-    match (p.wait()) {
+    match (pGot.unwrap()) {
       Data(got): { all = all + string.fromBytes(got); }
       End: { reading = false; }
       Failed(why): { reading = false; }
     }
   }
-  cli.closeSocket(h);
+  h!.close();
   return Carried(true, "", all);
 }
 
@@ -232,13 +230,13 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
  * A read is not a message: SOCKS5's two-byte greeting and ten-byte reply can each arrive split, and
  * a client that treats one `recv` as one reply passes on a quiet machine and fails on a loaded one.
  */
-u8[] readSome(Core core, Cli cli, i32 h, i32 want) {
+u8[] readSome(Clock clock, Socket h, i32 want) {
   u8[] got = u8[]();
   while (got.len() < want) {
     bool more = false;
-    Pending<Read> p = cli.recv(h);
-    if (core.waitAny([p.id], READ_MS) < 0) { p.cancel(); return got; }
-    match (p.wait()) {
+    auto pGot = flatten(clock.within(h.recv(), READ_MS).wait());
+    if (pGot.isErr()) { return got; }
+    match (pGot.unwrap()) {
       Data(bytes): {
         u8[] joined = u8[].filled(got.len() + bytes.len(), 0);
         for (i32 i = 0; i < got.len(); i++) { joined[i] = got[i]; }
@@ -276,21 +274,27 @@ i32 portFrom(string log, string marker) {
   return any ? got : -1;
 }
 
-export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli) {
+export string test_socks_bootstraps_through_relays_of_our_own(Sys sys) {
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/socksnet";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/socksnet";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   if (whyDir != "") { return t.report(); }
 
-  Built b = programs(cli);
+  Built b = programs(env, fs, procs);
   t.eqStr(b.why, "", "the three programs built");
   if (b.why != "") { return t.report(); }
 
   // Distinct random seeds: two relays given the same one derive the same identity, and a consensus
   // with two identical fingerprints is not a network.
   for (i32 i = 0; i < RELAYS; i++) {
-    cli.writeFile("\{dir}/s\{i + 1}", core.randomBytes(32).wait()).wait();
+    fs.writeFile("\{dir}/s\{i + 1}", flatten(rnd.bytes(32).wait()).unwrap()).wait();
   }
 
   // ── Stage one: the relays bind and write their descriptors ──────────────────
@@ -303,8 +307,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   Daemon[] relays = Daemon[].filled(RELAYS, Daemon(0, "", ""));
   for (i32 i = 0; i < RELAYS; i++) {
     string n = "\{i + 1}";
-    relays[i] = start(cli,
-      line(cli, b.relayd, quoted("\{dir}/s\{n}") + " -p 0 -n wacnet" + n +
+    relays[i] = start(procs, line(env, b.relayd, quoted("\{dir}/s\{n}") + " -p 0 -n wacnet" + n +
                           " --descriptor " + quoted("\{dir}/r\{n}.desc") +
                           (i == 0 ? " --seedline " + quoted("\{dir}/seed.txt") : "") +
                           " -C " + quoted("\{dir}/v.consensus") +
@@ -318,37 +321,37 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
                           " -K " + quoted("\{dir}/cert.cert") +
                           " -D " + quoted("\{dir}/r1.desc") +
                           " -D " + quoted("\{dir}/r2.desc") +
-                          " -D " + quoted("\{dir}/r3.desc")),
-      "\{dir}/relay\{n}.log");
+                          " -D " + quoted("\{dir}/r3.desc")), "\{dir}/relay\{n}.log");
     t.isTrue(relays[i].ok(), "relay \{n} started — \{relays[i].error}");
   }
 
   bool bound = true;
   for (i32 i = 0; i < RELAYS; i++) {
-    if (!waitForLogWithin(core, cli, relays[i], "-byte descriptor for port", 60000)) {
+    if (!waitForLogWithin(clock, fs, relays[i], "-byte descriptor for port", 60000)) {
       t.fail("relay \{i + 1} never wrote a descriptor. It said: " +
-             logOf(cli, relays[i]));
+             logOf(fs, relays[i]));
       bound = false;
     }
   }
-  if (!bound) { return stopAll(t, cli, relays); }
+  if (!bound) { return stopAll(t, procs, relays); }
 
   // ── Stage two: an authority, in one shot, over the descriptors they just wrote ──
-  Exec vote = cli.exec("/bin/sh", [
+  auto voteRan = flatten(procs.exec("/bin/sh", [
     "-c",
     "cd " + quoted(dir) + " && exec " +
-    line(cli, b.gendesc, "keys.json cert vote v - r1.desc r2.desc r3.desc")
-  ], u8[]()).wait();
-  t.isTrue(vote.ran() && vote.status == 0,
-           "the authority signed a consensus — \{string.fromBytes(vote.stderr)}");
-  if (!vote.ran() || vote.status != 0) { return stopAll(t, cli, relays); }
+    line(env, b.gendesc, "keys.json cert vote v - r1.desc r2.desc r3.desc")
+  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? vote = voteRan.ok();
+  t.isTrue((vote is not null) && vote!.status == 0,
+           "the authority signed a consensus — \{string.fromBytes(vote!.stderr)}");
+  if ((vote is null) || vote!.status != 0) { return stopAll(t, procs, relays); }
 
   // ── Stage three: each relay finds the documents and begins serving ─────────
   for (i32 i = 0; i < RELAYS; i++) {
-    if (!waitForLogWithin(core, cli, relays[i], "serving the consensus", 60000)) {
+    if (!waitForLogWithin(clock, fs, relays[i], "serving the consensus", 60000)) {
       t.fail("relay \{i + 1} never served the consensus. It said: " +
-             logOf(cli, relays[i]));
-      return stopAll(t, cli, relays);
+             logOf(fs, relays[i]));
+      return stopAll(t, procs, relays);
     }
   }
 
@@ -356,19 +359,17 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   // **Absolute paths rather than a `cd`.** `start` wraps what it is given as `{ exec <line>; }`, so
   // a line beginning `cd …` becomes `exec cd …` and the shell answers *exec: cd: not found* — which
   // is what the first run of this said, after every relay had come up correctly.
-  Daemon proxy = start(cli,
-    line(cli, b.socks, quoted("\{dir}/seed.txt") + " " + quoted("\{dir}/cert.fingerprint") + " 0"),
-    "\{dir}/socks.log");
+  Daemon proxy = start(procs, line(env, b.socks, quoted("\{dir}/seed.txt") + " " + quoted("\{dir}/cert.fingerprint") + " 0"), "\{dir}/socks.log");
   t.isTrue(proxy.ok(), "socks started — \{proxy.error}");
-  if (!proxy.ok()) { return stopAll(t, cli, relays); }
+  if (!proxy.ok()) { return stopAll(t, procs, relays); }
 
   // It bootstraps from the seed line relay 1 wrote, fetches the consensus through it, picks a guard
   // and says which. That is the whole of `bootstrap` and `connectGuard` — the part of `socks.wac`
   // that runs before its wait loop does anything.
-  bool guarded = waitForLogWithin(core, cli, proxy, "guard: ", 60000);
-  t.isTrue(guarded, "socks bootstrapped and pinned a guard. It said: \{logOf(cli, proxy)}");
+  bool guarded = waitForLogWithin(clock, fs, proxy, "guard: ", 60000);
+  t.isTrue(guarded, "socks bootstrapped and pinned a guard. It said: \{logOf(fs, proxy)}");
   if (guarded) {
-    t.isTrue(contains(logOf(cli, proxy), "wacnet"),
+    t.isTrue(contains(logOf(fs, proxy), "wacnet"),
              "and the guard it pinned is one of ours, not a name from somewhere else");
 
     // **The port it announces has to be the one it got.** Started on 0, this said
@@ -376,10 +377,10 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
     // so a proxy on a kernel-chosen port announced an address nothing can connect to. Nothing
     // noticed because the only caller that had ever started it passed a fixed port. Asserted here
     // rather than left to the next reader, since the case that catches it is the one that binds 0.
-    bool listening = waitForLogWithin(core, cli, proxy, "socks5 on 127.0.0.1:", 20000);
-    t.isTrue(listening, "socks said it was listening. It said: \{logOf(cli, proxy)}");
+    bool listening = waitForLogWithin(clock, fs, proxy, "socks5 on 127.0.0.1:", 20000);
+    t.isTrue(listening, "socks said it was listening. It said: \{logOf(fs, proxy)}");
     if (listening) {
-      i32 got = portFrom(logOf(cli, proxy), "socks5 on 127.0.0.1:");
+      i32 got = portFrom(logOf(fs, proxy), "socks5 on 127.0.0.1:");
       t.isTrue(got > 0, "and named the port the kernel gave it, rather than the 0 it asked for — " +
                         "got \{got}");
 
@@ -395,36 +396,31 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
       // path, and the alternative — the test listening for the exit's connection itself — needs the
       // test to be in two places at once.
       if (got > 0) {
-        string dirdMod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
-                                      ["--allow-read", "--allow-net"]);
+        string dirdMod = builtProgram(env, fs, procs, "packages/tor/src/dird.wac", "dird", ["--allow-read", "--allow-net"]);
         t.isTrue(dirdMod != "", "the target server built");
         if (dirdMod != "") {
-          Daemon target = start(cli,
-            line(cli, dirdMod, quoted("\{dir}/v.consensus") + " " + quoted("\{dir}/cert.cert") +
-                               " " + quoted("\{dir}/r1.desc") + " 0"),
-            "\{dir}/dird.log");
+          Daemon target = start(procs, line(env, dirdMod, quoted("\{dir}/v.consensus") + " " + quoted("\{dir}/cert.cert") +
+                               " " + quoted("\{dir}/r1.desc") + " 0"), "\{dir}/dird.log");
           t.isTrue(target.ok(), "the target started — \{target.error}");
           if (target.ok()) {
-            bool up = waitForLogWithin(core, cli, target, "serving the directory on 127.0.0.1:",
-                                       20000);
-            t.isTrue(up, "the target listened. It said: \{logOf(cli, target)}");
+            bool up = waitForLogWithin(clock, fs, target, "serving the directory on 127.0.0.1:", 20000);
+            t.isTrue(up, "the target listened. It said: \{logOf(fs, target)}");
             if (up) {
-              i32 tport = portFrom(logOf(cli, target), "serving the directory on 127.0.0.1:");
-              Carried r = carry(core, cli, got, tport,
-                                "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
+              i32 tport = portFrom(logOf(fs, target), "serving the directory on 127.0.0.1:");
+              Carried r = carry(clock, net, got, tport, "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                 "Host: 127.0.0.1\r\n\r\n");
               // The close is asserted, and was not for the first few hours of this file's life:
               // `0304b` made it unassertable, so the case checked the bytes and the proxy's own
               // account instead rather than turn the shared suite red for a filed bug. That is the
               // whole of what it cost to have a test in the lane that runs while the fix was found.
               t.isTrue(r.ok, "the proxy carried a stream — \{r.why}" +
-                                         ". socks said: \{logOf(cli, proxy)}");
+                                         ". socks said: \{logOf(fs, proxy)}");
               t.isTrue(contains(r.body, "200") || contains(r.body, "network-status-version"),
                        "and what came back is the document the target serves, not an empty " +
                        "stream — got \{r.body.len()} bytes");
               // The multiplexer's own account of the same exchange, so a passing case cannot be one
               // where the bytes came from somewhere other than a circuit.
-              t.isTrue(contains(logOf(cli, proxy), "stream 1 ended: done"),
+              t.isTrue(contains(logOf(fs, proxy), "stream 1 ended: done"),
                        "and socks saw the stream open and end on its circuit");
 
               // ── Clients that connect and say nothing, which is `issues/system/0306b` ──
@@ -449,15 +445,15 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // still *serve*: a cap that leaked a slot, or a `Vec<Client>` left holding the dead,
               // would pass a test that only asked whether the process was alive.
               const i32 HOLD = 32;
-              i32[] held = i32[].filled(HOLD, 0);
+              Socket?[] held = Socket?[].defaulted(HOLD);
               for (i32 i = 0; i < HOLD; i++) {
-                held[i] = cli.connect("127.0.0.1", got).wait().handle;
+                held[i] = flatten(net.connect("127.0.0.1", got).wait()).ok();
               }
-              i32 extra = cli.connect("127.0.0.1", got).wait().handle;
+              Socket? extra = flatten(net.connect("127.0.0.1", got).wait()).ok();
               for (i32 i = 0; i < HOLD; i++) {
-                if (held[i] >= 0) { cli.closeSocket(held[i]); }
+                if (held[i] is not null) { held[i]!.close(); }
               }
-              if (extra >= 0) { cli.closeSocket(extra); }
+              if (extra is not null) { extra!.close(); }
               // **Retried, because dropping a client is asynchronous and this asserts recovery.**
               // Closing thirty-two sockets does not put the proxy back under its cap: each pump has
               // to wake, see the end, and `dropClient` itself. Until enough of that has happened the
@@ -472,15 +468,13 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // A moment first, and a moment between tries: a `carry` issued while the proxy is
               // still over its cap does not fail fast, it waits out `READ_MS` in the backlog. So
               // the cheap thing is to let the drain happen rather than to pay ten seconds finding
-              // out it has not. `core.delay(…).wait()` is the sleep — `std/platform.wac` says so.
-              core.delay(250).wait();
-              Carried afterCap = carry(core, cli, got, tport,
-                                       "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
+              // out it has not.
+              clock.sleepMillis(250).wait();
+              Carried afterCap = carry(clock, net, got, tport, "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                        "Host: 127.0.0.1\r\n\r\n");
               for (i32 again = 0; again < 3 && afterCap.body.len() == 0; again++) {
-                core.delay(1000).wait();
-                afterCap = carry(core, cli, got, tport,
-                                 "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
+                clock.sleepMillis(1000).wait();
+                afterCap = carry(clock, net, got, tport, "GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                  "Host: 127.0.0.1\r\n\r\n");
               }
               t.isTrue(afterCap.body.len() > 0,
@@ -497,26 +491,27 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // and left `streamArmed` true, so `armConn` could never start a reader for the next
               // stream on that circuit. Rounds 1 and 2 are the regression — they read 0 bytes
               // before the fix and the full answer after.
-              HostSocket mine = cli.listen("127.0.0.1", 0).wait();
-              t.isTrue(mine.handle >= 0, "the case's own target listened — \{mine.error}");
-              for (i32 round = 0; round < 3 && mine.handle >= 0; round++) {
-                Opened o = opened(core, cli, got, mine.port);
+              auto mineBind = flatten(net.listen("127.0.0.1", 0).wait());
+              Listener? mine = mineBind.ok();
+              t.isTrue(mine is not null, "the case's own target listened — \{mineBind.isErr() ? "\{mineBind.err()!}" : ""}");
+              for (i32 round = 0; round < 3 && mine is not null; round++) {
+                Opened o = opened(clock, net, got, mine!.port);
                 t.isTrue(o.ok, "round \{round} connected through the proxy — \{o.why}");
                 if (!o.ok) { continue; }
-                cli.send(o.handle, "GET / HTTP/1.0\r\n\r\n".toBytes()).wait();
-                HostSocket from = cli.accept(mine.handle).wait();
-                t.isTrue(from.handle >= 0, "round \{round}: the exit dialled the target");
-                if (from.handle < 0) { cli.closeSocket(o.handle); continue; }
-                u8[] arrived = readSome(core, cli, from.handle, 6);
+                o.sock!.send("GET / HTTP/1.0\r\n\r\n".toBytes()).wait();
+                Socket? from = flatten(mine!.accept().wait()).ok();
+                t.isTrue(from is not null, "round \{round}: the exit dialled the target");
+                if (from is null) { o.sock!.close(); continue; }
+                u8[] arrived = readSome(clock, from!, 6);
                 t.isTrue(arrived.len() > 0, "round \{round}: the request arrived");
-                cli.send(from.handle, "HTTP/1.0 200 OK\r\n\r\nhi".toBytes()).wait();
-                cli.closeSocket(from.handle);
-                Carried back = answered(core, cli, o.handle, "");
+                from!.send("HTTP/1.0 200 OK\r\n\r\nhi".toBytes()).wait();
+                from!.close();
+                Carried back = answered(clock, o.sock!, "");
                 t.isTrue(contains(back.body, "hi"),
                          "round \{round}: and the answer came back down the same circuit "
                          + "— \{back.why}, \{back.body.len()} bytes");
               }
-              if (mine.handle >= 0) { cli.closeSocket(mine.handle); }
+              if (mine is not null) { mine!.close(); }
 
               // ── Two clients at once, which is the case the `owner` array can get wrong ──
               //
@@ -533,16 +528,13 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // limit, now stated in its header too. Two ports means two circuits and two streams,
               // which is also the more interesting case: it exercises building a second circuit
               // while the first is live.
-              Daemon second = start(cli,
-                line(cli, dirdMod, quoted("\{dir}/v.consensus") + " " + quoted("\{dir}/cert.cert") +
-                                   " " + quoted("\{dir}/r1.desc") + " 0"),
-                "\{dir}/dird2.log");
+              Daemon second = start(procs, line(env, dirdMod, quoted("\{dir}/v.consensus") + " " + quoted("\{dir}/cert.cert") +
+                                   " " + quoted("\{dir}/r1.desc") + " 0"), "\{dir}/dird2.log");
               t.isTrue(second.ok(), "a second target started — \{second.error}");
               bool up2 = second.ok() &&
-                         waitForLogWithin(core, cli, second, "serving the directory on 127.0.0.1:",
-                                          20000);
-              t.isTrue(up2, "and listened. It said: \{logOf(cli, second)}");
-              i32 tport2 = up2 ? portFrom(logOf(cli, second), "serving the directory on 127.0.0.1:")
+                         waitForLogWithin(clock, fs, second, "serving the directory on 127.0.0.1:", 20000);
+              t.isTrue(up2, "and listened. It said: \{logOf(fs, second)}");
+              i32 tport2 = up2 ? portFrom(logOf(fs, second), "serving the directory on 127.0.0.1:")
                                : -1;
 
               // **Client A reuses the target the single-client case already used**, which is
@@ -550,16 +542,16 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // stream reader outliving its stream was fixed. A third server used to be started
               // here to avoid it, and avoiding it is exactly why the bug survived — so this now
               // walks straight into the case that used to fail.
-              Opened a = opened(core, cli, got, tport);  // the originally-reported case: the already-used dird
-              Opened bb = up2 ? opened(core, cli, got, tport2) : Opened(false, "no second target", -1);
+              Opened a = opened(clock, net, got, tport);  // the originally-reported case: the already-used dird
+              Opened bb = up2 ? opened(clock, net, got, tport2) : Opened(false, "no second target", null);
               t.isTrue(a.ok && bb.ok, "two clients both got a CONNECT reply — \{a.why}\{bb.why}");
               if (a.ok && bb.ok) {
-                cli.send(a.handle, ("GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
+                a.sock!.send(("GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                     "Host: 127.0.0.1\r\n\r\n").toBytes()).wait();
-                cli.send(bb.handle, ("GET /nothing-is-served-here HTTP/1.0\r\n" +
+                bb.sock!.send(("GET /nothing-is-served-here HTTP/1.0\r\n" +
                                      "Host: 127.0.0.1\r\n\r\n").toBytes()).wait();
-                Carried ra = answered(core, cli, a.handle, "");
-                Carried rb = answered(core, cli, bb.handle, "");
+                Carried ra = answered(clock, a.sock!, "");
+                Carried rb = answered(clock, bb.sock!, "");
                 t.isTrue(contains(ra.body, "network-status-version"),
                          "the client that asked for the consensus got the consensus — \{ra.why}" +
                          ", \{ra.body.len()} bytes");
@@ -569,23 +561,23 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
                 t.isTrue(!contains(rb.body, "network-status-version"),
                          "and no part of the consensus reached the wrong connection");
               }
-              if (second.ok()) { stop(cli, second); }
+              if (second.ok()) { stop(procs, second); }
             }
-            stop(cli, target);
+            stop(procs, target);
           }
         }
       }
     }
   }
 
-  stop(cli, proxy);
-  return stopAll(t, cli, relays);
+  stop(procs, proxy);
+  return stopAll(t, procs, relays);
 }
 
 /** Every relay stopped, whatever the case decided, then the report. */
-string stopAll(T t, Cli cli, Daemon[] relays) {
+string stopAll(T t, Procs procs, Daemon[] relays) {
   for (Daemon relay in relays) {
-    if (relay.ok()) { stop(cli, relay); }
+    if (relay.ok()) { stop(procs, relay); }
   }
   return t.report();
 }

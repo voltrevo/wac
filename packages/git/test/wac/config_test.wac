@@ -17,8 +17,8 @@
 // another's fixture.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat } from "std";
-import { Vec } from "core";
+import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { Vec, flatten } from "core";
 import { Setting, parseConfig, configOf, hasConfig } from "../../src/config.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 
@@ -106,25 +106,30 @@ string joined(string[] all) {
   return out;
 }
 
-export string test_every_setting_is_the_one_git_config_list_reports_in_order(Core core, Cli cli) {
+export string test_every_setting_is_the_one_git_config_list_reports_in_order(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string who = agentDir(cli);
+  string who = agentDir(env);
   string dir = "/tmp/wac-git-cfg" + (who == "" ? "" : "-\{who}");
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  if (!made.ok()) { return t.report(); }
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   string path = "\{dir}/c.ini";
-  Change wrote = cli.writeFile(path, configText().toBytes()).wait();
-  t.isTrue(wrote.ok(), "the config file was written: \{wrote.message}");
-  if (!wrote.ok()) { return t.report(); }
+  auto wrote = flatten(fs.writeFile(path, configText().toBytes()).wait());
+  t.isTrue(wrote.isOk(), "the config file was written: \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
+  if (wrote.isErr()) { return t.report(); }
 
-  Exec r = cli.exec("git", ["config", "--list", "--file", path], u8[]()).wait();
-  t.eqStr(r.error, "", "git could not be started");
-  if (r.error != "") { return t.report(); }
-  t.eqI32(r.status, 0, "git config refused the file: \{string.fromBytes(r.stderr)}");
-  if (r.status != 0) { return t.report(); }
-  string[] theirs = lines(string.fromBytes(r.stdout));
+  auto rRan = flatten(procs.exec("git", ["config", "--list", "--file", path], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqStr("\{rRan.isErr() ? "\{rRan.err()!}" : ""}", "", "git could not be started");
+  if ("\{rRan.isErr() ? "\{rRan.err()!}" : ""}" != "") { return t.report(); }
+  t.eqI32(r!.status, 0, "git config refused the file: \{string.fromBytes(r!.stderr)}");
+  if (r!.status != 0) { return t.report(); }
+  string[] theirs = lines(string.fromBytes(r!.stdout));
 
   // **The fixture's own shape**, asserted in git's answer before ours is compared to it. Each of
   // these is a rule this parser could get wrong while still passing a tidy file — and if git's
@@ -158,8 +163,8 @@ export string test_every_setting_is_the_one_git_config_list_reports_in_order(Cor
   t.isFalse(hasConfig(settings, "nothing.here"), "a name that is not set is not present");
   t.eqStr(configOf(settings, "nothing.here"), "", "an unset name answers empty");
 
-  Change gone = cli.remove(path, false).wait();
-  if (!gone.ok()) { core.warn("config_test: could not remove \{path} — \{gone.message}"); }
+  auto gone = flatten(fs.remove(path, false).wait());
+  if (gone.isErr()) { err.line("config_test: could not remove \{path} — \{gone.isErr() ? "\{gone.err()!}" : ""}"); }
   return t.report();
 }
 

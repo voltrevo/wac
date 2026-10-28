@@ -14,21 +14,22 @@
 // scheduler tick would let both lines arrive in the same read — which is the case that passes whether
 // the launcher waits or not.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Clock, Output } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  core.log("stages: listening");
-  core.sleepMillis(300).wait();
-  core.log("stages: serving");
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  out.line("stages: listening");
+  clock.sleepMillis(300).wait();
+  out.line("stages: serving");
 
   // Then the same as `waiter`: alive until something stops it, and loud if nothing does. An hour of
   // not being stopped is a failure of whatever was supposed to stop it, and saying so is cheaper than
   // a silent success.
   for (i32 i = 0; i < 60; i++) {
-    core.sleepMillis(60000).wait();
+    clock.sleepMillis(60000).wait();
   }
-  core.warn("stages: nobody stopped me");
+  err.line("stages: nobody stopped me");
   return 1;
 }

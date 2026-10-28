@@ -40,10 +40,11 @@
 // substituted file — because those do not survive any hash, and `packages/crypto/test` compares this
 // implementation against published vectors before anything here runs.
 
-import { Core, Cli, Change, FileResult, Exec } from "std";
+import { Change, Exec, ChildEnv, Files, Launch, Output, Procs } from "std";
 import { Parser, parseDocument } from "../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../json/src/value.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
+import { flatten } from "core";
 
 static string CACHE_DIR = ".cache/fixtures";
 
@@ -96,10 +97,10 @@ export i32 memberI32(JsonValue v, string key, i32 missing) {
 }
 
 /** The manifest's entry for one set, with `found` false when the manifest does not name it. */
-Manifest manifestOf(Cli cli, string manifestPath, string name) {
-  FileResult r = cli.readFile(manifestPath).wait();
-  if (!r.ok) { return Manifest("", "", "", "", false); }
-  Parser p = Parser.create(r.bytes);
+Manifest manifestOf(Files fs, string manifestPath, string name) {
+  u8[]? r = flatten(fs.readFile(manifestPath).wait()).ok();
+  if ((r is null)) { return Manifest("", "", "", "", false); }
+  Parser p = Parser.create(r!);
   JsonValue? doc = parseDocument(p);
   if (doc is null) { return Manifest("", "", "", "", false); }
   JsonValue? sets = doc!.member("sets");
@@ -116,8 +117,8 @@ Manifest manifestOf(Cli cli, string manifestPath, string name) {
  * Never a fallback and never a skip: a set that cannot be produced comes back with `ok` false and a
  * message, and the caller is expected to fail on it.
  */
-export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifestPath) {
-  Manifest want = manifestOf(cli, manifestPath, name);
+export Fixture bytes(Output err, Files fs, Procs procs, string pkg, string name, string manifestPath) {
+  Manifest want = manifestOf(fs, manifestPath, name);
   if (!want.found) {
     return Fixture(false, u8[](),
                    "\{pkg}: no fixture set named \{name} in \{manifestPath}");
@@ -126,39 +127,39 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
   // Content-addressed by the *expected* hash, so changing the manifest changes the path and a stale
   // cache entry can never be read as a current one.
   string path = "\{CACHE_DIR}/\{pkg}-\{name}-\{want.sha256.slice(0, 16)}.json";
-  FileResult cached = cli.readFile(path).wait();
-  if (cached.ok) {
-    string got = lowerHex(sha256(cached.bytes));
-    if (got == want.sha256) { return Fixture(true, cached.bytes, ""); }
+  u8[]? cached = flatten(fs.readFile(path).wait()).ok();
+  if ((cached is not null)) {
+    string got = lowerHex(sha256(cached!));
+    if (got == want.sha256) { return Fixture(true, cached!, ""); }
     // The path carries only the first 16 hex digits of the expected hash, so a file can sit at the
     // right path and still not be the right bytes — a truncated download, or a manifest edited to a
     // hash sharing that prefix. Either way it is not what was asked for; rebuild rather than trust it.
     //
     // The *full* hash goes in the message on purpose: printing the truncation would reprint the
     // filename, which is the one thing the reader can already see.
-    core.warn("fixtures: \{path} holds \{got}, not what the manifest asks for; rebuilding");
+    err.line("fixtures: \{path} holds \{got}, not what the manifest asks for; rebuilding");
   }
 
-  Exec built = cli.exec("python3",
-                        [
+  auto builtRan = flatten(procs.exec("python3", [
                                  "packages/\{pkg}/tools/vendor.py", name, "--commit",
                                  want.commit, "--stdout"
-                        ], u8[]()).wait();
-  if (!built.ran()) {
+                        ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if ((built is null)) {
     return Fixture(false, u8[](),
                    "fixtures: cannot run the generator for \{pkg}/\{name}: " +
-                   "\{built.error}\n  \{want.rebuild}");
+                   "\{builtRan.isErr() ? "\{builtRan.err()!}" : ""}\n  \{want.rebuild}");
   }
-  if (built.status != 0) {
+  if (built!.status != 0) {
     return Fixture(false, u8[](),
                    "fixtures: " + pkg + "/" + name + " could not be produced.\n" +
                    "  source: " + want.source + " @ " + want.commit.slice(0, 12) + "\n" +
                    "  " + want.rebuild + "\n" +
                    "  This needs network on a cold cache. It is an error and not a skip on " +
                    "purpose: a suite\n  that silently drops its oracle reports a better number " +
-                   "for checking less.\n  ---\n  " + lastLines(string.fromBytes(built.stderr), 6));
+                   "for checking less.\n  ---\n  " + lastLines(string.fromBytes(built!.stderr), 6));
   }
-  string got = lowerHex(sha256(built.stdout));
+  string got = lowerHex(sha256(built!.stdout));
   if (got != want.sha256) {
     return Fixture(false, u8[](),
                    "fixtures: \{pkg}/\{name} does not match the manifest.\n" +
@@ -167,9 +168,9 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
                    ", or the manifest is wrong.\n" +
                    "  If the generator changed deliberately, update the sha256 in the manifest.");
   }
-  Change made = cli.mkdir(CACHE_DIR, true).wait();
-  if (made.ok()) { cli.writeFile(path, built.stdout).wait(); }
-  return Fixture(true, built.stdout, "");
+  auto made = flatten(fs.mkdir(CACHE_DIR, true).wait());
+  if (made.isOk()) { fs.writeFile(path, built!.stdout).wait(); }
+  return Fixture(true, built!.stdout, "");
 }
 
 /** As `bytes`, parsed — `null` document when the set could not be produced or is not JSON. */
@@ -179,8 +180,8 @@ export struct Loaded {
   string error;
 }
 
-export Loaded json(Core core, Cli cli, string pkg, string name, string manifestPath) {
-  Fixture f = bytes(core, cli, pkg, name, manifestPath);
+export Loaded json(Output err, Files fs, Procs procs, string pkg, string name, string manifestPath) {
+  Fixture f = bytes(err, fs, procs, pkg, name, manifestPath);
   if (!f.ok) { return Loaded(false, JsonValue.Null, f.error); }
   Parser p = Parser.create(f.bytes);
   JsonValue? doc = parseDocument(p);

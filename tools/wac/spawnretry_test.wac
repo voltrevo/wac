@@ -20,8 +20,8 @@
 // of this genre that failed the other way would have said "all clear" and been believed.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
-import { Vec } from "core";
+import { Files, Sys } from "std";
+import { Vec, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { codeLines, walk } from "./deadexports.wac";
 
@@ -66,10 +66,11 @@ bool importsRetry(string text) {
   return false;
 }
 
-export string test_a_test_that_builds_and_spawns_imports_the_retry(Core core, Cli cli) {
+export string test_a_test_that_builds_and_spawns_imports_the_retry(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   Vec<string> all = Vec.create();
-  walk(cli, ".", ".", ".test.ts", all);
+  walk(fs, ".", ".", ".test.ts", all);
 
   string missing = "";
   i32 atRisk = 0;
@@ -78,9 +79,10 @@ export string test_a_test_that_builds_and_spawns_imports_the_retry(Core core, Cl
     string f = all.get(i);
     // `site` is the npm subtree and `target` is cargo's; neither builds a wac application.
     if (f.indexOf("/site/") >= 0 || f.indexOf("/target/") >= 0) { continue; }
-    FileResult r = cli.readFile(f).wait();
-    if (!r.ok) { t.fail("cannot read " + f + " — " + r.error); continue; }
-    string text = string.fromBytes(r.bytes);
+    auto rRead = flatten(fs.readFile(f).wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) { t.fail("cannot read " + f + " — " + "\{rRead.isErr() ? "\{rRead.err()!}" : ""}"); continue; }
+    string text = string.fromBytes(r!);
     string[] lines = codeLines(text);
     string code = "";
     for (i32 k = 0; k < lines.len(); k++) { code = code + lines[k] + "\n"; }

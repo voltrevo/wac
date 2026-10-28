@@ -34,10 +34,11 @@
 // thing that rule was buying.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs, Sys } from "std";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { flatten } from "core";
 
 /** This file, which quotes the tag it looks for and must not be read as carrying one. */
 string SELF() { return "tools/wac/flaky_test.wac"; }
@@ -46,13 +47,14 @@ string SELF() { return "tools/wac/flaky_test.wac"; }
 string[] OPEN_DIRS() { return ["issues/lang/open", "issues/system/open"]; }
 string[] CLOSED_DIRS() { return ["issues/lang/closed", "issues/system/closed"]; }
 
-string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", ["ls-files"], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("flaky: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+string[] tracked(Output err, Procs procs) {
+  auto rRan = flatten(procs.exec("git", ["ls-files"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("flaky: git ls-files failed: " + ((r is not null) ? string.fromBytes(r!.stderr) : "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"));
     trap;
   }
-  return nonEmptyLines(string.fromBytes(r.stdout));
+  return nonEmptyLines(string.fromBytes(r!.stdout));
 }
 
 bool endsWith(string s, string suf) {
@@ -118,12 +120,12 @@ string[] tagsIn(string text) {
  * point a reader at an explanation is worse than refusing. So this answers with all of them and the
  * caller decides what more than one means.
  */
-string[] issuesNamed(Cli cli, string[] dirs, string n) {
+string[] issuesNamed(Files fs, string[] dirs, string n) {
   string[] hits = string[]();
   for (i32 i = 0; i < dirs.len(); i++) {
     // A directory that cannot be read is not "no such issue" — it is the failure this whole file
     // exists because of, so the canary below reports it separately.
-    string[]? names = cli.readDir(dirs[i]).wait();
+    string[]? names = flatten(fs.readDir(dirs[i]).wait()).ok();
     if (names is null) { continue; }
     string[] here = names!;
     for (i32 k = 0; k < here.len(); k++) {
@@ -138,8 +140,8 @@ string[] issuesNamed(Cli cli, string[] dirs, string n) {
 }
 
 /** The path of the open issue numbered `n`, or "" — "" also when the number is ambiguous. */
-string openIssue(Cli cli, string n) {
-  string[] hits = issuesNamed(cli, OPEN_DIRS(), n);
+string openIssue(Files fs, string n) {
+  string[] hits = issuesNamed(fs, OPEN_DIRS(), n);
   return hits.len() == 1 ? hits[0] : "";
 }
 
@@ -151,23 +153,23 @@ string openIssue(Cli cli, string n) {
  * and only the second one tests the resolver. Read out of the directories rather than written
  * down, because whichever number is written down is one somebody may file against tomorrow.
  */
-string unambiguousOpenNumber(Cli cli) {
+string unambiguousOpenNumber(Files fs) {
   for (i32 i = 0; i < OPEN_DIRS().len(); i++) {
-    string[]? names = cli.readDir(OPEN_DIRS()[i]).wait();
+    string[]? names = flatten(fs.readDir(OPEN_DIRS()[i]).wait()).ok();
     if (names is null) { continue; }
     string[] here = names!;
     for (i32 k = 0; k < here.len(); k++) {
       if (here[k].len() < 5) { continue; }
       string n = here[k].slice(0, 4);
-      if (issuesNamed(cli, OPEN_DIRS(), n).len() == 1) { return n; }
+      if (issuesNamed(fs, OPEN_DIRS(), n).len() == 1) { return n; }
     }
   }
   return "";
 }
 
 /** Tracked source that could carry a tag, minus this file. */
-Tag[] taggedFiles(Core core, Cli cli) {
-  string[] paths = tracked(core, cli);
+Tag[] taggedFiles(Output err, Files fs, Procs procs) {
+  string[] paths = tracked(err, procs);
   Tag[] out = Tag[]();
   for (i32 i = 0; i < paths.len(); i++) {
     string p = paths[i];
@@ -175,9 +177,9 @@ Tag[] taggedFiles(Core core, Cli cli) {
     // `issues/` describes the convention; it does not use it.
     if (startsWith(p, "issues/")) { continue; }
     if (!endsWith(p, ".ts") && !endsWith(p, ".wac")) { continue; }
-    FileResult r = cli.readFile(p).wait();
-    if (!r.ok) { continue; }
-    string text = string.fromBytes(r.bytes);
+    u8[]? r = flatten(fs.readFile(p).wait()).ok();
+    if ((r is null)) { continue; }
+    string text = string.fromBytes(r!);
     if (!contains(text, "[flaky ")) { continue; }
     string[] found = tagsIn(text);
     for (i32 k = 0; k < found.len(); k++) {
@@ -190,7 +192,8 @@ Tag[] taggedFiles(Core core, Cli cli) {
   return out;
 }
 
-export string test_the_lookup_can_find_an_open_issue(Core core, Cli cli) {
+export string test_the_lookup_can_find_an_open_issue(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // **The canary, and the whole reason this file is not a no-op.** No test carries a tag today, so
   // every assertion below runs zero times and reports success. That is indistinguishable from a
@@ -204,21 +207,21 @@ export string test_the_lookup_can_find_an_open_issue(Core core, Cli cli) {
   // which is the failure mode of every hard-coded fixture drawn from a shared, growing directory.
   // So it now looks for an open number that only one tree has. That there is one is itself worth
   // asserting: if every open number were ambiguous the canary would be vacuous again, and silently.
-  string one = unambiguousOpenNumber(cli);
+  string one = unambiguousOpenNumber(fs);
   t.isTrue(one != "", "some open issue has a number the other tree does not also have");
-  string path = openIssue(cli, one);
+  string path = openIssue(fs, one);
   t.isTrue(path != "", "issue " + one + " resolves as open — got \"" + path + "\"");
   t.isTrue(contains(path, "/open/"), "and the path is in an open directory");
 
   // And a number nothing uses must not resolve, or the lookup is answering yes to everything.
-  t.eqStr(openIssue(cli, "9999"), "", "a number with no issue resolves to nothing");
+  t.eqStr(openIssue(fs, "9999"), "", "a number with no issue resolves to nothing");
 
   // **The collision, with a number that really collides.** 0082 is an issue in both trees — five
   // tests failing under load in `system`, an i64 increment bug in `lang` — and 151 numbers are like
   // that today, against the 79 `CLAUDE.md` recorded when the repositories merged. A resolver that
   // returned the first match would answer confidently with whichever tree it happened to read
   // first, which for a tag whose whole job is to point at an explanation is the worst answer.
-  t.eqI32(issuesNamed(cli, CLOSED_DIRS(), "0082").len(), 2, "0082 names an issue in both trees");
+  t.eqI32(issuesNamed(fs, CLOSED_DIRS(), "0082").len(), 2, "0082 names an issue in both trees");
 
   // Both trees are searched: `lang` and `system` number from 1 independently, so a resolver that
   // read one of them would be right about half the repository and silently wrong about the rest.
@@ -227,14 +230,14 @@ export string test_the_lookup_can_find_an_open_issue(Core core, Cli cli) {
     // **Readable, said separately from non-empty.** `issues/open/` did not exist and the lookup
     // answered "" for every number, which reads as "no such issue" — the two must not be one
     // answer, or a whole tree going missing looks like a clean run.
-    string[]? names = cli.readDir(OPEN_DIRS()[i]).wait();
+    string[]? names = flatten(fs.readDir(OPEN_DIRS()[i]).wait()).ok();
     t.isFalse(names is null, OPEN_DIRS()[i] + " is readable");
     if (!(names is null)) { t.isTrue(names!.len() > 0, OPEN_DIRS()[i] + " is not empty"); }
   }
   return t.report();
 }
 
-export string test_the_tag_scanner_finds_what_it_should_and_nothing_else(Core core, Cli cli) {
+export string test_the_tag_scanner_finds_what_it_should_and_nothing_else() {
   T t = T.create();
   // A scanner is the other half that can silently find nothing. Held to a string built here, so it
   // fails whether or not the repository happens to contain a tag.
@@ -261,12 +264,16 @@ export string test_the_tag_scanner_finds_what_it_should_and_nothing_else(Core co
   return t.report();
 }
 
-export string test_every_flaky_tag_names_an_issue_that_is_still_open(Core core, Cli cli) {
+export string test_every_flaky_tag_names_an_issue_that_is_still_open(Sys sys) {
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Tag[] tags = taggedFiles(core, cli);
+  Tag[] tags = taggedFiles(err, fs, procs);
   for (i32 i = 0; i < tags.len(); i++) {
     string where = tags[i].file + " [flaky " + tags[i].issue + "]";
-    string[] open = issuesNamed(cli, OPEN_DIRS(), tags[i].issue);
+    string[] open = issuesNamed(fs, OPEN_DIRS(), tags[i].issue);
     if (open.len() == 1) { continue; }
     if (open.len() > 1) {
       // Ambiguous rather than absent, and said as its own thing: the tag points at two issues and
@@ -275,7 +282,7 @@ export string test_every_flaky_tag_names_an_issue_that_is_still_open(Core core, 
              + " — the two trees number independently, so the tag has to say which");
       continue;
     }
-    string[] closed = issuesNamed(cli, CLOSED_DIRS(), tags[i].issue);
+    string[] closed = issuesNamed(fs, CLOSED_DIRS(), tags[i].issue);
     t.fail(where + " is " + (closed.len() == 0 ? "not an issue at all" : "closed (" + joinPaths(closed) + ")")
            + " — take the tag off, a \"known flaky\" label with nothing behind it is how a real "
            + "regression gets waved through");
@@ -287,23 +294,26 @@ export string test_every_flaky_tag_names_an_issue_that_is_still_open(Core core, 
     for (i32 i = 0; i < tags.len(); i++) {
       said = said + "\n    " + tags[i].file + " — issue " + tags[i].issue;
     }
-    core.log("  " + said);
+    out.line("  " + said);
   }
   return t.report();
 }
 
-export string test_the_issue_a_tag_names_says_what_the_tag_is_for(Core core, Cli cli) {
+export string test_the_issue_a_tag_names_says_what_the_tag_is_for(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // A tag pointing at an issue that never mentions flakiness would be a dead end for the person
   // reading it mid-failure — which is the one moment this convention exists to serve.
-  Tag[] tags = taggedFiles(core, cli);
+  Tag[] tags = taggedFiles(err, fs, procs);
   for (i32 i = 0; i < tags.len(); i++) {
-    string path = openIssue(cli, tags[i].issue);
+    string path = openIssue(fs, tags[i].issue);
     if (path == "") { continue; }        // the test above reports this
-    FileResult r = cli.readFile(path).wait();
-    t.isTrue(r.ok, path + " is readable");
-    if (!r.ok) { continue; }
-    string text = lower(string.fromBytes(r.bytes));
+    u8[]? r = flatten(fs.readFile(path).wait()).ok();
+    t.isTrue((r is not null), path + " is readable");
+    if ((r is null)) { continue; }
+    string text = lower(string.fromBytes(r!));
     t.isTrue(contains(text, "flak") || contains(text, "fail, rather than slow down")
              || contains(text, "intermittent"),
              path + " does not read as an issue about intermittent failure, but "
@@ -312,15 +322,16 @@ export string test_the_issue_a_tag_names_says_what_the_tag_is_for(Core core, Cli
   return t.report();
 }
 
-export string test_the_convention_is_written_down_where_somebody_would_look(Core core, Cli cli) {
+export string test_the_convention_is_written_down_where_somebody_would_look(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // In `issues/system/README.md`, because that is what a person opens when a test name tells them
   // to read an issue number. A convention that lives only in the tests that use it is one the next
   // person invents differently.
-  FileResult r = cli.readFile("issues/system/README.md").wait();
-  t.isTrue(r.ok, "issues/system/README.md is there");
-  if (!r.ok) { return t.report(); }
-  t.isTrue(contains(string.fromBytes(r.bytes), "[flaky"),
+  u8[]? r = flatten(fs.readFile("issues/system/README.md").wait()).ok();
+  t.isTrue((r is not null), "issues/system/README.md is there");
+  if ((r is null)) { return t.report(); }
+  t.isTrue(contains(string.fromBytes(r!), "[flaky"),
            "issues/system/README.md describes the tag, so the convention is not only in the code");
   return t.report();
 }

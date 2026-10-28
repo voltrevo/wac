@@ -17,7 +17,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
-import { Change, Cli, Core, Exec, Stat } from "std";
+import { Change, Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /**
  * A `wac-run-<digits>` name that no process owns and no other checkout will pick.
@@ -31,8 +32,8 @@ import { Change, Cli, Core, Exec, Stat } from "std";
  * arranged, and offset by the checkout's own name so two agents running this at once do not share a
  * directory.
  */
-string plantedDir(Cli cli) {
-  string cwd = cli.cwd().wait();
+string plantedDir(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   // A character's position in a fixed alphabet, not `cwd.indexOf(ch)` — that answers where the
   // character first appears in the path, which is a number about the path's shape rather than about
   // the character, and two checkouts differing in one letter can share it.
@@ -44,25 +45,29 @@ string plantedDir(Cli cli) {
   return "/tmp/wac-run-\{90000000 + h}";
 }
 
-export string test_a_fresh_run_directory_of_anothers_is_left_alone(Core core, Cli cli) {
+export string test_a_fresh_run_directory_of_anothers_is_left_alone(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string planted = plantedDir(cli);
-  cli.remove(planted, true).wait();
-  Change made = cli.mkdir(planted, true).wait();
-  t.isTrue(made.ok(), "planted \{planted} — \{made.message}");
-  if (!made.ok()) { return t.report(); }
-  Change wrote = cli.writeFile("\{planted}/in-use.txt", "another run is writing here\n".toBytes()).wait();
-  t.isTrue(wrote.ok(), "and put a file in it — \{wrote.message}");
+  string planted = plantedDir(env);
+  fs.remove(planted, true).wait();
+  auto made = flatten(fs.mkdir(planted, true).wait());
+  t.isTrue(made.isOk(), "planted \{planted} — \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
+  auto wrote = flatten(fs.writeFile("\{planted}/in-use.txt", "another run is writing here\n".toBytes()).wait());
+  t.isTrue(wrote.isOk(), "and put a file in it — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
 
   // Any command that builds sweeps first; `--help` does not, so this runs something.
-  Exec r = cli.exec(binaryPath(cli), ["run"], u8[]()).wait();
-  t.isTrue(r.ran(), "the binary ran — \{r.error}");
+  auto rRan = flatten(procs.exec(binaryPath(env), ["run"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the binary ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
 
-  Stat after = cli.stat(planted).wait();
-  t.isTrue(after.isDir,
+  Stat? after = flatten(fs.stat(planted).wait()).ok();
+  t.isTrue((after is not null && after!.isDir),
            "a freshly made `wac-run-` directory whose pid is not running was swept — that is the "
            + "liveness rule, and it deletes live directories wherever /tmp is shared across PID "
            + "namespaces. See the header.");
-  cli.remove(planted, true).wait();
+  fs.remove(planted, true).wait();
   return t.report();
 }

@@ -10,47 +10,46 @@
 // It prints the metadata as well as the tree, because exact metadata was the argument for the format in
 // the first place, and a listing that hides it does not show what was paid for.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
+import { Opened, Chunk, openStream, nextChunk, operandCount } from "../lib/input.wac";
 import { Buf } from "core";
-import { dump } from "../../../fs/src/image.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { dumpImage } from "../../../fs/src/image.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
-export async i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 fsdump(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   // One image per operand, named when there is more than one — the same shape the checksums here use, and
   // for the same reason: reading the first operand and stopping is wac-mono 0096.
   i32 files = operandCount(a, 0);
   i32 count = files == 0 ? 1 : files;
   i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = await openStream(core, cli, fs, a, f, -1);
+    Opened in = await openStream(stdin, err, fs, a, f);
     // Reported, skipped, and the status at the end — the rule every operand-taking applet here follows.
     if (!in.ok) { status = 1; continue; }
     Feed fed = in.fed;
 
-    // Held whole rather than streamed: `read` checks a checksum over the entire image before it believes
+    // Held whole rather than streamed: `entriesOf` checks a checksum over the entire image before it believes
     // any of it, so there is nothing useful to do with a prefix. Said here rather than left as a
     // difference from the applets above, which do stream.
     Buf held = Buf.create();
     while (true) {
-      Chunk got = await nextChunk(core, cli, fed, a, in.label);
+      Chunk got = await nextChunk(err, fed, a, in.label);
       if (!got.ok) { return 1; }
       if (!got.more) { break; }
       held.pushAll(got.bytes);
     }
 
-    if (count > 1) { core.log((in.label == "" ? "-" : in.label) + ":"); }
-    string text = dump(held.take());
-    // `dump` ends its own lines, and `core.log` adds one — so trim the last, rather than printing a blank
+    if (count > 1) { out.line((in.label == "" ? "-" : in.label) + ":"); }
+    string text = dumpImage(held.take());
+    // `dumpImage` ends its own lines, and `line` adds one — so trim the last, rather than printing a blank
     // line after every image.
     if (text.len() > 0 && text.slice(text.len() - 1, text.len()) == "\n") {
       text = text.slice(0, text.len() - 1);
     }
-    core.log(text);
+    out.line(text);
     if (text.slice(0, 6) == "cannot") { return 1; }
   }
   return status;

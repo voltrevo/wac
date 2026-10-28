@@ -1,0 +1,25 @@
+// expect: f() = 6
+// spec:  §wac-union-normalise-9awgxvb
+// why: a type argument that is itself a union, put into `union<E, C>`, flattens as a written union does — so
+//      `flatten` of a `Result<Result<i32, union<A, B>>, C>` answers `union<A, B, C>`, which converts to text
+// from: spec/2-types/18-unions.md
+import { Result, flatten, toString } from "core";
+
+struct A { string m; string [toString](const this) { return "a"; } }
+struct B { string m; string [toString](const this) { return "bb"; } }
+struct C { string m; string [toString](const this) { return "ccc"; } }
+
+string said(Result<i32, union<A, B, C>> r) {
+  match (r) {
+    Ok(v): { return ""; }
+    Err(e): { return "\{e}"; }
+  }
+}
+
+export i32 f() {
+  Result<Result<i32, union<A, B>>, C> inner = Result.Ok(Result.Err(B("x")));
+  Result<Result<i32, union<A, B>>, C> outer = Result.Err(C("y"));
+  Result<i32, union<A, B, C>> one = flatten(inner);
+  auto two = flatten(outer);
+  return said(one).len() + (two.isErr() ? "\{two.err()!}" : "").len() + said(Result.Err(A("z"))).len();
+}

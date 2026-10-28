@@ -24,66 +24,71 @@
 // half already existed, and the pieces both need — the two builds, the two runners, the difference —
 // moved into `packages/platform/test/wac/hostfs.wac` so that there is one of each rather than two.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Clock, Env, Files, Output, Procs } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { nativeHost, nativeHostWhyNot } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { Built, Ran, builds, denoAll, difference, hangReport, shell }
        from "../../packages/platform/test/wac/hostfs.wac";
 
 /** `--name N`, or `fallback` when it is absent or has nothing after it. */
-i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+i32 flagOf(string[] argv, i32 argc, string name, i32 fallback) {
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--" + name && i + 1 < argc) {
-      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+      return atoi(argv[i + 1]);
     }
   }
   return fallback;
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string[] scripts = corpus();
-  i32 argc = cli.argCount().wait();
-  i32 from = flagOf(cli, argc, "from", 0);
-  i32 count = flagOf(cli, argc, "count", scripts.len());
+  i32 argc = argv.len();
+  i32 from = flagOf(argv, argc, "from", 0);
+  i32 count = flagOf(argv, argc, "count", scripts.len());
   i32 last = from + count < scripts.len() ? from + count : scripts.len();
 
   // **The wasmtime host is not built by default**, and a checkout without one is not quietly short of
   // coverage — `issues/system/0208`. This is the whole comparison, so there is nothing to report
   // without it.
-  string native = nativeHostWhyNot(cli) == "" ? nativeHost(cli) : "";
+  string native = nativeHostWhyNot(env, fs) == "" ? nativeHost(env) : "";
   if (native == "") {
-    core.warn("corpus:hosts: cargo has not built `native`, so there is no second host to compare with");
+    err.line("corpus:hosts: cargo has not built `native`, so there is no second host to compare with");
     return 2;
   }
 
   // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: it builds two
   // programs and runs each script twice. `issues/system/0142`. Removed by hand at each exit, since wac
   // has no `unload` listener; a note stranded by a trap is swept by the next reader.
-  string note = announce(core, cli, "corpus:hosts");
+  string note = announce(clock, env, fs, "corpus:hosts");
 
-  Built b = builds(cli);
+  Built b = builds(env, fs, procs);
   if (!b.ok) {
-    core.warn("corpus:hosts: the shells did not build — " + b.error);
-    unannounce(cli, note);
+    err.line("corpus:hosts: the shells did not build — " + b.error);
+    unannounce(fs, note);
     return 2;
   }
 
-  string tmp = cli.cwd().wait() + "/.cache/corpushosts";
-  cli.remove(tmp, true).wait();
-  cli.mkdir(tmp, true).wait();
+  string tmp = flatten(env.cwd().wait()).unwrap() + "/.cache/corpushosts";
+  fs.remove(tmp, true).wait();
+  fs.mkdir(tmp, true).wait();
 
   string[] slice = string[].filled(last - from, "");
   for (i32 i = from; i < last; i++) { slice[i - from] = scripts[i]; }
 
   // The Deno half in one batch, because starting Deno per script is most of the cost — `denoBatch`
   // is what `native_shell_test.wac` uses for the same reason.
-  Ran[] denoAnswers = denoAll(cli, tmp, string[].filled(0, ""), slice);
+  Ran[] denoAnswers = denoAll(env, procs, tmp, string[].filled(0, ""), slice);
 
   i32 agree = 0;
   Vec<string> hung = Vec<string>.create();
@@ -92,8 +97,8 @@ export i32 main(Sys sys) {
     Ran a = denoAnswers[i];
     // A batched run that hit its bound is retried alone, which is what tells a busy machine from a
     // program that wedges.
-    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[].filled(0, ""), slice[i]); }
-    Ran c = shell(core, cli, tmp, native, [b.sealedManifest], slice[i]);
+    if (a.hung) { a = shell(env, procs, tmp, b.sealedDeno, string[].filled(0, ""), slice[i]); }
+    Ran c = shell(env, procs, tmp, native, [b.sealedManifest], slice[i]);
 
     string why = hangReport(slice[i], ["deno", "native"], [a, c]);
     if (why != "") { hung.push(why); continue; }
@@ -102,17 +107,17 @@ export i32 main(Sys sys) {
     differ.push(d);
   }
 
-  cli.remove(tmp, true).wait();
-  unannounce(cli, note);
+  fs.remove(tmp, true).wait();
+  unannounce(fs, note);
 
-  core.log(itoa(agree) + " of " + itoa(slice.len() - hung.len())
+  out.line(itoa(agree) + " of " + itoa(slice.len() - hung.len())
            + " scripts answer the same on a JavaScript host and one that is not");
   // Said rather than dropped: a sweep that silently skipped what it could not run would report a
   // coverage it did not have.
   if (hung.len() > 0) {
-    core.log("\n" + itoa(hung.len()) + " did not finish and were not compared:");
-    for (i32 i = 0; i < hung.len(); i++) { core.log("  " + hung.get(i)); }
+    out.line("\n" + itoa(hung.len()) + " did not finish and were not compared:");
+    for (i32 i = 0; i < hung.len(); i++) { out.line("  " + hung.get(i)); }
   }
-  for (i32 i = 0; i < differ.len(); i++) { core.log("\n" + differ.get(i)); }
+  for (i32 i = 0; i < differ.len(); i++) { out.line("\n" + differ.get(i)); }
   return differ.len() == 0 ? 0 : 1;
 }

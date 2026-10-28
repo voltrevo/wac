@@ -10,10 +10,10 @@
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { decode as base64Decode } from "../../../codec/src/base64.wac";
-import { Cli } from "std";
+import { Files } from "std";
 import { arrayOf, jsonFile, num64Of, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
-JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdesc_vectors.json"); }
+JsonObject top(Files fs) { return jsonFile(fs, "packages/tor/test/data/hsdesc_vectors.json"); }
 
 /**
  * The descriptor as bytes.
@@ -26,34 +26,34 @@ JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdesc_ve
  * `test_the_vector_is_the_shape_the_tests_assume` asserts the descriptor is pure ASCII, which is
  * exactly the condition under which the two encodings are the same bytes.
  */
-export u8[] descriptor(Cli cli) { return strOf(top(cli), "descriptor").toBytes(); }
+export u8[] descriptor(Files fs) { return strOf(top(fs), "descriptor").toBytes(); }
 
-export u8[] identityKey(Cli cli) { return decoded(strOf(top(cli), "identityKey")); }
-export u8[] blindedKey(Cli cli) { return decoded(strOf(top(cli), "blindedKey")); }
-export u8[] signingKey(Cli cli) { return decoded(strOf(top(cli), "descriptorSigningKey")); }
-export u8[] subcredential(Cli cli) { return decoded(strOf(top(cli), "subcredential")); }
-export i64 revisionCounter(Cli cli) { return num64Of(top(cli), "revisionCounter"); }
+export u8[] identityKey(Files fs) { return decoded(strOf(top(fs), "identityKey")); }
+export u8[] blindedKey(Files fs) { return decoded(strOf(top(fs), "blindedKey")); }
+export u8[] signingKey(Files fs) { return decoded(strOf(top(fs), "descriptorSigningKey")); }
+export u8[] subcredential(Files fs) { return decoded(strOf(top(fs), "subcredential")); }
+export i64 revisionCounter(Files fs) { return num64Of(top(fs), "revisionCounter"); }
 
 // ── the two encrypted layers ─────────────────────────────────────────────────
 
-JsonArray layers(Cli cli) { return arrayOf(top(cli), "layers"); }
-JsonObject layerAt(Cli cli, i32 i) { return layers(cli).get(i).object()!; }
+JsonArray layers(Files fs) { return arrayOf(top(fs), "layers"); }
+JsonObject layerAt(Files fs, i32 i) { return layers(fs).get(i).object()!; }
 
-export i32 layerCount(Cli cli) { return layers(cli).len(); }
-export u8[] layerSalt(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "salt")); }
-export u8[] layerSecretKey(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "secretKey")); }
-export u8[] layerSecretIv(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "secretIv")); }
-export u8[] layerMacKey(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "macKey")); }
+export i32 layerCount(Files fs) { return layers(fs).len(); }
+export u8[] layerSalt(Files fs, i32 i) { return decoded(strOf(layerAt(fs, i), "salt")); }
+export u8[] layerSecretKey(Files fs, i32 i) { return decoded(strOf(layerAt(fs, i), "secretKey")); }
+export u8[] layerSecretIv(Files fs, i32 i) { return decoded(strOf(layerAt(fs, i), "secretIv")); }
+export u8[] layerMacKey(Files fs, i32 i) { return decoded(strOf(layerAt(fs, i), "macKey")); }
 /** The SHA3-256 of the layer's plaintext — the value that says the decryption was right. */
-export u8[] layerPlaintextSha3(Cli cli, i32 i) {
-  return decoded(strOf(layerAt(cli, i), "plaintextSha3"));
+export u8[] layerPlaintextSha3(Files fs, i32 i) {
+  return decoded(strOf(layerAt(fs, i), "plaintextSha3"));
 }
-export i32 layerPlaintextLength(Cli cli, i32 i) { return numOf(layerAt(cli, i), "plaintextLength"); }
+export i32 layerPlaintextLength(Files fs, i32 i) { return numOf(layerAt(fs, i), "plaintextLength"); }
 
 // ── the introduction points ──────────────────────────────────────────────────
 
-JsonArray intros(Cli cli) { return arrayOf(top(cli), "introductionPoints"); }
-JsonObject introAt(Cli cli, i32 i) { return intros(cli).get(i).object()!; }
+JsonArray intros(Files fs) { return arrayOf(top(fs), "introductionPoints"); }
+JsonObject introAt(Files fs, i32 i) { return intros(fs).get(i).object()!; }
 
 /**
  * Base64, as tor writes it in a descriptor.
@@ -64,16 +64,16 @@ JsonObject introAt(Cli cli, i32 i) { return intros(cli).get(i).object()!; }
  * than a decode that refuses and says so, since the only way to reach it would be a regenerated
  * vector — which is exactly when you want to be told.
  */
-u8[] b64(Cli cli, string text) {
+u8[] b64(string text) {
   u8[]? bytes = base64Decode(text.toBytes());
   if (bytes is null) { trap; }
   return bytes!;
 }
 
-export i32 introCount(Cli cli) { return intros(cli).len(); }
-export u8[] introLinkSpecifiers(Cli cli, i32 i) {
-  return b64(cli, strOf(introAt(cli, i), "linkSpecifiers"));
+export i32 introCount(Files fs) { return intros(fs).len(); }
+export u8[] introLinkSpecifiers(Files fs, i32 i) {
+  return b64(strOf(introAt(fs, i), "linkSpecifiers"));
 }
-export u8[] introOnionKey(Cli cli, i32 i) { return b64(cli, strOf(introAt(cli, i), "onionKeyNtor")); }
-export u8[] introEncKey(Cli cli, i32 i) { return b64(cli, strOf(introAt(cli, i), "encKeyNtor")); }
-export u8[] introAuthKey(Cli cli, i32 i) { return decoded(strOf(introAt(cli, i), "authKey")); }
+export u8[] introOnionKey(Files fs, i32 i) { return b64(strOf(introAt(fs, i), "onionKeyNtor")); }
+export u8[] introEncKey(Files fs, i32 i) { return b64(strOf(introAt(fs, i), "encKeyNtor")); }
+export u8[] introAuthKey(Files fs, i32 i) { return decoded(strOf(introAt(fs, i), "authKey")); }

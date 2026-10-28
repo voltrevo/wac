@@ -8,25 +8,29 @@
 // built by a wac program now and reads `MAP.md` itself (`site/wac/figures.wac`), so there is no copy.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat, FileResult } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
+import { flatten } from "core";
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Env env) { return flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac"; }
 
-export string test_map_md_is_current(Core core, Cli cli) {
+export string test_map_md_is_current(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary that runs the generator is where the seed task writes it");
-  if (!bin.exists) { return t.report(); }
+  Stat? bin = flatten(fs.stat(binary(env)).wait()).ok();
+  t.isTrue((bin is not null), "the binary that runs the generator is where the seed task writes it");
+  if ((bin is null)) { return t.report(); }
 
-  Exec r = cli.exec(binary(cli),
-                    ["run", "--allow-read", "tools/wac/map.wac", "--check"], u8[]()).wait();
-  t.isTrue(r.ran(), "the generator starts: " + r.error);
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0,
+  auto rRan = flatten(procs.exec(binary(env), ["run", "--allow-read", "tools/wac/map.wac", "--check"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the generator starts: " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0,
           "MAP.md is out of date — run `wac task map`. The generator said: " +
-          string.fromBytes(r.stderr));
+          string.fromBytes(r!.stderr));
   return t.report();
 }
 
@@ -48,14 +52,15 @@ export string test_map_md_is_current(Core core, Cli cli) {
  * over the ones marked `countsHere: true`, and the fourth being absent from `map.wac` is asserted too
  * — otherwise adding it there would double-count every wac test and this would say nothing.
  */
-export string test_the_two_lists_of_test_registrars_agree(Core core, Cli cli) {
+export string test_the_two_lists_of_test_registrars_agree(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  FileResult ts = cli.readFile("harness/testRegistrars.ts").wait();
-  FileResult wac = cli.readFile("tools/wac/map.wac").wait();
-  t.isTrue(ts.ok && wac.ok, "could not read both lists");
-  if (!ts.ok || !wac.ok) { return t.report(); }
-  string tsText = string.fromBytes(ts.bytes);
-  string wacText = string.fromBytes(wac.bytes);
+  u8[]? ts = flatten(fs.readFile("harness/testRegistrars.ts").wait()).ok();
+  u8[]? wac = flatten(fs.readFile("tools/wac/map.wac").wait()).ok();
+  t.isTrue((ts is not null) && (wac is not null), "could not read both lists");
+  if ((ts is null) || (wac is null)) { return t.report(); }
+  string tsText = string.fromBytes(ts!);
+  string wacText = string.fromBytes(wac!);
 
   string[] here = countsHere(tsText);
   // A floor, because a parser that found nothing would make every assertion below vacuous — which is

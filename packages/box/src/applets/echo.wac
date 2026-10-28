@@ -10,12 +10,11 @@
 // the applet's own arguments raw, rather than `a.flags`, which has already decided what an option is
 // and would have swallowed a `-n` from the middle.
 
-import { Cli, Core } from "std";
+import { Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { Buf } from "core";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 echo(Core core, Cli cli, Fs fs, Args a) {
+export i32 echo(Output out, Files fs, Args a) {
   bool newline = true;
   bool escapes = false;
   i32 from = 0;
@@ -29,21 +28,21 @@ export i32 echo(Core core, Cli cli, Fs fs, Args a) {
     from++;
   }
 
-  Buf out = Buf.create();
+  Buf buf = Buf.create();
   for (i32 i = from; i < a.own.len(); i++) {
-    if (i > from) { out.push(' '); }
+    if (i > from) { buf.push(' '); }
     if (escapes) {
-      if (!expandInto(out, a.own[i].toBytes())) {
+      if (!expandInto(buf, a.own[i].toBytes())) {
         // `\c` stops everything, newline included — the one escape that is not a character.
-        cli.write(out.take());
+        out.write(buf.take());
         return 0;
       }
     } else {
-      out.pushAll(a.own[i].toBytes());
+      buf.pushAll(a.own[i].toBytes());
     }
   }
-  if (newline) { out.push(10); }
-  cli.write(out.take());
+  if (newline) { buf.push(10); }
+  out.write(buf.take());
   return 0;
 }
 

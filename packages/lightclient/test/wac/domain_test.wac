@@ -29,7 +29,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json } from "../../../wactest/src/fixtures.wac";
-import { Core, Cli } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { fieldBytes, fieldRoot } from "../../../ssz/src/container.wac";
@@ -124,8 +124,8 @@ u8[] un(string h) {
   return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
 }
 
-JsonArray? syncCases(T t, Core core, Cli cli) {
-  Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
+JsonArray? syncCases(T t, Output err, Files fs, Procs procs) {
+  Loaded f = json(err, fs, procs, "ssz", "light_client_sync_altair_minimal", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return null; }
   JsonArray? cases = f.doc.member("cases")?.array();
@@ -143,9 +143,12 @@ string textAt(JsonObject o, string key) {
   }
 }
 
-export string test_the_fork_digest_the_vectors_state_is_the_one_this_computes(Core core, Cli cli) {
+export string test_the_fork_digest_the_vectors_state_is_the_one_this_computes(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // `meta.store_fork_digest` is the first four bytes of `hash_tree_root(ForkData(...))`, so it pins
   // the fork version *and* the ForkData merkleization at once — including that `Version` is four
@@ -172,10 +175,12 @@ export string test_the_fork_digest_the_vectors_state_is_the_one_this_computes(Co
   return t.report();
 }
 
-export string test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root(
-    Core core, Cli cli) {
+export string test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   JsonValue? meta0 = cases!.get(0).member("meta");
   if (meta0 is null) { return t.report(); }
@@ -193,9 +198,12 @@ export string test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_da
   return t.report();
 }
 
-export string test_every_real_sync_committee_signature_verifies(Core core, Cli cli) {
+export string test_every_real_sync_committee_signature_verifies(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // The whole stack in one assertion, over every update in every case.
   //
@@ -281,10 +289,12 @@ export string test_every_real_sync_committee_signature_verifies(Core core, Cli c
   return t.report();
 }
 
-export string test_the_signing_root_is_what_makes_the_signature_context_specific(
-    Core core, Cli cli) {
+export string test_the_signing_root_is_what_makes_the_signature_context_specific(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  JsonArray? cases = syncCases(t, core, cli);
+  JsonArray? cases = syncCases(t, err, fs, procs);
   if (cases is null) { return t.report(); }
   // The point of the domain: the same header signed under a different fork or a different chain must
   // not verify. Without this, a signature could be replayed across contexts, and nothing else in the

@@ -13,92 +13,92 @@
 // flight and a park on whichever answers. That is the whole loop, and it is why stdin was
 // given a handle rather than a second ticket-returning read of its own.
 
-import { Cli, Core, FAULT_OTHER, Pending, HostSocket } from "std";
+import { HostFault, Input, Net, Output, Socket, SocketFault, Listener } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
-import { Read } from "core";
-import { Fs } from "../../../fs/src/fs.wac";
+import { Read, Result, Ticket, flatten } from "core";
 
-/** Standard input, as a handle `recv` accepts. See `deno.ts`. */
-i32 STDIN() { return 0; }
+export async i32 nc(Input stdin, Output err, Output out, Net net, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Socket? opened = has(a, 'l') ? await accepted(err, net, a) : await dialled(err, net, a);
+  if (opened is null) { return 1; }
+  Socket peer = opened!;
 
-export i32 nc(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  HostSocket peer = has(a, 'l') ? accepted(core, cli, a) : dialled(core, cli, a);
-  if (peer.handle < 0) { return 1; }
-
-  // Both reads are in flight from here, and stay that way: whichever answers is replaced
-  // and the other is left running. Cancelling and resubmitting the untouched one would
-  // lose whatever had already arrived on it.
-  Pending<Read> fromPeer = cli.recv(peer.handle);
-  Pending<Read> fromUser = cli.recv(STDIN());
+  Ticket<Result<Read, SocketFault>> fromPeer = peer.recv();
+  Ticket<Result<Read, HostFault>> fromUser = stdin.chunk();
   bool userDone = false;
 
   while (true) {
-    i32 which = userDone
-      ? core.waitAny([fromPeer.id], -1)
-      : core.waitAny([fromPeer.id, fromUser.id], -1);
-    if (which < 0) { break; }
+    i32 which = userDone ? 0 : await Ticket.first([fromPeer, fromUser]);
 
     if (which == 0) {
-      bool over = false;
-      match (fromPeer.wait()) {
-        Data(bytes): { cli.write(bytes); fromPeer = cli.recv(peer.handle); }
-        End: { over = true; }             // the peer closed; we are done
-        // A relay that reports success after the connection broke is telling the user their data
-        // arrived. It did not, so this is worth both a word and a status.
-        Failed(why): { core.warn("\{a.name}: \{why}"); cli.closeSocket(peer.handle); return 1; }
+      match (await fromPeer) {
+        Ok(r): {
+          match (r) {
+            Data(bytes): { await out.write(bytes); fromPeer = peer.recv(); continue; }
+            End: { }                        // the peer closed; we are done
+            Failed(why): { err.line("\{a.name}: \{why}"); peer.close(); return 1; }
+          }
+        }
+        Err(e): { err.line("\{a.name}: \{e}"); peer.close(); return 1; }
       }
-      if (over) { break; }
-      continue;
+      break;
     }
 
-    bool inputOver = false;
-    match (fromUser.wait()) {
-      Data(bytes): {
-        if (!cli.send(peer.handle, bytes).wait()) { break; }
-        fromUser = cli.recv(STDIN());
+    match (await fromUser) {
+      Ok(r): {
+        match (r) {
+          Data(bytes): {
+            if ((await peer.send(bytes)).isErr()) { fromPeer.cancel(); break; }
+            fromUser = stdin.chunk();
+          }
+          // Our input ended; keep printing what the peer sends until it closes.
+          End: { userDone = true; }
+          Failed(why): { err.line("\{a.name}: \{why}"); peer.close(); return 1; }
+        }
       }
-      // Standard input ended. Keep reading the socket — a request has been sent and the answer has
-      // not arrived yet, which is exactly what `box nc host 80 < request` does.
-      End: { inputOver = true; }
-      Failed(why): { core.warn("\{a.name}: \{why}"); cli.closeSocket(peer.handle); return 1; }
+      Err(e): { err.line("\{a.name}: \{e}"); peer.close(); return 1; }
     }
-    if (inputOver) { userDone = true; continue; }
   }
 
-  cli.closeSocket(peer.handle);
+  // **The read still out on whichever side did not end is abandoned**, not left: a peer that closes before
+  // our input does leaves a `chunk` nobody will collect, and a host that counts what a finished program
+  // left waiting calls the run unfinished. A settled one ignores the cancel.
+  fromUser.cancel();
+  peer.close();
   return 0;
 }
 
 /** `nc host port`, or `nc host -port`. */
-HostSocket dialled(Core core, Cli cli, Args a) {
+async Socket? dialled(Output err, Net net, Args a) {
   if (a.rest.len() < 1) {
-    core.warn("usage: \{a.name} <host> <port>   |   \{a.name} -<port> -l");
-    return HostSocket(-1, "", "", 0, FAULT_OTHER());
+    err.line("usage: \{a.name} <host> <port>   |   \{a.name} -<port> -l");
+    return null;
   }
   i32 port = !a.hasNum && a.rest.len() > 1 ? atoi(a.rest[1]) : a.num;
-  HostSocket s = cli.connect(a.rest[0], port).wait();
-  if (s.handle < 0) { core.warn("\{a.name}: \{a.rest[0]}: \{s.error}"); }
-  return s;
+  match (await net.connect(a.rest[0], port)) {
+    Ok(s): { return s; }
+    Err(e): {
+      err.line("\{a.name}: \{a.rest[0]}: \{e}");
+      return null;
+    }
+  }
 }
 
 /** `nc -<port> -l`: bind, take one connection, relay it. */
-HostSocket accepted(Core core, Cli cli, Args a) {
-  // Every interface, as `nc -l` does: a listener you start by hand is meant to be reachable, and
-  // the address is now something this says rather than something the host assumed. Issue 0025.
-  HostSocket l = cli.listen("", a.num).wait();
-  if (l.handle < 0) {
-    core.warn("\{a.name}: \{a.num}: \{l.error}");
-    return HostSocket(-1, "", "", 0, FAULT_OTHER());
+async Socket? accepted(Output err, Net net, Args a) {
+  Listener l;
+  match (await net.listen("", a.num)) {
+    Ok(bound): { l = bound; }
+    Err(e): {
+      err.line("\{a.name}: \{a.num}: \{e}");
+      return null;
+    }
   }
-  // The port it *got*, not the port it asked for: `nc -0 -l` is a listener on whatever the kernel had
-  // free, and until `Socket.port` existed there was no way for it to say which.
-  core.warn("\{a.name}: listening on port \{l.port}");
-  HostSocket c = cli.accept(l.handle).wait();
-  cli.closeSocket(l.handle);
-  if (c.handle < 0) { core.warn("\{a.name}: accept: \{c.error}"); }
-  return c;
+  err.line("\{a.name}: listening on port \{l.port}");
+  auto took = await l.accept();
+  l.close();
+  if (took.isErr()) { err.line("\{a.name}: accept: \{took.err()!}"); }
+  return took.ok();
 }
-

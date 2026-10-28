@@ -39,8 +39,8 @@
 // and that is operational information rather than a network error: the fix is a line in a file on the
 // host. A caller reporting "connection failed" sends somebody to look at the wrong thing.
 
-import { Cli, HostSocket } from "std";
-import { Buf, Result } from "core";
+import { Net, Socket } from "std";
+import { Buf, Read, Result, flatten } from "core";
 
 /** Where a proxy is. */
 export struct ProxyAt {
@@ -140,7 +140,7 @@ export ProxyReply readReply(u8[] b) {
 /** An open tunnel. */
 export struct Tunnel {
   /** Still open, with the proxy's reply consumed and nothing more. */
-  i32 handle;
+  Socket socket;
   /**
    * Whatever arrived after the proxy's blank line, belonging to the tunnelled protocol.
    *
@@ -158,55 +158,60 @@ i32 replyCap() { return 1 << 16; }
  * The only thing here that owns a socket, and deliberately the only thing that is not a pure function of
  * its arguments. It is closed on every failure path, so a caller that gets an error owns nothing.
  */
-export Result<Tunnel, string> connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
-  HostSocket s = cli.connect(proxyHost, proxyPort).wait();
-  if (s.handle < 0) {
+export Result<Tunnel, string> connectThrough(Net net, string proxyHost, i32 proxyPort, string host, i32 port) {
+  auto connected = flatten(net.connect(proxyHost, proxyPort).wait());
+  if (connected.isErr()) {
     return Result.Err("the proxy at \{proxyHost}:\{proxyPort}"
-      + " could not be reached: \{s.error}");
+      + " could not be reached: \{connected.err()!}");
   }
-  if (!cli.send(s.handle, connectRequest(host, port)).wait()) {
-    cli.closeSocket(s.handle);
+  Socket s = connected.unwrap();
+  if (flatten(s.send(connectRequest(host, port)).wait()).isErr()) {
+    s.close();
     return Result.Err("the proxy accepted a connection and not a request");
   }
 
   string authority = "\{host}:\{port}";
   Buf all = Buf.create();
   while (true) {
-    match (cli.recv(s.handle).wait()) {
+    Read got = Read.End;
+    match (flatten(s.recv().wait())) {
+      Ok(r): { got = r; }
+      Err(e): {
+        s.close();
+        return Result.Err("reading the proxy's reply failed: \{e}");
+      }
+    }
+    match (got) {
       Data(bytes): { all.pushAll(bytes); }
-      End: {
-        cli.closeSocket(s.handle);
+      default: {
+        s.close();
         // Distinct from a refusal on purpose: nothing was said, so there is no status to report and the
         // cause is upstream of any policy the proxy has.
         return Result.Err("the proxy closed the connection before answering");
-      }
-      Failed(why): {
-        cli.closeSocket(s.handle);
-        return Result.Err("reading the proxy's reply failed: \{why}");
       }
     }
     u8[] soFar = all.bytes();
     match (readReply(soFar)) {
       NeedMore: {
         if (all.len > replyCap()) {
-          cli.closeSocket(s.handle);
+          s.close();
           return Result.Err("the proxy sent \{all.len}"
             + " bytes without finishing a reply");
         }
       }
       NotHttp(line): {
-        cli.closeSocket(s.handle);
+        s.close();
         return Result.Err("the proxy's reply is not HTTP: \{line}");
       }
       Refused(line): {
-        cli.closeSocket(s.handle);
+        s.close();
         // The proxy's own line, verbatim. A 403 here is an allowlist, not a network.
         return Result.Err("the proxy refused \{authority}: \{line}");
       }
       Established(at): {
         u8[] leftover = u8[].filled(soFar.len() - at, 0);
         leftover.copyFrom(soFar, at, 0, leftover.len());
-        return Result.Ok(Tunnel(s.handle, leftover));
+        return Result.Ok(Tunnel(s, leftover));
       }
     }
   }

@@ -4,89 +4,81 @@
 // it and closes it; this switches the current output for each piece, which is the part of
 // `openOutput` nothing had exercised.
 
-import { Change, Cli, Core, reasonOf } from "std";
+import { Files, Input, Output } from "std";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream } from "../lib/input.wac";
-import { Feed, Line, Lines, emit, nextLine } from "../../../platform/src/stream.wac";
+import { Opened, openStream } from "../lib/input.wac";
+import { Feed, Line, Lines, nextLine } from "../../../platform/src/stream.wac";
 import { extraOperand } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
-import { Buf } from "core";
+import { reason } from "../../../fs/src/words.wac";
 
-export async i32 split(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (extraOperand(core, a, 2)) { return 1; }
+export async i32 split(Input stdin, Output err, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (extraOperand(err, a, 2)) { return 1; }
   if (a.rest.len() < 1) {
-    core.warn("usage: \{a.name} [-<lines>] <file> [prefix]");
+    err.line("usage: \{a.name} [-<lines>] <file> [prefix]");
     return 2;
   }
-  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+  if (a.badNum != "") { err.line(badNumberMessage(a)); return 1; }
   i32 per = a.hasNum ? a.num : 1000;
   // Zero lines a piece is not a small piece, it is no piece: the counter never reaches the limit and every
   // line lands in the first file, or — depending where the check goes — a new file is opened per line
   // for ever. `split -0` used to exit 0 having done nothing at all, which is the worst of the three.
   if (per <= 0) {
-    core.warn("\{a.name}: invalid number of lines: '\{per}'");
+    err.line("\{a.name}: invalid number of lines: '\{per}'");
     return 1;
   }
   string prefix = a.rest.len() > 1 ? a.rest[1] : "x";
 
-  Input in = await openStream(core, cli, fs, a, 0, -1);
+  Opened in = await openStream(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
 
   Lines s = Lines.create();
   // The feed the opener chose — see `lib/input.wac`; not the process's own input.
   Feed fed = in.fed;
-  // **Which way the pieces are written is decided by the filesystem, not assumed.** `openOutput`
-  // redirects this process's standard output to a file, which is a capability the host has and a memory
-  // image does not — so on anything but a host mount the piece is collected and written with one
-  // `writeFile`. It is the same split `lib/input.wac` makes for reading and `lib/safe.wac` for the
-  // atomic write, and without it `split` in a sealed session refused every piece for want of a grant it
-  // should never have needed (wac-mono 0109's write side).
-  bool streaming = await fs.isHostPath(prefix + suffix(0));
+  // Every piece streams to its own file, on every backing: `openWrite` gives an `Output` per file, so a
+  // piece is never collected first and a memory image is written the same way as a disk.
   i32 piece = 0;
   i32 written = 0;
-  bool open = false;
-  Buf held = Buf.create();
+  Output? to = null;
   string name = "";
   while (true) {
     Line l = await nextLine(s, fed);
     if (!l.ok) { break; }
-    if (!open) {
+    if (to is null) {
       name = prefix + suffix(piece);
-      if (streaming) {
-        Change opened = await cli.openOutput(name).ticket();
-        if (!opened.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(opened)}"); return 1; }
-      } else {
-        held = Buf.create();
+      match (await fs.openWrite(name)) {
+        Ok(o): { to = o; }
+        Err(e): { err.line("\{a.name}: \{name}: \{reason(e)}"); return 1; }
       }
-      open = true;
       written = 0;
     }
-    if (streaming) { emit(cli, l.bytes, l.nl); }
-    else {
-      held.pushAll(l.bytes);
-      if (l.nl) { held.push(10); }
+    if ((await to!.write(l.bytes)).isErr() || (l.nl && (await to!.write([10 as@ u8])).isErr())) {
+      err.line("\{a.name}: \{name}: the write failed");
+      return 1;
     }
     written++;
     if (written == per) {
-      if (!open || streaming) {} else {
-        Change wrote = await fs.writeFile(name, held.take());
-        if (!wrote.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(wrote)}"); return 1; }
-      }
+      // Closed as it fills: a file left open is a file that may not be all there yet.
+      if (!(await closed(err, a, to!, name))) { return 1; }
+      to = null;
       piece++;
-      open = false;
     }
   }
   // The last piece, which is short: the loop above only closes one that filled up.
-  if (open && !streaming) {
-    Change wrote = await fs.writeFile(name, held.take());
-    if (!wrote.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(wrote)}"); return 1; }
-  }
-  // Back to standard output, which closes the last piece — a file left open is a file that
-  // may not be on disk yet.
-  if (streaming) { await cli.openOutput("").ticket(); }
+  if ((to is not null) && !(await closed(err, a, to!, name))) { return 1; }
   return 0;
+}
+
+/** `to` closed, or false having said why. */
+async bool closed(Output err, Args a, Output to, string name) {
+  match (await to.close()) {
+    Ok(v): { return true; }
+    Err(e): {
+      err.line("\{a.name}: \{name}: \{e}");
+      return false;
+    }
+  }
 }
 
 /**

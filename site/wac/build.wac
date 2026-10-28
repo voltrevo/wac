@@ -15,8 +15,8 @@
 // `file://` checkout alike. The playground is a React app built into `playground/` beside them, and the
 // demos (`site/tools/syncDemos.ts`) are written beside them too.
 
-import { Cli, Sys } from "std";
-import { Vec } from "core";
+import { Sys, Files, Output } from "std";
+import { Vec, flatten } from "core";
 import { Head, Node, documentOf } from "../../packages/web";
 import { CSS, Doc, Link, fileOf, pages } from "./ui.wac";
 import { Figures, readFigures, readText } from "./figures.wac";
@@ -90,33 +90,33 @@ export string redirectScript() {
 }
 
 /** Each page, with the shared head, under `out`, and the files beside them. */
-export i32 buildSite(Cli cli, string root, string out) {
-  Figures F = readFigures(cli, root);
-  Doc[] docs = site(F, readSpec(cli, root));
-  cli.mkdir(out, true).wait();
+export i32 buildSite(Output err, Files fs, string root, string out) {
+  Figures F = readFigures(fs, root);
+  Doc[] docs = site(F, readSpec(fs, root));
+  fs.mkdir(out, true).wait();
   for (Doc d in docs) {
     string[] scripts = d.file == "index.html" ? ["redirect.js"] : string[]();
     string html = documentOf(Head(d.title, d.description, policy(), ["site.css"], scripts, "logo.svg"), d.body);
-    write(cli, out + "/" + d.file, html.toBytes());
+    write(fs, out + "/" + d.file, html.toBytes());
   }
-  write(cli, out + "/site.css", CSS.toBytes());
-  write(cli, out + "/redirect.js", redirectScript().toBytes());
+  write(fs, out + "/site.css", CSS.toBytes());
+  write(fs, out + "/redirect.js", redirectScript().toBytes());
   for (string asset in ["logo.svg", "banner.svg"]) {
-    write(cli, out + "/" + asset, readText(cli, root + "/site/public/" + asset).toBytes());
+    write(fs, out + "/" + asset, readText(fs, root + "/site/public/" + asset).toBytes());
   }
   // Where this site was staged while it replaced the one before it: a link somebody kept still arrives.
-  cli.mkdir(out + "/next", true).wait();
-  write(cli, out + "/next/index.html", readText(cli, root + "/site/next/index.html").toBytes());
-  cli.writeErr("site: \{docs.len()} pages in \{out}\n".toBytes());
+  fs.mkdir(out + "/next", true).wait();
+  write(fs, out + "/next/index.html", readText(fs, root + "/site/next/index.html").toBytes());
+  err.write("site: \{docs.len()} pages in \{out}\n".toBytes());
   return 0;
 }
 
-void write(Cli cli, string path, u8[] bytes) {
-  auto c = cli.writeFile(path, bytes).wait();
-  if (!c.ok()) { trap path + ": " + c.message; }
+void write(Files fs, string path, u8[] bytes) {
+  auto c = flatten(fs.writeFile(path, bytes).wait());
+  if (c.isErr()) { trap path + ": \{c.err()!}"; }
 }
 
 export i32 main(Sys sys) {
   string[] args = sys.args();
-  return buildSite(sys.cli, ".", args.len() > 0 ? args[0] : "site/dist");
+  return buildSite(sys.stderr(), sys.files(), ".", args.len() > 0 ? args[0] : "site/dist");
 }

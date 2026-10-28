@@ -17,7 +17,7 @@
 // consistent* — it can invent a whole state and be believed. That is stated here rather than glossed,
 // because a composition that looks verified and is not is worse than one that admits it.
 
-import { Cli } from "std";
+import { Net } from "std";
 import { post } from "../../http/src/client.wac";
 import { Incoming } from "../../http/src/incoming.wac";
 import { Result } from "core";
@@ -34,9 +34,9 @@ import { JsonValue, JsonObject } from "../../json/src/value.wac";
  * Answers the `result` member, raw and undecoded — a `Str` for most `eth_` methods, an `Object` for
  * `eth_getProof` — or why there is none.
  */
-export Result<JsonValue, string> call(Cli cli, string host, i32 port, string method, string params) {
+export Result<JsonValue, string> call(Net net, string host, i32 port, string method, string params) {
   string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\{method}\",\"params\":\{params}}";
-  Incoming response = match (post(cli, host, port, "/", body.toBytes(), "application/json")) {
+  Incoming response = match (post(net, host, port, "/", body.toBytes(), "application/json")) {
     Ok(r): r,
     Err(e): return bad("\{method}: \{e}"),
   };

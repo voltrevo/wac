@@ -8,7 +8,7 @@
 // export — found by `wac` itself, which keeps both in one cache (`issues/lang/0398b`).
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core } from "std";
+import { Clock, Sys } from "std";
 import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 
 static string PROGRAM = "export struct Box<T> { T v; }\n"
@@ -20,9 +20,9 @@ static string PROGRAM = "export struct Box<T> { T v; }\n"
   + "  return countA(a) + countB(b);\n"
   + "}\n";
 
-export string test_an_instance_over_an_array_is_not_named_as_one_over_its_element(Core core, Cli cli) {
+export string test_an_instance_over_an_array_is_not_named_as_one_over_its_element(Sys sys) {
   T t = T.create();
-  Ran r = runEmittedOne(cli, "/t/m.wac", PROGRAM, scratchDir(cli), "bindnames.wasm");
+  Ran r = runEmittedOne(sys.env(), sys.files(), sys.procs(), "/t/m.wac", PROGRAM, scratchDir(sys.env(), sys.files()), "bindnames.wasm");
   t.isTrue(r.ok && r.status == 2, "the module loads and answers 2 — " + r.error + r.stderr + r.stdout);
   return t.report();
 }

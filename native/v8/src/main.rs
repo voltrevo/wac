@@ -180,6 +180,9 @@ enum Cap {
     Send,
     CloseSocket,
     CloseSend,
+    OpenFile,
+    CloseFile,
+    CloseOutput,
     BindDatagram,
     ReceiveFrom,
     SendTo,
@@ -262,6 +265,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "send") => Cap::Send,
         ("Cli", "closeSocket") => Cap::CloseSocket,
         ("Cli", "closeSend") => Cap::CloseSend,
+        ("Cli", "openFile") => Cap::OpenFile,
+        ("Cli", "closeFile") => Cap::CloseFile,
+        ("Cli", "closeOutput") => Cap::CloseOutput,
         ("Cli", "bindDatagram") => Cap::BindDatagram,
         ("Cli", "receiveFrom") => Cap::ReceiveFrom,
         ("Cli", "sendTo") => Cap::SendTo,
@@ -630,6 +636,8 @@ struct HostState {
     input: Option<std::fs::File>,
     /// And where `write` goes, once `openOutput` has redirected it.
     output: Option<std::fs::File>,
+    /// Standard output and standard error, once `closeOutput` has ended them: a write after it is refused.
+    out_closed: [bool; 2],
 }
 
 thread_local! {
@@ -1257,6 +1265,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .collect(),
             input: None,
             output: None,
+            out_closed: [false, false],
         })
     });
 
@@ -1577,6 +1586,10 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
     if captured {
         return true;
     }
+    let closed = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.out_closed[to_stderr as usize]));
+    if closed {
+        return false;
+    }
     // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
     // the program saying *my output is a file now*, which is not standard output — so whether
     // something spawned this program is a fact about the stream it no longer writes to.
@@ -1587,9 +1600,9 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
     // file-writing applet on this host. `issues/system/0277c`.
     //
     // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
-    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
-    // redirects, as it does on the host: a child that says its output is a file gets a file."* That
-    // was aligned to what the host does, and this host did not do it.
+    // `Frame`'s capture, and `packages/platform`'s frame (gone since design/system/0013 step 5) stated
+    // the answer: *"`openOutput` redirects, as it does on the host: a child that says its output is a
+    // file gets a file."* That was aligned to what the host does, and this host did not do it.
     //
     // Standard error is deliberately untouched: it is where a program says what went wrong, and
     // sending that into the file being written would hide it — `native/src/main.rs` makes the same
@@ -1627,6 +1640,16 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
             }
         }
     })
+}
+
+/// Point descriptor `fd` (1 or 2) at `/dev/null`: whoever reads the pipe it was sees the end, and the number
+/// stays taken, so nothing opened later receives a stray write meant for the terminal.
+fn close_std_stream(fd: i32) -> bool {
+    use std::io::Write;
+    if fd == 1 { let _ = std::io::stdout().flush(); } else { let _ = std::io::stderr().flush(); }
+    let Ok(null) = std::fs::OpenOptions::new().write(true).open("/dev/null") else { return false };
+    use std::os::fd::AsRawFd;
+    unsafe { libc::dup2(null.as_raw_fd(), fd) == fd }
 }
 
 /// `wac run <file.wac> <name> [args…]` for a module with no `main`.
@@ -2348,9 +2371,13 @@ fn dispatch(
             let argv = read_bytes_array(scope, args.get(1));
             let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(3));
-            // The `INHERIT_*` mask; only the input bit is the host's — `DETACHED` (4) is handled in
-            // std's `Cli.of`, where the ticket decides whether to stop the child. `issues/system/0312b`.
-            let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) & 1 != 0;
+            // The `INHERIT_*` mask: the input bit and the output bit are the host's — `DETACHED` (4) is
+            // handled in std, where the ticket decides whether to stop the child. `issues/system/0312b`.
+            let mask = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let inherits = mask & 1 != 0;
+            // **The child writes this process's own streams**, as `spawn`'s does — this read only the
+            // input bit, so a `spawnSelf` child handed the output wrote into a queue nobody read.
+            let inherit_out = mask & 2 != 0;
             // The fifth and last wac argument. Read rather than dropped as it used to be, which is
             // the whole of 0157: a parent that offered to serve a filesystem was never asked to.
             let serve_fs = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
@@ -2414,8 +2441,9 @@ fn dispatch(
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
-                out: Some(out.clone()),
-                err: Some(err.clone()),
+                // None is what `emit_bytes` falls through on: no parent queue, so the real stream.
+                out: if inherit_out { None } else { Some(out.clone()) },
+                err: if inherit_out { None } else { Some(err.clone()) },
                 input: Some(input),
                 inherits,
                 fs_req: fs_req.clone(),
@@ -3071,6 +3099,7 @@ fn dispatch(
             enum Source {
                 Socket(std::net::TcpStream),
                 Queue(Arc<Stream>),
+                File(std::fs::File),
             }
             let source = HOST.with(|h| {
                 let b = h.borrow();
@@ -3079,6 +3108,7 @@ fn dispatch(
                 match socks.get(&handle) {
                     Some(Sock::Stream(sk)) => sk.try_clone().ok().map(Source::Socket),
                     Some(Sock::Queue(q)) => Some(Source::Queue(q.clone())),
+                    Some(Sock::File(f)) => f.try_clone().ok().map(Source::File),
                     _ => None,
                 }
             });
@@ -3173,6 +3203,29 @@ fn dispatch(
                 }
                 return;
             }
+            // A file is read on a thread as a socket is: a slow disk must not stop the program. The
+            // descriptor is a duplicate sharing the original's offset, so reads continue where the last
+            // left off.
+            if let Source::File(mut file) = source {
+                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let id = t.submit();
+                note(id);
+                let worker = t.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 65536];
+                    let a = match file.read(&mut buf) {
+                        Ok(0) => Answer::Read(ReadAnswer::End),
+                        Ok(n) => Answer::Read(ReadAnswer::Data(buf[..n].to_vec())),
+                        Err(e) => Answer::Read(ReadAnswer::Failed(message_of(&e))),
+                    };
+                    park_read(&back, handle, worker.complete(id, a));
+                });
+                match ticket_pending(scope, "Read", id) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Read> to answer recv with"),
+                }
+                return;
+            }
             let Source::Socket(mut stream) = source else { unreachable!() };
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let id = t.submit();
@@ -3215,6 +3268,7 @@ fn dispatch(
                 let mut socks = st.sockets.lock().unwrap();
                 match socks.get_mut(&handle) {
                     Some(Sock::Stream(sk)) => sk.write_all(&bytes).and_then(|_| sk.flush()).is_ok(),
+                    Some(Sock::File(f)) => f.write_all(&bytes).is_ok(),
                     _ => false,
                 }
             });
@@ -3233,6 +3287,80 @@ fn dispatch(
         // An error from `shutdown` is dropped for the same reason `closeSocket` drops one — a peer
         // that has already gone is not a failure of this call, and a program that tidies up on every
         // path should not have to know which paths already did it.
+        // **A file as a stream of its own** — `Cli.openFile`. `how` is 0 to read, 1 to create or truncate,
+        // 2 to create or append; the grant is the one `readFile` or `writeFile` would need.
+        Cap::OpenFile => {
+            let path = framed_path(&read_string(scope, args.get(1)));
+            let how = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let granted = HOST.with(|h| {
+                h.borrow().as_ref().is_some_and(|s| if how == 0 { s.grants.read } else { s.grants.write })
+            });
+            let answer = if !granted {
+                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0, FAULT_NOT_GRANTED)
+            } else {
+                let mut o = std::fs::OpenOptions::new();
+                if how == 0 {
+                    o.read(true);
+                } else {
+                    o.write(true).create(true);
+                    if how == 2 { o.append(true); } else { o.truncate(true); }
+                }
+                match o.open(&path) {
+                    Ok(f) => Answer::Socket(keep_socket(Sock::File(f)), String::new(), String::new(), 0, FAULT_NONE),
+                    Err(e) => Answer::Socket(-1, message_of(&e), String::new(), 0, fault_of_path(&e, &path)),
+                }
+            };
+            match ticket_for(scope, "HostSocket", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<HostSocket> for openFile"),
+            }
+        }
+        // The end of a file `openFile` opened. `std::fs::File` does not buffer — each `send` was a write
+        // to the system — so dropping it is the whole of closing, and a later read finds every byte.
+        Cap::CloseFile => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let gone = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|st| st.sockets.lock().unwrap().remove(&handle))
+            });
+            let ok = match gone {
+                Some(Sock::File(_)) => true,
+                _ => false,
+            };
+            match ticket_for(scope, "bool", Answer::Bool(ok)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<bool> for closeFile"),
+            }
+        }
+        // The end of this program's output or its diagnostic output; it goes on running. A spawned child's
+        // queue is finished, so its parent reads the end; this process's own stream is pointed at
+        // `/dev/null` rather than closed, so the descriptor cannot be reused by a file opened later.
+        // Not under a frame, whose output is its capture.
+        Cap::CloseOutput => {
+            let to_err = args.get(1).boolean_value(scope);
+            let ok = HOST.with(|h| {
+                let mut b = h.borrow_mut();
+                let Some(s) = b.as_mut() else { return false };
+                if !s.frames.is_empty() {
+                    return false;
+                }
+                if s.out_closed[to_err as usize] {
+                    return true;
+                }
+                s.out_closed[to_err as usize] = true;
+                if !to_err && s.output.take().is_some() {
+                    return true;
+                }
+                if let Some(q) = if to_err { s.child_err.clone() } else { s.child_out.clone() } {
+                    q.finish();
+                    return true;
+                }
+                close_std_stream(if to_err { 2 } else { 1 })
+            });
+            match ticket_for(scope, "bool", Answer::Bool(ok)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<bool> for closeOutput"),
+            }
+        }
         Cap::CloseSend => {
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             HOST.with(|h| {
@@ -3598,6 +3726,10 @@ fn dispatch(
                             md.permissions().mode() & 0o100 != 0
                         },
                         fault: FAULT_NONE,
+                        mode: {
+                            use std::os::unix::fs::PermissionsExt;
+                            (md.permissions().mode() & 0o7777) as i32
+                        },
                     },
                     // **Except when the name is one this host mangled.** `issues/system/0295c`:
                     // a `NotFound` for a path carrying U+FFFD is this runtime being unable to
@@ -4336,6 +4468,7 @@ fn build_stat<'s>(
     let is_symlink = v8::Integer::new(scope, i32::from(st.is_symlink));
     let is_executable = v8::Integer::new(scope, i32::from(st.is_executable));
     let fault = v8::Integer::new(scope, st.fault);
+    let mode = v8::Integer::new(scope, st.mode);
     let ctor = get_export(scope, exports, &ctor_name)?;
     ctor.call(
         scope,
@@ -4349,6 +4482,7 @@ fn build_stat<'s>(
             is_symlink.into(),
             is_executable.into(),
             fault.into(),
+            mode.into(),
         ],
     )
 }
@@ -4825,6 +4959,9 @@ enum Sock {
     /// together is what `platform.wac` says handles are for, and that only works if one capability
     /// serves both.
     Queue(Arc<Stream>),
+    /// **A file opened as a stream** — `Cli.openFile`. Read with `recv` and written with `send` like a
+    /// socket, so a program holds as many as it likes; `closeFile` ends it.
+    File(std::fs::File),
 }
 
 /// `Socket.of(handle, error, peer, port)` — declared in `platform.wac` rather than left to bindgen

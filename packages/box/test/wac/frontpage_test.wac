@@ -20,24 +20,26 @@
 // would make this the slowest check in the tree for no gain.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Stat } from "std";
+import { Cli, Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
+import { flatten } from "core";
 
 static string SITE = "site/wac/home.wac";
 static string TERM = "packages/box/example/term.wac";
 static string SHELL = "packages/box/example/boxsh.wac";
 
-string read(Core core, Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
-    core.warn("frontpage: cannot read \{path} — \{r.error}");
+string read(Output err, Files fs, string path) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("frontpage: cannot read \{path} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  return string.fromBytes(r.bytes);
+  return string.fromBytes(r!);
 }
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
-string agentDir(Cli cli) {
-  string cwd = cli.cwd().wait();
+string agentDir(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   u8[] b = cwd.toBytes();
   for (i32 i = 0; i + 7 < b.len(); i++) {
     if (b[i] != '/') { continue; }
@@ -49,7 +51,7 @@ string agentDir(Cli cli) {
   return "";
 }
 
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
 /**
  * Every double-quoted string in `text`, with its escapes undone.
@@ -109,15 +111,15 @@ string between(string text, string open, string close) {
 }
 
 /** The `transcript()` table on the front page: each command and the output printed beneath it. */
-string[] transcript(Core core, Cli cli) {
-  string block = between(read(core, cli, SITE), "Said[] transcript() {", "\n}");
+string[] transcript(Output err, Files fs) {
+  string block = between(read(err, fs, SITE), "Said[] transcript() {", "\n}");
   if (block == "") { trap; }
   return quotedStrings(block);
 }
 
 /** The commands `term.wac` runs before it hands the keyboard over. */
-string[] opening(Core core, Cli cli) {
-  string block = between(read(core, cli, TERM), "string[] opening = [", "];");
+string[] opening(Output err, Files fs) {
+  string block = between(read(err, fs, TERM), "string[] opening = [", "];");
   if (block == "") { trap; }
   return quotedStrings(block);
 }
@@ -129,10 +131,12 @@ string[] opening(Core core, Cli cli) {
  * the terminal runs its own opening session so the reader sees real output rather than a prompt with
  * nothing above it, and the page shows that output as text.
  */
-export string test_the_terminal_opens_on_the_session_the_website_prints(Core core, Cli cli) {
+export string test_the_terminal_opens_on_the_session_the_website_prints(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string[] opens = opening(core, cli);
-  string[] rows = transcript(core, cli);
+  string[] opens = opening(err, fs);
+  string[] rows = transcript(err, fs);
   t.isTrue(opens.len() > 0, "term.wac has no opening session — has it been renamed?");
   // The table is command-then-output pairs, so the commands are its even entries.
   i32 shown = rows.len() / 2;
@@ -147,46 +151,50 @@ export string test_the_terminal_opens_on_the_session_the_website_prints(Core cor
 }
 
 /** Where to build the shell, named for this agent so two runs cannot overwrite each other. */
-string workDir(Cli cli) {
-  string who = agentDir(cli);
+string workDir(Env env) {
+  string who = agentDir(env);
   return "/tmp/wac-frontpage" + (who == "" ? "" : "-\{who}");
 }
 
-export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core core, Cli cli) {
+export string test_the_websites_shell_transcript_is_what_the_shell_prints(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary that builds the shell is where the seed task writes it");
-  if (!bin.exists) { return t.report(); }
+  Stat? bin = flatten(fs.stat(binary(env)).wait()).ok();
+  t.isTrue((bin is not null), "the binary that builds the shell is where the seed task writes it");
+  if ((bin is null)) { return t.report(); }
 
-  string[] rows = transcript(core, cli);
+  string[] rows = transcript(err, fs);
   t.isTrue(rows.len() >= 4, "only \{rows.len() / 2} transcript row(s) found");
   if (rows.len() < 4) { return t.report(); }
 
-  string work = workDir(cli);
-  Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  if (!made.ok()) { return t.report(); }
+  string work = workDir(env);
+  auto made = flatten(fs.mkdir(work, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
   string stem = "\{work}/boxsh";
 
-  Exec built = cli.exec(binary(cli),
-                        ["build", SHELL, "-o", stem, "--allow-read", "--allow-write"],
-                        u8[]()).wait();
-  t.isTrue(built.ran() && built.status == 0,
-           "the shell builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
-  if (!built.ran() || built.status != 0) { return t.report(); }
+  auto builtRan = flatten(procs.exec(binary(env), ["build", SHELL, "-o", stem, "--allow-read", "--allow-write"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  t.isTrue((built is not null) && built!.status == 0,
+           "the shell builds: " + ((built is not null) ? string.fromBytes(built!.stderr) : "\{builtRan.isErr() ? "\{builtRan.err()!}" : ""}"));
+  if ((built is null) || built!.status != 0) { return t.report(); }
 
   for (i32 i = 0; i + 1 < rows.len(); i = i + 2) {
     string command = rows[i];
     string expected = rows[i + 1];
-    Exec r = cli.exec(binary(cli), ["\{stem}.wasm", "-c", command], u8[]()).wait();
-    t.isTrue(r.ran(), "\{command}: the shell would not start — \{r.error}");
-    if (!r.ran()) { continue; }
-    t.eqStr(trimTrailingNewlines(string.fromBytes(r.stdout)), expected,
+    auto rRan = flatten(procs.exec(binary(env), ["\{stem}.wasm", "-c", command], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? r = rRan.ok();
+    t.isTrue((r is not null), "\{command}: the shell would not start — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+    if ((r is null)) { continue; }
+    t.eqStr(trimTrailingNewlines(string.fromBytes(r!.stdout)), expected,
             "\{command}: the page and the shell disagree");
   }
 
-  Change gone = cli.remove(work, true).wait();
-  if (!gone.ok()) { core.warn("frontpage: could not remove \{work} — \{gone.message}"); }
+  auto gone = flatten(fs.remove(work, true).wait());
+  if (gone.isErr()) { err.line("frontpage: could not remove \{work} — \{gone.isErr() ? "\{gone.err()!}" : ""}"); }
   return t.report();
 }
 

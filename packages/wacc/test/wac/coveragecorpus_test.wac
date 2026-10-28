@@ -10,7 +10,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
+import { flatten } from "core";
 import { emitFiles, emitFilesCovered } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
@@ -35,14 +36,16 @@ string packageOf(string path) {
   return path;
 }
 
-export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_it(
-    Core core, Cli cli) {
+export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "coveragecorpus_test");
+  Corpus c = loadCorpus(fs, "coveragecorpus_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   i32 compared = 0;
   i32 instrumented = 0;
   string[] same = string[].filled(16, "");
@@ -130,7 +133,7 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
     if (plain.len() <= 8) { continue; }
     instrumented = instrumented + 1;
     string at = dir + "/covfile" + itoa(f) + ".wasm";
-    cli.writeFile(at, cov).wait();
+    fs.writeFile(at, cov).wait();
     wrote[nWrote] = at;
     nWrote = nWrote + 1;
     // The instrumented build must differ — a build that instruments nothing would pass every
@@ -143,7 +146,7 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
 
   string[] toCheck = string[].filled(nWrote, "");
   for (i32 i = 0; i < nWrote; i++) { toCheck[i] = wrote[i]; }
-  Validated v = validateAll(cli, toCheck);
+  Validated v = validateAll(env, procs, toCheck);
   t.isTrue(v.ok, "the engine was asked about the instrumented modules — " + v.error);
   t.eqI32(v.rejected.len(), 0,
           itoa(v.rejected.len()) + " instrumented module(s) do not validate: " +

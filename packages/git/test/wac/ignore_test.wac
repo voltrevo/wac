@@ -16,15 +16,15 @@
 // named with `git -C` instead; every argument this needs is an argument git already takes.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std";
-import { Vec } from "core";
+import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Vec, flatten } from "core";
 import { Buf } from "core";
 import { Rule, parseIgnore, ignored } from "../../src/ignore.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 import { has } from "../../../wactest/src/strings.wac";
 
-string workDir(Cli cli, string name) {
-  string who = agentDir(cli);
+string workDir(Env env, string name) {
+  string who = agentDir(env);
   return "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
 }
 
@@ -98,15 +98,16 @@ Case[] cases() {
 }
 
 /** A fresh, empty git repository at `dir`, with `.gitignore` files written into it. */
-bool makeRepo(T t, Cli cli, string dir) {
-  cli.remove(dir, true).wait();                 // whatever a previous run left
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  if (!made.ok()) { return false; }
-  Exec init = cli.exec("git", ["init", "-q", dir], u8[]()).wait();
-  t.eqStr(init.error, "", "git could not be started");
-  t.eqI32(init.status, 0, "git init: \{string.fromBytes(init.stderr)}");
-  return init.error == "" && init.status == 0;
+bool makeRepo(T t, Files fs, Procs procs, string dir) {
+  fs.remove(dir, true).wait();                 // whatever a previous run left
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return false; }
+  auto initRan = flatten(procs.exec("git", ["init", "-q", dir], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? init = initRan.ok();
+  t.eqStr("\{initRan.isErr() ? "\{initRan.err()!}" : ""}", "", "git could not be started");
+  t.eqI32(init!.status, 0, "git init: \{string.fromBytes(init!.stderr)}");
+  return "\{initRan.isErr() ? "\{initRan.err()!}" : ""}" == "" && init!.status == 0;
 }
 
 /**
@@ -116,7 +117,7 @@ bool makeRepo(T t, Cli cli, string dir) {
  * record — none here do, but a test that would break on one is a test with an assumption in it. Exit
  * 1 means "nothing matched", which is a legitimate answer rather than a failure.
  */
-string[] gitIgnores(T t, Cli cli, string dir, Case[] all) {
+string[] gitIgnores(T t, Procs procs, string dir, Case[] all) {
   // NUL-separated, which is what `-z` means, and **built as bytes on purpose**. Written as a string
   // literal the separator is a raw 0x00 in the source: it works, and `grep` then treats the whole
   // file as binary and silently matches nothing in it, and a reader sees `+ ""` and takes it for an
@@ -126,14 +127,13 @@ string[] gitIgnores(T t, Cli cli, string dir, Case[] all) {
     question.pushAll(askAs(all[i]).toBytes());
     question.push(0);
   }
-  Exec r = cli.exec("git",
-                    ["-C", dir, "check-ignore", "--no-index", "-z", "--stdin"],
-                    question.take()).wait();
-  t.eqStr(r.error, "", "git could not be started");
-  t.isTrue(r.status == 0 || r.status == 1,
-           "git check-ignore failed: \{string.fromBytes(r.stderr)}");
-  if (r.error != "" || (r.status != 0 && r.status != 1)) { return string[].filled(0, ""); }
-  return splitNul(r.stdout);
+  auto rRan = flatten(procs.exec("git", ["-C", dir, "check-ignore", "--no-index", "-z", "--stdin"], question.take(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqStr("\{rRan.isErr() ? "\{rRan.err()!}" : ""}", "", "git could not be started");
+  t.isTrue(r!.status == 0 || r!.status == 1,
+           "git check-ignore failed: \{string.fromBytes(r!.stderr)}");
+  if ("\{rRan.isErr() ? "\{rRan.err()!}" : ""}" != "" || (r!.status != 0 && r!.status != 1)) { return string[].filled(0, ""); }
+  return splitNul(r!.stdout);
 }
 
 /** `-z` output: NUL-separated records, with empty ones dropped. Bytes, for the reason above. */
@@ -158,16 +158,19 @@ string[] splitNul(u8[] b) {
   return trimmed;
 }
 
-export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Core core, Cli cli) {
+export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = workDir(cli, "ign");
-  if (!makeRepo(t, cli, dir)) { return t.report(); }
-  Change wrote = cli.writeFile("\{dir}/.gitignore", ignoreFile().toBytes()).wait();
-  t.isTrue(wrote.ok(), "the .gitignore was written: \{wrote.message}");
-  if (!wrote.ok()) { return t.report(); }
+  string dir = workDir(env, "ign");
+  if (!makeRepo(t, fs, procs, dir)) { return t.report(); }
+  auto wrote = flatten(fs.writeFile("\{dir}/.gitignore", ignoreFile().toBytes()).wait());
+  t.isTrue(wrote.isOk(), "the .gitignore was written: \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
+  if (wrote.isErr()) { return t.report(); }
 
   Case[] all = cases();
-  string[] theirs = gitIgnores(t, cli, dir, all);
+  string[] theirs = gitIgnores(t, procs, dir, all);
 
   // **The corpus has to contain both answers**, or a matcher that said "no" to everything would pass.
   t.isTrue(all.len() > 800, "only \{all.len() as i64} decisions; the corpus shrank");
@@ -190,7 +193,7 @@ export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Core 
   }
   t.eqI32(wrong, 0, "disagreements with git, the first being \{first}");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -217,19 +220,22 @@ export string test_the_last_matching_rule_wins_and_reversing_them_reverses_the_a
   return t.report();
 }
 
-export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli cli) {
+export string test_a_nested_gitignore_overrides_the_one_above_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = workDir(cli, "ign2");
-  if (!makeRepo(t, cli, dir)) { return t.report(); }
+  string dir = workDir(env, "ign2");
+  if (!makeRepo(t, fs, procs, dir)) { return t.report(); }
 
   // The root ignores every `.log` and the whole of `build`; the nested file brings one `.log` back
   // and ignores something of its own. **The negation in the deeper file is the case that matters** —
   // it can only work if the deeper rules are applied after the shallower ones.
-  cli.writeFile("\{dir}/.gitignore", "*.log\nbuild/\n".toBytes()).wait();
-  string whyDir1 = madeDir(cli, "\{dir}/sub");
+  fs.writeFile("\{dir}/.gitignore", "*.log\nbuild/\n".toBytes()).wait();
+  string whyDir1 = madeDir(fs, "\{dir}/sub");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile("\{dir}/sub/.gitignore", "!keep.log\nlocal\n".toBytes()).wait();
-  string whyDir2 = madeDir(cli, "\{dir}/other");
+  fs.writeFile("\{dir}/sub/.gitignore", "!keep.log\nlocal\n".toBytes()).wait();
+  string whyDir2 = madeDir(fs, "\{dir}/other");
   t.isTrue(whyDir2 == "", whyDir2);
 
   Case[] all = [
@@ -238,7 +244,7 @@ export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli 
     Case("sub/deeper/local", false), Case("other/local", false), Case("build", true),
     Case("sub/build", true), Case("sub/ordinary.txt", false), Case("ordinary.txt", false)
   ];
-  string[] theirs = gitIgnores(t, cli, dir, all);
+  string[] theirs = gitIgnores(t, procs, dir, all);
 
   // **The shape, asserted in git's own answer**: the nested negation has to actually bring a file
   // back, and the same name outside that directory has to stay ignored. Without both, the test would
@@ -269,6 +275,6 @@ export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli 
   }
   t.eqI32(wrong, 0, "disagreements with git, the first being \{first}");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

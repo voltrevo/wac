@@ -27,11 +27,12 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsVerify, blsG1Status, blsG2Status } from "./probe.wac";
+import { flatten } from "core";
 
 /** `0x…` as bytes, which is how every field in these fixtures is written. */
 u8[] un(string h) {
@@ -39,11 +40,12 @@ u8[] un(string h) {
 }
 
 /** The vendored fixture file as a name-keyed object, or `null`. */
-JsonObject? fixture(T t, Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
-  if (!f.ok) { return null; }
-  JsonValue? doc = parse(f.bytes).ok();
+JsonObject? fixture(T t, Files fs, string path) {
+  auto fRead = flatten(fs.readFile(path).wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{path} could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return null; }
+  JsonValue? doc = parse(f!).ok();
   t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return null; }
   match (doc!) {
@@ -52,9 +54,10 @@ JsonObject? fixture(T t, Cli cli, string path) {
   }
 }
 
-export string test_every_ethereum_verify_fixture_agrees(Core core, Cli cli) {
+export string test_every_ethereum_verify_fixture_agrees(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject? cases = fixture(t, cli, "packages/bls/test/vendor/eth_verify.json");
+  JsonObject? cases = fixture(t, fs, "packages/bls/test/vendor/eth_verify.json");
   if (cases is null) { return t.report(); }
 
   i32 accepted = 0;
@@ -84,7 +87,8 @@ export string test_every_ethereum_verify_fixture_agrees(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core core, Cli cli) {
+export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // 28 more external cases, all about the encodings — which is where the security lives and where
   // my own generated vectors could only guess at what an implementer gets wrong. Their names are
@@ -95,8 +99,7 @@ export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core 
   i32 failures = 0;
   i32 checked = 0;
   for (i32 g = 0; g < groups.len(); g++) {
-    JsonObject? cases = fixture(t, cli,
-                                "packages/bls/test/vendor/eth_deserialization_\{groups[g]}" +
+    JsonObject? cases = fixture(t, fs, "packages/bls/test/vendor/eth_deserialization_\{groups[g]}" +
                                 ".json");
     if (cases is null) { continue; }
     for (i32 i = 0; i < cases!.len(); i++) {

@@ -1,0 +1,238 @@
+// `/dev`, `/proc` and `/bin` as `Files` — design/system/0013 step 5. Each tree is made up as it is asked, so these
+// check what each path answers and that every change but a write to `/dev/null` is refused.
+
+import { Sys, Files, MemoryStore, Mount, Input, Output, Stat, ReadOnly, NotFound, NotADir, IsDir, Exists } from "std";
+import { Read, Result, Vec } from "core";
+import { devFiles, procFiles, procSelfFiles, binFiles, systemFiles } from "../../src/trees.wac";
+import { ProcTable } from "../../src/proc.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+async string text(Files fs, string p) {
+  match (await fs.readFile(p)) {
+    Ok(b): { return string.fromBytes(b); }
+    Err(e): { return "<\{e}>"; }
+  }
+}
+
+/** A piece's length, or -1 for the end. */
+i32 piece(Read c) {
+  match (c) {
+    Data(b): { return b.len(); }
+    default: { return -1; }
+  }
+}
+
+async string listed(Files fs, string p) {
+  match (await fs.readDir(p)) {
+    Ok(names): {
+      string out = "";
+      for (string n in names) { out = out + (out == "" ? "" : " ") + n; }
+      return out;
+    }
+    Err(e): { return "<\{e}>"; }
+  }
+}
+
+export async string test_dev_has_a_sink_and_two_endless_streams(Sys sys) {
+  T t = T.create();
+  Files dev = devFiles(sys.random());
+  t.eqStr(await listed(dev, "/"), "null random urandom zero", "the four names");
+  t.isTrue((await dev.writeFile("/null", "gone".toBytes())).isOk(), "/dev/null takes a write");
+  t.eqStr(await text(dev, "/null"), "", "and reads as empty");
+  match (await dev.openRead("/null")) {
+    Ok(in): { t.eqI32(piece((await in.chunk()).unwrap()), -1, "a stream of it ends at once"); }
+    Err(e): { t.fail("openRead /null"); }
+  }
+  match (await dev.openWrite("/null")) {
+    Ok(out): {
+      t.isTrue((await out.write("x".toBytes())).isOk(), "a stream to /dev/null takes a write");
+      t.isTrue((await out.close()).isOk(), "and closes");
+    }
+    Err(e): { t.fail("openWrite /null"); }
+  }
+  t.isTrue((await dev.readFile("/zero")).isErr(), "an endless file has no whole to read");
+  match (await dev.openRead("/zero")) {
+    Ok(in): {
+      match (await in.chunk()) {
+        Ok(c): {
+          match (c) {
+            Data(b): { t.isTrue(b.len() > 0 && b[0] == 0, "a piece of zeros"); }
+            default: { t.fail("/dev/zero ended"); }
+          }
+        }
+        Err(e): { t.fail("chunk of /dev/zero"); }
+      }
+      t.isTrue((await in.readAll()).isErr(), "and no end to read up to");
+      await in.close();
+    }
+    Err(e): { t.fail("openRead /zero"); }
+  }
+  match (await dev.openRead("/urandom")) {
+    Ok(in): {
+      match (await in.chunk()) {
+        Ok(c): { t.isTrue(piece(c) > 0, "a piece of random bytes"); }
+        Err(e): { t.fail("chunk of /dev/urandom: \{e}"); }
+      }
+    }
+    Err(e): { t.fail("openRead /urandom"); }
+  }
+  match (await dev.writeFile("/zero", "x".toBytes())) {
+    Ok(v): { t.fail("wrote /dev/zero"); }
+    Err(e): { t.isTrue(e is ReadOnly, "every other write is ReadOnly"); }
+  }
+  t.isTrue((await dev.mkdir("/d", false)).isErr(), "mkdir is refused");
+  t.isTrue((await dev.chmod("/null", 0)).isErr(), "chmod is refused");
+  match (await dev.stat("/null")) {
+    Ok(s): { t.isTrue(s.isFile && s.mode == 438 && s.owner == "root", "/dev/null is a 0666 file owned by root"); }
+    Err(e): { t.fail("stat /null"); }
+  }
+  match (await dev.stat("/nope")) {
+    Ok(s): { t.fail("stat of nothing"); }
+    Err(e): { t.isTrue(e is NotFound, "a missing name is NotFound"); }
+  }
+  return t.report();
+}
+
+export async string test_proc_lists_each_process_and_self(Sys sys) {
+  T t = T.create();
+  ProcTable table = ProcTable.create();
+  Vec<string> argv = Vec.create();
+  argv.push("sh");
+  argv.push("-c");
+  i32 sh = table.start(0, argv, 0 as i64);
+  Vec<string> argv2 = Vec.create();
+  argv2.push("sort");
+  i32 sort = table.start(sh, argv2, 0 as i64);
+  table.current = sort;
+  Files proc = procFiles(table);
+  t.eqStr(await listed(proc, "/"), "1 2 self", "a directory per pid, and self");
+  t.eqStr(await listed(proc, "/1"), "cmdline comm status", "three files each");
+  t.eqStr(await text(proc, "/1/cmdline"), "sh\0-c\0", "argv, NUL-terminated");
+  t.eqStr(await text(proc, "/self/comm"), "sort\n", "self is the current process");
+  t.eqStr(await text(proc, "/2/status"), "Name:\tsort\nState:\tR (running)\nPid:\t2\nPPid:\t1\n", "status");
+  t.isTrue((await proc.readFile("/3/comm")).isErr(), "no such process");
+  match (await proc.readDir("/1/comm")) {
+    Ok(n): { t.fail("listed a file"); }
+    Err(e): { t.isTrue(e is NotADir, "a file is not a directory"); }
+  }
+  match (await proc.readFile("/1")) {
+    Ok(b): { t.fail("read a directory"); }
+    Err(e): { t.isTrue(e is IsDir, "a directory is IsDir"); }
+  }
+  match (await proc.openRead("/2/comm")) {
+    Ok(in): { t.eqStr(string.fromBytes((await in.readAll()).unwrap()), "sort\n", "streamed as well"); }
+    Err(e): { t.fail("openRead /2/comm"); }
+  }
+  table.exited(sort, 0);
+  t.eqStr(await text(proc, "/2/status"), "Name:\tsort\nState:\tZ (zombie)\nPid:\t2\nPPid:\t1\n", "an exited one is a zombie");
+  t.isTrue((await proc.readFile("/1/nope")).isErr(), "a file a process does not have");
+  t.isTrue((await proc.readFile("/1/comm/x")).isErr(), "nothing under a process's file");
+  t.isTrue((await proc.stat("/abc")).isErr(), "a name that is not a pid");
+  t.isTrue((await proc.stat("/1234567890")).isErr(), "a pid too long to be one");
+  t.isTrue((await proc.openRead("/9")).isErr(), "opening a process that is not there");
+  t.isTrue((await proc.openRead("/1")).isErr(), "opening a process's directory");
+  match (await proc.readDir("/9")) {
+    Ok(n): { t.fail("listed a process that is not there"); }
+    Err(e): { t.isTrue(e is NotFound, "NotFound"); }
+  }
+  match (await proc.openRead("/1/comm")) {
+    Ok(in): {
+      t.isTrue((await in.chunk()).isOk(), "the one piece");
+      match (await in.chunk()) {
+        Ok(c): { t.eqI32(piece(c), -1, "then the end"); }
+        Err(e): { t.fail("chunk after the piece"); }
+      }
+      t.eqI32((await in.readAll()).unwrap().len(), 0, "nothing left to read");
+    }
+    Err(e): { t.fail("openRead /1/comm"); }
+  }
+  return t.report();
+}
+
+export async string test_a_childs_proc_self_is_the_child_whatever_is_current(Sys sys) {
+  T t = T.create();
+  ProcTable table = ProcTable.create();
+  Vec<string> argv = Vec.create();
+  argv.push("sh");
+  i32 sh = table.start(0, argv, 0 as i64);
+  Vec<string> argv2 = Vec.create();
+  argv2.push("cat");
+  i32 cat = table.start(sh, argv2, 0 as i64);
+  table.current = sh;
+  Files theirs = Files.mounted([Mount("/proc/self", procSelfFiles(table, cat)), Mount("/proc", procFiles(table))]);
+  t.eqStr(await text(theirs, "/proc/self/comm"), "cat\n", "self is the child it was mounted for");
+  t.eqStr(await text(theirs, "/proc/1/comm"), "sh\n", "and the rest of /proc is the session's");
+  t.eqStr(await listed(theirs, "/proc/self"), "cmdline comm status", "self lists as a process does");
+  t.eqStr(await text(procFiles(table), "/self/comm"), "sh\n", "while the session's own self is still its current");
+  table.exited(cat, 0);
+  table.reap(cat);
+  t.isTrue((await theirs.readFile("/proc/self/comm")).isErr(), "a reaped child has no self");
+  return t.report();
+}
+
+export async string test_bin_lists_the_programs_as_executables(Sys sys) {
+  T t = T.create();
+  Files bin = binFiles(["wc", "cat", "ca"]);
+  t.eqStr(await listed(bin, "/"), "ca cat wc", "sorted by bytes, a prefix first");
+  match (await bin.stat("/wc")) {
+    Ok(s): { t.isTrue(s.isFile && s.isExecutable && s.mode == 493, "0755"); }
+    Err(e): { t.fail("stat /wc"); }
+  }
+  t.isTrue((await text(bin, "/cat")).len() > 0, "a note in place of the program");
+  t.isTrue((await bin.stat("/sort")).isErr(), "a program it does not have");
+  t.isTrue((await bin.stat("/wc/x")).isErr(), "nothing under a program");
+  match (await bin.openAppend("/wc")) {
+    Ok(o): { t.fail("opened /bin/wc to write"); }
+    Err(e): { t.isTrue(e is ReadOnly, "ReadOnly"); }
+  }
+  t.isTrue((await bin.remove("/wc", false)).isErr(), "remove is refused");
+  t.isTrue((await bin.rename("/wc", "/x")).isErr(), "rename is refused");
+  t.isTrue((await bin.setExecutable("/wc", false)).isErr(), "setExecutable is refused");
+  t.isTrue((await bin.chown("/wc", "ada")).isErr(), "chown is refused");
+  t.isTrue((await bin.linkStat("/")).isOk(), "linkStat is stat");
+  match (await bin.openRead("/ca")) {
+    Ok(in): { t.isTrue((await in.chunk()).isOk(), "a program's note streams"); }
+    Err(e): { t.fail("openRead /ca"); }
+  }
+  return t.report();
+}
+
+/**
+ * A system with no programs has no `/bin` at all.
+ *
+ * `packages/ssh`'s server wires no applets, and an **empty** `/bin` would claim more than an absent one:
+ * `ls /` would show a directory of programs with no programs in it. `packages/box`'s `bin_test.wac` asks
+ * the same through a shell; this is the rule where it lives.
+ */
+export async string test_a_system_with_no_programs_has_no_bin(Sys sys) {
+  T t = T.create();
+  Files none = systemFiles(MemoryStore.create(sys.clock()).asUser("root"), sys.random(), ProcTable.create(),
+                           string[].filled(0, ""));
+  string[] top = (await none.readDir("/")).orElse(string[].filled(0, ""));
+  for (i32 i = 0; i < top.len(); i++) { t.isTrue(top[i] != "bin", "an empty /bin was mounted anyway"); }
+  t.isTrue((await none.stat("/bin")).isErr(), "and /bin is not there to stat");
+
+  Files one = systemFiles(MemoryStore.create(sys.clock()).asUser("root"), sys.random(), ProcTable.create(), ["wc"]);
+  t.isTrue((await one.stat("/bin/wc")).isOk(), "a system with a program has it in /bin");
+  return t.report();
+}
+
+/**
+ * A directory in a read-only tree is a directory first and read-only second.
+ *
+ * GNU's answers, measured on `/proc`: `echo x > /proc` is *Is a directory*, `mkdir /proc` is *File
+ * exists*, and `mkdir -p /proc` succeeds. Each asks about something that is there, so the tree being
+ * read-only is not the reason — it is the reason only for a name that is *not* there.
+ */
+export async string test_a_trees_directory_answers_as_a_directory_before_it_answers_read_only(Sys sys) {
+  T t = T.create();
+  Files dev = devFiles(sys.random());
+  auto wrote = await dev.writeFile("/", "x".toBytes());
+  t.isTrue(wrote.isErr() && wrote.err()! is IsDir, "a write to the tree's root: \{wrote.isErr() ? "\{wrote.err()!}" : "ok"}");
+  auto made = await dev.mkdir("/", false);
+  t.isTrue(made.isErr() && made.err()! is Exists, "mkdir of the root: \{made.isErr() ? "\{made.err()!}" : "ok"}");
+  t.isTrue((await dev.mkdir("/", true)).isOk(), "mkdir -p of the root is nothing to do");
+  auto fresh = await dev.mkdir("/d", false);
+  t.isTrue(fresh.isErr() && fresh.err()! is ReadOnly, "and a new name is refused as read-only");
+  return t.report();
+}

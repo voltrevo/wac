@@ -9,254 +9,50 @@
 // listed here is expected to be covered and the run fails if it is not — and anything listed that *does*
 // get covered fails too, since the reason has stopped holding. `issues/system/0222`.
 //
-// ## Pins and rules, and why this package needs both
+// ## What is left to measure
 //
-// A pin names one line and proves it is still that line. That is right when the reason is about *that*
-// line, and it is 33 of them here. But 94 of the 127 uncovered points are one fact repeated — an arm
-// that needs a `Cli` only a built program has, or a peer only a real parent process can be — and 94
-// pins would each carry the same sentence. A `Rule` states it once and says which points it covers.
+// `packages/fs`'s own filesystem, `Fs`, folded into std's `Files` (design/system/0013 step 5), and with it the
+// 127 points that needed a `Cli` only a built program had or a parent process only a real child could ask.
+// What remains is ours rather than general — the trees, the image, the process table, the words for a fault —
+// and none of it needs a capability, so its tests are the whole workload (`cov_exercise.wac`) and almost
+// every point is reached. Two pins and one rule are the rest, each with its reason.
 //
-// `scope` decides what the pattern is matched against: `"line"` the point's own, `"decl"` its enclosing
-// declaration, `"struct"` its enclosing type. A rule that matches nothing fails, exactly as a moved pin
-// does; that is what stops it being a blanket.
+// `proven` is two claims: `true`, no input reaches it; `false`, reachable and nobody has built the input.
 //
-// ## `proven` is two different claims
-//
-//   - `true` — no input reaches it;
-//   - `false` — reachable, and nobody has built the input here. **For most of this package that means
-//     "driven by another test"**, which is a third thing again and is said in each `why`:
-//     `test/host.test.ts` drives the host arms against the real filesystem and
-//     `packages/box/test/sealing.test.ts` drives the remote ones through a real sealed session. This is
-//     where the *measurement* stops, not where the testing does.
-//
-// ## `cov.ts` until 2026-08-20 — `issues/system/0161`
-//
-// The exercises were already wac: `test/wac/cov_probe.wac` has been the whole workload since the probe
-// existed, and the TypeScript instrumented it, called its thirteen exports and held this ledger. The
-// numbers are unchanged — 806 points, 679 covered — because the workload is unchanged.
-//
-// **Its failure message could not be reported, which is the thing this issue was filed about.**
-// `tools/wac/coverageall.wac` repeats a failing task's own explanation and selects the lines by matching
-// `no longer holds`, `is listed as unreach`, `branch point(s) uncovered` and a leading `error`. This
-// package said "N uncovered branch point(s) are not accounted for" — the same words in the other order,
-// matching none of them — so its *principal* failure exited 1 with nothing on screen but "(nothing
-// matched the known failure shapes)". And that same phrase is how `tools/wac/coverageall.wac` decides a package
-// holds a coverage floor, so the strictest ledger here was counted among the ones that only check their
-// own exemptions. The shared ratchet says it the one way.
-//
-// **And two of its 33 pins were the same entry twice, about a branch that is covered.** Both named
-// `image.wac:339` — `if (r.bad) { return -1; }` — with the reason "one of the two `r.bad` checks inside
-// the directory-entry loop … reachable, and not constructed". All five `r.bad` checks in that file are
-// covered. So the ledger carried the same paragraph twice about a gap that was not one, and a staleness
-// check could not tell the difference: line 336 still holds that text, so the snippet matched both
-// times. The two-way ratchet fails it as listed-but-covered, which is how it was found. Both are gone
-// and 31 pins remain.
+// **Its failure message is the shared ratchet's**, which `tools/wac/coverageall.wac` matches — this package's
+// own wording once matched none of the known shapes, so its principal failure printed nothing
+// (`issues/system/0161`).
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Env, Files, Modules, Output, Procs } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/fs/test/cov_exercise.wac";
 
 /**
- * `src/` and **not** `packages/fs/`: the probe's own branches are a test's branches.
+ * `src/` and **not** `packages/fs/`: the tests' own branches are a test's branches.
  *
  * Counting them would put the driver's coverage into the package's number — and, worse, into the
- * ratchet, where an unexercised line of the *probe* would read as an unaccounted line of the package.
+ * ratchet, where an unexercised line of a *test* would read as an unaccounted line of the package.
  */
 static string PREFIX = "packages/fs/src/";
 
-/** Points that cannot be reached from a probe, each named on its own line. */
+/** Points the tests do not reach, each named on its own line. */
 Pin[] pins() {
   return [
-        Pin("packages/fs/src/fs.wac", 154, "export struct Fs {", false,
-        "Not a line of code: every `async` method of `Fs` has its state machine attributed to the " +
-        "struct's line, so this is the union of all their states, and a state any of them leaves " +
-        "untaken — a host mount's, a remote channel's — is uncovered here. `issues/lang/0379a`; " +
-        "this goes when the machines land on their own methods' lines."),
-    Pin("packages/fs/src/remote.wac", 1, "// A filesystem that lives in another process: the child's end, and the parent's.", false,
-        "Not a line of code: the entry of every lowered `async` function's coroutine is attributed " +
-        "to 1:1, and the ones here are the channel's, which need a live handle — see `struct Chan` " +
-        "below. `issues/lang/0379a`; this goes when the entries land on their declarations."),
-        Pin("packages/fs/src/fs.wac", 212, "Fs onHost(Cli cli, i64 now) {", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 542, "Host(cli): { return await cli.readFile(path).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 602, "Host(cli): { return await cli.stat(path).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 666, "Host(cli): { own = await cli.readDir(path).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 702, "Host(cli): {}", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 709, "Host(cli): { return await cli.writeFile(path, data).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 702, "Host(cli): {}", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 778, "Host(cli): { return await cli.mkdir(path, parents).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 833, "Host(cli): { return await cli.remove(path, recursive).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 888, "Host(cli): { return await cli.chmod(path, mode).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 945, "Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chown on a host mount is " +
-        "not implemented\"); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 987, "Host(cli): {", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 991, "Host(cli2): { return await cli.rename(from, to).ticket(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 992, "default: { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not " +
-        "implemented\"); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 998, "Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is " +
-        "not implemented\"); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/image.wac", 120, "default: { skipped.push(mountName(fs.mounts.get(i).at)); }", false,
-        "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
-        "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
-        "built program."),
-    Pin("packages/fs/src/image.wac", 137, "for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }", false,
-        "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
-        "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
-        "built program."),
-    Pin("packages/fs/src/fs.wac", 1067, "if (path.len() < m.at.len()) { return NODE_NONE(); }", true,
-        "A path shorter than the mount that owns it. `mountOf` picks by `underMount`, which " +
-        "requires the mount point to be a whole-component prefix, so a path it returns is " +
-        "never shorter than the mount's own `at`. The one caller that reached it was " +
-        "`writeFile`'s parent lookup for a mount point itself, and that now answers before it " +
-        "gets here. Kept because `find` is called with `parentOf(path)` from several places " +
-        "and a future one could pass something shorter."),
-    Pin("packages/fs/src/fs.wac", 1476, "if (cut < 0) { return path; }", true,
-        "`baseOf` on a path with no slash in it. Every path reaching this package is absolute " +
-        "— the shell resolves before it calls — so there is always at least the leading " +
-        "one. Kept because it is a general helper and returning the whole string is the right " +
-        "answer if that ever stops being true."),
-    // `image.wac`'s `boot` and `save` had nine pins here (they take a `Core` and a `Cli`, and are
-    // driven by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac`).
-    // Dropped 2026-10-16: nothing the exercise imports calls them, so they are no longer compiled into
-    // it and have no branch points to pin — not covered, just not measured.
-    Pin("packages/fs/src/fs.wac", 1066, "if (m.root < 0) { return NODE_NONE(); }", false,
-        "`find` on a mount whose bytes are not in the node pool. `root` is -1 for every " +
-        "backing but `Memory`, and every caller matches those backings out before walking, so " +
-        "this answers for a call none of them makes. Kept, and the comment above it is the " +
-        "argument: it was unreachable in exactly this way when a missing arm turned it into a " +
-        "trap."),
-    Pin("packages/fs/src/fs.wac", 1250, "if (name.len() == 0) { return -1; }", false,
-        "A `/proc/` path whose pid is the empty string. Every path reaching `procPid` has " +
-        "been through `at`, which collapses `//` and drops a trailing slash, so the component " +
-        "after `/proc` is never empty — `/proc//cmdline` and `/proc/` are both driven by " +
-        "`procOps` and both arrive here as something else. The guard is against a future " +
-        "caller that does not normalise first."),
-    Pin("packages/fs/src/fs.wac", 1375, "if (found is null) { return u8[](); }", false,
-        "`procBytes` for a pid with no process. `synthKind` calls `procPid`, which answers -1 " +
-        "for a pid that is not in the table, and a path whose kind is `SYNTH_NONE` never gets " +
-        "as far as reading bytes — so `/proc/9999/cmdline` (driven, in `procOps`) is " +
-        "refused a step earlier. This is the `Proc?` unwrap the type system requires and it " +
-        "has no second answer to give.")
+    Pin("packages/fs/src/trees.wac", 41, "async Result<Read, HostFault> noMore() { return Result.Ok(Read.End); }", true,
+        "The `more` every node that is not endless carries, because a function field needs a value; only an endless " +
+        "node's `more` is ever called."),
+    Pin("packages/fs/src/trees.wac", 166, "Err(e): { return Result.Err(Unsupported(\"\\{e}\")); }", false,
+        "A host with no random source, which every host the tests run on has.")
   ];
 }
 
 /**
- * Classes of point, matched by a pattern rather than named one at a time.
- *
- * Every one of these is `proven: false` and every `why` says which *other* test drives it. That is the
- * shape of this package: what needs a capability or a peer is exercised by a built program against a
- * real filesystem, and a probe can build the filesystems that need neither and no more.
+ * Classes of point, matched by a pattern rather than named one at a time — one sentence for a fact that
+ * repeats, where a pin per point would carry it several times.
  */
 Rule[] rules() {
   return [
-         Rule("packages/fs/src/fs.wac", "Host(cli)", "line", false,
-         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-         "is driven by `test/host.test.ts` and " +
-         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-         "is a better oracle than this probe could be — so this is where the measurement " +
-         "stops, not where the testing does."),
-    Rule("packages/fs/src/fs.wac", "Remote(chan", "line", false,
-         "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot " +
-         "be that peer — a wac fake has no state to answer from — so these are driven by " +
-         "`packages/box/test/sealing.test.ts`, which runs a sealed session whose stages read, " +
-         "write and rename through the channel. That claim was checked rather than remembered " +
-         "on 2026-08-12: the file had no `mv` in it, so `remoteRename` was named here as " +
-         "driven and driven by nothing. It has one now, canaried by making every rename " +
-         "report success."),
-    Rule("packages/fs/src/remote.wac", "struct Chan", "struct", false,
-         "`Chan`'s own methods — `of`, `waiting`, `rearm`, `compact`. Each is about a live " +
-         "handle: the id a `waitAny` waits on, the outstanding read that has to be re-armed, " +
-         "the backlog that has to be compacted. There is no handle without a `Cli` and no " +
-         "answer without a peer, so these move with the channel itself and are exercised " +
-         "wherever a real child asks a real parent."),
-    Rule("packages/fs/src/fs.wac", "Cli cli", "decl", false,
-         "A constructor that takes a `Cli` — `onHost`, `overParent`, `overChan`, " +
-         "`fromParentOrHost`. Only a built program has one, and what they build is exercised " +
-         "by `test/host.test.ts` and by every spawned stage in " +
-         "`packages/box/test/sealing.test.ts`; a probe can build the filesystems that need no " +
-         "capability and no more."),
-    Rule("packages/fs/src/fs.wac", "rename across mounts", "line", false,
-         "The refusal `rename` gives when one end is on a *parent's* filesystem and the other " +
-         "is not. Reaching it needs a mount with a `Remote` backing, which needs a channel to " +
-         "a live peer — the same reason as the arms above, one level in: this is the `else` " +
-         "inside `case Remote`, so a probe with no remote mount cannot get to either side of " +
-         "it. `packages/box/test/sealing.test.ts` is where a stage renames across the " +
-         "boundary."),
     Rule("packages/fs/src/wire.wac", "this.why == \"\"", "line", true,
          "**The `else` of first-error-wins, which cannot happen here.** Every reader that " +
          "records a reason sets `bad` in the same breath, and `byte()` answers zero for a " +
@@ -264,48 +60,28 @@ Rule[] rules() {
          "zero, zero is not negative, and this refusal is never reached a second time. The " +
          "guard is right and is what makes the property hold for the readers that *do* reach " +
          "it twice through other fields; here it is a statement rather than a branch. " +
-         "`cov_probe.wac`'s `wireOps` drives the arm that does fire, and `fs_test.wac` " +
-         "asserts the property from both sides. issues/lang/0112."),
-    Rule("packages/fs/src/remote.wac", "remoteSetExecutable", "line", false,
-         "**The one wire call with no driver anywhere**, named separately so the blanket " +
-         "reason above does not cover for it. Every other opcode is reached by a sealed " +
-         "session because some applet makes that call — `cat` reads, `cp` writes, `mv` " +
-         "renames — but nothing in `packages/box` sets the executable bit: `chmod` is one " +
-         "of the shell's *builtins*, so a sealed `chmod +x` never leaves the parent, and the " +
-         "only caller of `setExecutable` in the repository is `packages/git`'s checkout, " +
-         "which runs on a host filesystem. So this is not 'driven elsewhere' — it is " +
-         "untested, and it is written down here rather than inside a category that says " +
-         "otherwise. A driver would mean an applet that sets the bit — and `packages/sh`'s " +
-         "README says why there is not one: `chmod` is a *builtin*, along with `echo`, " +
-         "`test`, `ls` and `chown`, because 'a builtin is what the shell must answer itself'. " +
-         "So this is not an oversight waiting for a small change; driving it means arguing " +
-         "with that decision, and the cheaper honest answer is this entry. **Half of that " +
-         "argument expired on 2026-08-30**: `issues/system/0296c` added a `chmod` applet, so " +
-         "a sealed session does now reach `chmod` without leaving the parent. It does not " +
-         "reach *this* line — the applet asks `Fs.chmod`, which is the whole mode, and " +
-         "`setExecutable` is the one-bit call `git`'s checkout wants. So the entry stands " +
-         "and its second sentence no longer does: an applet exists, and it is not a driver " +
-         "for this."),
-    Rule("packages/fs/src/remote.wac", "Chan c", "decl", false,
-         "The child's half of the channel: every one of these writes a question and waits for " +
-         "its parent's answer. The *wire* underneath them is covered — `fs_test.wac` " +
-         "round-trips all four encode/decode pairs — and the asking needs a real peer, " +
-         "which is `packages/box/test/sealing.test.ts`.")
+         "`storeimage_test.wac`'s damaged images drive the arm that does fire. issues/lang/0112.")
   ];
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  LedgerFlags flags = LedgerFlags.read(cli);
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Modules mods = sys.modules();
+  LedgerFlags flags = LedgerFlags.read(argv);
 
-  // No grants: every filesystem the probe builds needs no capability, which is what makes it a probe.
-  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), string[].filled(0, ""));
+  // Read and nothing else: every store and tree the tests build needs no capability, and the one file read
+  // is the committed image fixture, which pins the format.
+  Measured m = measure(err, env, fs, procs, EXERCISE, ["--allow-read"], string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
   // union this driver's reach with another's — `issues/system/0241b`.
-  if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
-  report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+  if (flags.points) { reportPoints(out, m.points, m.nPoints, m.counts); return 0; }
+  report(out, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
+  return ratchet(err, out, fs, procs, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
 }

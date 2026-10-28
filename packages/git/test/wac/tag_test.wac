@@ -30,17 +30,18 @@
 // remembered string.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Cli, Exec, Change, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { ParsedTag, Tag, parseTag } from "../../src/commit.wac";
 import { encode as hexOf } from "../../../codec/src/hex.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /** One `git -C <dir>` run: everything this test needs, in one place. */
 struct Git {
-  Cli cli;
+  Procs procs;
   string dir;
 
-  Exec run(const this, string[] args, u8[] stdin) {
+  Exec run(this, string[] args, u8[] stdin) {
     string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
@@ -49,18 +50,18 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=ada@example.com";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, stdin).wait();
+    return flatten(this.procs.exec("git", full, stdin, ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
   }
 
   /** stdout with trailing whitespace removed, which is what a one-line answer wants. */
-  string text(const this, string[] args) {
+  string text(this, string[] args) {
     return trimmed(string.fromBytes(this.run(args, u8[]()).stdout));
   }
 
-  u8[] raw(const this, string[] args) { return this.run(args, u8[]()).stdout; }
+  u8[] raw(this, string[] args) { return this.run(args, u8[]()).stdout; }
 
   /** stdout and stderr together — `git fsck` prints its findings on stderr. */
-  string both(const this, string[] args) {
+  string both(this, string[] args) {
     const Exec r = this.run(args, u8[]());
     return trimmed(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
   }
@@ -82,17 +83,17 @@ bool contains(string text, string needle) {
 }
 
 /** A repository with one commit and one annotated tag on it. */
-Git tagged(T t, Cli cli, string name) {
-  string who = agentDir(cli);
+Git tagged(T t, Procs procs, Env env, Files fs, string name) {
+  string who = agentDir(env);
   string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  Git g = Git(cli, dir);
-  if (!made.ok()) { return g; }
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  Git g = Git(procs, dir);
+  if (made.isErr()) { return g; }
 
   g.run(["init", "-q", "-b", "main"], u8[]());
-  cli.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
+  fs.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
   g.run(["add", "-A"], u8[]());
   Exec c = g.run(["commit", "-qm", "root commit"], u8[]());
   t.eqI32(c.status, 0, "git commit: \{string.fromBytes(c.stderr)}");
@@ -103,9 +104,12 @@ Git tagged(T t, Cli cli, string name) {
   return g;
 }
 
-export string test_an_annotated_tags_fields_are_the_ones_git_prints(Core core, Cli cli) {
+export string test_an_annotated_tags_fields_are_the_ones_git_prints(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = tagged(t, cli, "tag");
+  Git g = tagged(t, procs, env, fs, "tag");
   ParsedTag parsed = parseTag(g.raw(["cat-file", "tag", "v1"]));
   match (parsed) {
     Unreadable(why): {
@@ -126,14 +130,16 @@ export string test_an_annotated_tags_fields_are_the_ones_git_prints(Core core, C
       t.isTrue(contains(tag.message, "with a body"), "the body is missing: \{tag.message}");
     }
   }
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 
-export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too(
-    Core core, Cli cli) {
+export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = tagged(t, cli, "tag2");
+  Git g = tagged(t, procs, env, fs, "tag2");
   string commit = g.text(["rev-parse", "HEAD"]);
 
   // `--literally` because git refuses to *create* this shape — see the header. What is being tested
@@ -159,7 +165,7 @@ export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too
       t.eqStr(tag.message, "no tagger here\n", "the message");
     }
   }
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 

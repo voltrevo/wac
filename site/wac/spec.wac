@@ -20,7 +20,7 @@
 //
 // It was site/src/next/specModel.ts and Spec.tsx, which loaded each chapter in the browser.
 
-import { Cli } from "std";
+import { Files } from "std";
 import { Vec } from "core";
 import { Node, html.a, html.code, html.div, html.em, html.h1, html.h2, html.h3, html.li, html.ol, html.p,
          html.span, html.strong, html.table, html.tbody, html.td, html.th, html.thead, html.tr,
@@ -88,16 +88,16 @@ export struct SpecSource {
 }
 
 /** `spec/` under `root`: its README, its status files, and every chapter the README lists. */
-export SpecSource readSpec(Cli cli, string root) {
-  string readme = readText(cli, root + "/spec/README.md");
+export SpecSource readSpec(Files fs, string root) {
+  string readme = readText(fs, root + "/spec/README.md");
   Chapter[] chs = chaptersOf(readme);
   string[] paths = string[].filled(chs.len(), "");
   string[] texts = string[].filled(chs.len(), "");
   for (i32 i = 0; i < chs.len(); i++) {
     paths[i] = chs[i].path;
-    texts[i] = readText(cli, root + "/spec/" + chs[i].path);
+    texts[i] = readText(fs, root + "/spec/" + chs[i].path);
   }
-  return SpecSource(readme, readText(cli, root + "/spec/_status/MET"), readText(cli, root + "/spec/_status/STATUS.md"),
+  return SpecSource(readme, readText(fs, root + "/spec/_status/MET"), readText(fs, root + "/spec/_status/STATUS.md"),
                     paths, texts);
 }
 

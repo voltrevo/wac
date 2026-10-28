@@ -13,11 +13,11 @@
 //
 // `--reference` and `-R` are GNU's and are not here either.
 
-import { Change, Cli, Core, reasonOf } from "std";
+import { Cli, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
 /** A parsed mode, or `ok = false` when the spelling is not one this understands. */
 struct Mode {
@@ -54,12 +54,12 @@ Mode parseMode(string spec) {
   return Mode(true, false, v);
 }
 
-export async i32 chmod(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+export async i32 chmod(Output err, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(err, a.name, ""); }
   // GNU: "chmod: missing operand after 'MODE'". The mode alone is not an invocation.
   if (a.rest.len() < 2) {
-    core.warn("\{a.name}: missing operand after '\{a.rest[0]}'");
+    err.line("\{a.name}: missing operand after '\{a.rest[0]}'");
     return 1;
   }
   Mode m = parseMode(a.rest[0]);
@@ -67,18 +67,18 @@ export async i32 chmod(Core core, Cli cli, Fs fs, Args a) {
     if (m.symbolic) {
       // Named as unwritten rather than invalid: `u+x` is a real mode and this is our gap, and saying
       // "invalid mode" about it would blame the caller for something they spelled correctly.
-      core.warn("\{a.name}: symbolic modes are not implemented: '\{a.rest[0]}'");
-      core.warn("\{a.name}: a mode cannot be read back on this filesystem, so `+` and `-` have nothing to start from");
+      err.line("\{a.name}: symbolic modes are not implemented: '\{a.rest[0]}'");
+      err.line("\{a.name}: a mode cannot be read back on this filesystem, so `+` and `-` have nothing to start from");
     } else {
-      core.warn("\{a.name}: invalid mode: '\{a.rest[0]}'");
+      err.line("\{a.name}: invalid mode: '\{a.rest[0]}'");
     }
     return 1;
   }
   i32 code = 0;
   for (i32 i = 1; i < a.rest.len(); i++) {
-    Change c = await fs.chmod(a.rest[i], m.bits);
-    if (c.ok()) { continue; }
-    core.warn("\{a.name}: changing permissions of '\{a.rest[i]}': \{reasonOf(c)}");
+    auto c = await fs.chmod(a.rest[i], m.bits);
+    if (c.isOk()) { continue; }
+    err.line("\{a.name}: changing permissions of '\{a.rest[i]}': \{reason(c.err()!)}");
     code = 1;
   }
   return code;

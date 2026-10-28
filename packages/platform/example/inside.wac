@@ -2,20 +2,15 @@
 //
 //   inside <a writable directory>
 //
-// `pushChild` and `popChild` are what a shell needs and nothing else does: something has to run
-// `grep`, keep what it printed, and hand it to the next stage. In wac that cannot be done by
-// giving the program a different `Cli` — there are no closures, so a substitute capability has
-// nowhere to put what it collected. So the host holds the child's world instead, for as long as
-// the child is running.
-//
-// **That sentence was true when it was written and is not now**, which is the whole point of
-// `insideValue.wac` beside this file: lambdas landed 2026-08-16 and capture by reference, so the
-// substitute `Cli` it says is impossible is written there and produces byte-identical output. It is
-// left standing rather than corrected because `insideValue.wac` quotes it. Whether `Cli.capture`
-// should survive the change is `issues/system/0327a`.
+// A shell needs this and little else does: something has to run `grep`, keep what it printed, and
+// hand it to the next stage. A program's world is the handles it is given — an `Input`, two
+// `Output`s, a `Files` — so the caller builds the child's world as values and passes them in:
+// bytes for its input, a `Kept` for each output stream, and its files `relativeTo` the directory it
+// stands in. There used to be a host frame for this (`pushChild`/`popChild`), from before closures,
+// when a substitute capability had nowhere to put what it collected; `issues/system/0327a`.
 //
 // The "child" here is `shout`, an ordinary function in this file. That is the point worth seeing:
-// it reads `cli.readStdin()`, writes `cli.write(...)`, complains with `core.warn(...)` and opens a
+// it reads its standard input, writes its output, complains on its error stream and opens a
 // file by a relative path — all the things a program does, none of them written for this — and it
 // is the *caller* that decides what those mean. `packages/box`'s sixty applets are wired into
 // `packages/sh` this way, unchanged.
@@ -24,33 +19,35 @@
 // boundary is `spawn`, a separate worker with its own grants, which a browser cannot do yet
 // (issue 0030).
 
-import { Captured, Cli, Core, FileResult, Sys } from "std";
+import { Sys, Files, Input, Output } from "std";
+import { Kept } from "../src/stream.wac";
+import { bytesInput } from "../../fs/src/trees.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 1) {
-    core.warn("usage: inside <a writable directory>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  if (argv.len() < 1) {
+    err.line("usage: inside <a writable directory>");
     return 2;
   }
-  string dir = string.fromBytes(cli.arg(0).wait());
+  string dir = argv[0];
 
   // Something for the child to find by a *relative* name, which is the whole of the cwd claim.
-  cli.writeFile("\{dir}/note.txt", "from the file\n".toBytes()).wait();
+  fs.writeFile("\{dir}/note.txt", "from the file\n".toBytes()).wait();
 
   // The world the child sees: its name and arguments, its standard input, and where it stands.
-  cli.pushChild(["shout", "-x", "note.txt"], "from stdin\n".toBytes(), dir, false).wait();
-  i32 status = shout(core, cli);
-  Captured got = cli.popChild().wait();
+  Kept said = Kept.create();
+  Kept moaned = Kept.create();
+  i32 status = shout(["shout", "-x", "note.txt"], bytesInput("from stdin\n".toBytes()), moaned.out, said.out,
+                     fs.relativeTo(dir));
 
   // None of the child's output reached this terminal; all of it came back here.
-  core.log("status \{status}");
-  core.log("out   \{oneLine(got.out)}");
-  core.log("err   \{oneLine(got.err)}");
-  // The third thing a frame answers: whether `out` is all of it. False here and in any program whose
-  // child writes less than the buffer holds — it is the *other* answer that matters, because a child
-  // that filled the buffer stops cleanly and its short output looks complete. See `Captured`.
-  core.log("whole " + (got.truncated ? "no" : "yes"));
+  out.line("status \{status}");
+  out.line("out   \{oneLine(said.bytes())}");
+  out.line("err   \{oneLine(moaned.bytes())}");
   return 0;
 }
 
@@ -60,25 +57,25 @@ export i32 main(Sys sys) {
  * Nothing here knows it is a child. It asks for its arguments, its input and a file by name, the
  * same as any program — which is what makes running it inside another one possible at all.
  */
-i32 shout(Core core, Cli cli) {
-  // `arg(0)` is its own name and `arg(1)` its first argument, the layout `box` uses.
-  bool loud = cli.argCount().wait() > 1 && string.fromBytes(cli.arg(1).wait()) == "-x";
-  string named = string.fromBytes(cli.arg(2).wait());
+i32 shout(string[] argv, Input stdin, Output err, Output out, Files fs) {
+  // `argv[0]` is its own name and `argv[1]` its first argument, the layout `box` uses.
+  bool loud = argv.len() > 1 && argv[1] == "-x";
+  string named = argv[2];
 
-  u8[] input = cli.readStdin().wait();
-  cli.write(upper(input));
+  u8[] input = flatten(stdin.readAll().wait()).orElse(u8[]());
+  out.write(upper(input));
 
-  FileResult f = cli.readFile(named).wait();
-  if (!f.ok) {
+  auto fRead = flatten(fs.readFile(named).wait());
+  u8[]? f = fRead.ok();
+  if ((f is null)) {
     // Goes to the child's own error stream, not this terminal's.
-    core.warn("shout: \{named}: \{f.error}");
+    err.line("shout: \{named}: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
     return 1;
   }
-  cli.write(loud ? upper(f.bytes) : f.bytes);
+  out.write(loud ? upper(f!) : f!);
 
-  // `log` is standard output too, and is captured with the rest.
-  core.log("read \{f.bytes.len()} bytes");
-  core.warn("shout: nothing wrong, just talking");
+  out.line("read \{f!.len()} bytes");
+  err.line("shout: nothing wrong, just talking");
   return 0;
 }
 

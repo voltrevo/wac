@@ -5,8 +5,8 @@
 // **A link to a heading that is not there is the failure this exists for.** The browser follows it
 // without complaint — the page opens at its top — and nothing about the page that wrote it looks wrong.
 
-import { Change, Cli, Core, Exec, Stat } from "std";
-import { Vec } from "core";
+import { Change, Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { Vec, flatten } from "core";
 import { T } from "../../../packages/wactest/src/assert.wac";
 import { Attr, Node } from "../../../packages/web";
 import { Doc } from "../ui.wac";
@@ -53,11 +53,12 @@ bool has(Vec<string> v, string s) {
   return false;
 }
 
-Doc[] built(Cli cli) { return site(readFigures(cli, "."), readSpec(cli, ".")); }
+Doc[] built(Files fs) { return site(readFigures(fs, "."), readSpec(fs, ".")); }
 
-export string test_the_figures_are_the_trees(Core core, Cli cli) {
+export string test_the_figures_are_the_trees(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Figures F = readFigures(cli, ".");
+  Figures F = readFigures(fs, ".");
   t.isTrue(F.totals.packages > 30 && F.built.len() == F.totals.packages,
            "MAP.md's package count is its rows: \{F.totals.packages} and \{F.built.len()}");
   t.isTrue(F.totals.lines > 100000 && F.totals.tests > 1000, "and its totals parsed: \{F.totals.lines} lines, \{F.totals.tests} tests");
@@ -68,9 +69,10 @@ export string test_the_figures_are_the_trees(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_every_link_between_pages_lands_on_a_file_and_a_heading_it_draws(Core core, Cli cli) {
+export string test_every_link_between_pages_lands_on_a_file_and_a_heading_it_draws(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Doc[] docs = built(cli);
+  Doc[] docs = built(fs);
   Vec<string> beside = Vec.create();
   for (string f in demos()) { beside.push(f); }
   i32 named = 0;
@@ -102,9 +104,10 @@ export string test_every_link_between_pages_lands_on_a_file_and_a_heading_it_dra
   return t.report();
 }
 
-export string test_no_page_draws_one_id_twice(Core core, Cli cli) {
+export string test_no_page_draws_one_id_twice(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  for (Doc d in built(cli)) {
+  for (Doc d in built(fs)) {
     Vec<string> ids = Vec.create();
     idsIn(d.body, ids);
     for (i32 i = 0; i < ids.len(); i++) {
@@ -128,12 +131,13 @@ export string test_the_redirect_knows_every_page_but_the_spec_by_name() {
 }
 
 /** `wac check` of `files` (names and texts) written under `dir`, entry first: what it said, or "" when clean. */
-string checks(Cli cli, string dir, string[] names, string[] texts) {
-  cli.mkdir(dir, true).wait();
-  for (i32 i = 0; i < names.len(); i++) { cli.writeFile(dir + "/" + names[i], texts[i].toBytes()).wait(); }
-  Exec r = cli.exec(wacBinary(cli), ["check", dir + "/" + names[0]], u8[]()).wait();
-  if (!r.ran()) { return "could not run wac: " + r.error; }
-  return r.status == 0 ? "" : string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+string checks(Env env, Files fs, Procs procs, string dir, string[] names, string[] texts) {
+  fs.mkdir(dir, true).wait();
+  for (i32 i = 0; i < names.len(); i++) { fs.writeFile(dir + "/" + names[i], texts[i].toBytes()).wait(); }
+  auto rRan = flatten(procs.exec(wacBinary(env), ["check", dir + "/" + names[0]], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return "could not run wac: " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"; }
+  return r!.status == 0 ? "" : string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
 }
 
 /**
@@ -141,17 +145,20 @@ string checks(Cli cli, string dir, string[] names, string[] texts) {
  * front page's is the most embarrassing one on the site to have broken. The core pair is a claim too:
  * neither file declares `Read` and they still meet through it, which only a compile can check.
  */
-export string test_the_pages_runnable_snippets_compile(Core core, Cli cli) {
+export string test_the_pages_runnable_snippets_compile(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] names = ["EX_GREET", "EX_HELLO", "EX_L5", "EX_START_HELLO", "EX_MATH", "EX_STRUCT", "EX_CONST", "EX_NULLABLE",
                     "EX_ENUM", "EX_UNION", "EX_GENERIC", "EX_ARRAYS"];
   string[] texts = [EX_GREET, EX_HELLO, EX_L5, EX_START_HELLO, EX_MATH, EX_STRUCT, EX_CONST, EX_NULLABLE, EX_ENUM,
                     EX_UNION, EX_GENERIC, EX_ARRAYS];
   for (i32 i = 0; i < names.len(); i++) {
-    string said = checks(cli, ".cache/site-snippets/" + names[i], ["a.wac"], [texts[i]]);
+    string said = checks(env, fs, procs, ".cache/site-snippets/" + names[i], ["a.wac"], [texts[i]]);
     t.eqStr(said, "", names[i] + " compiles");
   }
-  t.eqStr(checks(cli, ".cache/site-snippets/core", ["main.wac", "report.wac"], [EX_CORE_MAIN, EX_CORE_LIB]), "",
+  t.eqStr(checks(env, fs, procs, ".cache/site-snippets/core", ["main.wac", "report.wac"], [EX_CORE_MAIN, EX_CORE_LIB]), "",
           "the core snippets are one program");
   return t.report();
 }
@@ -161,12 +168,13 @@ export string test_the_pages_runnable_snippets_compile(Core core, Cli cli) {
  * the page goes on showing what it used to say. Compiling them is not the check — L2 to L4 are not wac,
  * and a compiler that accepted them would be the thing going wrong.
  */
-export string test_the_ladder_pages_rung_excerpts_are_verbatim(Core core, Cli cli) {
+export string test_the_ladder_pages_rung_excerpts_are_verbatim(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   string[] excerpts = [EX_L2, EX_L3, EX_L4];
   string[] files = ["l3.l2", "l4.l3", "l5.l4"];
   for (i32 i = 0; i < 3; i++) {
-    t.isTrue(readText(cli, "bootstrap/boot/" + files[i]).indexOf(excerpts[i]) >= 0,
+    t.isTrue(readText(fs, "bootstrap/boot/" + files[i]).indexOf(excerpts[i]) >= 0,
              "EX_L\{i + 2} is verbatim in bootstrap/boot/" + files[i]);
   }
   return t.report();
@@ -198,12 +206,13 @@ void commandWords(string src, Vec<string> into) {
  * `wac self uninstall` and the site printed the old spelling in two places; a reader who typed it got
  * `unknown command`. Only what is marked as code — the pages say "wac is" in prose all over.
  */
-export string test_the_command_spellings_the_site_prints_are_the_cli_pages(Core core, Cli cli) {
+export string test_the_command_spellings_the_site_prints_are_the_cli_pages(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string chapter = readText(cli, "spec/8-tooling/45-cli.md");
+  string chapter = readText(fs, "spec/8-tooling/45-cli.md");
   Vec<string> words = Vec.create();
-  for (string f in filesUnder(cli, "site/wac")) {
-    if (f.indexOf("/test/") < 0 && f.indexOf(".wac") == f.len() - 4) { commandWords(readText(cli, f), words); }
+  for (string f in filesUnder(fs, "site/wac")) {
+    if (f.indexOf("/test/") < 0 && f.indexOf(".wac") == f.len() - 4) { commandWords(readText(fs, f), words); }
   }
   t.isTrue(words.len() >= 3, "the pages print commands, or this read nothing: \{words.len()}");
   for (i32 i = 0; i < words.len(); i++) {
@@ -217,12 +226,13 @@ export string test_the_command_spellings_the_site_prints_are_the_cli_pages(Core 
  * **Every repository path the site links to is in the tree** — `BLOB + "/path"` and `TREE + "/path"`,
  * written as literals. The links are public and a dead one is a 404 for anyone who follows it.
  */
-export string test_every_repository_path_the_site_links_to_is_in_the_tree(Core core, Cli cli) {
+export string test_every_repository_path_the_site_links_to_is_in_the_tree(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   i32 seen = 0;
-  for (string f in filesUnder(cli, "site/wac")) {
+  for (string f in filesUnder(fs, "site/wac")) {
     if (f.indexOf("/test/") >= 0) { continue; }
-    string src = readText(cli, f);
+    string src = readText(fs, f);
     for (string open in ["BLOB + \"/", "TREE + \"/"]) {
       i32 at = src.indexOf(open);
       while (at >= 0) {
@@ -232,8 +242,8 @@ export string test_every_repository_path_the_site_links_to_is_in_the_tree(Core c
         i32 hash = path.indexOf("#");
         if (hash >= 0) { path = path.slice(0, hash); }
         if (path != "") {
-          Stat st = cli.stat(path).wait();
-          t.isTrue(st.exists, f + " links to " + path + ", which is not in the tree");
+          Stat? st = flatten(fs.stat(path).wait()).ok();
+          t.isTrue((st is not null), f + " links to " + path + ", which is not in the tree");
           seen++;
         }
         i32 next = src.slice(end, src.len()).indexOf(open);
@@ -250,11 +260,12 @@ export string test_every_repository_path_the_site_links_to_is_in_the_tree(Core c
  * the compiler, so it is rounded and checked rather than exact. The seed is one per checkout and
  * gitignored, so a checkout without one cannot answer — which is not a failure.
  */
-export string test_the_seed_size_the_front_page_states_is_the_seeds(Core core, Cli cli) {
+export string test_the_seed_size_the_front_page_states_is_the_seeds(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Stat st = cli.stat("native/v8/seed/wacc.wasm").wait();
-  if (!st.exists) { return t.report(); }
-  i32 kb = (st.size / (1000 as i64)) as! i32;
+  Stat? st = flatten(fs.stat("native/v8/seed/wacc.wasm").wait()).ok();
+  if ((st is null)) { return t.report(); }
+  i32 kb = (st!.size / (1000 as i64)) as! i32;
   i32 said = 0;
   for (u8 c in SEED_KB.toBytes()) { if (c >= '0' && c <= '9') { said = said * 10 + (c - '0') as i32; } }
   t.isTrue(kb * 10 >= said * 9 && kb * 10 <= said * 11,

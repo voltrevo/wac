@@ -53,8 +53,9 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Asked, agree } from "../../../wactest/src/inline.wac";
-import { Core, Cli, Exec, Sys } from "std";
+import { Exec, ChildEnv, Env, Launch, Output, Procs, Sys } from "std";
 import { decodeRender } from "./probe.wac";
+import { flatten } from "core";
 import { unhex, T_UINT, T_BOOL, T_ADDRESS } from "./descriptor.wac";
 
 /**
@@ -139,32 +140,35 @@ export string test_every_malformation_is_refused_and_says_which_rule() {
  * lane without `--allow-env` cannot reach `~/tools/foundry` and would otherwise report a table half
  * of which was never measured, as agreement. `issues/system/0173`.
  */
-string findCast(Core core, Cli cli) {
-  Exec onPath = cli.exec("cast", ["--version"], u8[]()).wait();
-  if (onPath.ran() && onPath.status == 0) { return "cast"; }
-  u8[]? h = cli.env("HOME").wait();
+string findCast(Output err, Env env, Procs procs) {
+  auto onPathRan = flatten(procs.exec("cast", ["--version"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? onPath = onPathRan.ok();
+  if ((onPath is not null) && onPath!.status == 0) { return "cast"; }
+  u8[]? h = flatten(env.get("HOME").wait()).orElse(null);
   if (h is null) {
-    core.warn("packages/abi/test/wac/strictness_test.wac: no `cast` on PATH, and HOME could not be " +
+    err.line("packages/abi/test/wac/strictness_test.wac: no `cast` on PATH, and HOME could not be " +
               "read so ~/tools/foundry could not be checked. Run this lane with --allow-env.");
     return "nolookup";
   }
   string candidate = "\{string.fromBytes(h!)}/tools/foundry/cast";
-  Exec there = cli.exec(candidate, ["--version"], u8[]()).wait();
-  if (there.ran() && there.status == 0) { return candidate; }
-  core.warn("packages/abi/test/wac/strictness_test.wac: no `cast` — half the table is not measured.");
+  auto thereRan = flatten(procs.exec(candidate, ["--version"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? there = thereRan.ok();
+  if ((there is not null) && there!.status == 0) { return candidate; }
+  err.line("packages/abi/test/wac/strictness_test.wac: no `cast` — half the table is not measured.");
   return "missing";
 }
 
 /** What `cast abi-decode` does with a row's bytes: `accepts` when it exits zero. */
-string castVerdict(T t, Cli cli, string cast, Row r) {
-  Exec e = cli.exec(cast, ["abi-decode", "f()(\{r.type})", r.data], u8[]()).wait();
-  t.isTrue(e.ran(), "cast did not run for \"\{r.what}\" — \{e.error}");
-  return e.ran() && e.status == 0 ? "accepts" : "refuses";
+string castVerdict(T t, Procs procs, string cast, Row r) {
+  auto ran = flatten(procs.exec(cast, ["abi-decode", "f()(\{r.type})", r.data], u8[](), ChildEnv.inherited(),
+                                Launch.plain()).wait());
+  t.isTrue(ran.isOk(), "cast did not run for \"\{r.what}\" — \{ran.isErr() ? "\{ran.err()!}" : ""}");
+  return ran.isOk() && ran.unwrap().status == 0 ? "accepts" : "refuses";
 }
 
 export async string test_the_table_of_what_the_real_tools_do_is_still_true(Sys sys) {
   T t = T.create();
-  string cast = findCast(sys.core, sys.cli);
+  string cast = findCast(sys.stderr(), sys.env(), sys.procs());
   t.isTrue(cast != "nolookup",
            "cast could not be looked for: this lane has no --allow-env, so half this table would " +
            "be unmeasured rather than agreed");
@@ -176,7 +180,7 @@ export async string test_the_table_of_what_the_real_tools_do_is_still_true(Sys s
     // was already reported above as unmeasured rather than passed.
     asked.add("ethers \{rs[i].type} \{rs[i].data}", rs[i].ethers);
     if (cast == "nolookup" || cast == "missing") { continue; }
-    string got = castVerdict(t, sys.cli, cast, rs[i]);
+    string got = castVerdict(t, sys.procs(), cast, rs[i]);
     t.eqStr(got, rs[i].cast,
             "cast on \"\{rs[i].what}\" (\{rs[i].type} \{rs[i].data}) — re-measure the table");
   }

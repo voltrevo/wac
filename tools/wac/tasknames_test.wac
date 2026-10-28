@@ -49,11 +49,12 @@
 // is usually a rule asking the wrong question.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Files, Output, Procs, Stat, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { has } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { Task, hasTask, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
+import { flatten } from "core";
 
 /** The extensions worth reading. A task name is quoted in prose, in code and in shell alike. */
 string[] kinds() { return [".md", ".ts", ".tsx", ".wac", ".sh", ".json5"]; }
@@ -122,9 +123,9 @@ Named[] namesAfter(string text, string runner) {
 }
 
 /** Read a file, or "". */
-string readAll(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string readAll(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 /**
@@ -149,7 +150,7 @@ string[] mayNameTheOldRunner() {
 }
 
 /** The nearest `tasks.json5` at or above `file`'s directory — the repository's when there is none closer. */
-string registryFor(Cli cli, string file) {
+string registryFor(Files fs, string file) {
   string dir = file;
   while (true) {
     i32 cut = -1;
@@ -157,29 +158,32 @@ string registryFor(Cli cli, string file) {
     if (cut < 0) { return tasksFile(); }
     dir = dir.slice(0, cut);
     string here = dir + "/tasks.json5";
-    if (cli.stat(here).wait().isFile) { return here; }
+    if (flatten(fs.stat(here).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) { return here; }
   }
 }
 
-export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Core core, Cli cli) {
+export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Task[] tasks = tasksIn(readAll(cli, tasksFile()).toBytes());
+  Task[] tasks = tasksIn(readAll(fs, tasksFile()).toBytes());
   t.isTrue(tasks.len() > 50, "only " + itoa(tasks.len()) + " tasks parsed from " + tasksFile());
 
-  string[] files = sourceFiles(core, cli, kinds(), string[]());
+  string[] files = sourceFiles(err, procs, kinds(), string[]());
   t.isTrue(files.len() > 500, "only " + itoa(files.len()) + " sources found");
 
   i32 checked = 0;
   string wrong = "";
   for (i32 i = 0; i < files.len(); i++) {
     if (!isCurrent(files[i])) { continue; }
-    Named[] said = namesAfter(readAll(cli, files[i]), "wac");
+    Named[] said = namesAfter(readAll(fs, files[i]), "wac");
     if (said.len() == 0) { continue; }
     // **Against the registry that would run it** — the nearest `tasks.json5` at or above the file,
     // which is the one `wac task` reads there. `templates/webapp` is a project of its own with its
     // own `build`, and its README naming it is right.
-    string registry = registryFor(cli, files[i]);
-    Task[] own = registry == tasksFile() ? tasks : tasksIn(readAll(cli, registry).toBytes());
+    string registry = registryFor(fs, files[i]);
+    Task[] own = registry == tasksFile() ? tasks : tasksIn(readAll(fs, registry).toBytes());
     for (i32 k = 0; k < said.len(); k++) {
       checked = checked + 1;
       if (hasTask(own, said[k].name)) { continue; }
@@ -193,7 +197,10 @@ export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Core core
   return t.report();
 }
 
-export string test_nothing_current_tells_you_to_run_a_live_task_through_deno(Core core, Cli cli) {
+export string test_nothing_current_tells_you_to_run_a_live_task_through_deno(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // **The rule is about the name, not the phrase.** `deno task app:native` names a task that was
   // retired in `d1c5b0ae`; nobody can follow it, and the sentence around it is almost always saying
@@ -205,15 +212,15 @@ export string test_nothing_current_tells_you_to_run_a_live_task_through_deno(Cor
   // that a blanket rename had turned two dozen *accurate past-tense* mentions into `wac task
   // app:native` and friends, naming commands that never existed under that runner. Reverting those
   // and asking about the name instead left three exceptions.
-  Task[] tasks = tasksIn(readAll(cli, tasksFile()).toBytes());
+  Task[] tasks = tasksIn(readAll(fs, tasksFile()).toBytes());
   string[] allowed = mayNameTheOldRunner();
-  string[] files = sourceFiles(core, cli, kinds(), string[]());
+  string[] files = sourceFiles(err, procs, kinds(), string[]());
   i32 retired = 0;
   i32 exempt = 0;
   string wrong = "";
   for (i32 i = 0; i < files.len(); i++) {
     if (!isCurrent(files[i])) { continue; }
-    Named[] said = namesAfter(readAll(cli, files[i]), "deno");
+    Named[] said = namesAfter(readAll(fs, files[i]), "deno");
     for (i32 k = 0; k < said.len(); k++) {
       if (!hasTask(tasks, said[k].name)) { retired = retired + 1; continue; }
       if (has(allowed, files[i])) { exempt = exempt + 1; continue; }
@@ -266,9 +273,12 @@ string spawnedTaskName(string text) {
  * command, and this sends *CI* to one. The second is worse — it is the case nobody sees until
  * something outside the repository says so.
  */
-export string test_nothing_spawns_a_task_through_deno(Core core, Cli cli) {
+export string test_nothing_spawns_a_task_through_deno(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] files = sourceFiles(core, cli, kinds(), string[]());
+  string[] files = sourceFiles(err, procs, kinds(), string[]());
   string wrong = "";
   i32 looked = 0;
   for (i32 i = 0; i < files.len(); i++) {
@@ -276,7 +286,7 @@ export string test_nothing_spawns_a_task_through_deno(Core core, Cli cli) {
     if (path.len() < 3 || path.slice(path.len() - 3, path.len()) != ".ts") { continue; }
     if (path == "tools/wac/tasknames_test.wac") { continue; }
     looked = looked + 1;
-    string name = spawnedTaskName(readAll(cli, path));
+    string name = spawnedTaskName(readAll(fs, path));
     if (name == "") { continue; }
     wrong = wrong + "\n  " + path + ": spawns `deno` with `[\"task\", \"" + name + "\"]`";
   }
@@ -289,7 +299,7 @@ export string test_nothing_spawns_a_task_through_deno(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_scope_rule_is_the_one_the_header_describes(Core core, Cli cli) {
+export string test_the_scope_rule_is_the_one_the_header_describes() {
   T t = T.create();
   // The boundary is the whole judgement in this file, so it is stated as cases rather than left to
   // the reader of `isCurrent`.

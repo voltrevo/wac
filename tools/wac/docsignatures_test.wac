@@ -39,9 +39,9 @@
 // declaration structure; the tokens give the exact text.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Cli, Core, Files, Output, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { linesOf } from "../../packages/wacc/src/text.wac";
 import { tracked } from "../../packages/wactest/src/repo.wac";
@@ -53,9 +53,9 @@ import { tokenTextOf } from "../../packages/wacc/src/emit.wac";
 import { coreSource, stdSource } from "../../packages/wacc/src/coretext.wac";
 
 /** Read a file, or "". */
-string readAll(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string readAll(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 /** `packages/fmt/README.md` -> `fmt`. */
@@ -201,15 +201,15 @@ void collect(Decls d, u8[] src) {
  * inside the compiler — but `Read`, `Data`, `End` and `Failed` are named by READMEs all over this
  * repository and are the most real names here.
  */
-Decls declarations(Core core, Cli cli) {
+Decls declarations(Output err, Files fs, Procs procs) {
   Decls d = emptyDecls();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   for (i32 i = 0; i < all.len(); i++) {
     string p = all[i];
     if (p.len() < 13 || p.slice(0, 9) != "packages/") { continue; }
     if (!contains(p, "/src/")) { continue; }
     if (p.slice(p.len() - 4, p.len()) != ".wac") { continue; }
-    collect(d, readAll(cli, p).toBytes());
+    collect(d, readAll(fs, p).toBytes());
   }
   // **The embedded trees, which are not under `packages/`.** `core` ships inside the compiler, and
   // `std/platform.wac` is where `Core` and `Cli` declare every capability — so `outputError()`,
@@ -222,8 +222,8 @@ Decls declarations(Core core, Cli cli) {
 }
 
 /** Every package's `README.md` that git tracks. */
-string[] readmes(Core core, Cli cli) {
-  string[] all = tracked(core, cli);
+string[] readmes(Output err, Procs procs) {
+  string[] all = tracked(err, procs);
   string[] hit = string[].filled(256, "");
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
@@ -338,20 +338,23 @@ string exportedName(string line) {
   return head.slice(lastSpace + 1, head.len());
 }
 
-export string test_an_export_signature_in_a_readme_is_the_signature_in_the_source(Core core, Cli cli) {
+export string test_an_export_signature_in_a_readme_is_the_signature_in_the_source(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Decls d = declarations(core, cli);
+  Decls d = declarations(err, fs, procs);
   t.isTrue(d.names.len() > 500,
            "only " + itoa(d.names.len()) + " declarations found — the walk or the parser has moved");
   t.isTrue(d.sigNames.len() > 100, "only " + itoa(d.sigNames.len()) + " exported signatures found");
 
-  string[] docs = readmes(core, cli);
+  string[] docs = readmes(err, procs);
   t.isTrue(docs.len() >= 15, "only " + itoa(docs.len()) + " package READMEs found");
 
   string wrong = "";
   for (i32 i = 0; i < docs.len(); i++) {
     string pkg = pkgOf(docs[i]);
-    string[] fences = wacFences(readAll(cli, docs[i]));
+    string[] fences = wacFences(readAll(fs, docs[i]));
     for (i32 f = 0; f < fences.len(); f++) {
       string[] lines = linesOf(fences[f]);
       for (i32 l = 0; l < lines.len(); l++) {
@@ -391,16 +394,19 @@ export string test_an_export_signature_in_a_readme_is_the_signature_in_the_sourc
   return t.report();
 }
 
-export string test_a_call_shaped_reference_in_a_readme_names_something_real(Core core, Cli cli) {
+export string test_a_call_shaped_reference_in_a_readme_names_something_real(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Decls d = declarations(core, cli);
+  Decls d = declarations(err, fs, procs);
   t.isTrue(d.names.len() > 500, "only " + itoa(d.names.len()) + " declarations found");
-  string[] docs = readmes(core, cli);
+  string[] docs = readmes(err, procs);
   string missing = "";
   i32 checked = 0;
   for (i32 i = 0; i < docs.len(); i++) {
     string pkg = pkgOf(docs[i]);
-    string text = readAll(cli, docs[i]);
+    string text = readAll(fs, docs[i]);
     i32 at = 0;
     while (at < text.len()) {
       i32 rel = text.slice(at, text.len()).indexOf("`");

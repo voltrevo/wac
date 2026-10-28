@@ -19,8 +19,8 @@
 // also where the note about `-ign_eof` and the 55 seconds it used to cost lives.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, HostSocket } from "std";
-import { Buf } from "core";
+import { Datagram, Exec, Pending, HostSocket, ChildEnv, Env, Files, Launch, Net, Procs, Sys, Datagrams, Clock } from "std";
+import { Buf, flatten } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { blockFrom, ckePublic, certMessage, doneBody, ecdhParams, epochAt, finishedMessage,
@@ -93,25 +93,25 @@ struct Identity {
   u8[] priv;
 }
 
-Identity identity(Cli cli) {
-  Exec der = cli.exec("openssl",
-                      [
+Identity identity(Procs procs) {
+  auto derRan = flatten(procs.exec("openssl", [
                                "x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-outform",
                                "der"
-                      ], u8[]()).wait();
-  if (!der.ran() || der.status != 0) {
-    return Identity(false, "openssl x509: \{string.fromBytes(der.stderr)}", u8[](), u8[]());
+                      ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? der = derRan.ok();
+  if ((der is null) || der!.status != 0) {
+    return Identity(false, "openssl x509: \{string.fromBytes(der!.stderr)}", u8[](), u8[]());
   }
-  Exec key = cli.exec("openssl",
-                      [
+  auto keyRan = flatten(procs.exec("openssl", [
                                "pkey", "-in", "packages/tls/test/data/ec_leaf.key", "-text",
                                "-noout"
-                      ], u8[]()).wait();
-  if (!key.ran() || key.status != 0) {
-    return Identity(false, "openssl pkey: \{string.fromBytes(key.stderr)}", u8[](), u8[]());
+                      ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? key = keyRan.ok();
+  if ((key is null) || key!.status != 0) {
+    return Identity(false, "openssl pkey: \{string.fromBytes(key!.stderr)}", u8[](), u8[]());
   }
   // The `priv:` block, which is the scalar as colon-separated hex over several lines.
-  string text = string.fromBytes(key.stdout);
+  string text = string.fromBytes(key!.stdout);
   i32 start = text.indexOf("priv:");
   if (start < 0) { return Identity(false, "no priv: block in the key", u8[](), u8[]()); }
   string rest = text.slice(start + 5, text.len());
@@ -128,7 +128,7 @@ Identity identity(Cli cli) {
     priv.push((nibble * 16 + v) as@ u8);
     nibble = -1;
   }
-  return Identity(true, "", der.stdout, priv.take());
+  return Identity(true, "", der!.stdout, priv.take());
 }
 
 i32 hexValue(string c) {
@@ -146,35 +146,37 @@ struct Got {
 }
 
 /** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
-Got receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
-  Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny([p.id], ms) < 0) {
-    p.drop(p.id);
-    return Got(false, u8[](), "", 0);
+Got receiveWithin(Clock clock, Datagrams sock, i32 ms) {
+  match (flatten(clock.within(sock.receive(), ms).wait())) {
+    Ok(d): { return Got(true, d.bytes, d.peer, d.port); }
+    Err(e): { return Got(false, u8[](), "", 0); }
   }
-  Datagram d = p.wait();
-  if (d.error != "") { return Got(false, u8[](), "", 0); }
-  return Got(true, d.bytes, d.peer, d.port);
 }
 
-export string test_openssl_s_client_completes_a_handshake_with_our_server_role(Core core, Cli cli) {
+export string test_openssl_s_client_completes_a_handshake_with_our_server_role(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Identity me = identity(cli);
+  Identity me = identity(procs);
   t.isTrue(me.ok, "the certificate and key could not be read — \{me.error}");
   if (!me.ok) { return t.report(); }
   t.eqI32(me.priv.len(), 32, "a P-256 private scalar is thirty-two bytes");
 
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
-  if (sock.handle < 0) { return t.report(); }
-  SClient client = startClient(cli, "serverrole", sock.port);
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  t.isTrue(sock is not null, "our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+  if (sock is null) { return t.report(); }
+  SClient client = startClient(env, fs, procs, "serverrole", sock!.port);
   t.isTrue(client.ok, client.error);
-  if (!client.ok) { cli.closeSocket(sock.handle); return t.report(); }
+  if (!client.ok) { sock!.close(); return t.report(); }
 
   // ── Their first hello, and our cookie ────────────────────────────────────────
-  Got first = receiveWithin(core, cli, sock, 8000);
-  t.isTrue(first.ok, "s_client sent no ClientHello — \{client.said(cli)}");
-  if (!first.ok) { finish(cli, sock, client); return t.report(); }
+  Got first = receiveWithin(clock, sock!, 8000);
+  t.isTrue(first.ok, "s_client sent no ClientHello — \{client.said(fs)}");
+  if (!first.ok) { finish(net, procs, sock!, client); return t.report(); }
   t.eqI32(handshakeKindAt(first.bytes, 0), 1, "a ClientHello");
   u8[] firstBody = slice(first.bytes, 13 + 12, sizeAt(first.bytes, 0));
   t.eqI32(cookieOfHello(firstBody).len(), 0,
@@ -184,12 +186,12 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
 
   // Any stable value is a legal cookie. A real server derives it from the client's address so it
   // holds no state; this is a test and holds the association in a local variable instead.
-  cli.sendTo(sock.handle, first.peer, first.port, verifyRequestRecord(cookie(), 0, 0)).wait();
+  sock!.sendTo(first.peer, first.port, verifyRequestRecord(cookie(), 0, 0)).wait();
 
   // ── Their second hello: the transcript starts here ───────────────────────────
-  Got second = receiveWithin(core, cli, sock, 8000);
-  t.isTrue(second.ok, "s_client did not retry with the cookie — \{client.said(cli)}");
-  if (!second.ok) { finish(cli, sock, client); return t.report(); }
+  Got second = receiveWithin(clock, sock!, 8000);
+  t.isTrue(second.ok, "s_client did not retry with the cookie — \{client.said(fs)}");
+  if (!second.ok) { finish(net, procs, sock!, client); return t.report(); }
   t.eqI32(handshakeKindAt(second.bytes, 0), 1, "a second ClientHello");
   u8[] clientHelloMsg = slice(second.bytes, 13, sizeAt(second.bytes, 0));
   u8[] helloBody = slice(second.bytes, 13 + 12, sizeAt(second.bytes, 0));
@@ -230,10 +232,10 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   // spent 0 of. Restarting it makes the ServerHello a replay of a record the peer has already seen,
   // and DTLS's replay window drops it silently — the client then waits and reports `read timeout
   // expired`, which points at the network rather than at the counter.
-  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 1, shMsg)).wait();
-  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 2, certMsg)).wait();
-  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 3, skeMsg)).wait();
-  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 4, doneMsg)).wait();
+  sock!.sendTo(first.peer, first.port, recordOf(22, 0, 1, shMsg)).wait();
+  sock!.sendTo(first.peer, first.port, recordOf(22, 0, 2, certMsg)).wait();
+  sock!.sendTo(first.peer, first.port, recordOf(22, 0, 3, skeMsg)).wait();
+  sock!.sendTo(first.peer, first.port, recordOf(22, 0, 4, doneMsg)).wait();
 
   // ── Their ClientKeyExchange, ChangeCipherSpec and Finished ───────────────────
   u8[] clientKey = u8[]();
@@ -242,15 +244,15 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   i32 finishedAt = -1;
   bool sawCcs = false;
   for (i32 round = 0; round < 6 && finishedAt < 0; round++) {
-    Got got = receiveWithin(core, cli, sock, 4000);
+    Got got = receiveWithin(clock, sock!, 4000);
     if (!got.ok) {
       // **Ask the client why.** It writes its alerts and its reasons out, and a test that reported
       // only "nothing arrived" would be the third time in this package a diagnostic said less than
       // the tool it was wrapping.
       t.fail("no flight from s_client after our ServerHelloDone (cke " +
              (clientKey.len() > 0 ? "yes" : "no") + ", ccs " + (sawCcs ? "yes" : "no") +
-             "). It said:\n" + client.said(cli));
-      finish(cli, sock, client);
+             "). It said:\n" + client.said(fs));
+      finish(net, procs, sock!, client);
       return t.report();
     }
     i32 at = 0;
@@ -277,7 +279,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   }
   t.isTrue(clientKey.len() > 0 && ckeMsg.len() > 0, "no ClientKeyExchange arrived");
   t.isTrue(sawCcs, "and no ChangeCipherSpec");
-  if (clientKey.len() == 0 || finishedAt < 0) { finish(cli, sock, client); return t.report(); }
+  if (clientKey.len() == 0 || finishedAt < 0) { finish(net, procs, sock!, client); return t.report(); }
   t.eqI32(clientKey.len(), 32, "an x25519 point");
 
   // ── The keys, and their Finished ─────────────────────────────────────────────
@@ -294,7 +296,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   t.isTrue(theirFinished.len() > 0,
            "their Finished did not authenticate under the keys we derived — the master secret, the " +
            "key block or the record protection");
-  if (theirFinished.len() == 0) { finish(cli, sock, client); return t.report(); }
+  if (theirFinished.len() == 0) { finish(net, procs, sock!, client); return t.report(); }
   t.eqI32(theirFinished[0] as i32, 20, "and it is a Finished message");
 
   u8[] wantClient = finishedMessage(master, transcript, 0, true);
@@ -306,22 +308,27 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   u8[] ourFinished = finishedMessage(master, cat([transcript, theirFinished]), 5, false);
   u8[] one = u8[].filled(1, 0);
   one[0] = 1;
-  cli.sendTo(sock.handle, first.peer, first.port, recordOf(20, 0, 5, one)).wait();
-  cli.sendTo(sock.handle, first.peer, first.port,
+  sock!.sendTo(first.peer, first.port, recordOf(20, 0, 5, one)).wait();
+  sock!.sendTo(first.peer, first.port,
              sealedRecord(serverWriteKey, serverIv, 1, 0, 22, ourFinished)).wait();
 
   // ── And what s_client says about all that ────────────────────────────────────
-  string said = saidUntil(cli, client, CIPHER_LINE, 500);
+  string said = saidUntil(fs, procs, client, CIPHER_LINE, 500);
   t.isTrue(contains(said, CIPHER_LINE),
            "s_client did not report a completed handshake. Its output:\n\{said}");
   t.isTrue(contains(said, "Verify return code: 0 (ok)") || contains(said, "verify error"),
            "and it reached certificate verification, which means the handshake got that far");
 
-  finish(cli, sock, client);
+  finish(net, procs, sock!, client);
   return t.report();
 }
 
-export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
+export string test_and_a_lost_flight_is_resent(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // **The first thing a real path does is lose a packet**, and on loopback nothing ever does — so
   // the loss is made here: our whole first flight is built and thrown away. What must happen next is
   // that the client's own retransmission timer fires, its ClientHello arrives again, and the stored
@@ -331,23 +338,24 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
   // sequence number the peer has already seen, its replay window drops them, and the handshake
   // stalls exactly as though the retransmission had been lost too.
   T t = T.create();
-  Identity me = identity(cli);
+  Identity me = identity(procs);
   t.isTrue(me.ok, "the certificate and key could not be read — \{me.error}");
   if (!me.ok) { return t.report(); }
 
   Peer peer = newPeer(me.der, me.priv, sigK(), serverScalar(), serverRandom(), cookie());
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
-  if (sock.handle < 0) { return t.report(); }
-  SClient client = startClient(cli, "resend", sock.port);
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  t.isTrue(sock is not null, "our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+  if (sock is null) { return t.report(); }
+  SClient client = startClient(env, fs, procs, "resend", sock!.port);
   t.isTrue(client.ok, client.error);
-  if (!client.ok) { cli.closeSocket(sock.handle); return t.report(); }
+  if (!client.ok) { sock!.close(); return t.report(); }
 
   i32 dropped = 0;
   string[] sequences = string[].filled(16, "");
   i32 seen = 0;
   for (i32 round = 0; round < 24 && !peerEstablished(peer); round++) {
-    Got got = receiveWithin(core, cli, sock, 6000);
+    Got got = receiveWithin(clock, sock!, 6000);
     if (!got.ok) { break; }
     u8[][] out = peerReceive(peer, got.bytes);
     // **Drop the first flight and nothing else.** Five messages arrive together the first time —
@@ -364,7 +372,7 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
       }
     }
     for (i32 i = 0; i < out.len(); i++) {
-      cli.sendTo(sock.handle, got.peer, got.port, out[i]).wait();
+      sock!.sendTo(got.peer, got.port, out[i]).wait();
     }
   }
 
@@ -373,7 +381,7 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
   t.isTrue(peerEstablished(peer),
            "the handshake did not recover from the dropped flight — the client retransmitted its " +
            "ClientHello and either we did not resend, or we resent records the peer discarded as " +
-           "replays. It said:\n\{client.said(cli)}");
+           "replays. It said:\n\{client.said(fs)}");
 
   // **The evidence that it was a resend and not a rebuild.** Ten records went out for five messages,
   // and no record sequence number appears twice.
@@ -382,11 +390,11 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
           "a record sequence number was reused — a peer's replay window drops the repeat, which " +
           "looks exactly like the retransmission being lost as well");
 
-  string said = saidUntil(cli, client, CIPHER_LINE, 500);
+  string said = saidUntil(fs, procs, client, CIPHER_LINE, 500);
   t.isTrue(contains(said, CIPHER_LINE),
            "s_client did not report a completed handshake:\n\{said}");
 
-  finish(cli, sock, client);
+  finish(net, procs, sock!, client);
   return t.report();
 }
 
@@ -400,7 +408,7 @@ i32 distinct(string[] all, i32 n) {
   return count;
 }
 
-void finish(Cli cli, HostSocket sock, SClient client) {
-  stopClient(cli, client);
-  if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
+void finish(Net net, Procs procs, Datagrams sock, SClient client) {
+  stopClient(procs, client);
+  sock.close();
 }

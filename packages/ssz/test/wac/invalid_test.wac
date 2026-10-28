@@ -35,7 +35,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Loaded, json } from "../../../wactest/src/fixtures.wac";
-import { Core, Cli } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashTreeRoot } from "../../src/container.wac";
@@ -234,9 +234,12 @@ i32 typeOf(World w, string group, string name) {
   return -1;
 }
 
-export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli cli) {
+export string test_every_invalid_ssz_generic_encoding_is_refused(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Loaded f = json(core, cli, "ssz", "ssz_generic_invalid", MANIFEST);
+  Loaded f = json(err, fs, procs, "ssz", "ssz_generic_invalid", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return t.report(); }
   JsonArray? cases = f.doc.member("cases")?.array();

@@ -28,7 +28,7 @@
 // that way, so what decides is whether the body arrived. `gets` reported "handshake failed" on every
 // successful fetch before that was understood.
 
-import { Cli, Core, FileResult, HostSocket } from "std";
+import { Clock, Env, Files, Net, Random, Socket } from "std";
 import { slice } from "../../bytes/src/slice.wac";
 import { Store, pemBundle } from "../../tls/src/roots.wac";
 import { recordsReady } from "../../tls/src/record.wac";
@@ -36,6 +36,7 @@ import { ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientSend, tl
          tlsClientPhase, tlsClientFailure } from "../../tls/src/client.wac";
 import { Incoming, ParsedResponse, parseResponse } from "../../http/src/incoming.wac";
 import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../../http/src/proxy.wac";
+import { flatten } from "core";
 
 /** Where the system keeps its trust store. */
 export string bundlePath() { return "/etc/ssl/certs/ca-certificates.crt"; }
@@ -69,10 +70,10 @@ export Remote parseRemote(string url) {
 }
 
 /** The system's trust store, or an empty one with `refused` telling the caller why not. */
-export Store systemStore(Cli cli) {
-  FileResult bundle = cli.readFile(bundlePath()).wait();
-  if (!bundle.ok) { return Store(u8[](), i32[](), 0); }
-  return pemBundle(bundle.bytes);
+export Store systemStore(Files fs) {
+  u8[]? bundle = flatten(fs.readFile(bundlePath()).wait()).ok();
+  if ((bundle is null)) { return Store(u8[](), i32[](), 0); }
+  return pemBundle(bundle!);
 }
 
 /** What one request produced. */
@@ -91,41 +92,41 @@ export struct Answer {
  * `body` empty means a GET; anything else is a POST with `contentType`. That is the whole of the method
  * selection, because git's two endpoints are exactly one of each and a third would want naming.
  */
-export Answer request(Core core, Cli cli, const Store store, string host, string target,
-                      u8[] body, string contentType) {
+export Answer request(Clock clock, Random rnd, Env env, Net net, const Store store, string host, string target, u8[] body, string contentType) {
   if (store.offsets.len() == 0) {
     return Answer(false, 0, u8[](), "no trust store, so nothing can be verified");
   }
 
-  i32 handle = -1;
+  Socket? conn = null;
   u8[] buffered = u8[]();
-  u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
+  u8[]? proxyVar = flatten(env.get("HTTP_PROXY").wait()).orElse(null);
   if (proxyVar is null) {
-    HostSocket direct = cli.connect(host, 443).wait();
-    if (direct.handle < 0) { return Answer(false, 0, u8[](), "\{host}: \{direct.error}"); }
-    handle = direct.handle;
+    auto direct = flatten(net.connect(host, 443).wait());
+    if (direct.isErr()) { return Answer(false, 0, u8[](), "\{host}: \{direct.err()!}"); }
+    conn = direct.unwrap();
   } else {
     ProxyAt? at = parseProxy(string.fromBytes(proxyVar!));
     if (at is null) {
       return Answer(false, 0, u8[](), "HTTP_PROXY is not a proxy this can parse");
     }
-    Tunnel t = match (connectThrough(cli, at!.host, at!.port, host, 443)) {
+    Tunnel t = match (connectThrough(net, at!.host, at!.port, host, 443)) {
       Ok(open): open,
       Err(e): return Answer(false, 0, u8[](), e),
     };
-    handle = t.handle;
+    conn = t.socket;
     buffered = t.leftover;   // **First, before any recv.** See the header.
   }
+  Socket sock = conn!;
 
   ClientStep s = clientStep(tlsClientInit(
     host.toBytes(), store.der, store.offsets,
-    core.randomBytes(32).wait(),
-    core.randomBytes(32).wait(),
-    core.randomBytes(64).wait(),
-    core.randomBytes(32).wait(),
-    core.nowMillis().wait() / 1000));
-  if (!cli.send(handle, s.toSend).wait()) {
-    cli.closeSocket(handle);
+    flatten(rnd.bytes(32).wait()).unwrap(),
+    flatten(rnd.bytes(32).wait()).unwrap(),
+    flatten(rnd.bytes(64).wait()).unwrap(),
+    flatten(rnd.bytes(32).wait()).unwrap(),
+    flatten(clock.nowMillis().wait()).unwrap() / 1000));
+  if (flatten(sock.send(s.toSend).wait()).isErr()) {
+    sock.close();
     return Answer(false, 0, u8[](), "cannot send the client hello");
   }
 
@@ -135,7 +136,7 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
     i32 phase = tlsClientPhase(s.state);
     if (phase == 4) {
       if (got.len() > 0) { break; }
-      cli.closeSocket(handle);
+      sock.close();
       return Answer(false, 0, u8[](), "TLS to \{host} failed (code "
         + "\{tlsClientFailure(s.state)})");
     }
@@ -155,7 +156,7 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
       whole.copyFrom(body, 0, headBytes.len(), body.len());
       ClientStep out = clientStep(tlsClientSend(s.state, whole));
       s = ClientStep(out.state, out.toSend, u8[]());
-      if (!cli.send(handle, s.toSend).wait()) { break; }
+      if (flatten(sock.send(s.toSend).wait()).isErr()) { break; }
       requested = true;
     }
 
@@ -166,25 +167,29 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
       ClientStep step = clientStep(tlsClientFeed(s.state, slice(buffered, 0, ready)));
       buffered = slice(buffered, ready, buffered.len());
       s = step;
-      if (s.toSend.len() > 0 && !cli.send(handle, s.toSend).wait()) { break; }
+      if (s.toSend.len() > 0 && flatten(sock.send(s.toSend).wait()).isErr()) { break; }
       if (s.appData.len() > 0) { got = concat(got, s.appData); }
       continue;
     }
 
     bool closed = false;
-    match (cli.recv(handle).wait()) {
-      Data(bytes): { buffered = concat(buffered, bytes); }
-      End: { closed = true; }
-      Failed(why): {
-        cli.closeSocket(handle);
-        return Answer(false, 0, u8[](), "\{host}: \{why}");
+    match (flatten(sock.recv().wait())) {
+      Ok(r): {
+        match (r) {
+          Data(bytes): { buffered = concat(buffered, bytes); }
+          default: { closed = true; }
+        }
+      }
+      Err(e): {
+        sock.close();
+        return Answer(false, 0, u8[](), "\{host}: \{e}");
       }
     }
     if (closed) { break; }
   }
 
   clientStep(tlsClientClose(s.state));
-  cli.closeSocket(handle);
+  sock.close();
   if (got.len() == 0) { return Answer(false, 0, u8[](), "\{host} said nothing"); }
 
   match (parseResponse(got, (body.len() == 0 ? "GET" : "POST").toBytes(), true, 1 << 26)) {

@@ -8,93 +8,103 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec } from "std";
-import { Fs } from "../../../fs/src/fs.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Clock, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 import { Gathered, ReadCache, gatherRoots, gatherWith } from "../../src/sources.wac";
 
-void put(Cli cli, string path, string text) {
+void put(Files fs, string path, string text) {
   i32 cut = 0 - 1;
   for (i32 k = 0; k < path.len(); k++) { if (path.slice(k, k + 1) == "/") { cut = k; } }
-  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
-  cli.writeFile(path, text.toBytes()).wait();
+  if (cut > 0) { fs.mkdir(path.slice(0, cut), true).wait(); }
+  fs.writeFile(path, text.toBytes()).wait();
 }
 
 /** `wac check <args>` run from `dir`. */
-Exec checkIn(Cli cli, string dir, string args) {
-  return cli.exec("/bin/sh", ["-c", "cd \{dir} && exec \{binaryPath(cli)} check \{args}"], u8[]()).wait();
+Exec checkIn(Env env, Procs procs, string dir, string args) {
+  return flatten(procs.exec("/bin/sh", ["-c", "cd \{dir} && exec \{binaryPath(env)} check \{args}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
-string fresh(Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/\{name}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+string fresh(Env env, Files fs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/\{name}";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
   return dir;
 }
 
-export string test_alone_it_checks_every_project_file_less_its_exclusions_x9xt4fg_2ixx2cu(Core core, Cli cli) {
+export string test_alone_it_checks_every_project_file_less_its_exclusions_x9xt4fg_2ixx2cu(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = fresh(cli, "checkproject-project");
-  put(cli, "\{dir}/wac.json5", "{ check: { exclude: [\"./fixtures/**\"] } }\n");
-  put(cli, "\{dir}/main.wac", "export i32 zero() { return 0; }\n");
-  put(cli, "\{dir}/src/unused.wac", "export i32 one() { return 1; }\n");
-  put(cli, "\{dir}/fixtures/invalid.wac", "i32 broken() { return nonexistent(); }\n");
-  Exec clean = checkIn(cli, dir, "");
+  string dir = fresh(env, fs, "checkproject-project");
+  put(fs, "\{dir}/wac.json5", "{ check: { exclude: [\"./fixtures/**\"] } }\n");
+  put(fs, "\{dir}/main.wac", "export i32 zero() { return 0; }\n");
+  put(fs, "\{dir}/src/unused.wac", "export i32 one() { return 1; }\n");
+  put(fs, "\{dir}/fixtures/invalid.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec clean = checkIn(env, procs, dir, "");
   t.eqI32(clean.status, 0, "the excluded fixture is not discovered — \{said(clean)}");
   t.isTrue(contains(said(clean), ".: 2 file(s), no diagnostics"), "and the two project files are — \{said(clean)}");
 
   // An unreached file outside the exclusion is checked, which is what makes it a project check.
-  put(cli, "\{dir}/src/unused.wac", "i32 broken() { return nonexistent(); }\n");
-  Exec bad = checkIn(cli, dir, "");
+  put(fs, "\{dir}/src/unused.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec bad = checkIn(env, procs, dir, "");
   t.eqI32(bad.status, 1, "an unreached broken file is diagnosed — \{said(bad)}");
   t.isTrue(contains(said(bad), "1 error(s)"), "and counted — \{said(bad)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_files_are_roots_and_turn_discovery_off_2ncb9c8_km2e8t2(Core core, Cli cli) {
+export string test_files_are_roots_and_turn_discovery_off_2ncb9c8_km2e8t2(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = fresh(cli, "checkproject-files");
-  put(cli, "\{dir}/wac.json5", "{}\n");
-  put(cli, "\{dir}/src/lib.wac", "export i32 answer() { return 42; }\n");
-  put(cli, "\{dir}/src/other.wac", "export i32 other() { return 1; }\n");
-  put(cli, "\{dir}/src/neighbour.wac", "i32 broken() { return nonexistent(); }\n");
-  Exec two = checkIn(cli, dir, "src/lib.wac src/other.wac");
+  string dir = fresh(env, fs, "checkproject-files");
+  put(fs, "\{dir}/wac.json5", "{}\n");
+  put(fs, "\{dir}/src/lib.wac", "export i32 answer() { return 42; }\n");
+  put(fs, "\{dir}/src/other.wac", "export i32 other() { return 1; }\n");
+  put(fs, "\{dir}/src/neighbour.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec two = checkIn(env, procs, dir, "src/lib.wac src/other.wac");
   t.eqI32(two.status, 0, "two roots, and the broken neighbour is not discovered — \{said(two)}");
   t.isTrue(contains(said(two), "2 file(s), no diagnostics"), "both roots counted — \{said(two)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_with_no_manifest_the_directory_is_the_project(Core core, Cli cli) {
+export string test_with_no_manifest_the_directory_is_the_project(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The README's own example runs `wac check` over a lone file with no `wac.json5`.
   T t = T.create();
   // **Outside the repository**, because the repository has a `wac.json5` at its root: a directory under
   // it with none of its own is inside that project, so `.cache/` cannot stand for "no manifest" any more.
-  string dir = scratch(cli, "checkproject-bare");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
-  put(cli, "\{dir}/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
-  Exec r = checkIn(cli, dir, "");
+  string dir = scratch(env, "checkproject-bare");
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
+  put(fs, "\{dir}/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
+  Exec r = checkIn(env, procs, dir, "");
   t.eqI32(r.status, 1, "diagnosed, not a usage error — \{said(r)}");
   t.isTrue(contains(said(r), "1 file(s), 1 error(s)"), "and it says what it read — \{said(r)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** A project of `k` files that each import `big.wac`, which is `lines` lines of comment and one struct. */
-string importers(Cli cli, string name, i32 k, i32 lines) {
-  string dir = fresh(cli, name);
-  put(cli, "\{dir}/wac.json5", "{}\n");
+string importers(Env env, Files fs, string name, i32 k, i32 lines) {
+  string dir = fresh(env, fs, name);
+  put(fs, "\{dir}/wac.json5", "{}\n");
   u8[] line = "// filler filler filler filler filler filler filler filler filler filler\n".toBytes();
   u8[] head = "export struct Lib { i32 x; }\n".toBytes();
   u8[] big = u8[].filled(head.len() + lines * line.len(), 0);
   big.copyFrom(head, 0, 0, head.len());
   for (i32 i = 0; i < lines; i++) { big.copyFrom(line, 0, head.len() + i * line.len(), line.len()); }
-  cli.writeFile("\{dir}/big.wac", big).wait();
+  fs.writeFile("\{dir}/big.wac", big).wait();
   for (i32 i = 0; i < k; i++) {
-    put(cli, "\{dir}/u\{i}.wac", "import { Lib } from \"./big.wac\";\nexport i32 f\{i}(Lib l) { return l.x; }\n");
+    put(fs, "\{dir}/u\{i}.wac", "import { Lib } from \"./big.wac\";\nexport i32 f\{i}(Lib l) { return l.x; }\n");
   }
   return dir;
 }
@@ -116,13 +126,14 @@ string[] rootsOf(string dir, i32 k) {
 // gates on correct code under load even with a 3× bar. What it guards is how many times a file is read,
 // so it counts the reads `wac check`'s own gathering (`gatherRoots`) makes, and the canary gathers each
 // root on its own to show the count moves when the cache is not shared.
-export string test_a_project_check_reads_a_shared_file_once(Core core, Cli cli) {
+export string test_a_project_check_reads_a_shared_file_once(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Fs fs = Fs.onHost(cli, 0);
   for (i32 k in [10, 80]) {
-    string dir = importers(cli, "checkproject-reads-\{k}", k, 10);
+    string dir = importers(env, fs, "checkproject-reads-\{k}", k, 10);
     string[] roots = rootsOf(dir, k);
-    Gathered g = gatherRoots(fs, cli, roots).wait().unwrap();
+    Gathered g = gatherRoots(fs, env, roots).wait().unwrap();
     t.eqStr(g.error, "", "\{k} importers: gathered");
     t.eqI32(g.paths.len(), k + 1, "\{k} importers: the files the project holds");
     t.eqI32(g.reads, k + 1, "\{k} importers: reads, one per file — the shared one is not read per importer");
@@ -131,12 +142,12 @@ export string test_a_project_check_reads_a_shared_file_once(Core core, Cli cli) 
       i32 alone = 0;
       for (string root in roots) {
         ReadCache own = ReadCache.create();
-        gatherWith(fs, cli, root, false, own).wait().unwrap();
+        gatherWith(fs, env, root, false, own).wait().unwrap();
         alone = alone + own.reads;
       }
       t.eqI32(alone, 2 * k + 1, "the canary: gathered root by root, the shared file is read once per importer");
     }
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
   }
   return t.report();
 }

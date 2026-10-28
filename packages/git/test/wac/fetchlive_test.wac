@@ -29,9 +29,10 @@
 // as far as talking to the server and came back with something too small to be a real pack.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, Env, Files, Output, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
+import { flatten } from "core";
 
 static string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
 
@@ -85,22 +86,25 @@ bool isObjectName(string s) {
   return true;
 }
 
-export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it(
-    Core core, Cli cli) {
+export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[]? proxyBytes = cli.env("HTTP_PROXY").wait();
+  u8[]? proxyBytes = flatten(env.get("HTTP_PROXY").wait()).orElse(null);
   string proxy = proxyBytes is null ? "" : string.fromBytes(proxyBytes!);
   if (proxy == "") {
-    core.warn("git live fetch test: skipped — HTTP_PROXY is not set");
+    err.line("git live fetch test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
   string[] names = ["HTTP_PROXY", "HTTPS_PROXY"];
   string[] values = [proxy, proxy];
 
   // What the remote says HEAD is, from git rather than from us.
-  Exec ls = withEnv(cli, names, values, "git", ["ls-remote", REMOTE, "HEAD"]);
+  Exec ls = withEnv(procs, names, values, "git", ["ls-remote", REMOTE, "HEAD"]);
   if (!ls.ran() || ls.status != 0) {
-    core.warn("git live fetch test: skipped — git ls-remote failed: " +
+    err.line("git live fetch test: skipped — git ls-remote failed: " +
               string.fromBytes(ls.stderr));
     return t.report();
   }
@@ -111,11 +115,9 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   if (!isObjectName(wantSha)) { return t.report(); }
 
   // Read for the trust store, net for the socket, env for the proxy. No write.
-  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
-  Exec r = withEnv(cli, names, values, wac,
-                   [
-                                         builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
-                                         [
+  string wac = "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
+  Exec r = withEnv(procs, names, values, wac, [
+                                         builtProgram(env, fs, procs, "packages/git/example/gitfetch.wac", "gitfetch", [
                                                   "--allow-net", "--allow-env", "--allow-read",
                                                   "--quiet"
                                          ]),

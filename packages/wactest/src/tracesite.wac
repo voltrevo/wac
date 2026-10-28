@@ -23,8 +23,9 @@
 // So the repository cut lives here and happens always. A caller that wants a cosmetic shortening on
 // top does it to the result.
 
-import { Cli, FileResult } from "std";
+import { Env, Files } from "std";
 import { splitLines, startsWith } from "./strings.wac";
+import { flatten } from "core";
 
 /** One row of a `.trace` table, resolved. */
 export struct TraceSite {
@@ -47,10 +48,10 @@ export struct TraceSite {
  * here: the table records the path the build was given, and the drivers these tools write are given
  * absolute ones.
  */
-export TraceSite traceSite(Cli cli, string stem, i32 site) {
-  FileResult f = cli.readFile("\{stem}.trace").wait();
-  if (!f.ok) { return TraceSite("", "", "", "", false); }
-  string[] rows = splitLines(string.fromBytes(f.bytes));
+export TraceSite traceSite(Env env, Files fs, string stem, i32 site) {
+  u8[]? f = flatten(fs.readFile("\{stem}.trace").wait()).ok();
+  if ((f is null)) { return TraceSite("", "", "", "", false); }
+  string[] rows = splitLines(string.fromBytes(f!));
   string want = "\{site}\t";
   for (string row in rows) {
     if (!startsWith(row, want)) { continue; }
@@ -64,7 +65,7 @@ export TraceSite traceSite(Cli cli, string stem, i32 site) {
     }
     if (n < 5) { return TraceSite("", "", "", "", false); }
     string file = parts[4];
-    string here = "\{cli.cwd().wait()}/";
+    string here = "\{flatten(env.cwd().wait()).unwrap()}/";
     if (startsWith(file, here)) { file = file.slice(here.len(), file.len()); }
     return TraceSite(parts[3], file, parts[1], parts[2], true);
   }

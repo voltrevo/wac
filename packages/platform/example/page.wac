@@ -10,7 +10,7 @@
 //
 // wacc only, as JSX is: `design/lang/0004` and compiler/README.md's omissions table.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Output } from "std";
 import { Attr, Node, On, html.li } from "../../web";
 
 /**
@@ -57,11 +57,11 @@ string render(Node n) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output out = sys.stdout();
+  i32 n = argv.len();
   string[] args = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
-  core.log(render(listOf(args)));
+  for (i32 i = 0; i < n; i++) { args[i] = argv[i]; }
+  out.line(render(listOf(args)));
   return 0;
 }

@@ -38,7 +38,7 @@
 // and failing on one would make this guard everybody else's flake.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Output, Procs, Sys } from "std";
 import { tracked } from "../../packages/wactest/src/repo.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -79,9 +79,11 @@ bool atRoot(string p) {
   return true;
 }
 
-export string test_the_repository_root_holds_only_what_is_named_here(Core core, Cli cli) {
+export string test_the_repository_root_holds_only_what_is_named_here(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] all = tracked(core, cli);
+  string[] all = tracked(err, procs);
   t.isTrue(all.len() >= 500, "only " + itoa(all.len()) + " tracked file(s) — did the walk resolve?");
   if (all.len() < 500) { return t.report(); }
 

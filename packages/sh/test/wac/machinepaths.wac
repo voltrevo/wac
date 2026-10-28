@@ -16,7 +16,8 @@
 // scripts, the byte scan and the regex both answered 30, disagreeing on none. The classes are not
 // identical — see `pathStart` — so that agreement is a property of this corpus, not of the two rules.
 
-import { Cli, Stat } from "std";
+import { Stat, Files } from "std";
+import { flatten } from "core";
 
 /**
  * The bytes a path can follow: the start of a word, in other words.
@@ -92,11 +93,11 @@ export string[] absolutePathsIn(string script) {
  * session, so all three backings agree and the comparison is worth keeping. Excluding on the name
  * alone dropped the host arm for 34 scripts where only 6 could ever have differed.
  */
-export bool reachesTheMachine(Cli cli, string script) {
+export bool reachesTheMachine(Files fs, string script) {
   string[] paths = absolutePathsIn(script);
   for (string path in paths) {
-    Stat st = cli.stat(path).wait();
-    if (st.exists) { return true; }
+    Stat? st = flatten(fs.stat(path).wait()).ok();
+    if ((st is not null)) { return true; }
   }
   return false;
 }

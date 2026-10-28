@@ -39,54 +39,63 @@ import { check as iceCheck, consentAnswered, consentDue, consentLive, consentSen
          hostPref, isNomination, lineFor, newConsent, pairPriorityOf, prflxPref, priorityOf,
          rejected, relayPref, reportedAddress, srflxPref, success, tidOf }
   from "./ice_probe.wac";
+import { flatten } from "core";
+import { ChildEnv, Env, Files, Launch, Net, Output, Procs, Sys, Datagrams, Clock } from "std";
 
 static string ORACLE = "packages/webrtc/test/ice_oracle.py";
 static string AGENT = "packages/webrtc/test/ice_agent.py";
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 
-void ask(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "python3", [ORACLE], lines, what);
+void ask(T t, Procs procs, Lines lines, string what) {
+  check(t, procs, "python3", [ORACLE], lines, what);
 }
 
 // ── The live one ──────────────────────────────────────────────────────────────
 
-export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
+export string test_aioice_completes_ice_against_us(Sys sys) {
+  Clock clock = sys.clock();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/ice";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/ice";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
   // **Bound to every interface, and advertised on the one aioice actually gathered.** aioice gathers
   // host candidates from the container's real interface — not loopback — and a datagram from there
   // to a `127.0.0.1` candidate does not route. Advertising loopback made the agent send checks that
   // never arrived and time out, which reads exactly like a protocol bug and is not one.
-  HostSocket sock = cli.bindDatagram("0.0.0.0", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
-  if (sock.handle < 0) { return t.report(); }
-  i32 ourPort = sock.port;
+  auto sockBind = flatten(net.bindDatagram("0.0.0.0", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  t.isTrue(sock is not null, "our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+  if (sock is null) { return t.report(); }
+  i32 ourPort = sock!.port;
   string ourUfrag = "wacUF";
   string ourPwd = "wac-password-0123456789";
   i64 ourPriority = priorityOf(hostPref(), 65535, 1);
 
-  Daemon agent = start(cli, "python3 \{quoted(AGENT)} \{quoted(dir)}", "\{dir}/agent.log");
+  Daemon agent = start(procs, "python3 \{quoted(AGENT)} \{quoted(dir)}", "\{dir}/agent.log");
   t.isTrue(agent.ok(), "the aioice agent did not start — \{agent.error}");
   if (!agent.ok()) { return t.report(); }
 
   // Gathering takes a moment; the file appears when it is done.
-  string theirs = awaitFile(cli, "\{dir}/theirs.json", 600);
+  string theirs = awaitFile(fs, procs, "\{dir}/theirs.json", 600);
   if (theirs == "") {
-    t.fail("aioice never published its candidates. It said: " + logTail(cli, "\{dir}/agent.log"));
-    stop(cli, agent);
-    cli.closeSocket(sock.handle);
+    t.fail("aioice never published its candidates. It said: " + logTail(fs, "\{dir}/agent.log"));
+    stop(procs, agent);
+    sock!.close();
     return t.report();
   }
   string theirUfrag = jsonString(theirs, "ufrag");
   string firstCandidate = firstOfArray(theirs, "candidates");
   t.isTrue(firstCandidate != "", "aioice gathered no candidates");
   if (firstCandidate == "") {
-    stop(cli, agent);
-    cli.closeSocket(sock.handle);
+    stop(procs, agent);
+    sock!.close();
     return t.report();
   }
   // Their first candidate's host is the interface they will send from, so it is the one we must be
@@ -94,7 +103,7 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   string ourHost = word(firstCandidate, 4);
 
   string ourLine = lineFor("wac1", 1, "udp", ourPriority, ourHost, ourPort, "host");
-  cli.writeFile("\{dir}/ours.json",
+  fs.writeFile("\{dir}/ours.json",
                 ("{\"ufrag\": \"\{ourUfrag}\", \"pwd\": \"\{ourPwd}" +
                  "\", \"candidates\": [\"\{ourLine}\"]}").toBytes()).wait();
 
@@ -106,24 +115,23 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   i32 nominations = 0;
   string result = "";
   for (i32 i = 0; i < 1200 && result == ""; i++) {
-    Pending<Datagram> p = cli.receiveFrom(sock.handle);
-    if (core.waitAny([p.id], 50) < 0) {
-      p.drop(p.id);
-      result = readIfPresent(cli, "\{dir}/result.json");
+    auto pGot = flatten(clock.within(sock!.receive(), 50).wait());
+    if (pGot.isErr()) {
+      result = readIfPresent(fs, "\{dir}/result.json");
       continue;
     }
-    Datagram d = p.wait();
+    Datagram d = pGot.unwrap();
     if (d.error != "" || d.bytes.len() == 0) { continue; }
     if (rejected(d.bytes, ourUfrag, theirUfrag, ourPwd.toBytes()) != 0) { continue; }
     checksSeen = checksSeen + 1;
     if (isNomination(d.bytes)) { nominations = nominations + 1; }
-    cli.sendTo(sock.handle, d.peer, d.port,
+    sock!.sendTo(d.peer, d.port,
                success(tidOf(d.bytes), ourPwd.toBytes(), 1, ipv4Of(d.peer), d.port)).wait();
   }
-  if (result == "") { result = awaitFile(cli, "\{dir}/result.json", 200); }
+  if (result == "") { result = awaitFile(fs, procs, "\{dir}/result.json", 200); }
 
   t.isTrue(result != "",
-           "aioice never reported a result. It said: " + logTail(cli, "\{dir}/agent.log"));
+           "aioice never reported a result. It said: " + logTail(fs, "\{dir}/agent.log"));
   t.isTrue(contains(result, "\"connected\": true"),
            "aioice did not report a completed connection: \{result}");
   t.isFalse(contains(result, "\"selected\": null"), "and it selected no candidate pair");
@@ -132,18 +140,19 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   t.isTrue(checksSeen > 0, "aioice sent no checks we accepted");
   t.isTrue(nominations > 0,
            "and nominated no pair with USE-CANDIDATE, which is the controlling agent's last word");
-  core.log("    ice: \{checksSeen} checks answered, \{nominations}" +
+  out.line("    ice: \{checksSeen} checks answered, \{nominations}" +
            " of them nominations");
 
-  stop(cli, agent);
-  cli.closeSocket(sock.handle);
-  cli.remove(dir, true).wait();
+  stop(procs, agent);
+  sock!.close();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 // ── Bytes, judged by aioice's parser ──────────────────────────────────────────
 
-export string test_aioice_validates_a_check_we_build(Core core, Cli cli) {
+export string test_aioice_validates_a_check_we_build(Sys sys) {
+  Procs procs = sys.procs();
   // The other direction. aioice's `parse_message` takes an integrity key and raises when it
   // disagrees, so this is its own validation applied to our bytes.
   T t = T.create();
@@ -161,12 +170,12 @@ export string test_aioice_validates_a_check_we_build(Core core, Cli cli) {
   lines.add("check \{hexOf(good)} peer-password-xyz peerUF:wacUF \{priority}" +
             " ICE-CONTROLLING 72623859790382856 yes");
   lines.add("refused \{hexOf(bad)} peer-password-xyz");
-  ask(t, cli, lines, "aioice validating our check");
+  ask(t, procs, lines, "aioice validating our check");
   return t.report();
 }
 
-export string test_aioice_accepts_a_consent_check_as_an_authenticated_binding_request(
-    Core core, Cli cli) {
+export string test_aioice_accepts_a_consent_check_as_an_authenticated_binding_request(Sys sys) {
+  Procs procs = sys.procs();
   // **The bytes, judged by somebody else's parser.** A consent check is an ordinary connectivity
   // check sent again later, so what has to hold is that it still authenticates. The second line is
   // the canary: without it the first would pass on a message with no integrity attribute at all.
@@ -178,11 +187,12 @@ export string test_aioice_accepts_a_consent_check_as_an_authenticated_binding_re
   lines.add("check \{hexOf(msg)} their-password THEIRUF:OURUF 2130706431 ICE-CONTROLLED " +
             "506381209866536711 no");
   lines.add("refused \{hexOf(msg)} not-their-password");
-  ask(t, cli, lines, "aioice and a consent check");
+  ask(t, procs, lines, "aioice and a consent check");
   return t.report();
 }
 
-export string test_a_candidate_line_is_the_shape_aioice_parses(Core core, Cli cli) {
+export string test_a_candidate_line_is_the_shape_aioice_parses(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string line = lineFor("wac1", 1, "udp", priorityOf(hostPref(), 65535, 1), "127.0.0.1", 45678,
                         "host");
@@ -190,7 +200,7 @@ export string test_a_candidate_line_is_the_shape_aioice_parses(Core core, Cli cl
   Lines lines = Lines.create();
   lines.add("candidate \{hexOf(line.toBytes())}" +
             " wac1 1 udp 2130706431 127.0.0.1 45678 host");
-  ask(t, cli, lines, "aioice reading our candidate");
+  ask(t, procs, lines, "aioice reading our candidate");
   return t.report();
 }
 
@@ -306,22 +316,22 @@ Consent freshConsent(u8[] tid) {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /** Poll for a file, answering its contents or empty. Each look is a `stat`, so this sleeps. */
-string awaitFile(Cli cli, string path, i32 tries) {
+string awaitFile(Files fs, Procs procs, string path, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
-    string got = readIfPresent(cli, path);
+    string got = readIfPresent(fs, path);
     if (got != "") { return got; }
-    cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait();
+    procs.exec("/bin/sh", ["-c", "sleep 0.05"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
   }
   return "";
 }
 
-string readIfPresent(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string readIfPresent(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
-string logTail(Cli cli, string path) {
-  string said = trimmed(readIfPresent(cli, path));
+string logTail(Files fs, string path) {
+  string said = trimmed(readIfPresent(fs, path));
   if (said == "") { return "(nothing)"; }
   return said.len() <= 700 ? said : "…\{said.slice(said.len() - 700, said.len())}";
 }

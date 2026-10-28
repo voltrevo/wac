@@ -20,7 +20,6 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { Arities, exportArities, arityOf, allExportNames } from "./wasm_probe.wac";
@@ -41,8 +40,7 @@ void takes(T t, Arities a, string name, i32 want) {
                              : name + " takes " + itoa(got) + " args, glue passes " + itoa(want));
 }
 
-export string test_the_array_constructors_have_the_arity_the_glue_calls_them_with(
-    Core core, Cli cli) {
+export string test_the_array_constructors_have_the_arity_the_glue_calls_them_with() {
   T t = T.create();
   Arities a = arities(t, "array helpers",
     "export i32 rows(u8[][] g) { return g.len(); }\n" +
@@ -70,7 +68,7 @@ export string test_the_array_constructors_have_the_arity_the_glue_calls_them_wit
   return t.report();
 }
 
-export string test_an_instances_methods_carry_the_compilers_mangled_name(Core core, Cli cli) {
+export string test_an_instances_methods_carry_the_compilers_mangled_name() {
   // A monomorphisation is named from *canonical* names — the template qualified by its declaring
   // file, then each argument mangled — because that is what the bindgen generates its glue against.
   // `packages/box` and `packages/fs` stopped at `$bind$sm_Vec__packages_std_src_vec$string_create`
@@ -111,8 +109,7 @@ export string test_an_instances_methods_carry_the_compilers_mangled_name(Core co
   return t.report();
 }
 
-export string test_a_string_an_enum_and_a_method_reach_the_host_under_the_names_bindgen_uses(
-    Core core, Cli cli) {
+export string test_a_string_an_enum_and_a_method_reach_the_host_under_the_names_bindgen_uses() {
   T t = T.create();
   Arities a = arities(t, "the boundary helpers",
     "enum Shape { Circle(f64 r), Empty }\n" +

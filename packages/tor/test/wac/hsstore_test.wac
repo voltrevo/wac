@@ -8,7 +8,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import {
   Checked, MAX_DESCRIPTOR_LEN, MAX_LIFETIME_MINUTES, PUB_CERT_SIG, PUB_LIFETIME, PUB_NOT_V3,
   PUB_NO_BODY, PUB_NO_CERT, PUB_OK, PUB_SIGNATURE, PUB_TOO_LARGE, certExpiryHours,
@@ -30,15 +30,16 @@ import {
  * the real descriptor filed under the wrong name — has to be among them and stored, or nothing here
  * distinguishes a wrong name from a wrong descriptor.
  */
-export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
+export string test_the_controls_are_what_the_tests_assume(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject top = publishTop(cli);
+  JsonObject top = publishTop(fs);
   string source = strOf(top, "source");
   t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0, "the verdicts must be tor's — source is \{source}");
-  t.eqI32(numOf(top, "descriptorLength"), descriptorText(cli).len(),
+  t.eqI32(numOf(top, "descriptorLength"), descriptorText(fs).len(),
           "the generated descriptor has changed since the controls were captured");
 
-  JsonArray cs = controls(cli);
+  JsonArray cs = controls(fs);
   bool sawRealUnderWrongName = false;
   for (i32 i = 0; i < cs.len(); i++) {
     JsonObject c = cs.get(i).object()!;
@@ -59,13 +60,13 @@ export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
   // the bytes and I did not port it at first; the canary said so — breaking `controlBytes` so that a
   // replace edits nothing left every test green, because nothing else here compares a control
   // against the descriptor it was made from.
-  u8[] whole = descriptorBytes(cli);
+  u8[] whole = descriptorBytes(fs);
   for (i32 i = 0; i < cs.len(); i++) {
     JsonObject c = cs.get(i).object()!;
     JsonValue? ev = c.getStr("edit");
     if (ev is null) { trap; }
     if (strOf(ev!.object()!, "kind") != "replace") { continue; }
-    u8[] built = controlBytes(cli, i);
+    u8[] built = controlBytes(fs, i);
     t.eqI32(built.len(), whole.len(), "control \{i} changed the descriptor's length");
     t.isFalse(equal(built, whole), "control \{i} edits nothing");
   }
@@ -80,11 +81,12 @@ export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
  * descriptor where no client will look, and the upload, the store and the reply would all report
  * success.
  */
-export string test_the_descriptor_tor_stored_is_stored(Core core, Cli cli) {
+export string test_the_descriptor_tor_stored_is_stored(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Checked c = checkForPublication(descriptorBytes(cli), 0);
+  Checked c = checkForPublication(descriptorBytes(fs), 0);
   t.eqI32(c.reason, PUB_OK, "the descriptor an HSDir accepted is one we accept");
-  t.eqBytes(c.blindedKey, blindedKeyBytes(cli),
+  t.eqBytes(c.blindedKey, blindedKeyBytes(fs),
             "and the name is the blinded key tor filed it under");
   t.isTrue(c.revision >= 0, "with a revision counter a store can compare against");
   return t.report();
@@ -97,18 +99,19 @@ export string test_the_descriptor_tor_stored_is_stored(Core core, Cli cli) {
  * agree with tor on all five of these and be useless. Each control is here because it fails at a
  * different check, and the reasons are asserted individually below.
  */
-export string test_every_descriptor_tor_refused_is_refused(Core core, Cli cli) {
+export string test_every_descriptor_tor_refused_is_refused(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = controlCount(cli);
+  i32 n = controlCount(fs);
   t.isTrue(n >= 4, "there are several controls, not one");
 
   for (i32 i = 0; i < n; i++) {
-    u8[] body = controlBytes(cli, i);
+    u8[] body = controlBytes(fs, i);
     // The last control is the real descriptor under a wrong lookup name; it is about the name rather
     // than the document, so the document itself must still be accepted. That is what separates "a bad
     // descriptor" from "a bad name", and it is the only control that can.
-    if (body.len() == descriptorBytes(cli).len() &&
-        equal(body, descriptorBytes(cli))) {
+    if (body.len() == descriptorBytes(fs).len() &&
+        equal(body, descriptorBytes(fs))) {
       t.eqI32(checkForPublication(body, 0).reason, PUB_OK,
               "the unedited descriptor is still accepted — that control is about the name");
     } else {
@@ -122,9 +125,10 @@ export string test_every_descriptor_tor_refused_is_refused(Core core, Cli cli) {
 }
 
 /** And each is refused for its own reason, at the check that should have caught it. */
-export string test_the_reasons_are_the_right_ones(Core core, Cli cli) {
+export string test_the_reasons_are_the_right_ones(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] desc = descriptorBytes(cli);
+  u8[] desc = descriptorBytes(fs);
 
   // Truncated after the first line: version present, everything else gone.
   t.eqI32(checkForPublication(slice(desc, 0, 16), 0).reason, PUB_LIFETIME,
@@ -152,12 +156,13 @@ export string test_the_reasons_are_the_right_ones(Core core, Cli cli) {
 }
 
 /** The limits are tor's own, and the ones that bound work before it is done. */
-export string test_the_limits_are_tors(Core core, Cli cli) {
+export string test_the_limits_are_tors(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   t.eqI32(MAX_DESCRIPTOR_LEN, 50000, "HS_DESC_MAX_LEN");
   t.eqI32(MAX_LIFETIME_MINUTES, 720, "HS_DESC_MAX_LIFETIME, in the minutes a descriptor states");
 
-  u8[] desc = descriptorBytes(cli);
+  u8[] desc = descriptorBytes(fs);
   t.isTrue(desc.len() < MAX_DESCRIPTOR_LEN, "a real descriptor is well inside the cap");
   // Refused by size *before* anything is parsed, so an absurd upload costs an allocation and not a
   // signature verification. Both sides of the boundary, because tor's comparison is `>=` and a `>`
@@ -186,9 +191,10 @@ export string test_the_limits_are_tors(Core core, Cli cli) {
  * certified by whoever holds the blinded secret, and the blinded key is then the name. A client that
  * knows the onion address derives that key independently and accepts nothing filed elsewhere.
  */
-export string test_the_certificate_stands_on_its_own_key(Core core, Cli cli) {
+export string test_the_certificate_stands_on_its_own_key(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] desc = descriptorBytes(cli);
+  u8[] desc = descriptorBytes(fs);
   i32 certAt = findFrom(desc, "-----BEGIN ED25519 CERT-----", 0);
   t.isTrue(certAt > 0, "the certificate is where a descriptor keeps it");
   t.eqI32(checkForPublication(edit(desc, certAt + 40, 'A'), 0).reason, PUB_CERT_SIG,

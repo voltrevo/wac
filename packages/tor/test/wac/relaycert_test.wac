@@ -40,7 +40,7 @@ import { equal, slice } from "../../../bytes/src/slice.wac";
 import { jsonFile, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Files, Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 
 static string ORACLE = "packages/tor/test/oracle.mjs";
@@ -53,18 +53,19 @@ struct Rsa {
   u8[] d;
 }
 
-Rsa rsaKey(T t, Cli cli) {
+Rsa rsaKey(T t, Procs procs) {
   Lines lines = Lines.create();
   lines.add("rsakeypair 1024");
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "an RSA-1024 key");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "an RSA-1024 key");
   if (!a.ok) { return Rsa(false, u8[](), u8[](), u8[]()); }
   return Rsa(true, decoded(word(a.lines[0], 1)), decoded(word(a.lines[0], 2)),
              decoded(word(a.lines[0], 3)));
 }
 
-export string test_every_certificate_tor_made_verifies(Core core, Cli cli) {
+export string test_every_certificate_tor_made_verifies(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonArray cases = arrayOf(jsonFile(cli, "packages/tor/test/data/relaycert_vectors.json"),
+  JsonArray cases = arrayOf(jsonFile(fs, "packages/tor/test/data/relaycert_vectors.json"),
                             "cases");
   i32 n = cases.len();
   t.isTrue(n >= 3, "several real certificates, not one");
@@ -178,7 +179,8 @@ export string test_a_link_certificate_names_the_tls_certificate() {
   return t.report();
 }
 
-export string test_the_rsa_crosscert_has_its_own_shape(Core core, Cli cli) {
+export string test_the_rsa_crosscert_has_its_own_shape(Sys sys) {
+  Procs procs = sys.procs();
   // Type 7 is not an ed25519 certificate at all: a different layout, an RSA signature, and a
   // personalisation prefix that types 4 to 6 do not have.
   T t = T.create();
@@ -186,7 +188,7 @@ export string test_the_rsa_crosscert_has_its_own_shape(Core core, Cli cli) {
   for (i32 i = 0; i < 32; i++) { ed[i] = ((i * 5 + 7) & 0xFF) as@ u8; }
   // A modulus and private exponent are supplied by the host, since generating an RSA key is not
   // something this package does — see `design/0002` D4.
-  Rsa key = rsaKey(t, cli);
+  Rsa key = rsaKey(t, procs);
   if (!key.ok) { return t.report(); }
   u8[] n = key.n;
   u8[] d = key.d;
@@ -203,7 +205,7 @@ export string test_the_rsa_crosscert_has_its_own_shape(Core core, Cli cli) {
   // which is the only party here that did not produce it.
   Lines lines = Lines.create();
   lines.add("crosscert \{hex(n)} \{hex(key.e)} \{hex(cert)}");
-  Answers verdict = ask(t, cli, "node", [ORACLE], lines, "the host's verdict");
+  Answers verdict = ask(t, procs, "node", [ORACLE], lines, "the host's verdict");
   if (!verdict.ok) { return t.report(); }
   t.eqStr(word(verdict.lines[0], 1), "1", "the host verifies our cross-certificate");
 
@@ -301,7 +303,8 @@ export string test_a_certs_cell_carries_one_of_each() {
   return t.report();
 }
 
-export string test_the_onion_key_crosscert_binds_both_identities(Core core, Cli cli) {
+export string test_the_onion_key_crosscert_binds_both_identities(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
 
   u8[] fingerprint = u8[].filled(20, 0);
@@ -309,7 +312,7 @@ export string test_the_onion_key_crosscert_binds_both_identities(Core core, Cli 
   u8[] edIdentity = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { edIdentity[i] = ((250 - i * 5) & 0xFF) as@ u8; }
 
-  Rsa onion = rsaKey(t, cli);
+  Rsa onion = rsaKey(t, procs);
   if (!onion.ok) { return t.report(); }
   u8[] onionN = onion.n;
   u8[] onionD = onion.d;
@@ -319,7 +322,7 @@ export string test_the_onion_key_crosscert_binds_both_identities(Core core, Cli 
 
   Lines lines = Lines.create();
   lines.add("rsarecover \{hex(onionN)} \{hex(onion.e)} \{hex(sig)}");
-  Answers a = ask(t, cli, "node", [ORACLE], lines, "the recovered payload");
+  Answers a = ask(t, procs, "node", [ORACLE], lines, "the recovered payload");
   if (!a.ok) { return t.report(); }
   u8[] got = decoded(word(a.lines[0], 1));
 

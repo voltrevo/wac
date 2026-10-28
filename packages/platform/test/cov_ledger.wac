@@ -3,29 +3,18 @@
 //   wac task coverage:platform
 //   wac task coverage:platform --verbose
 //
-// **29 of 75 — 38.7%**, and the shape of this package is why. `src/` holds two files: `frame.wac`
-// (379 lines) and `stream.wac` (374). Everything else the package offers is a *declaration* — the
-// `Core` and `Cli` capabilities the host implements — and a declaration has no branch points, so the
-// package's surface is almost entirely not the sort of thing coverage measures.
+// **`src/` is one file now, `stream.wac`**, and everything else the package offers is a *declaration* —
+// the capabilities the host implements — which has no branch points, so the package's surface is almost
+// entirely not the sort of thing coverage measures. `frame.wac`, the capability frame a program handed a
+// child, was the other file and the one this ledger was about; it went in design/system/0013 step 5,
+// when std's `Files`, `Authority` and served files replaced it, and the narrowing it measured is std's
+// now.
 //
-// Of the two, `stream.wac` contributes nothing at all: its consumer is `packages/box`, which has no
-// coverage task. And `frame.wac` — the capability frame a program hands a child — is measured only by
-// what this package's own wac tests build.
-//
-// **The other half of this package's tests are TypeScript**: 6,522 lines of `.test.ts` against 8,913
-// of wac. `issues/system/0161` is moving them, and until it does a driver that compiles wac sees one
-// side. That is the same distinction as everywhere else in this sweep — see `issues/system/0241b`.
-//
-// ## What the number is actually about
-//
-// `childCli`, at seventeen uncovered points. A `Frame` narrows a `Cli`: which of the parent's
-// authorities the child gets, and which paths it may reach. Every uncovered arm is a **refusal** — a
-// path outside the frame, an authority the parent does not hold, a redirect that will not open.
-//
-// That is this package's whole subject. *No ambient capabilities* is the principle, the narrowing is
-// how it is enforced, and the enforcement is the part with no inputs.
+// **The other half of this package's tests are TypeScript**: `issues/system/0161` is moving them, and
+// until it does a driver that compiles wac sees one side. That is the same distinction as everywhere
+// else in this sweep — see `issues/system/0241b`.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Env, Files, Modules, Output, Procs } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
@@ -38,49 +27,7 @@ string[] grants() {
 }
 
 Rule[] rules() {
-  return [
-         Rule("packages/platform/src/frame.wac", "childCli", "decl", false,
-         "**`childCli` — the capability frame a program hands a child — at seventeen uncovered " +
-         "points.** A `Frame` narrows a `Cli`: it decides which of the parent's authorities " +
-         "the child gets and rewrites the paths it may reach. Every arm here is a *refusal*: a " +
-         "path outside the frame, an authority the parent does not hold, a redirect that " +
-         "cannot be opened. \n" +
-         "That is the package's whole subject — *no ambient capabilities* — and the refusals " +
-         "are the part with no inputs. `packages/box` is the consumer that drives them, and " +
-         "`box` has no coverage task, so nothing measures the narrowing at all."),
-    // No rule for `childCore`: no test this exercise runs calls it, so it is not compiled in and
-    // contributes no points at all. Its callers are `packages/box` and `packages/sh` tests.
-    Rule("packages/platform/src/frame.wac", "joinPath", "decl", false,
-         "Path joining for shapes the frame's callers do not construct — an absolute path, a " +
-         "`..` that escapes, an empty component."),
-    Rule("packages/platform/src/frame.wac", "take", "decl", false,
-         "`take`'s remaining arms — see the rule over `frame.wac` for the corpus that shapes " +
-         "them."),
-    Rule("packages/platform/src/frame.wac", "chunkSize", "decl", false,
-         "`chunkSize`'s remaining arms — see the rule over `frame.wac` for the corpus that " +
-         "shapes them."),
-    Rule("packages/platform/src/frame.wac", "write", "decl", false,
-         "`write`'s remaining arms — see the rule over `frame.wac` for the corpus that shapes " +
-         "them."),
-    Rule("packages/platform/src/frame.wac", "warn", "decl", false,
-         "`warn`'s remaining arms — see the rule over `frame.wac` for the corpus that shapes " +
-         "them."),
-    Rule("packages/platform/src/frame.wac", "readChunk", "decl", false,
-         "`readChunk`'s remaining arms — see the rule over `frame.wac` for the corpus that " +
-         "shapes them."),
-    Rule("packages/platform/src/frame.wac", "readAll", "decl", false,
-         "`readAll`'s remaining arms — see the rule over `frame.wac` for the corpus that " +
-         "shapes them."),
-    Rule("packages/platform/src/frame.wac", "streamPath", "decl", false,
-         "`streamPath`'s remaining arms — see the rule over `frame.wac` for the corpus that " +
-         "shapes them."),
-    Rule("packages/platform/src/frame.wac", "captured", "decl", false,
-         "`captured`'s remaining arms — see the rule over `frame.wac` for the corpus that " +
-         "shapes them."),
-    Rule("packages/platform/src/frame.wac", "Pending<T> rea", "decl", false,
-         "`Pending<T> rea`'s remaining arms — see the rule over `frame.wac` for the corpus " +
-         "that shapes them.")
-  ];
+  return Rule[].filled(0, Rule("", "", "", false, ""));
 }
 
 Pin[] pins() {
@@ -88,16 +35,21 @@ Pin[] pins() {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  LedgerFlags flags = LedgerFlags.read(cli);
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Modules mods = sys.modules();
+  LedgerFlags flags = LedgerFlags.read(argv);
 
-  Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));
+  Measured m = measure(err, env, fs, procs, EXERCISE, grants(), string[].filled(0, ""));
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
   // union this driver's reach with another's — `issues/system/0241b`.
-  if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
-  report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+  if (flags.points) { reportPoints(out, m.points, m.nPoints, m.counts); return 0; }
+  report(out, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
+  return ratchet(err, out, fs, procs, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
 }

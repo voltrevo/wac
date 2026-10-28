@@ -26,33 +26,35 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Cli, Files, Output, Sys } from "std";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decodeRender, roundTrip, encodeMismatch, tags } from "./probe.wac";
 import { Ints, unhex, hex, writeDescriptor, T_UINT, T_BOOL, T_ADDRESS, T_BYTES32, T_BYTES,
          T_STRING, T_ARRAY, T_FIXED, T_TUPLE } from "./descriptor.wac";
+import { flatten } from "core";
 
 static string FIXTURE = "packages/abi/test/vendor/corpus.json";
 
 // ── The fixture ───────────────────────────────────────────────────────────────
 
-JsonValue fixture(Core core, Cli cli) {
-  FileResult r = cli.readFile(FIXTURE).wait();
-  if (!r.ok) {
-    core.warn("abi: cannot read \{FIXTURE} — \{r.error}");
+JsonValue fixture(Output err, Files fs) {
+  auto rRead = flatten(fs.readFile(FIXTURE).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("abi: cannot read \{FIXTURE} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  Parser p = Parser.create(r.bytes);
+  Parser p = Parser.create(r!);
   JsonValue? doc = parseDocument(p);
   if (doc is null) {
-    core.warn("abi: \{FIXTURE} is not valid JSON");
+    err.line("abi: \{FIXTURE} is not valid JSON");
     trap;
   }
   return doc!;
 }
 
-JsonArray cases(Core core, Cli cli) { return fixture(core, cli).member("cases")!.array()!; }
+JsonArray cases(Output err, Files fs) { return fixture(err, fs).member("cases")!.array()!; }
 
 /** Every type in a case, flattened into one descriptor — the schema the probe takes. */
 i32[] schemaOf(JsonValue c) {
@@ -84,9 +86,11 @@ Rendered rendered(u8[] out) {
   return Rendered(out[0] == 1, string.fromBytes(rest));
 }
 
-export string test_every_case_decodes_to_what_ethers_says_it_means(Core core, Cli cli) {
+export string test_every_case_decodes_to_what_ethers_says_it_means(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonArray cs = cases(core, cli);
+  JsonArray cs = cases(err, fs);
   t.isTrue(cs.len() >= 25, "only \{cs.len()} cases — is the vendored corpus intact?");
   for (i32 i = 0; i < cs.len(); i++) {
     JsonValue c = cs.get(i);
@@ -104,9 +108,11 @@ export string test_every_case_decodes_to_what_ethers_says_it_means(Core core, Cl
  * The encoder is checked against real bytes rather than against the decoder beside it: the tree came
  * from ethers' own encoding, and the test above established it is the right tree.
  */
-export string test_and_re_encodes_to_the_bytes_ethers_produced(Core core, Cli cli) {
+export string test_and_re_encodes_to_the_bytes_ethers_produced(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonArray cs = cases(core, cli);
+  JsonArray cs = cases(err, fs);
   for (i32 i = 0; i < cs.len(); i++) {
     JsonValue c = cs.get(i);
     string want = c.member("hex")!.text()!;
@@ -122,9 +128,11 @@ export string test_and_re_encodes_to_the_bytes_ethers_produced(Core core, Cli cl
  * A corpus that quietly lost its hard cases would leave both tests above passing and meaning much
  * less.
  */
-export string test_the_nested_cases_are_actually_in_the_corpus(Core core, Cli cli) {
+export string test_the_nested_cases_are_actually_in_the_corpus(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonArray cs = cases(core, cli);
+  JsonArray cs = cases(err, fs);
   string[] wanted = [
                              "bytes,string[]", "uint256[][]", "(uint256,string)[]",
                              "((uint256,bool),(string,bytes))"

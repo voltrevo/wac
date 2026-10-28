@@ -39,10 +39,11 @@
 // reading it is what lets the skip above say *which* precondition was missing.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, Env, Files, Output, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { has } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 // Small enough to be polite, and it carries the shapes: heads, lightweight tags, an annotated tag
 // with a peeled entry, and four thousand `refs/pull/*` with deep names.
@@ -130,21 +131,24 @@ string[] missingFrom(string[] all, string[] other, i32 limit) {
   return exact;
 }
 
-export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists(
-    Core core, Cli cli) {
+export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[]? proxyBytes = cli.env("HTTP_PROXY").wait();
+  u8[]? proxyBytes = flatten(env.get("HTTP_PROXY").wait()).orElse(null);
   string proxy = proxyBytes is null ? "" : string.fromBytes(proxyBytes!);
   if (proxy == "") {
-    core.warn("git ls-remote test: skipped — HTTP_PROXY is not set");
+    err.line("git ls-remote test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
   string[] names = ["HTTP_PROXY", "HTTPS_PROXY"];
   string[] values = [proxy, proxy];
 
-  Exec first = withEnv(cli, names, values, "git", ["ls-remote", REMOTE]);
+  Exec first = withEnv(procs, names, values, "git", ["ls-remote", REMOTE]);
   if (!first.ran() || first.status != 0) {
-    core.warn("git ls-remote test: skipped — git ls-remote failed: " +
+    err.line("git ls-remote test: skipped — git ls-remote failed: " +
               string.fromBytes(first.stderr));
     return t.report();
   }
@@ -166,27 +170,25 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   if (lines.len() <= 100) { return t.report(); }
 
   // Read for the trust store, net for the socket, env for the proxy. No write.
-  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
-  Exec r = withEnv(cli, names, values, wac,
-                   [
-                                         builtProgram(cli, "packages/git/example/gitls.wac", "gitls",
-                                         [
+  string wac = "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
+  Exec r = withEnv(procs, names, values, wac, [
+                                         builtProgram(env, fs, procs, "packages/git/example/gitls.wac", "gitls", [
                                                   "--allow-net", "--allow-env", "--allow-read",
                                                   "--quiet"
                                          ]),
                             REMOTE
                    ]);
-  string err = trimmedEnd(string.fromBytes(r.stderr));
-  t.eqI32(r.status, 0, "gitls failed: \{err}");
-  t.eqStr(err, "", "gitls warned");
+  string said = trimmedEnd(string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "gitls failed: \{said}");
+  t.eqStr(said, "", "gitls warned");
   if (r.status != 0) { return t.report(); }
   string ours = trimmedEnd(string.fromBytes(r.stdout));
 
-  Exec second = withEnv(cli, names, values, "git", ["ls-remote", REMOTE]);
+  Exec second = withEnv(procs, names, values, "git", ["ls-remote", REMOTE]);
   string after = trimmedEnd(string.fromBytes(second.stdout));
   if (before != after) {
     // Not a failure of ours: `refs/pull/*` moved while this ran.
-    core.warn("git ls-remote test: the remote moved mid-test, so the comparison is skipped");
+    err.line("git ls-remote test: the remote moved mid-test, so the comparison is skipped");
     return t.report();
   }
 

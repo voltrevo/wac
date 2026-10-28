@@ -17,6 +17,8 @@ import { Core, Cli, Datagram, FileResult, Pending, HostSocket }
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { clientFinishedPacket, flight } from "./hello_probe.wac";
+import { flatten } from "core";
+import { ChildEnv, Env, Files, Launch, Net, Procs, Datagrams, Clock } from "std";
 
 static string SERVER = "packages/quic/test/quicserver.ts";
 
@@ -29,16 +31,16 @@ export struct Server {
   Daemon daemon;
 
   /** One of the files it publishes, or empty when it has not written that one yet. */
-  string file(const this, Cli cli, string name) { return readIfPresent(cli, "\{this.dir}/\{name}"); }
+  string file(const this, Files fs, string name) { return readIfPresent(fs, "\{this.dir}/\{name}"); }
 }
 
-export string readIfPresent(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+export string readIfPresent(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 /** A short sleep. Polling for a file is a `stat`, so the loops around here sleep rather than spin. */
-export void pause(Cli cli) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait(); }
+export void pause(Procs procs) { flatten(procs.exec("/bin/sh", ["-c", "sleep 0.05"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap(); }
 
 /**
  * Start one and wait for it to publish its port.
@@ -46,42 +48,39 @@ export void pause(Cli cli) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).w
  * `upper` makes it an echo that upper-cases what it reads, which is how the other-direction test
  * tells the server's answer from its own request coming back off a buffer.
  */
-export Server startServer(Cli cli, string name, bool upper) {
-  string dir = "\{cli.cwd().wait()}/.cache/quic/\{name}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+export Server startServer(Env env, Files fs, Procs procs, string name, bool upper) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/quic/\{name}";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
   string line = "deno run -A --unstable-net " + quoted(SERVER) + " " + quoted(dir) +
                 (upper ? " --upper" : "");
-  Daemon d = start(cli, line, "\{dir}/server.log");
+  Daemon d = start(procs, line, "\{dir}/server.log");
   if (!d.ok()) { return Server(false, "the QUIC server did not start — \{d.error}", dir, -1, d); }
 
   // Deno takes a moment to boot; the port appears when it is listening.
   for (i32 i = 0; i < 400; i++) {
-    string ready = readIfPresent(cli, "\{dir}/ready.json");
+    string ready = readIfPresent(fs, "\{dir}/ready.json");
     if (ready != "") {
       i32 port = numberIn(ready, "port");
       if (port > 0) { return Server(true, "", dir, port, d); }
     }
-    pause(cli);
+    pause(procs);
   }
   return Server(false, "the QUIC server never published a port — " +
-                       readIfPresent(cli, "\{dir}/server.log"), dir, -1, d);
+                       readIfPresent(fs, "\{dir}/server.log"), dir, -1, d);
 }
 
-export void stopServer(Cli cli, Server s) {
-  stop(cli, s.daemon);
-  cli.remove(s.dir, true).wait();
+export void stopServer(Files fs, Procs procs, Server s) {
+  stop(procs, s.daemon);
+  fs.remove(s.dir, true).wait();
 }
 
 /** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
-export u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
-  Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny([p.id], ms) < 0) {
-    p.drop(p.id);
-    return u8[]();
+export u8[] receiveWithin(Clock clock, Datagrams sock, i32 ms) {
+  match (flatten(clock.within(sock.receive(), ms).wait())) {
+    Ok(d): { return d.bytes; }
+    Err(e): { return u8[](); }
   }
-  Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[]();
 }
 
 /**
@@ -91,23 +90,24 @@ export u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
  * came, and every caller says what silence would mean for *its* case — a server gives the same
  * silence to a packet it cannot open and to one it will not talk to.
  */
-export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
-  Server s = startServer(cli, name, false);
+export u8[] ask(T t, Clock clock, Env env, Files fs, Net net, Procs procs, string name, u8[] datagram, i32 ms) {
+  Server s = startServer(env, fs, procs, name, false);
   if (!s.ok) {
     t.fail(s.error);
-    stopServer(cli, s);
+    stopServer(fs, procs, s);
     return u8[]();
   }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) {
-    t.fail("our socket did not bind — \{sock.error}");
-    stopServer(cli, s);
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) {
+    t.fail("our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+    stopServer(fs, procs, s);
     return u8[]();
   }
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, datagram).wait();
-  u8[] got = receiveWithin(core, cli, sock, ms);
-  cli.closeSocket(sock.handle);
-  stopServer(cli, s);
+  sock!.sendTo("127.0.0.1", s.port, datagram).wait();
+  u8[] got = receiveWithin(clock, sock!, ms);
+  sock!.close();
+  stopServer(fs, procs, s);
   return got;
 }
 
@@ -117,12 +117,11 @@ export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
  * Answers the server's reply datagram, which is what every later packet's keys come off — so empty
  * means the caller must stop rather than carry on with keys derived from nothing.
  */
-export u8[] handshake(Core core, Cli cli, HostSocket sock, Server s, u8[] dcid, u8[] scid,
-                      string name) {
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid, scid, name)).wait();
-  u8[] reply = receiveWithin(core, cli, sock, 5000);
+export u8[] handshake(Clock clock, Datagrams sock, Server s, u8[] dcid, u8[] scid, string name) {
+  sock.sendTo("127.0.0.1", s.port, flight(dcid, scid, name)).wait();
+  u8[] reply = receiveWithin(clock, sock, 5000);
   if (reply.len() == 0) { return u8[](); }
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, clientFinishedPacket(reply, dcid, scid, name)).wait();
+  sock.sendTo("127.0.0.1", s.port, clientFinishedPacket(reply, dcid, scid, name)).wait();
   return reply;
 }
 
@@ -171,10 +170,10 @@ export string firstHeard(string json) {
 }
 
 /** Wait for the server's application to have heard `n` streams. */
-export bool heardCount(Cli cli, Server s, i32 n, i32 tries) {
+export bool heardCount(Files fs, Procs procs, Server s, i32 n, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
-    if (countIn(s.file(cli, "streams.json")) >= n) { return true; }
-    pause(cli);
+    if (countIn(s.file(fs, "streams.json")) >= n) { return true; }
+    pause(procs);
   }
   return false;
 }

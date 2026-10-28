@@ -188,8 +188,8 @@ export async function runLauncherNode(
     env: Record<string, string | undefined>;
     exit(code: number): never;
     stdin: AsyncIterable<Uint8Array>;
-    stdout: { write(b: Uint8Array, cb: (e?: unknown) => void): void };
-    stderr: { write(b: Uint8Array, cb: (e?: unknown) => void): void };
+    stdout: { write(b: Uint8Array, cb: (e?: unknown) => void): void; end(cb: () => void): void };
+    stderr: { write(b: Uint8Array, cb: (e?: unknown) => void): void; end(cb: () => void): void };
   },
   workerSource: string,
   grants: Grants = {},
@@ -238,8 +238,8 @@ export async function runLauncherNode(
       const r = await stdinIter.next();
       return r.done === true ? new Uint8Array(0) : r.value;
     },
-    createFile: async (path: string) => {
-      const h = await fs.open(path, "w");
+    createFile: async (path: string, append = false) => {
+      const h = await fs.open(path, append ? "a" : "w");
       return { write: async (b: Uint8Array) => { await h.write(b); }, close: () => h.close() };
     },
     openFile: async (path: string) => {
@@ -260,6 +260,8 @@ export async function runLauncherNode(
       new Promise((res, rej) => proc.stdout.write(b, (e) => (e ? rej(e) : res()))),
     writeStderr: (b: Uint8Array): Promise<void> =>
       new Promise((res, rej) => proc.stderr.write(b, (e) => (e ? rej(e) : res()))),
+    closeOutput: (toErr: boolean): Promise<void> =>
+      new Promise((res) => (toErr ? proc.stderr : proc.stdout).end(() => res())),
     stat: async (path: string) => {
       const st = await fs.stat(path);
       return {

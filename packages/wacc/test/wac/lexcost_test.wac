@@ -19,7 +19,8 @@ import { importSpecs } from "../../src/files.wac";
 import { builtinEnumVariants, builtinVariadicCallees, coreSource, stdSource } from "../../src/coretext.wac";
 import { enumVariantsOfText, variadicCalleesIn } from "../../src/scans.wac";
 import { Res } from "../../src/path.wac";
-import { Core } from "std";
+import { Clock, Sys } from "std";
+import { flatten } from "core";
 
 /** `s`, `n` times over. */
 string repeated(string s, i32 n) {
@@ -36,7 +37,8 @@ string fingerprint(Lexed l) {
   return "count " + itoa(l.tokenCount) + " errors " + itoa(l.errorCount) + " hash " + itoa(h);
 }
 
-export string test_the_token_array_is_sized_by_the_tokens_read(Core core) {
+export string test_the_token_array_is_sized_by_the_tokens_read(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   Lexed l = lex(stdSource().toBytes());
   i32 used = l.tokenCount * 5;
@@ -46,7 +48,8 @@ export string test_the_token_array_is_sized_by_the_tokens_read(Core core) {
   return t.report();
 }
 
-export string test_nesting_deeper_than_any_starting_stack_lexes_as_before(Core core) {
+export string test_nesting_deeper_than_any_starting_stack_lexes_as_before(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   t.eqStr(fingerprint(lex(("i32 x = " + repeated("(", 4000) + "1" + repeated(")", 4000) + ";\n").toBytes())),
           "count 8006 errors 0 hash 1147720021", "4,000 parentheses");
@@ -96,7 +99,7 @@ i32[] tallyGraph(string[][] g) {
 // the other, and on a machine three agents share it failed gates on correct code. What it guards is a
 // count — how many files a check lexes again — so it asserts that, and the canary shows the count moves
 // when the tables are withheld.
-export string test_a_large_file_costs_a_check_the_same_however_many_files_import_it(Core core) {
+export string test_a_large_file_costs_a_check_the_same_however_many_files_import_it() {
   T t = T.create();
   string big = "export struct Lib { i32 x; }\nexport i32 work(i32 a) {\n  i32 x = a;\n"
     + repeated("  x = x * 3 + (x >> 2) - a;\n", 9000) + "  return x;\n}\n";
@@ -116,7 +119,8 @@ export string test_a_large_file_costs_a_check_the_same_however_many_files_import
 // lexes of `std` and `core` to lower a one-line program that imports them. A pass that leaves a file
 // alone now hands the next one the same tokens (`Reads`, in `frontend.wac`); the passes that rewrite it
 // still lex what they wrote.
-export string test_lowering_a_program_that_imports_std_lexes_std_about_once(Core core) {
+export string test_lowering_a_program_that_imports_std_lexes_std_about_once(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string[] paths = ["/t/m.wac", "std", "core"] as string[];
   string[] texts = ["import { Sys } from \"std\";\nexport i32 main(Sys sys) { return 0; }\n", stdSource(), coreSource()] as string[];
@@ -126,12 +130,12 @@ export string test_lowering_a_program_that_imports_std_lexes_std_about_once(Core
   i64 lexing = 0 as i64;
   i64 lowering = 0 as i64;
   for (i32 r = 0; r < 5; r++) {
-    i64 t0 = core.monotonicNanos().wait();
+    i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
     lex(s);
     lex(c);
-    i64 t1 = core.monotonicNanos().wait();
+    i64 t1 = flatten(clock.monotonicNanos().wait()).unwrap();
     lowerSources(paths, texts, Res.empty());
-    i64 t2 = core.monotonicNanos().wait();
+    i64 t2 = flatten(clock.monotonicNanos().wait()).unwrap();
     if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
     if (r == 0 || t2 - t1 < lowering) { lowering = t2 - t1; }
   }
@@ -146,7 +150,8 @@ export string test_lowering_a_program_that_imports_std_lexes_std_about_once(Core
 // whole on every compile to list their enums' variants, and the variadic pass searched `core` for its
 // variadic methods: two thirds of checking a one-line file with no imports. Both lists are fixed when
 // the compiler is built, so `gen:core` writes them into `coretext.wac` beside the type defaults.
-export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Core core) {
+export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string[] paths = ["/t/m.wac"] as string[];
   string[] texts = ["export i32 f(i32 n) { return n; }\n"] as string[];
@@ -155,11 +160,11 @@ export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Core co
   i64 lexing = 0 as i64;
   i64 lowering = 0 as i64;
   for (i32 r = 0; r < 5; r++) {
-    i64 t0 = core.monotonicNanos().wait();
+    i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
     lex(c);
-    i64 t1 = core.monotonicNanos().wait();
+    i64 t1 = flatten(clock.monotonicNanos().wait()).unwrap();
     lowerSources(paths, texts, Res.empty());
-    i64 t2 = core.monotonicNanos().wait();
+    i64 t2 = flatten(clock.monotonicNanos().wait()).unwrap();
     if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
     if (r == 0 || t2 - t1 < lowering) { lowering = t2 - t1; }
   }
@@ -170,7 +175,8 @@ export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Core co
 }
 
 /** The tables `gen:core` wrote are what the lowering would have read off the embedded text. */
-export string test_the_built_tables_are_what_the_text_says(Core core) {
+export string test_the_built_tables_are_what_the_text_says(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   t.eqStr(builtinEnumVariants(), enumVariantsOfText(coreSource()) + enumVariantsOfText(stdSource()),
           "the enums of core and std");
@@ -182,18 +188,19 @@ export string test_the_built_tables_are_what_the_text_says(Core core) {
 // **A file's import list costs a lex, not a parse.** `wac` reads every file of a program for its imports
 // before compiling any, `std` included, and that went through the whole frontend: a lex and a parse of
 // 173 KB to find one `import` line. The list is read off the tokens.
-export string test_reading_a_files_imports_does_not_parse_it(Core core) {
+export string test_reading_a_files_imports_does_not_parse_it(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   u8[] s = stdSource().toBytes();
   importSpecs(s);
   i64 lexing = 0 as i64;
   i64 reading = 0 as i64;
   for (i32 r = 0; r < 5; r++) {
-    i64 t0 = core.monotonicNanos().wait();
+    i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
     lex(s);
-    i64 t1 = core.monotonicNanos().wait();
+    i64 t1 = flatten(clock.monotonicNanos().wait()).unwrap();
     importSpecs(s);
-    i64 t2 = core.monotonicNanos().wait();
+    i64 t2 = flatten(clock.monotonicNanos().wait()).unwrap();
     if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
     if (r == 0 || t2 - t1 < reading) { reading = t2 - t1; }
   }
@@ -204,12 +211,12 @@ export string test_reading_a_files_imports_does_not_parse_it(Core core) {
 }
 
 /** The best of three checks of `paths`, entered at `entry`. */
-i64 timeCheck(Core core, string[] paths, string[] texts, string entry) {
+i64 timeCheck(Clock clock, string[] paths, string[] texts, string entry) {
   i64 best = 0 as i64;
   for (i32 r = 0; r < 3; r++) {
-    i64 t0 = core.monotonicNanos().wait();
+    i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
     diagnoseGraph(paths, texts, entry);
-    i64 d = core.monotonicNanos().wait() - t0;
+    i64 d = flatten(clock.monotonicNanos().wait()).unwrap() - t0;
     if (r == 0 || d < best) { best = d; }
   }
   return best;
@@ -219,7 +226,8 @@ i64 timeCheck(Core core, string[] paths, string[] texts, string entry) {
 // built-ins included, so a one-line program that imports `std` paid for checking all of `std`'s bodies
 // and lowering its `async` ones — more than checking `std` alone. Their diagnostics are fixed when the
 // compiler is built, and the first assertion here is what keeps them empty.
-export string test_checking_a_program_does_not_check_std(Core core) {
+export string test_checking_a_program_does_not_check_std(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string[] alone = ["/t/std.wac", "core"] as string[];
   string[] aloneTexts = [stdSource(), coreSource()] as string[];
@@ -227,8 +235,8 @@ export string test_checking_a_program_does_not_check_std(Core core) {
   string[] paths = ["/t/m.wac", "std", "core"] as string[];
   string[] texts = ["import { Sys } from \"std\";\nexport i32 main(Sys sys) { return 0; }\n", stdSource(), coreSource()] as string[];
   t.eqStr(diagnoseGraph(paths, texts, "/t/m.wac"), "", "a program that imports it");
-  i64 program = timeCheck(core, paths, texts, "/t/m.wac");
-  i64 std = timeCheck(core, alone, aloneTexts, "/t/std.wac");
+  i64 program = timeCheck(clock, paths, texts, "/t/m.wac");
+  i64 std = timeCheck(clock, alone, aloneTexts, "/t/std.wac");
   t.isTrue(program * (4 as i64) < std * (3 as i64),
            "checking one line that imports std took " + itoa((program / (1000000 as i64)) as! i32)
            + " ms, and checking std " + itoa((std / (1000000 as i64)) as! i32) + " ms");
@@ -240,7 +248,7 @@ export string test_checking_a_program_does_not_check_std(Core core) {
 //
 // **Counted, not timed, since 2026-10-28**, for the reason the test above gives: it compared sixty
 // files' check against one build of the text, and a load spike lands in the longer window.
-export string test_a_graph_builds_cores_text_once(Core core) {
+export string test_a_graph_builds_cores_text_once() {
   T t = T.create();
   i32 k = 60;
   string[] paths = string[].filled(k, "");

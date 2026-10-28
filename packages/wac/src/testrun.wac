@@ -15,12 +15,11 @@
 //
 // Nine names leave here; the other twenty are this file's own business.
 
-import { CallResult, Change, Cli, Core, FileResult, LoadedModule, Stat } from "std";
-import { Vec } from "core";
+import { Authority, CallResult, Stat, Clock, Env, Files, Module, Modules, Output, Unsupported } from "std";
+import { Vec, flatten } from "core";
 import { atoi } from "../../fmt/src/itoa.wac";
 import { parse } from "../../json/src/json.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
-import { Fs } from "../../fs/src/fs.wac";
 import { cellAt, cells } from "../../wacc/src/manifest.wac";
 import { DeclaredTest, declaredTests, testEntry } from "../../wacc/src/program.wac";
 
@@ -39,8 +38,8 @@ import { DeclaredTest, declaredTests, testEntry } from "../../wacc/src/program.w
  * aggregate written into the walked directory imports its neighbours without leaving it, so the
  * absolute path never has to appear in an import at all.
  */
-export string[] importable(Cli cli, string[] walked) {
-  string cwd = cli.cwd().wait();
+export string[] importable(Env env, string[] walked) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   string prefix = "\{cwd}/";
   string[] out = string[].filled(walked.len(), "");
   for (i32 i = 0; i < walked.len(); i++) {
@@ -75,9 +74,9 @@ export string[] importable(Cli cli, string[] walked) {
  * `ownPid` answers 0 when `/proc/self/stat` cannot be read, and 0 is fine here: it costs the
  * cross-process uniqueness and leaves the clock, which is what this had all along.
  */
-export string aggregatePath(Core core, Cli cli) {
-  return ".cache/wac-aggregate-\{ownPid(cli)}-"
-       + "\{core.monotonicNanos().wait()}_test.wac";
+export string aggregatePath(Clock clock, Files fs) {
+  return ".cache/wac-aggregate-\{ownPid(fs)}-"
+       + "\{flatten(clock.monotonicNanos().wait()).unwrap()}_test.wac";
 }
 
 /**
@@ -88,10 +87,10 @@ export string aggregatePath(Core core, Cli cli) {
  * the operating system rather than about itself. Not imported from there because `tools/` is not a
  * dependency of the command; six lines is cheaper than that edge.
  */
-i32 ownPid(Cli cli) {
-  FileResult f = cli.readFile("/proc/self/stat").wait();
-  if (!f.ok) { return 0; }
-  string s = string.fromBytes(f.bytes);
+i32 ownPid(Files fs) {
+  u8[]? f = flatten(fs.readFile("/proc/self/stat").wait()).ok();
+  if (f is null) { return 0; }
+  string s = string.fromBytes(f!);
   i32 sp = s.indexOf(" ");
   return sp <= 0 ? 0 : atoi(s.slice(0, sp));
 }
@@ -282,7 +281,7 @@ bool startsWithPath(string path, string prefix) {
  * Sorted at each level, so a run is the same twice. `.`-prefixed directories, `node_modules` and
  * `target` are skipped: nothing anybody wants compiled, and `target` in particular is enormous.
  */
-export async string[] testFilesIn(Fs fs, string dir) {
+export async string[] testFilesIn(Files fs, string dir) {
   // **No cap**, because a cap here is a silent truncation and this is a *test* runner: running fewer
   // files and reporting that they passed is the worst answer available. `maxFiles()` bounds a
   // program's import graph and `issues/lang/0158` is the day it was applied by skipping rather than
@@ -307,11 +306,11 @@ export async string[] testFilesIn(Fs fs, string dir) {
  * **Deduplicated, because a caller may name a directory and a file inside it.** The same file twice
  * in the aggregate is a duplicate import of the same module and every test in it runs twice.
  */
-export async string[] testTargets(Fs fs, string[] paths) {
+export async string[] testTargets(Files fs, string[] paths) {
   Vec<string> out = Vec.create();
   for (i32 p = 0; p < paths.len(); p++) {
     string one = paths[p];
-    if ((await fs.stat(one)).isDir) {
+    if (await isDirAt(fs, one)) {
       string[] under = await testFilesIn(fs, one);
       for (i32 i = 0; i < under.len(); i++) { pushOnce(out, under[i]); }
     } else {
@@ -352,8 +351,9 @@ void pushOnce(Vec<string> out, string path) {
 }
 
 /** One level of the walk, appending into `out`. */
-async void walkTests(Fs fs, string dir, Vec<string> out) {
-  string[]? listed = await fs.readDir(dir);
+async void walkTests(Files fs, string dir, Vec<string> out) {
+  // "" is the current directory, which a host's `readDir` is asked for by name.
+  string[]? listed = (await fs.readDir(dir == "" ? "." : dir)).ok();
   if (listed is null) { return; }
   string[] names = sortedNames(listed!);
   for (i32 i = 0; i < names.len(); i++) {
@@ -363,7 +363,7 @@ async void walkTests(Fs fs, string dir, Vec<string> out) {
     // `wac test .` arrives here as "", the current directory normalised, and "" + "/" + name is a file
     // at the root of the filesystem: *cannot read /a_test.wac*.
     string path = dir == "" ? name : dir + (dir.slice(dir.len() - 1, dir.len()) == "/" ? "" : "/") + name;
-    if ((await fs.stat(path)).isDir) {
+    if (await isDirAt(fs, path)) {
       await walkTests(fs, path, out);
       continue;
     }
@@ -512,10 +512,10 @@ bool holds(string name, string part) {
 }
 
 /** The value after a flag, or "" — `--filter passes`. */
-export string flagValue(Cli cli, i32 argc, string flag) {
+export string flagValue(string[] argv, i32 argc, string flag) {
   for (i32 i = 1; i + 1 < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == flag) {
-      return string.fromBytes(cli.arg(i + 1).wait());
+    if (argv[i] == flag) {
+      return argv[i + 1];
     }
   }
   return "";
@@ -553,7 +553,7 @@ export string flagValue(Cli cli, i32 argc, string flag) {
  * the table is one row per counter in counter order — so dropping rows before this would slide every
  * later counter onto the wrong point and the percentage would still look plausible.
  */
-void sayCoverage(Core core, string table, i32[] hit, string[] only) {
+void sayCoverage(Output out, string table, i32[] hit, string[] only) {
   string[] lines = splitLines(table);
   string[] names = string[].filled(lines.len(), "");
   i32[] total = i32[].filled(lines.len(), 0);
@@ -578,14 +578,14 @@ void sayCoverage(Core core, string table, i32[] hit, string[] only) {
     if (i < hit.len() && hit[i] > 0) { taken[at] = taken[at] + 1; reached = reached + 1; }
   }
   if (points == 0) { return; }
-  core.log("");
-  core.log("branch coverage: \{reached} of \{points} points ("
+  out.line("");
+  out.line("branch coverage: \{reached} of \{points} points ("
            + "\{points == 0 ? 0 : (reached * 100) / points}%)");
   for (i32 k = 0; k < files; k++) {
     string left = "\{taken[k]} / \{total[k]}";
     string pad = "";
     for (i32 j = left.len(); j < 10; j++) { pad = pad + " "; }
-    core.log("      \{left}\{pad}\{names[k]}");
+    out.line("      \{left}\{pad}\{names[k]}");
   }
 }
 
@@ -665,13 +665,13 @@ string[] uniqLines(string[] lines) {
 }
 
 /** Every counter's value, read through the module's own `__cov_len` and `__cov_get`. */
-i32[] countersOf(Cli cli, i32 handle) {
-  CallResult n = cli.call(handle, "__cov_len", 0);
-  if (n.status != 0 || n.value <= 0) { return i32[](); }
-  i32[] out = i32[].filled(n.value, 0);
-  for (i32 i = 0; i < n.value; i++) {
-    CallResult one = cli.call(handle, "__cov_get", i);
-    out[i] = one.status == 0 ? one.value : 0;
+i32[] countersOf(Module m) {
+  CallResult? n = m.call("__cov_len", 0).ok();
+  if ((n is null) || n!.status != 0 || n!.value <= 0) { return i32[](); }
+  i32[] out = i32[].filled(n!.value, 0);
+  for (i32 i = 0; i < n!.value; i++) {
+    CallResult? one = m.call("__cov_get", i).ok();
+    out[i] = (one is not null) && one!.status == 0 ? one!.value : 0;
   }
   return out;
 }
@@ -739,8 +739,8 @@ string column(string name) {
 }
 
 /** ` (12 ms)`, the way a test's wall time is spelled. */
-string tookMs(Core core, i64 began) {
-  i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+string tookMs(Clock clock, i64 began) {
+  i64 took = (flatten(clock.monotonicNanos().wait()).unwrap() - began) / 1000000;
   return " (\{took} ms)";
 }
 
@@ -751,8 +751,8 @@ string tookMs(Core core, i64 began) {
  * hundred of milliseconds — is this file 40 ms or 400 — and above it nobody reads three digits of
  * millisecond, they read "this one is the slow one".
  */
-string elapsedText(Core core, i64 began) {
-  i64 ms = (core.monotonicNanos().wait() - began) / 1000000;
+string elapsedText(Clock clock, i64 began) {
+  i64 ms = (flatten(clock.monotonicNanos().wait()).unwrap() - began) / 1000000;
   if (ms < 1000 as i64) { return "\{ms} ms"; }
   i64 tenths = (ms + 50 as i64) / 100 as i64;
   return "\{tenths / 10 as i64}.\{tenths % 10 as i64}s";
@@ -766,8 +766,7 @@ string elapsedText(Core core, i64 began) {
  * an `__f<n>` suffix naming the file they came from, and that is bookkeeping rather than the test's
  * name.
  */
-Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, i32 count,
-               i32 grants, string filter, bool loud, string covTable, bool profiling) {
+Tally runNamed(Output out, Clock clock, Module m, TestExport[] names, i32[] which, i32 count, i32 grants, string filter, bool loud, string covTable, bool profiling) {
   i32 passed = 0;
   i32 failed = 0;
   i32 filtered = 0;
@@ -816,11 +815,19 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
     // The clock only when it will be printed: `--quiet` says nothing per test, and this is a host
     // call per test on the JavaScript hosts. The suite passes that flag and is where the host calls
     // would add up — 2,700 of them for a figure nobody reads.
-    i64 began = loud ? core.monotonicNanos().wait() : 0 as i64;
-    i32[] before = profiling ? countersOf(cli, handle) : i32[]();
-    CallResult c = cli.call(handle, t.name, 0);
+    i64 began = loud ? flatten(clock.monotonicNanos().wait()).unwrap() : 0 as i64;
+    i32[] before = profiling ? countersOf(m) : i32[]();
+    CallResult c;
+    match (m.call(t.name, 0)) {
+      Ok(r): { c = r; }
+      Err(e): {
+        failed = failed + 1;
+        out.line("FAIL \{shown} — the call did not reach it: \{e}");
+        continue;
+      }
+    }
     if (profiling) {
-      i32[] after = countersOf(cli, handle);
+      i32[] after = countersOf(m);
       string ls = "";
       i32 lsN = 0;
       for (i32 i = 0; i < after.len() && i < lineOf.len(); i++) {
@@ -839,23 +846,23 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
     if (c.trapped()) {
       if (wantsTrap) {
         passed = passed + 1;
-        if (loud) { core.log("ok   \{shown} — trapped, as it says\{said}\{tookMs(core, began)}"); }
-      } else { failed = failed + 1; core.log("FAIL \{shown} — trapped\{said}"); }
+        if (loud) { out.line("ok   \{shown} — trapped, as it says\{said}\{tookMs(clock, began)}"); }
+      } else { failed = failed + 1; out.line("FAIL \{shown} — trapped\{said}"); }
     } else if (c.status != 0) {
       failed = failed + 1;
-      core.log("FAIL \{shown} — \{c.text}");
+      out.line("FAIL \{shown} — \{c.text}");
     } else if (wantsTrap) {
       // The report is ignored on purpose: a test named for a trap that returned cleanly has not
       // observed the thing it is about, and an empty string from it would otherwise read as a pass.
       failed = failed + 1;
-      core.log("FAIL " + shown + " — returned instead of trapping"
+      out.line("FAIL " + shown + " — returned instead of trapping"
                + (c.text == "" ? "" : " — \{c.text}"));
     } else if (c.text != "") {
       failed = failed + 1;
-      core.log("FAIL \{shown} — \{c.text}");
+      out.line("FAIL \{shown} — \{c.text}");
     } else {
       passed = passed + 1;
-      if (loud) { core.log("ok   \{column(shown)}\{tookMs(core, began)}"); }
+      if (loud) { out.line("ok   \{column(shown)}\{tookMs(clock, began)}"); }
     }
   }
   return Tally(passed, failed, filtered, ungranted, ungrantedCount, profileTests, profileSkipped);
@@ -869,10 +876,10 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
  * looking at at all. It is also the number a reader compares against the last run, and adding the
  * per-test times by hand is not that.
  */
-void sayTally(Core core, Tally t, i64 began) {
-  core.log("\{t.passed} passed, \{t.failed} failed"
+void sayTally(Output out, Clock clock, Tally t, i64 began) {
+  out.line("\{t.passed} passed, \{t.failed} failed"
            + (t.filtered > 0 ? ", \{t.filtered} filtered out" : "")
-           + " in " + elapsedText(core, began));
+           + " in " + elapsedText(clock, began));
 }
 
 /**
@@ -901,7 +908,7 @@ string profileStem(string entry) {
  * host this was ported from took the same view. It warns, because silence here reads to
  * `tools/mutate.ts` as "this entry has no tests".
  */
-void writeProfile(Core core, Cli cli, string dir, string entry, Tally t, string[] allLines) {
+void writeProfile(Output err, Files fs, string dir, string entry, Tally t, string[] allLines) {
   if (dir == "") { return; }
   string all = "";
   for (i32 i = 0; i < allLines.len(); i++) {
@@ -914,35 +921,36 @@ void writeProfile(Core core, Cli cli, string dir, string entry, Tally t, string[
   // exists: `tools/mutate.ts` points it at a fresh subdirectory of a temporary directory and expects
   // the run to create it, which the host's version did with `create_dir_all` and this did not.
   // `parents` because the whole path can be new.
-  cli.mkdir(dir, true).wait();
-  Change wrote = cli.writeFile(path, doc.toBytes()).wait();
-  if (!wrote.ok()) {
-    core.warn("wac: WAC_PROFILE is set but \{path} could not be written — \{wrote.message}");
+  fs.mkdir(dir, true).wait();
+  auto wrote = flatten(fs.writeFile(path, doc.toBytes()).wait());
+  if (wrote.isErr()) {
+    err.line("wac: WAC_PROFILE is set but \{path} could not be written — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
   }
 }
 
-export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 grants,
-             string filter, string[] files, i32 ignored, string target, string covTable, bool loud,
-             string profileDir) {
+export i32 runTests(Output err, Output out, Clock clock, Files fs, Modules mods, string entry, u8[] whole, string manifest, Authority given, string filter, string[] files, i32 ignored, string target, string covTable, bool loud, string profileDir) {
   // **The tests get what the caller granted, and no more.** `wac test --allow-read` means the tests
   // may read; it does not mean they may write because *this command* can. `load` narrows the world it
   // hands over, and it took a test writing a file to disk to find that it had not been asked to —
   // `issues/system/0242c`.
-  LoadedModule m = cli.load(whole, grants);
-  if (m.unavailable()) {
-    core.warn("wac: this host cannot run tests — `test` needs `load`, which a page has no form of");
-    return 1;
-  }
-  if (m.handle < 0) {
-    core.warn("wac: the module just built will not load — \{m.error}");
-    return 1;
+  i32 grants = given.grants();
+  Module m;
+  match (mods.load(whole, given)) {
+    Ok(loaded): { m = loaded; }
+    Err(e): {
+      match (e) {
+        Unsupported(u): { err.line("wac: this host cannot run tests — `test` needs `load`, which a page has no form of"); }
+        default: { err.line("wac: the module just built will not load — \{e}"); }
+      }
+      return 1;
+    }
   }
   TestExport[] names = testExportsIn(manifest);
   // **The counter array is allocated by this call, not by instantiation.** Without it every
   // instrumented function traps on its first branch with "dereferencing a null pointer" — a message
   // naming the program under test rather than the missing call, which is what both other hosts
   // learnt the hard way.
-  if (covTable != "") { cli.call(m.handle, "__cov_init", 0); }
+  if (covTable != "") { m.call("__cov_init", 0); }
 
   // **One file: no headers, no file count.** That is what a person naming one file wants, and it is
   // what the native command prints — the summary below is the whole output.
@@ -954,26 +962,25 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     // running none of it. A *directory* is different and is not covered here: a walk that finds no
     // test files says so in its own words, above.
     if (names.len() == 0) {
-      cli.unload(m.handle);
-      core.warn("wac: \{entry} exports no tests — a test is `test*()` answering a string, "
+      m.unload();
+      err.line("wac: \{entry} exports no tests — a test is `test*()` answering a string, "
                 + "empty for a pass");
       return 1;
     }
     i32[] all = i32[].filled(names.len(), 0);
     for (i32 i = 0; i < names.len(); i++) { all[i] = i; }
-    i64 began = core.monotonicNanos().wait();
-    Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter, loud,
-                       covTable, profileDir != "");
+    i64 began = flatten(clock.monotonicNanos().wait()).unwrap();
+    Tally t = runNamed(out, clock, m, names, all, names.len(), grants, filter, loud, covTable, profileDir != "");
     // **Read before the handle goes.** The counters live in the module, so `unload` is the end of
     // them — and an unloaded handle answers "no such export" rather than failing, so this would have
     // reported a run of nothing as a coverage of zero.
-    i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[]();
-    cli.unload(m.handle);
+    i32[] hit = covTable != "" ? countersOf(m) : i32[]();
+    m.unload();
     if (t.ungrantedCount > 0) {
-      core.log("\{t.ungrantedCount} test(s) want a capability this run was not granted: "
+      out.line("\{t.ungrantedCount} test(s) want a capability this run was not granted: "
                + "\{t.ungranted} — try `wac test --allow-read …`");
       if (t.passed == 0 && t.failed == 0) {
-        core.warn("wac: every test in \{entry} wants a capability this run was not granted — "
+        err.line("wac: every test in \{entry} wants a capability this run was not granted — "
                   + "try `--allow-read`");
       }
     }
@@ -981,11 +988,11 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     // every test wanted a grant are reported by name, and the run still exits 0 — neither ran a test
     // that went wrong.
     if (t.passed == 0 && t.failed == 0 && filter != "") {
-      core.log("(no test matches --filter \{filter})");
+      out.line("(no test matches --filter \{filter})");
     }
-    sayTally(core, t, began);
-    if (covTable != "") { sayCoverage(core, covTable, hit, string[]()); }
-    writeProfile(core, cli, profileDir, entry, t, uniqLines(tableLines(covTable)));
+    sayTally(out, clock, t, began);
+    if (covTable != "") { sayCoverage(out, covTable, hit, string[]()); }
+    writeProfile(err, fs, profileDir, entry, t, uniqLines(tableLines(covTable)));
     return t.failed == 0 ? 0 : 3;
   }
 
@@ -1011,7 +1018,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // The whole walk, for the summary — the per-file times below say which file, and this says
   // whether the run was worth waiting for. Wall time, named as such: the CPU split the native
   // command used to print is `getrusage` and not something a wac program is offered.
-  i64 runBegan = core.monotonicNanos().wait();
+  i64 runBegan = flatten(clock.monotonicNanos().wait()).unwrap();
   for (i32 f = 0; f < files.len(); f++) {
     i32[] mine = i32[].filled(names.len(), 0);
     i32 count = 0;
@@ -1023,12 +1030,11 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     // by asking it: a fresh project with a single test file printed `── t/x_test.wac` here and nothing
     // there. One file named by a directory reads like one file named directly, plus the summary line
     // that says a directory was walked.
-    if (files.len() > 1) { core.log("── \{files[f]}"); }
-    i64 began = core.monotonicNanos().wait();
-    Tally t = runNamed(core, cli, m.handle, names, mine, count, grants, filter, loud,
-                       covTable, profileDir != "");
+    if (files.len() > 1) { out.line("── \{files[f]}"); }
+    i64 began = flatten(clock.monotonicNanos().wait()).unwrap();
+    Tally t = runNamed(out, clock, m, names, mine, count, grants, filter, loud, covTable, profileDir != "");
     if (t.ungrantedCount > 0) {
-      core.log("\{t.ungrantedCount} test(s) want a capability this run was not granted: "
+      out.line("\{t.ungrantedCount} test(s) want a capability this run was not granted: "
                + "\{t.ungranted} — try `wac test --allow-read …`");
     }
     // **The file, not the aggregate.** A run with no grants skips every test that wants a world, and
@@ -1037,7 +1043,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     // and cannot open. `issues/system/0230a`'s differential is what made that visible.
     bool allUngranted = t.ungrantedCount > 0 && t.passed == 0 && t.failed == 0;
     if (allUngranted) {
-      core.warn("wac: every test in \{files[f]} wants a capability this run was not granted — "
+      err.line("wac: every test in \{files[f]} wants a capability this run was not granted — "
                 + "try `--allow-read`");
     }
     // **Per file, not once for the walk.** A filter that matched nothing *here* is worth saying about
@@ -1049,9 +1055,9 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
     if (allUngranted) {
       // The message above is this file's whole report.
     } else if (nothingMatched) {
-      core.log("(no test matches --filter \{filter})");
+      out.line("(no test matches --filter \{filter})");
     } else {
-      sayTally(core, t, began);
+      sayTally(out, clock, t, began);
     }
     if (t.profileTests != "") { walkTests = walkTests + (walkTests == "" ? "" : ",") + t.profileTests; }
     if (t.profileSkipped != "") {
@@ -1084,21 +1090,21 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // command keeps producing: the flag was accepted, the run happened, and no report was printed —
   // where the native command answers with the table. One aggregate module means one counter array for
   // the whole walk, so this is the same two calls the single-file branch makes.
-  i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[]();
-  cli.unload(m.handle);
+  i32[] hit = covTable != "" ? countersOf(m) : i32[]();
+  m.unload();
   // **Nothing matched anywhere is a mistake, not a clean walk.** Per file the message says which file
   // the filter emptied; across the whole walk it says the pattern found nothing at all, and exits
   // non-zero, because `N files: 0 ok` under a filter reads like a suite that passed.
   // Said by name, and — spec ch47 — not a failure: the summary below still counts the walk.
   if (unmatched > 0 && ok == 0 && withFailures == 0) {
-    core.warn("wac: no test anywhere under \{target} matches --filter \{filter}");
+    err.line("wac: no test anywhere under \{target} matches --filter \{filter}");
   }
   // The report goes between the blocks and the summary, where the native command puts it, and it
   // opens with the blank line the summary would otherwise have printed for itself.
-  if (covTable != "") { sayCoverage(core, covTable, hit, files); }
+  if (covTable != "") { sayCoverage(out, covTable, hit, files); }
   // The blank line separates the per-file blocks from the summary, and there are no blocks to
   // separate when the walk found one file — the native command prints none there either.
-  else if (files.len() > 1) { core.log(""); }
+  else if (files.len() > 1) { out.line(""); }
   // **One section of the native command's output is missing here, and cannot be written.** After the
   // summary it ranks the files that cost a second or more:
   //
@@ -1114,13 +1120,13 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // `1 file:` and `4 files:`, as the native command spells them. `file(s)` is the spelling that
   // avoids the choice, and it is a different sentence from the one this has to match.
   i32 total = ok + withFailures + unmatched + ungrantedFiles;
-  core.log("\{total}" + (total == 1 ? " file: " : " files: ") + "\{ok} ok"
+  out.line("\{total}" + (total == 1 ? " file: " : " files: ") + "\{ok} ok"
            + (ignored > 0 ? ", \{ignored} not run (--ignore)" : "")
            + (withFailures > 0 ? ", \{withFailures} with failures" : "")
            + (ungrantedFiles > 0 ? ", \{ungrantedFiles} needing a grant" : "")
            + (ungrantedTests > 0 ? ", \{ungrantedTests} test(s) skipped for a grant" : "")
            + (unmatched > 0 ? ", \{unmatched} with nothing matching --filter" : "")
-           + " in " + elapsedText(core, runBegan));
+           + " in " + elapsedText(clock, runBegan));
   if (failingN > 0) {
     i32 wide = 0;
     for (i32 i = 0; i < failingN; i++) {
@@ -1132,9 +1138,15 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
       for (i32 k = failingFiles[i].len(); k < wide; k++) { pad = pad + " "; }
       block = block + "\n   \{failingFiles[i]}\{pad}   failures";
     }
-    core.log(block);
+    out.line(block);
   }
-  writeProfile(core, cli, profileDir, entry,
-               Tally(0, 0, 0, "", 0, walkTests, walkSkipped), uniqLines(tableLines(covTable)));
+  writeProfile(err, fs, profileDir, entry, Tally(0, 0, 0, "", 0, walkTests, walkSkipped), uniqLines(tableLines(covTable)));
   return code;
+}
+
+/** Whether `p` is a directory — false for anything else, and for a path that cannot be looked at. */
+export async bool isDirAt(Files fs, string p) {
+  // "" is the current directory normalised — `wac test .` — which the host is asked for by name.
+  Stat? s = (await fs.stat(p == "" ? "." : p)).ok();
+  return (s is not null) && s!.isDir;
 }

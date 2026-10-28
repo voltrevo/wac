@@ -3,25 +3,24 @@
 // A bad pattern is a *user* error and is reported as one — the only applet where the input
 // can be wrong in a way that is nobody's bug.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
-import { Input, openStream, operandCount } from "../lib/input.wac";
+import { Opened, openStream, operandCount } from "../lib/input.wac";
 import { search, slotCount } from "../../../regex/src/regex.wac";
 import { Compiled } from "../../../regex/src/compile.wac";
 import { compileExtended, compileExtendedIgnoreCase } from "../../../regex/src/posix.wac";
 import { compileBasic, compileBasicIgnoreCase } from "../../../regex/src/basic.wac";
 import { Program, BUDGET, NO_MATCH } from "../../../regex/src/program.wac";
 import { tryHelp } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 grep(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   if (a.rest.len() < 1) {
     // GNU's own summary, and **2** rather than 1: for `grep`, 1 means "no line matched".
-    core.warn("Usage: \{a.name} [OPTION]... PATTERNS [FILE]...");
-    tryHelp(core, a.name);
+    err.line("Usage: \{a.name} [OPTION]... PATTERNS [FILE]...");
+    tryHelp(err, a.name);
     return 2;
   }
   // **Basic unless `-E`**, which is what `grep` is. This compiled every pattern as *extended*, so
@@ -43,7 +42,7 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
   // **The reason, not "bad pattern".** `grep '\(ab\)\1'` is a pattern GNU accepts and this engine
   // cannot run, and calling it bad told the caller to go and fix something that was already right.
   // Where GNU refuses too the words are GNU's; where the gap is ours the sentence says so.
-  if (got.program is null) { core.warn("\{a.name}: \{got.why}"); return 2; }
+  if (got.program is null) { err.line("\{a.name}: \{got.why}"); return 2; }
   Program p = got.program!;
 
   i32[] caps = i32[].filled(slotCount(p), 0);
@@ -76,7 +75,7 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
   bool listMisses = has(a, 'L');
   bool listing = listHits || listMisses;
   i32 matchCount = 0;
-  Sink out = Sink.create(cli);
+  Sink sink = Sink.to(out);
 
   // Every file named, and **the name in front of every line when there is more than one**, which is what
   // makes `grep pattern *.c` usable and is what the real one does. It used to search the first file and
@@ -90,7 +89,7 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
   // first, and answering 1 said the pattern was absent from files that were never read.
   bool unreadable = false;
   for (i32 f = 0; f < count; f++) {
-    Input in = await openStream(core, cli, fs, a, 1 + f, -1);
+    Opened in = await openStream(stdin, err, fs, a, 1 + f);
     if (!in.ok) { unreadable = true; continue; }
     string where = label ? in.label + ":" : "";
     i32 n = 0;
@@ -110,7 +109,7 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
     // in any implementation that splits on newlines alone — measured, and it only shows through `-c`,
     // because the lines themselves are never printed. Rewriting the byte is the whole of it: what the
     // splitter sees is what GNU's does.
-    Feed held = Feed.of(cli, binary ? nulAsNewline(whole) : whole);
+    Feed held = Feed.of(binary ? nulAsNewline(whole) : whole);
     while (true) {
       Line l = await nextLine(s, held);
       if (!l.ok) { break; }
@@ -122,7 +121,7 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
     // cannot answer, and it is the only honest status: neither "matched" nor "did not match" is
     // known.
       if (found == BUDGET()) {
-        core.warn("\{a.name}: \{n}: pattern too expensive on this line, giving up");
+        err.line("\{a.name}: \{n}: pattern too expensive on this line, giving up");
         return 2;
       }
       bool hit = found != NO_MATCH();
@@ -130,7 +129,7 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
       matchCount++;
       here++;
       // The status is the whole answer, so there is nothing left to read once there is one.
-      if (quiet) { out.flush(); return 0; }
+      if (quiet) { sink.flush(); return 0; }
       if (countOnly) { continue; }
       string text = string.fromBytes(l.bytes);
       // Buffered: a pattern that matches most of a large file is one host call per line otherwise, and
@@ -138,25 +137,25 @@ export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
       // A binary file's matching *lines* are not printed — the message below stands in for them — while
       // `-c`, `-l` and `-q` are unaffected, because a count is not a line of the file.
       if (binary || listing) { continue; }
-      if (!out.line(where + (number ? "\{n}:\{text}" : text))) { break; }
+      if (!sink.line(where + (number ? "\{n}:\{text}" : text))) { break; }
     }
     string named = in.label == "" ? "(standard input)" : in.label;
     if (listHits) {
-      if (here > 0) { out.line(named); }
+      if (here > 0) { sink.line(named); }
     } else if (listMisses) {
-      if (here == 0) { out.line(named); }
+      if (here == 0) { sink.line(named); }
     } else if (countOnly) {
       // `-c` prints a count for each file, with the name in front when there is more than one.
-      out.line("\{where}\{here}");
+      sink.line("\{where}\{here}");
     }
     // GNU's sentence, on standard error, once per file that matched. `(standard input)` is the name it
     // uses when there is no operand, and it uses it here even though nothing else in this applet does.
     if (binary && here > 0 && !countOnly && !quiet && !listing) {
-      out.flush();
-      core.warn(a.name + ": " + (in.label == "" ? "(standard input)" : in.label) + ": binary file matches");
+      sink.flush();
+      err.line(a.name + ": " + (in.label == "" ? "(standard input)" : in.label) + ": binary file matches");
     }
   }
-  out.flush();
+  sink.flush();
   if (unreadable) { return 2; }
   return matchCount > 0 ? 0 : 1;
 }

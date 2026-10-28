@@ -19,8 +19,7 @@
 // describe processes the host has never heard of. What *is* compared against the host is the format of
 // the `/proc` files underneath — `packages/fs`'s tests read the real `/proc/self/comm` and `status`.
 
-import { Cli, Core, FileResult } from "std";
-import { Fs } from "../../../fs/src/fs.wac";
+import { Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 
@@ -63,37 +62,37 @@ bool allDigits(string s) {
   return true;
 }
 
-export async i32 ps(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 ps(Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   if (a.rest.len() > 0) {
     // Real `ps` takes a pid list and a great many option syntaxes. None is implemented, and saying so
     // beats the two worse answers: ignoring the argument, or listing everything as though it had been
     // asked for.
-    core.warn("\{a.name}: selecting processes is not implemented; ps lists all of them");
+    err.line("\{a.name}: selecting processes is not implemented; ps lists all of them");
     return 1;
   }
-  string[]? listing = await fs.readDir("/proc");
+  string[]? listing = (await fs.readDir("/proc")).ok();
   if (listing is null) {
-    core.warn("\{a.name}: /proc: no such file or directory");
+    err.line("\{a.name}: /proc: no such file or directory");
     return 1;
   }
   string[] names = listing!;
-  core.log("  PID  PPID S CMD");
+  out.line("  PID  PPID S CMD");
   for (i32 i = 0; i < names.len(); i++) {
     // `self` is a name for a pid already in this listing, so following it would print one row twice.
     if (!allDigits(names[i])) { continue; }
-    FileResult f = await fs.readFile("/proc/\{names[i]}/status");
+    u8[]? f = (await fs.readFile("/proc/\{names[i]}/status")).ok();
     // A process that exited between the listing and the read is gone rather than an error — the same
     // race real `ps` has, and the same answer it gives.
-    if (!f.ok) { continue; }
-    string body = string.fromBytes(f.bytes);
-    FileResult c = await fs.readFile("/proc/\{names[i]}/cmdline");
+    if (f is null) { continue; }
+    string body = string.fromBytes(f!);
+    u8[]? c = (await fs.readFile("/proc/\{names[i]}/cmdline")).ok();
     string cmd = field(body, "Name");
-    if (c.ok) {
+    if (c is not null) {
       // `cmdline` is NUL-separated with a trailing NUL; the words joined by spaces is what `ps` shows,
       // and it is lossy in exactly the way `ps`'s is — an argument containing a space reads as two.
       string joined = "";
-      string all = string.fromBytes(c.bytes);
+      string all = string.fromBytes(c!);
       i32 start = 0;
       for (i32 j = 0; j < all.len(); j++) {
         if (all.toBytes()[j] == 0) {
@@ -106,7 +105,7 @@ export async i32 ps(Core core, Cli cli, Fs fs, Args a) {
     }
     // The state letter, which is the first character of `status`'s `State` line — `R (running)`.
     string state = field(body, "State");
-    core.log(pad(names[i], 5) + " " + pad(field(body, "PPid"), 5) + " "
+    out.line(pad(names[i], 5) + " " + pad(field(body, "PPid"), 5) + " "
       + (state.len() > 0 ? state.slice(0, 1) : "?") + " " + cmd);
   }
   return 0;

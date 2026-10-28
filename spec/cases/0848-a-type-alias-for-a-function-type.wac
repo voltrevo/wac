@@ -1,0 +1,14 @@
+// expect: f() = 42
+// spec:  §wac-type-alias-e4gvipb
+// why: a `type` naming a function type is the function type — the alias is evaluated as a computed type, and
+//      that evaluation had no case for `fn<…>`, so it declined
+// from: spec/4-static/30-computed-types.md
+type Twice = fn<i32(i32)>;
+
+i32 apply(Twice g, i32 x) { return g(x); }
+
+export i32 f() {
+  Twice g = (i32 n) => n * 2;
+  fn<i32(i32)> same = g;
+  return apply(same, 21);
+}

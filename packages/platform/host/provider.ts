@@ -42,7 +42,7 @@ import { asAppModule, drive, manifestIn } from "./driver.ts";
 import type { Driven } from "./driver.ts";
 /** One export's wac signature, as the manifest records it — `Manifest.exports` in `native.ts`. */
 type ExportSig = { name: string; params: string[]; ret: string };
-import { FAULT_NONE, FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC } from "./faults.ts";
+import { FAULT_NONE, FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC, STAT_MODE } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
 const SLOT_BITS = Math.ceil(Math.log2(SLOTS));
@@ -334,17 +334,17 @@ export function cliOf(
     try {
       const out = collect(b, unpack(id));
       // exists, isFile, isDir as bytes, then size and mtime as little-endian i64s, then isSymlink, the
-      // fault, and isExecutable — each appended rather than inserted, so the offsets above never had to
+      // fault, isExecutable and the mode — each appended rather than inserted, so the offsets above never had to
       // move. That is why the newest field sits past the fault rather than beside the flag it belongs with.
       const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
       return cls.Stat.of(
         out[0] === 1, out[1] === 1, out[2] === 1,
         dv.getBigInt64(3, true), dv.getBigInt64(11, true),
-        out[19] === 1, out[STAT_EXEC] === 1, out[20] ?? 0,
+        out[19] === 1, out[STAT_EXEC] === 1, out[20] ?? 0, dv.getUint32(STAT_MODE, true),
       );
     } catch {
       // The bridge itself failed, which is not absence — `FAULT_OTHER`, because nothing said better.
-      return cls.Stat.of(false, false, false, 0n, 0n, false, false, FAULT_OTHER);
+      return cls.Stat.of(false, false, false, 0n, 0n, false, false, FAULT_OTHER, 0);
     }
   };
   const dirNames = (id: number) => {
@@ -687,6 +687,13 @@ export function cliOf(
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
     /*= closeSend */
     (handle: number) => { hostCall(b, OP.CLOSE_SEND, i32le(handle)); },
+    /*= openFile */
+    // How, then the path — the fixed-width part first, as everywhere.
+    (path: string, how: number) => T.socket(send(OP.OPEN_FILE, headed(i32le(how), str(path)))),
+    /*= closeFile */
+    (handle: number) => T.ok(send(OP.CLOSE_FILE, i32le(handle))),
+    /*= closeOutput */
+    (toErr: boolean) => T.ok(send(OP.CLOSE_OUTPUT, i32le(toErr ? 1 : 0))),
 
     /*= bindDatagram */
     // The port, then the address, exactly as `listen` — the same shape because it is the same question.
@@ -746,8 +753,8 @@ export function cliOf(
       args: Uint8Array[],
       grants: number,
       cwd: string,
-      // The `INHERIT_*` mask, as `spawn` takes: `DETACHED` (4) is the program's own business — std's
-      // `Cli.of` keeps the ticket from stopping the child — so only the input bit is the host's.
+      // The `INHERIT_*` mask, as `spawn` takes: `DETACHED` (4) is the program's own business — std
+      // keeps the ticket from stopping the child — so the input and output bits are the host's, in one byte.
       inherit: number,
       serveFs: boolean,
     ) =>
@@ -755,7 +762,7 @@ export function cliOf(
         send(OP.SPAWN_SELF,
           headed(
             i32le(grants),
-            headed(argvBytes(args), prefixed(str(cwd), headed(flag((inherit & 1) !== 0), flag(serveFs)))),
+            headed(argvBytes(args), prefixed(str(cwd), headed(new Uint8Array([inherit & 3]), flag(serveFs)))),
           ),
         ),
       ),
@@ -961,8 +968,9 @@ export function cliOf(
 /**
  * The modules this program has loaded, by handle — `issues/system/0240c`.
  *
- * **Module-scope rather than per `Cli`**, because a frame forwards `load`/`call`/`unload` unchanged
- * (`packages/platform/src/frame.wac`), so a handle taken through one `Cli` is used through another.
+ * **Module-scope rather than per `Cli`**, because nothing ties a handle to the `Cli` that took it: a
+ * frame used to forward `load`/`call`/`unload` unchanged, so one taken through one `Cli` was used
+ * through another, and the table should not care which.
  * One program is one realm here: a worker runs one program at a time, and a spawned child is a
  * different worker with its own copy of this module.
  */

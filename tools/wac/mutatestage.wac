@@ -17,8 +17,9 @@
 // undo; this is a few lines and can be replaced by one later without anything outside noticing.
 // `issues/system/0161` has the argument in full.
 
-import { Change, Cli, Exec, FileResult, Stat } from "std";
+import { Change, Cli, Exec, Stat, ChildEnv, Files, Launch, Procs } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /** `.cache/mutate/<n>` — distinct per mutant, and still there when the run ends. */
 export string stageDir(string root, i32 n) { return root + "/.cache/mutate/" + itoa(n); }
@@ -48,16 +49,15 @@ export bool isSource(string name) {
  * of Rust build output and a plain copy has no exclusion. It is the portable way to copy a tree minus
  * a subdirectory, and it is what the exclusion costs.
  */
-export string copyTree(Cli cli, string root, string dir, string dest) {
-  Exec r = cli.exec("bash",
-                    [
+export string copyTree(Procs procs, string root, string dir, string dest) {
+  auto rRan = flatten(procs.exec("bash", [
                              "-c",
                              "cd '" + root + "' && tar -c --exclude=target --exclude=node_modules"
                              + " -f - '" + dir + "' | tar -x -f - -C '" + dest + "'"
-                    ],
-                    u8[]()).wait();
-  if (!r.ran()) { return "copy " + dir + ": the shell did not run"; }
-  if (r.status != 0) { return "copy " + dir + " failed: " + string.fromBytes(r.stderr); }
+                    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return "copy " + dir + ": the shell did not run"; }
+  if (r!.status != 0) { return "copy " + dir + " failed: " + string.fromBytes(r!.stderr); }
   return "";
 }
 
@@ -73,17 +73,16 @@ export string copyTree(Cli cli, string root, string dir, string dest) {
  * staged worker is 68 MB each. Made with `ln -s` through the shell this function is already using —
  * `Cli` has no symlink capability, which is `issues/system/0300c`, and this needs no new one.
  */
-export string linkBinary(Cli cli, string root, string dest, string bin) {
-  Stat have = cli.stat(root + "/" + bin).wait();
-  if (!have.exists) { return ""; }               // nothing to link is not a failure
+export string linkBinary(Files fs, Procs procs, string root, string dest, string bin) {
+  Stat? have = flatten(fs.stat(root + "/" + bin).wait()).ok();
+  if ((have is null)) { return ""; }               // nothing to link is not a failure
   i32 cut = lastSlash(bin);
   string dir = cut < 0 ? dest : dest + "/" + bin.slice(0, cut);
-  cli.mkdir(dir, true).wait();
-  Exec r = cli.exec("bash",
-                    ["-c", "ln -sfn '" + root + "/" + bin + "' '" + dest + "/" + bin + "'"],
-                    u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    return "linking the binary failed: " + string.fromBytes(r.stderr);
+  fs.mkdir(dir, true).wait();
+  auto rRan = flatten(procs.exec("bash", ["-c", "ln -sfn '" + root + "/" + bin + "' '" + dest + "/" + bin + "'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    return "linking the binary failed: " + string.fromBytes(r!.stderr);
   }
   return "";
 }
@@ -113,21 +112,20 @@ i32 lastSlash(string s) {
  * The caller passes the lists rather than this walking them, so a test can stage two directories
  * instead of the repository.
  */
-export string stageInto(Cli cli, string root, string dest, string[] dirs, string[] files,
-                        string bin) {
-  cli.mkdir(dest, true).wait();
+export string stageInto(Files fs, Procs procs, string root, string dest, string[] dirs, string[] files, string bin) {
+  fs.mkdir(dest, true).wait();
   for (i32 i = 0; i < dirs.len(); i++) {
     if (!isSource(dirs[i])) { continue; }
-    string why = copyTree(cli, root, dirs[i], dest);
+    string why = copyTree(procs, root, dirs[i], dest);
     if (why != "") { return why; }
   }
   for (i32 i = 0; i < files.len(); i++) {
-    FileResult f = cli.readFile(root + "/" + files[i]).wait();
-    if (!f.ok) { continue; }                     // a file that vanished mid-run is not a failure
-    Change wrote = cli.writeFile(dest + "/" + files[i], f.bytes).wait();
-    if (!wrote.ok()) { return "copying " + files[i] + ": " + wrote.message; }
+    u8[]? f = flatten(fs.readFile(root + "/" + files[i]).wait()).ok();
+    if ((f is null)) { continue; }                     // a file that vanished mid-run is not a failure
+    auto wrote = flatten(fs.writeFile(dest + "/" + files[i], f!).wait());
+    if (wrote.isErr()) { return "copying " + files[i] + ": " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}"; }
   }
-  return bin == "" ? "" : linkBinary(cli, root, dest, bin);
+  return bin == "" ? "" : linkBinary(fs, procs, root, dest, bin);
 }
 
 /**
@@ -138,16 +136,18 @@ export string stageInto(Cli cli, string root, string dest, string[] dirs, string
  * files were modified, and when — and a reader comparing a score against their working tree can see
  * that the two are not the same thing.
  */
-export string stagedFrom(Cli cli, string clock) {
-  Exec head = cli.exec("git", ["rev-parse", "--short", "HEAD"], u8[]()).wait();
-  if (!head.ran() || head.status != 0) { return "an unknown revision"; }
-  string rev = trimmed(string.fromBytes(head.stdout));
+export string stagedFrom(Procs procs, string clock) {
+  auto headRan = flatten(procs.exec("git", ["rev-parse", "--short", "HEAD"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? head = headRan.ok();
+  if ((head is null) || head!.status != 0) { return "an unknown revision"; }
+  string rev = trimmed(string.fromBytes(head!.stdout));
   if (rev == "") { return "an unknown revision"; }
 
-  Exec status = cli.exec("git", ["status", "--porcelain"], u8[]()).wait();
+  auto statusRan = flatten(procs.exec("git", ["status", "--porcelain"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? status = statusRan.ok();
   i32 dirty = 0;
-  if (status.ran() && status.status == 0) {
-    string lines = string.fromBytes(status.stdout);
+  if ((status is not null) && status!.status == 0) {
+    string lines = string.fromBytes(status!.stdout);
     i32 from = 0;
     for (i32 i = 0; i <= lines.len(); i++) {
       if (i < lines.len() && lines.slice(i, i + 1) != "\n") { continue; }

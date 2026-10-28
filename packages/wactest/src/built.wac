@@ -36,13 +36,14 @@
 // The cache is `.cache/`, which is per workspace and therefore per agent. Nothing here writes to
 // `/tmp`, where three agents would share a name.
 
-import { Cli, Exec, Stat, FileResult } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs } from "std";
 import { T } from "./assert.wac";
 import { Located, Manifest, packageEntry, readManifest } from "../../wacpkg/src/manifest.wac";
+import { flatten } from "core";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
-export i64 newestUnder(const Cli cli, string dir) {
-  return newestUnderExcept(cli, dir, string[].filled(0, ""));
+export i64 newestUnder(Files fs, string dir) {
+  return newestUnderExcept(fs, dir, string[].filled(0, ""));
 }
 
 /**
@@ -55,9 +56,9 @@ export i64 newestUnder(const Cli cli, string dir) {
  * differed from this file's in exactly that line, which is the kind of divergence two copies of one
  * walk are for. `issues/system/0208`.
  */
-export i64 newestUnderExcept(const Cli cli, string dir, string[] skip) {
+export i64 newestUnderExcept(Files fs, string dir, string[] skip) {
   i64 newest = 0 as i64;
-  string[]? names = cli.readDir(dir).wait();
+  string[]? names = flatten(fs.readDir(dir).wait()).ok();
   if (names is null) { return 0 as i64; }
   string[] here = names!;
   for (i32 i = 0; i < here.len(); i++) {
@@ -65,14 +66,14 @@ export i64 newestUnderExcept(const Cli cli, string dir, string[] skip) {
     for (i32 k = 0; k < skip.len(); k++) { if (here[i] == skip[k]) { skipped = true; } }
     if (skipped) { continue; }
     string path = "\{dir}/\{here[i]}";
-    Stat s = cli.stat(path).wait();
-    if (!s.exists) { continue; }
-    if (s.isDir) {
-      i64 deep = newestUnderExcept(cli, path, skip);
+    Stat? s = flatten(fs.stat(path).wait()).ok();
+    if ((s is null)) { continue; }
+    if ((s is not null && s!.isDir)) {
+      i64 deep = newestUnderExcept(fs, path, skip);
       if (deep > newest) { newest = deep; }
       continue;
     }
-    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+    if (s!.modifiedMillis > newest) { newest = s!.modifiedMillis; }
   }
   return newest;
 }
@@ -163,7 +164,7 @@ export struct Closure {
  * one walk — the build cache wants the time, and a freshness check reporting to a human wants the file
  * name to put in the message and the count to prove the walk resolved.
  */
-export Closure closureOf(const Cli cli, string entry) {
+export Closure closureOf(Files fs, string entry) {
   string[] seen = string[].filled(CLOSURE_CAP, "");
   seen[0] = entry;
   i32 n = 1;
@@ -174,20 +175,20 @@ export Closure closureOf(const Cli cli, string entry) {
   while (at < n) {
     string path = seen[at];
     at = at + 1;
-    Stat s = cli.stat(path).wait();
+    Stat? s = flatten(fs.stat(path).wait()).ok();
     // `std/…` and `core/…` resolve to nothing on disk: they live in the compiler, and the binary's own
     // mtime below is what covers them.
-    if (!s.isFile) { continue; }
+    if (!(s is not null && s!.isFile)) { continue; }
     files = files + 1;
-    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; what = path; }
-    FileResult f = cli.readFile(path).wait();
-    if (!f.ok) { return Closure(newest, what, files, false); }
-    string[] specs = importsOf(string.fromBytes(f.bytes));
+    if (s!.modifiedMillis > newest) { newest = s!.modifiedMillis; what = path; }
+    u8[]? f = flatten(fs.readFile(path).wait()).ok();
+    if ((f is null)) { return Closure(newest, what, files, false); }
+    string[] specs = importsOf(string.fromBytes(f!));
     for (string spec in specs) {
       string next = resolvedFrom(path, spec);
       if (next == "") { continue; }
       // A nested project is entered by its directory, at the module it exports.
-      string entered = nestedEntry(cli, next);
+      string entered = nestedEntry(fs, next);
       if (entered != "") { next = entered; }
       bool have = false;
       for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
@@ -234,7 +235,7 @@ export struct Sources {
   string[] mapTo;
 }
 
-export Sources sourcesOf(Cli cli, string entry) {
+export Sources sourcesOf(Files fs, string entry) {
   string[] seen = string[].filled(CLOSURE_CAP, "");
   string[] text = string[].filled(CLOSURE_CAP, "");
   seen[0] = entry;
@@ -250,10 +251,10 @@ export Sources sourcesOf(Cli cli, string entry) {
     at = at + 1;
     // `std/…` and `core/…` resolve to nothing on disk: they live in the compiler, and the compiler
     // is what will be handed these, so it already has them.
-    if (!cli.stat(path).wait().isFile) { continue; }
-    FileResult f = cli.readFile(path).wait();
-    if (!f.ok) { return Sources(string[].filled(0, ""), string[].filled(0, ""), path, string[](), string[](), string[]()); }
-    string src = string.fromBytes(f.bytes);
+    if (!flatten(fs.stat(path).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) { continue; }
+    u8[]? f = flatten(fs.readFile(path).wait()).ok();
+    if ((f is null)) { return Sources(string[].filled(0, ""), string[].filled(0, ""), path, string[](), string[](), string[]()); }
+    string src = string.fromBytes(f!);
     paths[kept] = path;
     text[kept] = src;
     kept = kept + 1;
@@ -261,7 +262,7 @@ export Sources sourcesOf(Cli cli, string entry) {
     for (string spec in specs) {
       string next = resolvedFrom(path, spec);
       if (next == "") { continue; }
-      string entered = nestedEntry(cli, next);
+      string entered = nestedEntry(fs, next);
       if (entered != "") {
         mapFrom = grown(mapFrom, path);
         mapSpec = grown(mapSpec, spec);
@@ -282,11 +283,11 @@ export Sources sourcesOf(Cli cli, string entry) {
 }
 
 /** The module a nested project at `dir` exports, or "" when `dir` is not one. */
-string nestedEntry(const Cli cli, string dir) {
-  if (!cli.stat(dir).wait().isDir) { return ""; }
-  FileResult m = cli.readFile(dir + "/wac.json5").wait();
-  if (!m.ok) { return ""; }
-  Manifest mf = readManifest(m.bytes);
+string nestedEntry(Files fs, string dir) {
+  if (!flatten(fs.stat(dir).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isDir) { return ""; }
+  u8[]? m = flatten(fs.readFile(dir + "/wac.json5").wait()).ok();
+  if ((m is null)) { return ""; }
+  Manifest mf = readManifest(m!);
   if (!mf.ok || mf.exports == "") { return ""; }
   Located at = packageEntry(dir, mf.exports);
   return at.ok ? at.path : "";
@@ -305,10 +306,10 @@ string[] grown(string[] xs, string x) {
  * cannot see what it is made of — the safe direction, since the alternative is asserting against
  * yesterday's build.
  */
-export i64 newestInClosure(const Cli cli, string entry) {
-  Closure c = closureOf(cli, entry);
-  if (!c.complete) { return nowMillis(cli); }
-  i64 carried = newestCarried(cli);
+export i64 newestInClosure(Env env, Files fs, string entry) {
+  Closure c = closureOf(fs, entry);
+  if (!c.complete) { return nowMillis(env, fs); }
+  i64 carried = newestCarried(fs);
   return carried > c.newest ? carried : c.newest;
 }
 
@@ -319,24 +320,24 @@ export i64 newestInClosure(const Cli cli, string entry) {
  * them, nor the compiler that embeds them, nor the JavaScript host a Deno build bundles. A build made
  * while `std` named a type wrongly stayed cached after the fix, and a dozen tests failed on it.
  */
-export i64 newestCarried(const Cli cli) {
+export i64 newestCarried(Files fs) {
   string[] carried = ["core", "std", "packages/wacc/src", "packages/platform/host"];
   i64 newest = 0 as i64;
   for (i32 i = 0; i < carried.len(); i++) {
-    i64 m = newestUnder(cli, carried[i]);
+    i64 m = newestUnder(fs, carried[i]);
     if (m > newest) { newest = m; }
   }
   return newest;
 }
 
 /** A stand-in for "newer than anything", used when the closure cannot be read. */
-i64 nowMillis(const Cli cli) {
-  Stat s = cli.stat(wacBinary(cli)).wait();
-  return s.exists ? s.modifiedMillis + (1000000 as i64) : 1000000000000000;
+i64 nowMillis(Env env, Files fs) {
+  Stat? s = flatten(fs.stat(wacBinary(env)).wait()).ok();
+  return (s is not null) ? s!.modifiedMillis + (1000000 as i64) : 1000000000000000;
 }
 
 /** The path of the `wac` binary these tests build and run with. */
-export string wacBinary(const Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+export string wacBinary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
 /**
  * The newest mtime of `path`, whether it is a file or a directory.
@@ -345,11 +346,11 @@ export string wacBinary(const Cli cli) { return "\{cli.cwd().wait()}/native/v8/t
  * freshness inputs that mixes directories with `Cargo.toml` silently ignores the files, and a
  * lockfile change goes unnoticed. Found while writing exactly that list.
  */
-export i64 newestOf(Cli cli, string path) {
-  Stat s = cli.stat(path).wait();
-  if (!s.exists) { return 0 as i64; }
-  if (!s.isDir) { return s.modifiedMillis; }
-  return newestUnder(cli, path);
+export i64 newestOf(Files fs, string path) {
+  Stat? s = flatten(fs.stat(path).wait()).ok();
+  if ((s is null)) { return 0 as i64; }
+  if (!(s is not null && s!.isDir)) { return s!.modifiedMillis; }
+  return newestUnder(fs, path);
 }
 
 /**
@@ -360,7 +361,7 @@ export i64 newestOf(Cli cli, string path) {
  * the one component underneath it. Both crates produce a binary called `wac`, because the command
  * is `packages/wac/src/wac.wac` and each host carries it as its seed; the engine is the difference.
  */
-export string nativeHost(Cli cli) { return "\{cli.cwd().wait()}/native/target/release/wac"; }
+export string nativeHost(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/target/release/wac"; }
 
 /**
  * The wasmtime host, **required**: a missing or stale one fails `t`, saying how to build it.
@@ -370,10 +371,10 @@ export string nativeHost(Cli cli) { return "\{cli.cwd().wait()}/native/target/re
  * said so only in a log line. A test either needs the host or it does not; `tools/push.sh` builds it.
  * `""` after the failure is recorded, so a caller can return early without running against nothing.
  */
-export string requireNativeHost(Cli cli, T t) {
-  string why = nativeHostWhyNot(cli);
+export string requireNativeHost(Env env, Files fs, T t) {
+  string why = nativeHostWhyNot(env, fs);
   t.isTrue(why == "", "the wasmtime host is required here and is not ready: \{why}");
-  return why == "" ? nativeHost(cli) : "";
+  return why == "" ? nativeHost(env) : "";
 }
 
 /**
@@ -389,10 +390,10 @@ export string requireNativeHost(Cli cli, T t) {
  * The reason is returned rather than warned, so the caller can put it in its own skip line — the four
  * that skip say different things about what is lost, and that is worth keeping.
  */
-export string nativeHostWhyNot(Cli cli) {
-  string root = cli.cwd().wait();
-  Stat host = cli.stat(nativeHost(cli)).wait();
-  if (!host.exists) {
+export string nativeHostWhyNot(Env env, Files fs) {
+  string root = flatten(env.cwd().wait()).unwrap();
+  Stat? host = flatten(fs.stat(nativeHost(env)).wait()).ok();
+  if ((host is null)) {
     return "native/target/release/wac is not built — `./bootstrap.sh --host wasmtime` builds it";
   }
   // **The crate's own inputs, named — not a walk of `native/`.** A blanket walk answered "stale"
@@ -406,7 +407,7 @@ export string nativeHostWhyNot(Cli cli) {
                              "native/Cargo.lock", "native/build.rs"
   ];
   for (i32 i = 0; i < inputs.len(); i++) {
-    if (host.modifiedMillis < newestOf(cli, "\{root}/\{inputs[i]}")) {
+    if (host!.modifiedMillis < newestOf(fs, "\{root}/\{inputs[i]}")) {
       return "native/target/release/wac is older than \{inputs[i]}"
           + " — `./bootstrap.sh --host wasmtime` rebuilds it";
     }
@@ -417,7 +418,7 @@ export string nativeHostWhyNot(Cli cli) {
   // "current" about a host carrying a compiler from days ago. The four callers that consult this to
   // decide whether to skip were told nothing was wrong and compared answers from it.
   // `issues/system/0316b`.
-  string stale = seedStale(cli, WASMTIME_SEED());
+  string stale = seedStale(fs, WASMTIME_SEED());
   if (stale != "") { return "\{stale} — `./bootstrap.sh --host wasmtime` rebuilds it"; }
   return "";
 }
@@ -440,13 +441,13 @@ export string SEED_ENTRY() { return "packages/wac/src/wac.wac"; }
  * **Absent is not stale** and is not this function's question — a fresh clone has no wasmtime seed,
  * and the caller that cares about absence distinguishes it with its own `stat`.
  */
-export string seedStale(Cli cli, string seed) {
-  Stat s = cli.stat(seed).wait();
-  if (!s.isFile) { return ""; }
-  Closure c = closureOf(cli, SEED_ENTRY());
+export string seedStale(Files fs, string seed) {
+  Stat? s = flatten(fs.stat(seed).wait()).ok();
+  if (!(s is not null && s!.isFile)) { return ""; }
+  Closure c = closureOf(fs, SEED_ENTRY());
   // A graph of one file is a walk that did not resolve, and would make this answer "fresh" for ever.
   if (c.count < 10) { return ""; }
-  if (s.modifiedMillis >= c.newest) { return ""; }
+  if (s!.modifiedMillis >= c.newest) { return ""; }
   return "\{seed} is older than \{c.what}";
 }
 
@@ -476,22 +477,22 @@ export string seedStale(Cli cli, string seed) {
  * comparison cannot collide, the file is two lines, and a missing sidecar forces a rebuild, which is
  * the right way to be wrong.
  */
-export string builtProgram(const Cli cli, string entry, string name, string[] grants) {
-  string wac = wacBinary(cli);
-  string dir = "\{cli.cwd().wait()}/.cache/built-\{name}";
-  cli.mkdir(dir, true).wait();
+export string builtProgram(Env env, Files fs, Procs procs, string entry, string name, string[] grants) {
+  string wac = wacBinary(env);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/built-\{name}";
+  fs.mkdir(dir, true).wait();
   string stem = "\{dir}/\{name}";
-  Stat have = cli.stat("\{stem}.wasm").wait();
+  Stat? have = flatten(fs.stat("\{stem}.wasm").wait()).ok();
 
   string want = "";
   for (i32 i = 0; i < grants.len(); i++) { want = want + "\{grants[i]}\n"; }
-  FileResult had = cli.readFile("\{stem}.flags").wait();
-  bool sameFlags = had.ok && string.fromBytes(had.bytes) == want;
+  u8[]? had = flatten(fs.readFile("\{stem}.flags").wait()).ok();
+  bool sameFlags = (had is not null) && string.fromBytes(had!) == want;
 
-  i64 newest = newestInClosure(cli, entry);
-  Stat bin = cli.stat(wac).wait();
-  if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
-  if (have.exists && sameFlags && have.modifiedMillis > newest) { return "\{stem}.wasm"; }
+  i64 newest = newestInClosure(env, fs, entry);
+  Stat? bin = flatten(fs.stat(wac).wait()).ok();
+  if ((bin is not null) && bin!.modifiedMillis > newest) { newest = bin!.modifiedMillis; }
+  if ((have is not null) && sameFlags && have!.modifiedMillis > newest) { return "\{stem}.wasm"; }
 
   string[] args = string[].filled(4 + grants.len(), "");
   args[0] = "build";
@@ -511,13 +512,14 @@ export string builtProgram(const Cli cli, string entry, string name, string[] gr
   // remembered to look. The compiler's own message went to this process's stderr on the way past, so
   // the reason is in the run's output even though the return value cannot carry it. `.flags` goes too,
   // or a later build with the same grants would find a sidecar agreeing with it and no module.
-  (const Exec) built = cli.exec(wac, args, u8[]()).wait();
-  if (!built.ran() || built.status != 0) {
-    cli.remove("\{stem}.wasm", false).wait();
-    cli.remove("\{stem}.flags", false).wait();
+  auto builtRan = flatten(procs.exec(wac, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if ((built is null) || built!.status != 0) {
+    fs.remove("\{stem}.wasm", false).wait();
+    fs.remove("\{stem}.flags", false).wait();
     return "\{stem}.wasm";
   }
-  cli.writeFile("\{stem}.flags", want.toBytes()).wait();
+  fs.writeFile("\{stem}.flags", want.toBytes()).wait();
   return "\{stem}.wasm";
 }
 
@@ -561,22 +563,22 @@ export string builtProgram(const Cli cli, string entry, string name, string[] gr
  * that builds an app starts failing under load with *Text file busy*, this is the note that says the
  * retry belongs here and why it was not written in advance.
  */
-export string builtApp(Cli cli, string entry, string name, string[] grants) {
-  string wac = wacBinary(cli);
-  string dir = "\{cli.cwd().wait()}/.cache/built-\{name}";
-  cli.mkdir(dir, true).wait();
+export string builtApp(Env env, Files fs, Procs procs, string entry, string name, string[] grants) {
+  string wac = wacBinary(env);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/built-\{name}";
+  fs.mkdir(dir, true).wait();
   string out = "\{dir}/\{name}";
 
   string want = "";
   for (i32 i = 0; i < grants.len(); i++) { want = want + "\{grants[i]}\n"; }
-  FileResult had = cli.readFile("\{out}.flags").wait();
-  bool sameFlags = had.ok && string.fromBytes(had.bytes) == want;
+  u8[]? had = flatten(fs.readFile("\{out}.flags").wait()).ok();
+  bool sameFlags = (had is not null) && string.fromBytes(had!) == want;
 
-  Stat have = cli.stat(out).wait();
-  i64 newest = newestInClosure(cli, entry);
-  Stat bin = cli.stat(wac).wait();
-  if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
-  if (have.exists && sameFlags && have.modifiedMillis > newest) { return out; }
+  Stat? have = flatten(fs.stat(out).wait()).ok();
+  i64 newest = newestInClosure(env, fs, entry);
+  Stat? bin = flatten(fs.stat(wac).wait()).ok();
+  if ((bin is not null) && bin!.modifiedMillis > newest) { newest = bin!.modifiedMillis; }
+  if ((have is not null) && sameFlags && have!.modifiedMillis > newest) { return out; }
 
   string[] args = string[].filled(4 + grants.len(), "");
   args[0] = "app";
@@ -586,13 +588,14 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
   args.copyFrom(grants, 0, 4, grants.len());
   // The same rule as `builtProgram`: a failed build takes the artefact with it, because a stale one
   // still runs and the test then passes against code that no longer compiles.
-  Exec built = cli.exec(wac, args, u8[]()).wait();
-  if (!built.ran() || built.status != 0) {
-    cli.remove(out, false).wait();
-    cli.remove("\{out}.flags", false).wait();
+  auto builtRan = flatten(procs.exec(wac, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if ((built is null) || built!.status != 0) {
+    fs.remove(out, false).wait();
+    fs.remove("\{out}.flags", false).wait();
     return out;
   }
-  cli.writeFile("\{out}.flags", want.toBytes()).wait();
+  fs.writeFile("\{out}.flags", want.toBytes()).wait();
   return out;
 }
 
@@ -611,20 +614,19 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
  * same reason `spawn_test` clears it: an instrumented build carries a scoped `--allow-write` for its
  * counter dump, and a test asserting on a shebang would see it.
  */
-export string builtByDeno(Cli cli, string entry, string name, string[] grants, string target,
-                          bool worker) {
-  string dir = "\{cli.cwd().wait()}/.cache/built-\{name}";
-  cli.mkdir(dir, true).wait();
+export string builtByDeno(Env env, Files fs, Procs procs, string entry, string name, string[] grants, string target, bool worker) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/built-\{name}";
+  fs.mkdir(dir, true).wait();
   string out = dir + "/" + name + (worker ? ".worker.js" : "");
-  Stat have = cli.stat(out).wait();
+  Stat? have = flatten(fs.stat(out).wait()).ok();
 
-  i64 newest = newestInClosure(cli, entry);
+  i64 newest = newestInClosure(env, fs, entry);
   // **And `compiler/`**, which is the other half of this path: `build.ts` binds `wacc` through the
   // *reference* compiler, so an edit there changes what comes out even when no `.wac` moved.
-  i64 ref = newestUnder(cli, "compiler");
+  i64 ref = newestUnder(fs, "compiler");
   if (ref > newest) { newest = ref; }
-  Stat builder = cli.stat("packages/platform/build.ts").wait();
-  if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
+  Stat? builder = flatten(fs.stat("packages/platform/build.ts").wait()).ok();
+  if ((builder is not null) && builder!.modifiedMillis > newest) { newest = builder!.modifiedMillis; }
   // **And `host/`, which is the rest of what goes into the artefact.** `build.ts` bundles `entry.ts`,
   // `deno.ts`, `children.ts` and their imports into every program it writes, and this check watched
   // only the file that does the bundling — so a host change left every cached build in place. Found by
@@ -632,17 +634,18 @@ export string builtByDeno(Cli cli, string entry, string name, string[] grants, s
   // binary built before the edit: the message was right, the build was three minutes old, and the
   // failure named neither. `build.ts` keys its own work on the content of every file it reads, so this
   // is the only stale link in the chain.
-  i64 host = newestUnder(cli, "packages/platform/host");
+  i64 host = newestUnder(fs, "packages/platform/host");
   if (host > newest) { newest = host; }
-  if (have.exists && have.modifiedMillis > newest) { return out; }
+  if ((have is not null) && have!.modifiedMillis > newest) { return out; }
 
   string line = "exec env -u WAC_PROFILE deno run -A packages/platform/build.ts \"\{entry}\"";
   for (i32 i = 0; i < grants.len(); i++) { line = line + " \{grants[i]}"; }
   line = line + " --target \{target}";
   if (worker) { line = line + " --worker"; }
   line = line + " -o \"\{out}\"";
-  Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return ""; }
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return ""; }
   return out;
 }
 
@@ -654,21 +657,21 @@ export string builtByDeno(Cli cli, string entry, string name, string[] grants, s
  * changed — `packages/crypto/test/wac/constanttime_test.wac` generates fourteen drivers that differ only
  * in an array literal and are byte-identical between runs. Comparing first costs one read.
  */
-export bool writeIfDifferent(Cli cli, string path, u8[] bytes) {
-  FileResult had = cli.readFile(path).wait();
-  if (had.ok && had.bytes.len() == bytes.len()) {
+export bool writeIfDifferent(Files fs, string path, u8[] bytes) {
+  u8[]? had = flatten(fs.readFile(path).wait()).ok();
+  if ((had is not null) && had!.len() == bytes.len()) {
     bool same = true;
-    for (i32 i = 0; i < bytes.len() && same; i++) { if (had.bytes[i] != bytes[i]) { same = false; } }
+    for (i32 i = 0; i < bytes.len() && same; i++) { if (had![i] != bytes[i]) { same = false; } }
     if (same) { return true; }
   }
-  return cli.writeFile(path, bytes).wait().ok();
+  return flatten(fs.writeFile(path, bytes).wait()).isOk();
 }
 
 /** `from` to `to`, since `Cli` has no copy. Answers whether it landed. */
-export bool copyBuilt(Cli cli, string from, string to, bool executable) {
-  FileResult r = cli.readFile(from).wait();
-  if (!r.ok) { return false; }
-  if (!cli.writeFile(to, r.bytes).wait().ok()) { return false; }
-  if (executable) { cli.setExecutable(to, true).wait(); }
+export bool copyBuilt(Files fs, string from, string to, bool executable) {
+  u8[]? r = flatten(fs.readFile(from).wait()).ok();
+  if ((r is null)) { return false; }
+  if (!flatten(fs.writeFile(to, r!).wait()).isOk()) { return false; }
+  if (executable) { fs.setExecutable(to, true).wait(); }
   return true;
 }

@@ -17,11 +17,11 @@
 // tail of its own match and slices backwards. No caller passes such a separator, so this is a choice
 // of semantics rather than a bug that was biting; the standard one is kept and pinned below.
 
-import { Cli, Core } from "std";
+import { Cli } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { differs, splitOn, trimEnd } from "./replay.wac";
 
-export string test_differs_can_disagree(Core core, Cli cli) {
+export string test_differs_can_disagree() {
   T t = T.create();
 
   t.eqStr(differs([1, 2, 3] as u8[], [1, 2, 3] as u8[]), "", "equal arrays agree");
@@ -43,7 +43,7 @@ export string test_differs_can_disagree(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_split_on_a_multi_character_separator(Core core, Cli cli) {
+export string test_split_on_a_multi_character_separator() {
   T t = T.create();
 
   string[] one = splitOn("a\nb\nc", "\n");
@@ -76,7 +76,7 @@ export string test_split_on_a_multi_character_separator(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_trim_end_takes_only_trailing_newlines(Core core, Cli cli) {
+export string test_trim_end_takes_only_trailing_newlines() {
   T t = T.create();
 
   t.eqStr(trimEnd("a\n"), "a", "one newline");

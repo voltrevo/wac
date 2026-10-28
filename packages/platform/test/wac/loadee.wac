@@ -8,13 +8,13 @@
 // every shape the four native-only commands need: `wac test` calls `string f(Core, Cli)`, and
 // `covdump`, `tracestat` and `ctcompare` call `__cov_init`, `__cov_len` and `__cov_get`.
 
-import { Cli, Core, Sys } from "std";
+import { Cli, Core, Sys, Output } from "std";
 
 /** A test that passes: an empty report. */
-export string test_passes(Core core, Cli cli) { return ""; }
+export string test_passes() { return ""; }
 
 /** A test that fails, and its report is what a caller has to get back. */
-export string test_fails(Core core, Cli cli) { return "two of two assertions failed"; }
+export string test_fails() { return "two of two assertions failed"; }
 
 /**
  * A test that passes **by trapping**, which is why a trap has to be a value rather than the end.
@@ -22,12 +22,12 @@ export string test_fails(Core core, Cli cli) { return "two of two assertions fai
  * 389 of this repository's 2553 test exports are `test_traps_*`, and no wac program can catch one —
  * so without `CallResult.status == 1` a caller can only learn this by dying with it.
  */
-export string test_traps_on_purpose(Core core, Cli cli) {
+export string test_traps_on_purpose() {
   trap;
 }
 
 /** `Core` alone, because a test may name fewer capabilities than the boundary offers. */
-export string test_core_only(Core core) { return ""; }
+export string test_core_only() { return ""; }
 
 /** No capabilities at all, which is the third arity a test export is written with. */
 export string test_no_world() { return ""; }
@@ -51,8 +51,7 @@ export f64 half(f64 x) { return x / 2.0; }
 
 /** A program too, so the same module can be spawned as well as loaded — `load_test` compares them. */
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  core.log("loadee ran as a program");
+  Output out = sys.stdout();
+  out.line("loadee ran as a program");
   return 3;
 }

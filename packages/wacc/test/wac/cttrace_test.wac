@@ -25,10 +25,11 @@
 // `coverage_test.wac` already uses, and it costs a compile per run rather than a call.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, execReason} from "std";
+import { Exec, execReason, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { splitLines, trimmed, joined, contains } from "../../../wactest/src/strings.wac";
 import { emitFilesTraced, emitFilesTracedSlots, traceTableFiles } from "../../src/api.wac";
+import { flatten } from "core";
 
 static string ENTRY = "/t/m.wac";
 
@@ -52,7 +53,7 @@ static string ENTRY = "/t/m.wac";
  */
 static i32 SLOTS = 4096;
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
 /** One recorded point: what it is and where. */
 struct Point {
@@ -112,9 +113,9 @@ Point[] pointsOf(string src) {
  *
  * `slots` of 0 means the compiler's own size.
  */
-Journal traced(Cli cli, string name, string src, i32 slots) {
-  string dir = root(cli) + "/.cache/cttrace";
-  cli.mkdir(dir, true).wait();
+Journal traced(Env env, Files fs, Procs procs, string name, string src, i32 slots) {
+  string dir = root(env) + "/.cache/cttrace";
+  fs.mkdir(dir, true).wait();
   string path = dir + "/" + name + ".wasm";
   u8[] wasm = slots == 0
     ? emitFilesTraced([ENTRY], [src], ENTRY)
@@ -122,17 +123,17 @@ Journal traced(Cli cli, string name, string src, i32 slots) {
   if (wasm.len() <= 8) {
     return Journal(i32[](), i32[](), 0, 0, false, name + ": the emitter declined this program");
   }
-  cli.writeFile(path, wasm).wait();
+  fs.writeFile(path, wasm).wait();
 
-  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
-                    ["covdump", path], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
+  auto rRan = flatten(procs.exec(root(env) + "/native/v8/target/release/wac", ["covdump", path], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
     return Journal(i32[](), i32[](), 0, 0, false,
-                   name + ": covdump — " + execReason(r));
+                   name + ": covdump — " + (r is null ? "\{rRan.err()!}" : execReason(r!)));
   }
 
   // `<index>\t<value>` per slot, then a line saying how many there were.
-  string[] rows = splitLines(string.fromBytes(r.stdout));
+  string[] rows = splitLines(string.fromBytes(r!.stdout));
   i32 n = 0;
   for (i32 i = 0; i < rows.len(); i++) {
     string[] f = fields(rows[i]);
@@ -140,7 +141,7 @@ Journal traced(Cli cli, string name, string src, i32 slots) {
   }
   if (n < 2) {
     return Journal(i32[](), i32[](), 0, 0, false,
-                   name + ": covdump printed " + itoa(n) + " slots: " + string.fromBytes(r.stdout));
+                   name + ": covdump printed " + itoa(n) + " slots: " + string.fromBytes(r!.stdout));
   }
   i32[] raw = i32[].filled(n, 0);
   i32 at = 0;
@@ -238,8 +239,10 @@ bool whole(T t, string what, Journal a, Journal b) {
   return a.sites.len() == a.wanted && b.sites.len() == b.wanted;
 }
 
-export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_find(
-    Core core, Cli cli) {
+export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_find(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The shape of AES's S-box lookup, and the whole reason indices are recorded: `f` has exactly one
   // branch point per run either way, so counting branches reports it as uniform.
   T t = T.create();
@@ -251,8 +254,8 @@ export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_f
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
   t.isTrue(hasKind(points, "index"), "an index point exists");
 
-  Journal a = traced(cli, "index1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
-  Journal b = traced(cli, "index2", BODY + "export i32 main() { return f(2); }\n", SLOTS);
+  Journal a = traced(env, fs, procs, "index1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal b = traced(env, fs, procs, "index2", BODY + "export i32 main() { return f(2); }\n", SLOTS);
   if (whole(t, "the S-box lookup", a, b)) {
     t.eqI32(a.sites.len(), b.sites.len(), "same number of events — no branch differs");
     t.eqStr(divergence(points, a, b), "index@3", "the index at line 3 is where they differ");
@@ -260,15 +263,18 @@ export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_f
   return t.report();
 }
 
-export string test_a_secret_dependent_branch_diverges_at_the_branch(Core core, Cli cli) {
+export string test_a_secret_dependent_branch_diverges_at_the_branch(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   const string BODY = "export i32 f(i32 secret) {\n" +
     "  if (secret > 10) { return 1; }\n" +
     "  return 0;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
-  Journal a = traced(cli, "branch1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
-  Journal b = traced(cli, "branch100", BODY + "export i32 main() { return f(100); }\n", SLOTS);
+  Journal a = traced(env, fs, procs, "branch1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal b = traced(env, fs, procs, "branch100", BODY + "export i32 main() { return f(100); }\n", SLOTS);
   // `else@2`, not `then@2`: the divergence is named for the point the *first* run stood at, and with
   // `secret = 1` that run took the untaken side. Which of the two it names does not matter to a
   // caller — `firstDivergence` reports the line — and pinning the real answer is worth more than
@@ -279,8 +285,10 @@ export string test_a_secret_dependent_branch_diverges_at_the_branch(Core core, C
   return t.report();
 }
 
-export string test_a_routine_that_does_not_look_at_its_secret_produces_one_journal(
-    Core core, Cli cli) {
+export string test_a_routine_that_does_not_look_at_its_secret_produces_one_journal(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The canary for the two tests above: a comparison that *finds* a divergence everywhere is not a
   // check, it is a broken clock, and both of the leaks here are one line away from this program.
   T t = T.create();
@@ -290,8 +298,8 @@ export string test_a_routine_that_does_not_look_at_its_secret_produces_one_journ
     "  return acc;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");
-  Journal a = traced(cli, "clean0", BODY + "export i32 main() { return f(0); }\n", SLOTS);
-  Journal b = traced(cli, "clean255", BODY + "export i32 main() { return f(255); }\n", SLOTS);
+  Journal a = traced(env, fs, procs, "clean0", BODY + "export i32 main() { return f(0); }\n", SLOTS);
+  Journal b = traced(env, fs, procs, "clean255", BODY + "export i32 main() { return f(255); }\n", SLOTS);
   if (whole(t, "the clean routine", a, b)) {
     t.isTrue(a.sites.len() > 0, "something was recorded");
     t.eqStr(divergence(points, a, b), "", "identical journals");
@@ -299,7 +307,10 @@ export string test_a_routine_that_does_not_look_at_its_secret_produces_one_journ
   return t.report();
 }
 
-export string test_the_right_hand_side_of_a_short_circuit_is_a_point(Core core, Cli cli) {
+export string test_the_right_hand_side_of_a_short_circuit_is_a_point(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // It had none, so a secret deciding whether `b` runs at all was invisible — and a coverage report
   // called `a && b` covered when only `a` had ever been true. The reference records it as `and-rhs`;
   // this is the same point under the same name.
@@ -312,8 +323,8 @@ export string test_the_right_hand_side_of_a_short_circuit_is_a_point(Core core, 
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
   t.isTrue(hasKind(points, "and-rhs"), "an and-rhs point exists");
 
-  Journal a = traced(cli, "short1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
-  Journal b = traced(cli, "short9", BODY + "export i32 main() { return f(9); }\n", SLOTS);
+  Journal a = traced(env, fs, procs, "short1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal b = traced(env, fs, procs, "short9", BODY + "export i32 main() { return f(9); }\n", SLOTS);
   if (whole(t, "the short circuit", a, b)) {
     // **The claim, asserted directly**: with `secret = 1` the left operand is false and the right
     // never runs; with `secret = 9` it does. Before this point existed the two runs recorded the same
@@ -332,7 +343,10 @@ export string test_the_right_hand_side_of_a_short_circuit_is_a_point(Core core, 
   return t.report();
 }
 
-export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, Cli cli) {
+export string test_the_journal_is_a_journal_order_is_what_it_records(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Two runs that touch the same indices in a different *order* have identical counts, and coverage
   // cannot tell them apart. This is what a trace is for.
   T t = T.create();
@@ -343,8 +357,8 @@ export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, 
     "  return a + b;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");
-  Journal a = traced(cli, "order0", BODY + "export i32 main() { return f(0); }\n", SLOTS);
-  Journal b = traced(cli, "order1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal a = traced(env, fs, procs, "order0", BODY + "export i32 main() { return f(0); }\n", SLOTS);
+  Journal b = traced(env, fs, procs, "order1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
   if (whole(t, "the ordering", a, b)) {
     // **The whole sequence, so the wrapper is stated rather than filtered.** Two entries because
     // there are two functions — `main` is one, and the TypeScript that called `f` directly saw only
@@ -360,7 +374,10 @@ export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, 
   return t.report();
 }
 
-export string test_a_journal_too_small_says_how_large_it_needed_to_be(Core core, Cli cli) {
+export string test_a_journal_too_small_says_how_large_it_needed_to_be(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // `issues/lang/0059`: the buffer was a fixed 2^22 events, so a routine that produces more could not
   // be checked for secret dependence *at all* — and the routines that overflow are the ones selected
   // for being expensive on purpose. A KDF's cost is the function rather than a parameter of it.
@@ -377,8 +394,8 @@ export string test_a_journal_too_small_says_how_large_it_needed_to_be(Core core,
 
   // Eight slots is one event's worth of room and little more, so 40 iterations overflow it many
   // times over.
-  Journal tiny = traced(cli, "tiny", SRC, 8);
-  Journal roomy = traced(cli, "roomy", SRC, 4096);
+  Journal tiny = traced(env, fs, procs, "tiny", SRC, 8);
+  Journal roomy = traced(env, fs, procs, "roomy", SRC, 4096);
   if (both(t, "the sized journal", tiny, roomy)) {
     t.eqI32(tiny.capacity, 8, "the size is the caller's");
     t.isTrue(tiny.sites.len() < tiny.wanted, "fewer recorded (" + itoa(tiny.sites.len()) +

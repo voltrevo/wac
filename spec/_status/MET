@@ -350,6 +350,7 @@ spec/3-expressions/23-interpolation-and-markup.md#14
 spec/3-expressions/23-interpolation-and-markup.md#15
 spec/3-expressions/23-interpolation-and-markup.md#16
 spec/3-expressions/23-interpolation-and-markup.md#17
+spec/3-expressions/23-interpolation-and-markup.md#18
 spec/3-expressions/24-casts.md#1
 spec/3-expressions/24-casts.md#2
 spec/3-expressions/24-casts.md#3
@@ -445,6 +446,7 @@ spec/6-concurrency/35-tickets-and-await.md#15
 spec/6-concurrency/35-tickets-and-await.md#16
 spec/6-concurrency/35-tickets-and-await.md#17
 spec/6-concurrency/35-tickets-and-await.md#18
+spec/6-concurrency/35-tickets-and-await.md#19
 spec/6-concurrency/36-coroutines-and-generators.md#1
 spec/6-concurrency/36-coroutines-and-generators.md#2
 spec/6-concurrency/36-coroutines-and-generators.md#3

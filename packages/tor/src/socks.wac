@@ -55,14 +55,14 @@
 // `FULL_POLL_MS` and looks again. The client still waits in the backlog rather than being refused,
 // which is the property that mattered.
 
-import { Core, Cli, HostSocket, Pending, FileResult, CALL_SLOTS, Sys } from "std";
-import { Vec, Read } from "core";
+import { CALL_SLOTS, HostFault, Sys, Clock, Files, Net, Output, Random, Listener, Socket, SocketFault } from "std";
+import { Vec, Read, Result, flatten } from "core";
 import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanceCircuit,
          circuitReady, circuitFailed } from "./bootstrap.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotBroken, gotDestroyed }
   from "./circuit.wac";
 import { cellCircId, encodeDestroy, destroyRequested, ID_WIDE} from "./cell.wac";
-import { Link, feedLink, takeCell, sendCells, sliceOf, concat } from "./link.wac";
+import { Link, closeLink, feedLink, takeCell, sendCells, sliceOf, concat } from "./link.wac";
 import { socksReply, replyForEndReason, endReasonName, targetOf, requestLength,
          repOk, repFailure, repNotAllowed, repBadCommand, repBadAddress } from "./socks5.wac";
 
@@ -110,7 +110,7 @@ struct Client {
    * `issues/system/0306b`.
    */
   i32 id;
-  i32 sock;
+  Socket sock;
   /** Which circuit in `circuits`; -1 until a destination is known. */
   i32 circIdx;
   /** The stream id on that circuit; 0 until BEGIN has been sent. */
@@ -148,12 +148,12 @@ struct Client {
 struct Proxy {
   /** Hands out `Client.id`; never reused, unlike a socket handle. */
   i32 nextClientId;
-  Network net;
+  Network network;
   Guard guard;
   Vec<Client> clients;
   Vec<Building> circuits;
   i32 nextCircId;
-  i32 listener;
+  Listener listener;
   /** Set when the guard link dies, which is what ends every pump and the drain loop with them. */
   bool stopped;
 }
@@ -167,14 +167,14 @@ struct Proxy {
  * hazard in its old form. A pump holds its `Client`; the index is looked up here, where nothing can
  * suspend between finding it and using it.
  */
-void dropClient(Cli cli, Proxy x, Client c) {
+void dropClient(Net net, Proxy x, Client c) {
   if (c.gone) { return; }
   c.gone = true;
   // **Closing is how a parked pump is woken**, rather than cancelling its ticket. The client's read
   // lives in its own pump now, so nothing here can reach it — and it does not need to: the close
   // makes that `await` answer `End`, the pump sees `gone`, and it returns. That only became true
   // when `issues/system/0304b` was fixed; before it, a close behind a parked read reached nobody.
-  cli.closeSocket(c.sock);
+  c.sock.close();
   if (c.phase >= 3 && !x.guard.link.dead && c.circIdx >= 0) {
     // REASON_MISC. The exit should learn the stream ended even though the circuit has not,
     // or it holds the far side open until its own timeout. Phase 2 has no stream yet.
@@ -196,7 +196,7 @@ void dropClient(Cli cli, Proxy x, Client c) {
  * socket. The backlog rule it enforced lives in `pumpClient`, which is the thing that decides
  * whether to go round again.
  */
-void drain(Cli cli, Proxy x, Client c) {
+void drain(Proxy x, Client c) {
   if (c.phase == 4 && c.circIdx >= 0) {
     Circuit circ = x.circuits.get(c.circIdx).circ;
     while (c.pending.len() > 0 && circ.maySend(c.streamId)) {
@@ -229,10 +229,10 @@ i32 portOf(string target) {
  * end. `dropClient` sends one; this is the other half, kept separate so the difference is visible
  * rather than a flag.
  */
-void forget(Cli cli, Proxy x, Client c) {
+void forget(Net net, Proxy x, Client c) {
   if (c.gone) { return; }
   c.gone = true;
-  cli.closeSocket(c.sock);
+  c.sock.close();
   for (i32 i = 0; i < x.clients.len(); i++) {
     if (x.clients.get(i).id == c.id) { x.clients.swapRemove(i); return; }
   }
@@ -256,9 +256,10 @@ Client? streamOwner(Proxy x, i32 ci, i32 id) {
  * (connection, source, circuit) by hand, which the comment above them called the bug they existed
  * to avoid" — and this is the same removal.
  */
-async void pumpGuard(Core core, Cli cli, Proxy x) {
+async void pumpGuard(Output err, Output out, Random rnd, Net net, Proxy x) {
   while (!x.stopped) {
-    Read got = await cli.recv(x.guard.link.sock).ticket();
+    Result<Read, SocketFault> read = await x.guard.link.sock!.recv();
+    Read got = read.isOk() ? read.unwrap() : Read.Failed("\{read.err()!}");
     bool linkLive = false;
     match (got) {
       Data(bytes): { linkLive = feedLink(x.guard.link, bytes); }
@@ -266,10 +267,10 @@ async void pumpGuard(Core core, Cli cli, Proxy x) {
       // A guard that closed and a guard whose connection failed are both fatal to this proxy, but
       // an operator reading the log needs to know which — one is a relay going away, the other is
       // the network under us.
-      Failed(why): { core.warn("tor: the link to the guard failed: \{why}"); }
+      Failed(why): { err.line("tor: the link to the guard failed: \{why}"); }
     }
     if (!linkLive) {
-      core.warn("tor: the link to the guard is gone");
+      err.line("tor: the link to the guard is gone");
       x.stopped = true;
       return;
     }
@@ -277,7 +278,7 @@ async void pumpGuard(Core core, Cli cli, Proxy x) {
     while (true) {
       u8[] cell = takeCell(x.guard.link);
       if (cell.len() == 0) { break; }
-      handleCell(core, cli, x, cell);
+      handleCell(err, out, rnd, net, x, cell);
       if (x.stopped) { return; }
     }
     if (x.guard.link.dead) { x.stopped = true; return; }
@@ -290,7 +291,7 @@ async void pumpGuard(Core core, Cli cli, Proxy x) {
  * **Dispatch first**, as it always did: handing a cell to the wrong `Circuit` advances the wrong
  * ciphers, and there is no recovering from that — the hop would stop recognising us.
  */
-void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
+void handleCell(Output err, Output out, Random rnd, Net net, Proxy x, u8[] cell) {
   i32 cid = cellCircId(cell, 0, ID_WIDE);
   i32 ci = -1;
   for (i32 i = 0; i < x.circuits.len(); i++) {
@@ -300,8 +301,8 @@ void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
   Building b = x.circuits.get(ci);
 
   if (b.state < circuitReady()) {
-    if (advanceCircuit(core, x.net, x.guard, b, cell) == circuitReady()) {
-      core.log("circuit \{ci} for port \{b.port}: \{b.description}");
+    if (advanceCircuit(err, rnd, x.network, x.guard, b, cell) == circuitReady()) {
+      out.line("circuit \{ci} for port \{b.port}: \{b.description}");
     }
     // Ready or failed, the clients parked on it can move: one to sending BEGIN, the other to
     // being told so rather than waiting for a reply that is not coming.
@@ -310,13 +311,13 @@ void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
         Client p = x.clients.get(i);
         if (p.circIdx != ci || p.phase != 2) { continue; }
         if (b.state == circuitFailed()) {
-          cli.send(p.sock, socksReply(repFailure())).wait();
-          dropClient(cli, x, p);
+          p.sock.send(socksReply(repFailure())).wait();
+          dropClient(net, x, p);
           continue;
         }
         p.streamId = b.circ.beginStream();
         p.phase = 3;
-        core.log("stream \{p.streamId} -> \{p.target} on circuit \{ci}");
+        out.line("stream \{p.streamId} -> \{p.target} on circuit \{ci}");
         sendCells(x.guard.link, b.circ.beginCell(p.streamId, p.target));
       }
     }
@@ -326,11 +327,11 @@ void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
   Received got = b.circ.receive(cell);
   if (got.toSend.len() > 0) { sendCells(x.guard.link, got.toSend); }
   if (got.kind == gotBroken() || got.kind == gotDestroyed()) {
-    core.warn("tor: circuit \{ci} was destroyed");
+    err.line("tor: circuit \{ci} was destroyed");
     b.state = circuitFailed();
     for (i32 i = x.clients.len() - 1; i >= 0; i--) {
       Client q = x.clients.get(i);
-      if (q.circIdx == ci) { dropClient(cli, x, q); }
+      if (q.circIdx == ci) { dropClient(net, x, q); }
     }
     return;
   }
@@ -341,29 +342,29 @@ void handleCell(Core core, Cli cli, Proxy x, u8[] cell) {
   if (owner is null) {
     // A SENDME is credit, which may unblock a client sitting on a full buffer, and it carries no
     // stream of its own to find.
-    for (i32 i = 0; i < x.clients.len(); i++) { drain(cli, x, x.clients.get(i)); }
+    for (i32 i = 0; i < x.clients.len(); i++) { drain(x, x.clients.get(i)); }
     return;
   }
   Client c = owner!;
 
   if (got.kind == gotConnected() && c.phase == 3) {
     c.phase = 4;
-    cli.send(c.sock, socksReply(repOk())).wait();
-    drain(cli, x, c);
+    c.sock.send(socksReply(repOk())).wait();
+    drain(x, c);
   } else if (got.kind == gotData() && c.phase == 4) {
-    if (!cli.send(c.sock, got.data).wait()) { dropClient(cli, x, c); }
+    if (flatten(c.sock.send(got.data).wait()).isErr()) { dropClient(net, x, c); }
   } else if (got.kind == gotEnd()) {
-    core.log("stream \{c.streamId} ended: \{endReasonName(got.data)}");
+    out.line("stream \{c.streamId} ended: \{endReasonName(got.data)}");
     if (c.phase == 3) {
       // It never opened, so the client is still waiting for a reply rather than for data. Telling
       // it *why* is the whole point of the reason mapping.
-      cli.send(c.sock, socksReply(replyForEndReason(got.data))).wait();
+      c.sock.send(socksReply(replyForEndReason(got.data))).wait();
     }
     // Phase 3 is owed nothing and phase 4's stream is the one that just ended, so neither needs the
     // RELAY_END `dropClient` would send.
-    forget(cli, x, c);
+    forget(net, x, c);
   }
-  for (i32 i = 0; i < x.clients.len(); i++) { drain(cli, x, x.clients.get(i)); }
+  for (i32 i = 0; i < x.clients.len(); i++) { drain(x, x.clients.get(i)); }
 }
 
 /**
@@ -398,23 +399,23 @@ static i32 FULL_POLL_MS = 25;
  */
 static i32 IDLE_MS = 50;
 
-async void pumpAccept(Core core, Cli cli, Proxy x) {
+async void pumpAccept(Output err, Output out, Random rnd, Clock clock, Net net, Proxy x) {
   while (!x.stopped) {
     if (x.clients.len() >= MAX_CLIENTS) {
-      i64 unused = await core.delay(FULL_POLL_MS).ticket();
+      await clock.sleepMillis(FULL_POLL_MS);
       continue;
     }
-    HostSocket incoming = await cli.accept(x.listener).ticket();
+    Result<Socket, HostFault> incoming = await x.listener.accept();
     if (x.stopped) { return; }
-    if (incoming.handle < 0) {
-      core.warn("tor: accept failed: \{incoming.error}");
+    if (incoming.isErr()) {
+      err.line("tor: accept failed: \{incoming.err()!}");
       x.stopped = true;
       return;
     }
-    Client c = Client(x.nextClientId, incoming.handle, -1, 0, 0, u8[](), "", false);
+    Client c = Client(x.nextClientId, incoming.unwrap(), -1, 0, 0, u8[](), "", false);
     x.nextClientId = x.nextClientId + 1;
     x.clients.push(c);
-    pumpClient(core, cli, x, c);
+    pumpClient(err, out, rnd, clock, net, x, c);
   }
 }
 
@@ -431,17 +432,18 @@ async void pumpAccept(Core core, Cli cli, Proxy x) {
  * that placeholder is what stopped the first draft of this rewrite from ever answering a greeting.
  * Closing the socket wakes the pump just as well and costs nothing to express.
  */
-async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
+async void pumpClient(Output err, Output out, Random rnd, Clock clock, Net net, Proxy x, Client c) {
   while (!x.stopped && !c.gone) {
     // The backlog rule the old `drain` enforced when it re-armed: stop reading from a client whose
     // queued bytes the circuit has not taken yet, or a fast client with a slow exit grows `pending`
     // without bound.
     if (c.pending.len() >= CLIENT_BACKLOG) {
-      i64 unused = await core.delay(FULL_POLL_MS).ticket();
+      await clock.sleepMillis(FULL_POLL_MS);
       continue;
     }
 
-    Read got = await cli.recv(c.sock).ticket();
+    Result<Read, SocketFault> read = await c.sock.recv();
+    Read got = read.isOk() ? read.unwrap() : Read.Failed("\{read.err()!}");
     if (c.gone || x.stopped) { return; }
 
     u8[] chunk = u8[]();
@@ -451,14 +453,14 @@ async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
       End: { ended = true; }
       // A client whose connection failed is dropped like one that closed; the warning is what
       // distinguishes a browser that navigated away from a network that broke under it.
-      Failed(why): { core.warn("tor: a client connection failed: \{why}"); ended = true; }
+      Failed(why): { err.line("tor: a client connection failed: \{why}"); ended = true; }
     }
-    if (ended) { dropClient(cli, x, c); return; }
+    if (ended) { dropClient(net, x, c); return; }
     c.pending = concat(c.pending, chunk);
 
-    if (c.phase == 0 && !greeted(core, cli, x, c)) { return; }
-    if (c.phase == 1 && !requested(core, cli, x, c)) { return; }
-    drain(cli, x, c);
+    if (c.phase == 0 && !greeted(err, net, x, c)) { return; }
+    if (c.phase == 1 && !requested(err, out, rnd, net, x, c)) { return; }
+    drain(x, c);
   }
 }
 
@@ -468,16 +470,16 @@ async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
  * VER, NMETHODS, METHODS. We answer "no authentication" without reading the methods: a client that
  * did not offer it will reject the reply, which is its business.
  */
-bool greeted(Core core, Cli cli, Proxy x, Client c) {
+bool greeted(Output err, Net net, Proxy x, Client c) {
   if (c.pending.len() < 2) { return true; }
   i32 need = 2 + c.pending[1] as i32;
   if (c.pending.len() < need) { return true; }
   if (c.pending[0] != 0x05) {
-    core.warn("tor: a client spoke SOCKS version \{c.pending[0] as i32}");
-    dropClient(cli, x, c);
+    err.line("tor: a client spoke SOCKS version \{c.pending[0] as i32}");
+    dropClient(net, x, c);
     return false;
   }
-  cli.send(c.sock, [0x05, 0x00] as u8[]).wait();
+  c.sock.send([0x05, 0x00] as u8[]).wait();
   c.pending = sliceOf(c.pending, need, c.pending.len());
   c.phase = 1;
   return true;
@@ -490,18 +492,18 @@ bool greeted(Core core, Cli cli, Proxy x, Client c) {
  * need not accept 25, and asking it is how a stream fails after three handshakes rather than before
  * any.
  */
-bool requested(Core core, Cli cli, Proxy x, Client c) {
+bool requested(Output err, Output out, Random rnd, Net net, Proxy x, Client c) {
   if (c.pending.len() >= 2 && c.pending[1] != 0x01) {
     // BIND and UDP ASSOCIATE. Tor has no equivalent of either.
-    cli.send(c.sock, socksReply(repBadCommand())).wait();
-    dropClient(cli, x, c);
+    c.sock.send(socksReply(repBadCommand())).wait();
+    dropClient(net, x, c);
     return false;
   }
   string target = targetOf(c.pending);
   if (target == "") { return true; }
   if (target == "!") {
-    cli.send(c.sock, socksReply(repBadAddress())).wait();
-    dropClient(cli, x, c);
+    c.sock.send(socksReply(repBadAddress())).wait();
+    dropClient(net, x, c);
     return false;
   }
   c.pending = sliceOf(c.pending, requestLength(c.pending), c.pending.len());
@@ -536,18 +538,18 @@ bool requested(Core core, Cli cli, Proxy x, Client c) {
       if (slot >= 0) {
         // Told, not dropped. The three relays hold key material and the exit holds an open
         // connection until they hear otherwise.
-        core.log("retiring idle circuit \{slot} (port " +
+        out.line("retiring idle circuit \{slot} (port " +
                  "\{x.circuits.get(slot).port}) to make room for \{want}");
         sendCells(x.guard.link, encodeDestroy(x.circuits.get(slot).circId, destroyRequested()));
       }
     }
     if (slot < 0 && x.circuits.len() >= MAX_CIRCUITS) {
-      core.warn("tor: \{MAX_CIRCUITS} circuits already, refusing port \{want}");
-      cli.send(c.sock, socksReply(repFailure())).wait();
-      dropClient(cli, x, c);
+      err.line("tor: \{MAX_CIRCUITS} circuits already, refusing port \{want}");
+      c.sock.send(socksReply(repFailure())).wait();
+      dropClient(net, x, c);
       return false;
     }
-    Building fresh = startCircuit(core, x.net, x.guard, want, x.nextCircId);
+    Building fresh = startCircuit(err, rnd, x.network, x.guard, want, x.nextCircId);
     x.nextCircId = x.nextCircId + 1;
     if (slot < 0) {
       x.circuits.push(fresh);
@@ -559,18 +561,18 @@ bool requested(Core core, Cli cli, Proxy x, Client c) {
     if (fresh.state == circuitFailed()) {
       // It never reached the wire — no exit carries the port. The slot stays free for the next
       // attempt, which is the whole point of looking for one above.
-      cli.send(c.sock, socksReply(repNotAllowed())).wait();
-      dropClient(cli, x, c);
+      c.sock.send(socksReply(repNotAllowed())).wait();
+      dropClient(net, x, c);
       return false;
     }
-    core.log("building circuit \{use} for port \{want}");
+    out.line("building circuit \{use} for port \{want}");
   }
   c.circIdx = use;
 
   if (x.circuits.get(use).state == circuitReady()) {
     c.streamId = x.circuits.get(use).circ.beginStream();
     c.phase = 3;
-    core.log("stream \{c.streamId} -> \{target} on circuit \{use}");
+    out.line("stream \{c.streamId} -> \{target} on circuit \{use}");
     sendCells(x.guard.link, x.circuits.get(use).circ.beginCell(c.streamId, target));
   } else {
     // Parked. `handleCell` sends its BEGIN when the last hop answers.
@@ -582,63 +584,69 @@ bool requested(Core core, Cli cli, Proxy x, Client c) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 3) {
-    core.warn("usage: tor-socks <seed-file> <authorities-file> <port>");
-    core.warn("  then: curl --socks5-hostname 127.0.0.1:<port> http://example.com/");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Files fs = sys.files();
+  Net net = sys.net();
+  if (argv.len() < 3) {
+    err.line("usage: tor-socks <seed-file> <authorities-file> <port>");
+    err.line("  then: curl --socks5-hostname 127.0.0.1:<port> http://example.com/");
     return 2;
   }
-  FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!seedFile.ok) { core.warn("tor: \{seedFile.error}"); return 1; }
-  FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
-  if (!authFile.ok) { core.warn("tor: \{authFile.error}"); return 1; }
+  auto seedFileRead = flatten(fs.readFile(argv[0]).wait());
+  if (seedFileRead.isErr()) { err.line("tor: \{seedFileRead.isErr() ? "\{seedFileRead.err()!}" : ""}"); return 1; }
+  auto authFileRead = flatten(fs.readFile(argv[1]).wait());
+  if (authFileRead.isErr()) { err.line("tor: \{authFileRead.isErr() ? "\{authFileRead.err()!}" : ""}"); return 1; }
   i32 port = 0;
-  u8[] pb = string.fromBytes(cli.arg(2).wait()).toBytes();
+  u8[] pb = argv[2].toBytes();
   for (i32 i = 0; i < pb.len(); i++) {
-    if (pb[i] < '0' || pb[i] > '9') { core.warn("tor: the port must be a number"); return 1; }
+    if (pb[i] < '0' || pb[i] > '9') { err.line("tor: the port must be a number"); return 1; }
     port = port * 10 + (pb[i] as i32 - '0');
   }
 
-  Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, true);
-  if (!net.ok) { return 1; }
+  Network network = bootstrap(err, clock, rnd, net, seedFileRead.unwrap(), authFileRead.unwrap(), true);
+  if (!network.ok) { return 1; }
 
   // One guard, pinned, carrying every circuit. Choosing a fresh guard per circuit would present the
   // network a new entry point for each destination, which is the thing guards exist to prevent.
-  Guard guard = connectGuard(core, cli, net);
+  Guard guard = connectGuard(err, clock, rnd, net, network);
   if (!guard.ok) { return 1; }
-  core.log("guard: \{guard.nickname}");
+  out.line("guard: \{guard.nickname}");
 
   // Loopback only: a SOCKS port reachable from the network launders anyone's traffic into the Tor
   // network under this client's exits. `listen` took a port alone until issue 0025.
-  HostSocket listener = cli.listen("127.0.0.1", port).wait();
-  if (listener.handle < 0) {
-    core.warn("tor: cannot listen on 127.0.0.1:\{port}: \{listener.error}");
-    cli.closeSocket(guard.link.sock);
+  auto listenerBind = flatten(net.listen("127.0.0.1", port).wait());
+  Listener? listener = listenerBind.ok();
+  if (listener is null) {
+    err.line("tor: cannot listen on 127.0.0.1:\{port}: \{listenerBind.isErr() ? "\{listenerBind.err()!}" : ""}");
+    closeLink(guard.link);
     return 1;
   }
-  // `listener.port`, not `port`: with 0 the kernel chooses, and this line reported the request
+  // `listener!.port`, not `port`: with 0 the kernel chooses, and this line reported the request
   // rather than the answer until `socksnet_test.wac` started it on 0 and could not find it.
-  core.log("socks5 on 127.0.0.1:\{listener.port}, circuits built on demand per port");
+  out.line("socks5 on 127.0.0.1:\{listener!.port}, circuits built on demand per port");
 
-  Proxy x = Proxy(1, net, guard, Vec.create(), Vec.create(), 0x80000002, listener.handle, false);
-  pumpGuard(core, cli, x);
-  pumpAccept(core, cli, x);
+  Proxy x = Proxy(1, network, guard, Vec.create(), Vec.create(), 0x80000002, listener!, false);
+  pumpGuard(err, out, rnd, net, x);
+  pumpAccept(err, out, rnd, clock, net, x);
 
   // **The drain is the loop now.** What stood here was a `waitAny` over a rebuilt list of every
   // outstanding read with an `owner` array beside it to say whose each one was; every read carries
   // its own continuation, so there is nothing to rebuild and no position to translate back.
   // `relayd.wac` made the same removal and its header says what it was worth.
   while (!x.stopped) {
-    i32 ran = core.drainFor(IDLE_MS);
+    i32 ran = sys.drainFor(IDLE_MS);
     if (ran > 0) { continue; }
     if (x.guard.link.dead) { x.stopped = true; }
   }
 
   for (i32 i = x.clients.len() - 1; i >= 0; i--) {
-    cli.closeSocket(x.clients.get(i).sock);
+    x.clients.get(i).sock.close();
   }
-  cli.closeSocket(listener.handle);
-  cli.closeSocket(guard.link.sock);
+  listener!.close();
+  closeLink(guard.link);
   return 0;
 }

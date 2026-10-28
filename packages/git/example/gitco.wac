@@ -12,55 +12,56 @@
 // to rebuild it, and asks git whether the result is clean. That is a hard test to pass by accident: a
 // wrong mode, a wrong byte, a missing file or an index in the wrong order all show up by name.
 
-import { Cli, Core, FAULT_NONE, Sys } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { FAULT_NONE, Sys, Env, Output, Files } from "std";
 import { RepoAt, Written, checkout, head, openRepo, treeOfCommit } from "../src/repo.wac";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  i32 n = argv.len();
   if (n < 1) {
-    core.warn("usage: gitco <repo-dir>");
+    err.line("usage: gitco <repo-dir>");
     return 2;
   }
-  string root = string.fromBytes(cli.arg(0).wait());
-  Fs fs = Fs.onHost(cli, 0);
+  string root = argv[0];
+  Files fs = sys.files();
 
   match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
-      core.warn("gitco: \{why}");
+      err.line("gitco: \{why}");
       return 1;
     }
     Opened(repo): {
       u8[]? at = await head(repo);
       if (at is null) {
-        core.warn("gitco: HEAD does not resolve to a commit");
+        err.line("gitco: HEAD does not resolve to a commit");
         return 1;
       }
       u8[]? tree = await treeOfCommit(repo, at!);
       if (tree is null) {
-        core.warn("gitco: HEAD is not a commit, or names no tree");
+        err.line("gitco: HEAD is not a commit, or names no tree");
         return 1;
       }
       match ((await checkout(repo, tree!, root))) {
         Stopped(why): {
-          core.warn("gitco: \{why}");
+          err.line("gitco: \{why}");
           return 1;
         }
-        Files(count, modesUnset, linksAsFiles): {
-          core.log("\{count} files");
+        CheckedOut(count, modesUnset, linksAsFiles): {
+          out.line("\{count} files");
           // Said before the mode warning because it is the larger difference: a mode is wrong, a
           // symlink is the wrong *kind* of thing on disk.
           if (linksAsFiles > 0) {
-            core.warn("gitco: \{linksAsFiles}" +
+            err.line("gitco: \{linksAsFiles}" +
               " symlink(s) were written as ordinary files holding their target" +
               " — this filesystem cannot create one, and git will report them as typechanged");
           }
           if (modesUnset > 0) {
             // Said rather than swallowed: `git status` would otherwise be the first thing to mention
             // it, and it would blame the file. issues/system/0132.
-            core.warn("gitco: \{modesUnset}" +
+            err.line("gitco: \{modesUnset}" +
               " file(s) wanted the executable bit and this filesystem cannot set it" +
               " — git will report them as modified");
           }

@@ -24,7 +24,7 @@
 // was 5,994 ms and 180 files there. Passing the whole corpus is deliberate and free — `emitFiles`
 // documents that what is emitted is the closure, not the table.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Files, Output } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { emitFiles } from "../../packages/wacc/src/api.wac";
 import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wac";
@@ -36,22 +36,24 @@ import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wa
 static string ENTRY = "packages/box/src/bin/sh.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output stdout = sys.stdout();
+  Files fs = sys.files();
   // **The entry is a constant and cannot be an argument.** This runs under `wac covdump`, which
   // calls `main` with no argv of its own — and a loaded module sees the *host's*, so
   // `cli.arg(0)` here is the string `"covdump"`. Reading it took the entry to be a file of that name
   // and emitted an eight-byte module, which is a profile of nothing that looks exactly like a profile.
   // Change `ENTRY` to profile something else.
-  Corpus c = loadCorpus(cli, "waccprofile");
+  Corpus c = loadCorpus(fs, "waccprofile");
   if (!c.ok) {
-    core.warn("waccprofile: the corpus walk — " + c.error);
+    err.line("waccprofile: the corpus walk — " + c.error);
     return 1;
   }
   u8[] out = emitFiles(c.paths, c.sources, ENTRY);
   // **Printed, because a module that emitted nothing still fills a counter table.** A run that
   // failed to find the entry would produce a plausible-looking profile of the failure path, and the
   // byte count is the cheapest thing that tells the two apart.
-  core.log(itoa(c.paths.len()) + " files offered, " + itoa(out.len()) + " bytes emitted from " + ENTRY);
+  stdout.line(itoa(c.paths.len()) + " files offered, " + itoa(out.len()) + " bytes emitted from " + ENTRY);
   return out.len() > 0 ? 0 : 1;
 }

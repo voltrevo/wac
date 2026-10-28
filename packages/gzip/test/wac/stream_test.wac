@@ -35,7 +35,7 @@
 
 import { Read } from "core";
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { gunzipBytes, gunzipStream } from "../../src/inflate.wac";
 import { gzipStream, gzipBest } from "../../src/gzip.wac";
 import { External, gunzip, pythonGzip, pythonGzipNamed, firstDifference } from "./external.wac";
@@ -168,11 +168,11 @@ u8[] noise(i32 n, i32 seed) {
   return out;
 }
 
-export string test_streamed_output_equals_the_whole_buffer_decode_at_every_chunk_size(Core core,
-                                                                                     Cli cli) {
+export string test_streamed_output_equals_the_whole_buffer_decode_at_every_chunk_size(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] text = repeated("the quick brown fox jumps over the lazy dog. ", 40);
-  External made = pythonGzip(cli, text, 6);
+  External made = pythonGzip(procs, text, 6);
   t.isTrue(made.ok(), "python gzip: \{made.error}");
   if (!made.ok()) { return t.report(); }
   u8[] want = gunzipBytes(made.bytes);
@@ -193,9 +193,10 @@ export string test_streamed_output_equals_the_whole_buffer_decode_at_every_chunk
  * The exhaustive version of the test above: cut the input in two at every position, so a boundary
  * lands inside the header, inside a code, and inside the trailer.
  */
-export string test_a_chunk_boundary_at_every_single_byte(Core core, Cli cli) {
+export string test_a_chunk_boundary_at_every_single_byte(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  External made = pythonGzip(cli, repeated("streaming gunzip, one boundary at a time. ", 6), 6);
+  External made = pythonGzip(procs, repeated("streaming gunzip, one boundary at a time. ", 6), 6);
   t.isTrue(made.ok(), "python gzip: \{made.error}");
   if (!made.ok()) { return t.report(); }
   u8[] gz = made.bytes;
@@ -218,10 +219,11 @@ export string test_a_chunk_boundary_at_every_single_byte(Core core, Cli cli) {
  * been handed to the sink, which is exactly what the retained window is for. A window dropped one
  * byte too eagerly fails here and nowhere smaller.
  */
-export string test_output_larger_than_the_window_flush(Core core, Cli cli) {
+export string test_output_larger_than_the_window_flush(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] big = repeated("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ", 12000);
-  External made = pythonGzip(cli, big, 6);
+  External made = pythonGzip(procs, big, 6);
   t.isTrue(made.ok(), "python gzip: \{made.error}");
   if (!made.ok()) { return t.report(); }
   u8[] want = gunzipBytes(made.bytes);
@@ -249,10 +251,11 @@ export string test_output_larger_than_the_window_flush(Core core, Cli cli) {
  * The other block type across a flush. Random bytes deflate to stored blocks, so this walks the
  * byte-at-a-time stored path over more than one window.
  */
-export string test_incompressible_data_larger_than_the_flush(Core core, Cli cli) {
+export string test_incompressible_data_larger_than_the_flush(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] rnd = noise(200000, 0x12345678);
-  External made = pythonGzip(cli, rnd, 0);
+  External made = pythonGzip(procs, rnd, 0);
   t.isTrue(made.ok(), "python gzip: \{made.error}");
   if (!made.ok()) { return t.report(); }
   t.isTrue(same(gunzipBytes(made.bytes), rnd), "the buffer decode agrees");
@@ -272,10 +275,11 @@ export string test_incompressible_data_larger_than_the_flush(Core core, Cli cli)
  * FNAME is what python sets when it is given a filename, and the streaming header parser is a
  * separate piece of code from the buffer one — it reads forward instead of indexing.
  */
-export string test_header_extras_are_skipped_not_mistaken_for_data(Core core, Cli cli) {
+export string test_header_extras_are_skipped_not_mistaken_for_data(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] data = "named member".toBytes();
-  External made = pythonGzipNamed(cli, data, "some-name.txt");
+  External made = pythonGzipNamed(procs, data, "some-name.txt");
   t.isTrue(made.ok(), "python gzip: \{made.error}");
   if (!made.ok()) { return t.report(); }
   u8[] gz = made.bytes;
@@ -411,7 +415,8 @@ u8[][] corpus() {
   return out;
 }
 
-export string test_gunzip_accepts_what_gzipstream_produces_at_every_chunk_size(Core core, Cli cli) {
+export string test_gunzip_accepts_what_gzipstream_produces_at_every_chunk_size(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] names = corpusNames();
   u8[][] data = corpus();
@@ -421,7 +426,7 @@ export string test_gunzip_accepts_what_gzipstream_produces_at_every_chunk_size(C
       // Chunk 1 over 300 KB is 300000 spawns' worth of work in the reader; skip the two biggest
       // inputs at the finest chunk, which the host-side version paid for and nothing needed.
       if (chunks[k] == 1 && data[i].len() > 100000) { continue; }
-      External back = gunzip(cli, compressed(data[i], chunks[k]));
+      External back = gunzip(procs, compressed(data[i], chunks[k]));
       string where = "\{names[i]} at chunk \{chunks[k]}";
       t.isTrue(back.ok(), "\{where}: \{back.error}");
       if (!back.ok()) { continue; }
@@ -463,7 +468,8 @@ export string test_it_never_expands_past_a_stored_member() {
  * empty window, and repetitive input pays for it: the check is against the whole-input compressor,
  * which has the whole history by definition.
  */
-export string test_matches_still_reach_across_a_block_boundary(Core core, Cli cli) {
+export string test_matches_still_reach_across_a_block_boundary(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // A twenty-kilobyte unit with nothing inside it to find, repeated past three block boundaries.
   // The period is under the 32 KiB history and the unit is incompressible, so the *only* thing
@@ -477,7 +483,7 @@ export string test_matches_still_reach_across_a_block_boundary(Core core, Cli cl
   }
   u8[] chunked = compressed(data, 1 << 16);
   i32 whole = gzipBest(data).len();
-  External back = gunzip(cli, chunked);
+  External back = gunzip(procs, chunked);
   t.isTrue(back.ok(), "gunzip: \{back.error}");
   if (back.ok()) { t.isTrue(same(back.bytes, data), "it round trips"); }
 

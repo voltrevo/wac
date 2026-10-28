@@ -50,15 +50,16 @@
 // anything unbounded — and `spawn_test.wac` holds the other half.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { CallResult, Cli, Core, Exec, GRANT_ALL, LoadedModule } from "std";
+import { Authority, CallResult, Exec, ChildEnv, Env, Files, Launch, Module, Modules, Output, Procs, Sys, Unsupported } from "std";
 import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot, requireNativeHost }
   from "../../../wactest/src/built.wac";
+import { flatten } from "core";
 
 static string PROBE = "packages/platform/test/wac/loadprobe.wac";
 
 /** The module whose exports get called, built once by the `wac` binary. */
-string loadee(Cli cli) {
-  return builtProgram(cli, "packages/platform/test/wac/loadee.wac", "loadee", string[].filled(0, ""));
+string loadee(Env env, Files fs, Procs procs) {
+  return builtProgram(env, fs, procs, "packages/platform/test/wac/loadee.wac", "loadee", string[].filled(0, ""));
 }
 
 /** One line per call, in `loadprobe.wac`'s order. Compared verbatim, so a shape cannot move quietly. */
@@ -76,84 +77,104 @@ string expected() {
        + "after-unload 2\n";
 }
 
+/** Whether `path` is a file — and false when it cannot be asked, which a build that failed also answers. */
+bool isFile(Files fs, string path) {
+  auto st = flatten(fs.stat(path).wait());
+  return st.isOk() && st.unwrap().isFile;
+}
+
 struct Ran {
   i32 code;
   string out;
   string err;
 }
 
-Ran run(Cli cli, string bin, string[] args) {
-  Exec r = cli.exec(bin, args, u8[]()).wait();
-  if (!r.ran()) { return Ran(-1, "", "did not run — \{r.error}"); }
-  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
+Ran run(Procs procs, string bin, string[] args) {
+  auto rRan = flatten(procs.exec(bin, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Ran(-1, "", "did not run — \{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  return Ran(r!.status, string.fromBytes(r!.stdout), string.fromBytes(r!.stderr));
 }
 
-export string test_this_host_loads_a_module_and_calls_every_shape(Core core, Cli cli) {
+export string test_this_host_loads_a_module_and_calls_every_shape(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Modules mods = sys.modules();
   // **Directly, on whatever host is running this file** — which is the native binary under
   // `wac test`. The JavaScript hosts are covered by the built probe below; this is the same claim
   // about this one, and having both is the point: `issues/system/0240c` was filed because four
   // commands existed on one host only, and a capability that repeated that would be no better.
   T t = T.create();
-  string path = loadee(cli);
-  t.isTrue(cli.stat(path).wait().isFile, "the module built: \{path}");
-  if (!cli.stat(path).wait().isFile) { return t.report(); }
+  string path = loadee(env, fs, procs);
+  t.isTrue(isFile(fs, path), "the module built: \{path}");
+  if (!isFile(fs, path)) { return t.report(); }
 
-  LoadedModule m = cli.load(cli.readFile(path).wait().bytes, GRANT_ALL());
-  t.isTrue(!m.unavailable(), "this host can load a module — \{m.error}");
-  t.isTrue(m.handle >= 0, "it loaded: \{m.error}");
-  if (m.handle < 0) { return t.report(); }
+  Module m;
+  match (mods.load(flatten(fs.readFile(path).wait()).orElse(u8[]()), Authority(fs, null, null, null))) {
+    Ok(loaded): { m = loaded; }
+    Err(e): {
+      t.isTrue(!(e is Unsupported), "this host can load a module — \{e}");
+      t.isTrue(false, "it loaded: \{e}");
+      return t.report();
+    }
+  }
 
-  CallResult pass = cli.call(m.handle, "test_passes", 0);
+  CallResult pass = m.call("test_passes", 0).unwrap();
   t.eqI32(pass.status, 0, "test_passes returned: \{pass.text}");
   t.eqStr(pass.text, "", "a passing test's report is empty");
 
-  CallResult fail = cli.call(m.handle, "test_fails", 0);
+  CallResult fail = m.call("test_fails", 0).unwrap();
   t.eqStr(fail.text, "two of two assertions failed", "the failing report came back whole");
 
   // **The row the capability exists for**, and every assertion after it is also proof that the
   // caller survived: 389 of this repository's 2553 test exports pass by trapping.
-  CallResult trapped = cli.call(m.handle, "test_traps_on_purpose", 0);
+  CallResult trapped = m.call("test_traps_on_purpose", 0).unwrap();
   t.eqI32(trapped.status, 1, "a trap is a value, not the end");
   t.eqStr(trapped.text, "", "a bare trap says nothing, on every host — the engine's own word "
                             + "for it was invented to make the four agree and told a caller "
                             + "nothing");
 
-  t.eqI32(cli.call(m.handle, "test_core_only", 0).status, 0, "Core alone is callable");
-  t.eqI32(cli.call(m.handle, "test_no_world", 0).status, 0, "no capabilities is callable");
-  t.eqI32(cli.call(m.handle, "answer", 0).value, 42, "an i32 answer comes back");
-  t.eqI32(cli.call(m.handle, "twice", 21).value, 42, "the i32 argument arrived");
-  t.eqI32(cli.call(m.handle, "nothing", 0).status, 0, "a void export is callable");
-  t.eqI32(cli.call(m.handle, "no_such_export", 0).status, 2, "a missing export says so");
-  t.eqI32(cli.call(m.handle, "half", 0).status, 3, "a signature outside the set is refused");
+  t.eqI32(m.call("test_core_only", 0).unwrap().status, 0, "Core alone is callable");
+  t.eqI32(m.call("test_no_world", 0).unwrap().status, 0, "no capabilities is callable");
+  t.eqI32(m.call("answer", 0).unwrap().value, 42, "an i32 answer comes back");
+  t.eqI32(m.call("twice", 21).unwrap().value, 42, "the i32 argument arrived");
+  t.eqI32(m.call("nothing", 0).unwrap().status, 0, "a void export is callable");
+  t.eqI32(m.call("no_such_export", 0).unwrap().status, 2, "a missing export says so");
+  t.eqI32(m.call("half", 0).unwrap().status, 3, "a signature outside the set is refused");
 
   // **The caller's own world is intact afterwards.** On the native hosts `call` swaps the running
   // module's context in and out, and a swap that did not put the caller's back would corrupt the
   // next capability call rather than fail — silently, because `write_string` would copy into the
   // wrong module's memory. Reading a file here is the cheapest thing that would notice.
-  cli.unload(m.handle);
-  t.isTrue(cli.stat(path).wait().isFile, "the caller's own capabilities still work afterwards");
-  t.eqI32(cli.call(m.handle, "answer", 0).status, 2, "an unloaded handle names nothing");
+  m.unload();
+  t.isTrue(isFile(fs, path), "the caller's own capabilities still work afterwards");
+  t.eqI32(m.call("answer", 0).unwrap().status, 2, "an unloaded handle names nothing");
   return t.report();
 }
 
-export string test_all_four_hosts_load_one_module_and_answer_the_same(Core core, Cli cli) {
+export string test_all_four_hosts_load_one_module_and_answer_the_same(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string mod = loadee(cli);
-  t.isTrue(cli.stat(mod).wait().isFile, "the module built: \{mod}");
-  if (!cli.stat(mod).wait().isFile) { return t.report(); }
+  string mod = loadee(env, fs, procs);
+  t.isTrue(isFile(fs, mod), "the module built: \{mod}");
+  if (!isFile(fs, mod)) { return t.report(); }
 
   string[] grants = ["--allow-read"];
-  string deno = builtByDeno(cli, PROBE, "loadprobe-deno", grants, "deno", false);
-  string node = builtByDeno(cli, PROBE, "loadprobe-node", grants, "node", false);
-  t.isTrue(cli.stat(deno).wait().isFile, "the Deno probe built");
-  t.isTrue(cli.stat(node).wait().isFile, "the Node probe built");
-  if (!cli.stat(deno).wait().isFile || !cli.stat(node).wait().isFile) { return t.report(); }
+  string deno = builtByDeno(env, fs, procs, PROBE, "loadprobe-deno", grants, "deno", false);
+  string node = builtByDeno(env, fs, procs, PROBE, "loadprobe-node", grants, "node", false);
+  t.isTrue(isFile(fs, deno), "the Deno probe built");
+  t.isTrue(isFile(fs, node), "the Node probe built");
+  if (!isFile(fs, deno) || !isFile(fs, node)) { return t.report(); }
 
-  Ran d = run(cli, deno, [mod]);
+  Ran d = run(procs, deno, [mod]);
   t.eqI32(d.code, 0, "the Deno probe ran: \{d.err}");
   t.eqStr(d.out, expected(), "Deno: \{d.err}");
 
-  Ran n = run(cli, "node", [node, mod]);
+  Ran n = run(procs, "node", [node, mod]);
   t.eqI32(n.code, 0, "the Node probe ran: \{n.err}");
   // **Against Deno's, not only against the expectation.** The two share `provider.ts` — one
   // implementation, two runtimes — so this row is what would catch a difference in the *runtime*
@@ -164,11 +185,11 @@ export string test_all_four_hosts_load_one_module_and_answer_the_same(Core core,
   // so this is the row that is not sharing any code with the others — the one that would catch the
   // capability having been *described* the same and *implemented* differently. It is asked for rather
   // than built, and required: a checkout without one fails here rather than keeping the three above.
-  if (requireNativeHost(cli, t) == "") { return t.report(); }
-  string probe = builtProgram(cli, PROBE, "loadprobe-native", ["--allow-read"]);
-  t.isTrue(cli.stat(probe).wait().isFile, "the native probe module built");
-  if (!cli.stat(probe).wait().isFile) { return t.report(); }
-  Ran w = run(cli, nativeHost(cli), [probe, mod]);
+  if (requireNativeHost(env, fs, t) == "") { return t.report(); }
+  string probe = builtProgram(env, fs, procs, PROBE, "loadprobe-native", ["--allow-read"]);
+  t.isTrue(isFile(fs, probe), "the native probe module built");
+  if (!isFile(fs, probe)) { return t.report(); }
+  Ran w = run(procs, nativeHost(env), [probe, mod]);
   t.eqI32(w.code, 0, "the wasmtime probe ran: \{w.err}");
   t.eqStr(w.out, d.out, "wacland said the same as Deno");
   return t.report();

@@ -201,8 +201,7 @@ export async string test_greedy_quantifiers(Sys sys) {
   await checkAll(t, sys.procs(), [
     "a*", "a+", "a?", "ab*", "ab+", "ab?", "a*b", "a+b", "a?b", ".*b", ".+b",
     "a{2}", "a{2,}", "a{2,3}", "a{0,2}", "a{0}", "a{1}", "a{3,3}", "(ab){2}", "(a|b){2,3}"
-  ],
-    subjects(), "greedy quantifiers");
+  ], subjects(), "greedy quantifiers");
   return t.report();
 }
 
@@ -245,8 +244,7 @@ export async string test_backtracking_order_is_the_whole_answer(Sys sys) {
   await checkAll(t, sys.procs(), [
     "(a|ab)", "(a|ab)c", "(ab|a)", "(ab|a)b", "a*a", "(a*)(a*)", "(a+)(a*)",
     "(a?)(a?)a", ".*(b)", ".*?(b)", "(a*)*", "(a*)+", "(a|)*", "(|a)*"
-  ],
-    subjects(), "backtracking order");
+  ], subjects(), "backtracking order");
   return t.report();
 }
 

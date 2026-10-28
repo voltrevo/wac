@@ -18,56 +18,57 @@
 // `reachableExcluding` — the difference — and for a fast-forward onto a long history that is a few objects
 // rather than all of them.
 
-import { Cli, Core, FileResult, Sys } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { Sys, Env, Output, Files } from "std";
 import { decode } from "../../codec/src/hex.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { Ad, Advertised, parseAdvertisement } from "../src/fetch.wac";
 import { Update, absentName, advertisedTargets, noRefsYet, oldFor, updateRequest } from "../src/receive.wac";
 import { Reachable, RepoAt, head, openRepo, reachableExcluding, readObject } from "../src/repo.wac";
 import { Got, writePack } from "../src/pack.wac";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  i32 n = argv.len();
   if (n < 3) {
-    core.warn("usage: gitpush <repo-dir> <advertisement-file> <ref>");
+    err.line("usage: gitpush <repo-dir> <advertisement-file> <ref>");
     return 2;
   }
-  string root = string.fromBytes(cli.arg(0).wait());
-  string advPath = string.fromBytes(cli.arg(1).wait());
-  string ref = string.fromBytes(cli.arg(2).wait());
-  Fs fs = Fs.onHost(cli, 0);
+  string root = argv[0];
+  string advPath = argv[1];
+  string ref = argv[2];
+  Files fs = sys.files();
 
-  FileResult adv = await fs.readFile(advPath);
-  if (!adv.ok) {
-    core.warn("gitpush: cannot read \{advPath}");
+  u8[]? adv = (await fs.readFile(advPath)).ok();
+  if (adv is null) {
+    err.line("gitpush: cannot read \{advPath}");
     return 1;
   }
   // **The old value comes from what the server just said**, which is what makes this a compare-and-swap
   // rather than an overwrite: twenty zeros if the ref is new, its current target otherwise. If somebody
   // moves the ref between that advertisement and this push, the server refuses — and that refusal is the
   // only thing standing between a stale client and a discarded commit.
-  u8[] old = oldFor(adv.bytes, ref);
+  u8[] old = oldFor(adv!, ref);
 
   match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
-      core.warn("gitpush: \{why}");
+      err.line("gitpush: \{why}");
       return 1;
     }
     Opened(repo): {
       u8[]? tip = await head(repo);
       if (tip is null) {
-        core.warn("gitpush: HEAD does not resolve to a commit");
+        err.line("gitpush: HEAD does not resolve to a commit");
         return 1;
       }
       // **What the far end already has, left out.** Everything reachable from an advertised ref is there by
       // definition, so the pack carries the difference — which for a fast-forward onto a long history is the
       // difference between a few objects and all of them.
-      Vec<Reachable> objects = await reachableExcluding(repo, tip!, advertisedTargets(adv.bytes), 64);
+      Vec<Reachable> objects = await reachableExcluding(repo, tip!, advertisedTargets(adv!), 64);
       if (objects.len() == 0) {
-        core.warn("gitpush: nothing reachable from HEAD, or an object could not be read");
+        err.line("gitpush: nothing reachable from HEAD, or an object could not be read");
         return 1;
       }
 
@@ -77,7 +78,7 @@ export async i32 main(Sys sys) {
         kinds[i] = objects.get(i).kind;
         match ((await readObject(repo, objects.get(i).name))) {
           Absent(why): {
-            core.warn("gitpush: \{why}");
+            err.line("gitpush: \{why}");
             return 1;
           }
           Found(kind, data): { bodies.push(data); }
@@ -86,15 +87,15 @@ export async i32 main(Sys sys) {
 
       Vec<Update> updates = Vec.create();
       updates.push(Update(ref, old, tip!));
-      if (!cli.write(updateRequest(updates, "report-status"))) {
-        core.warn("gitpush: cannot write the update commands");
+      if (!flatten(out.write(updateRequest(updates, "report-status")).wait()).isOk()) {
+        err.line("gitpush: cannot write the update commands");
         return 1;
       }
-      if (!cli.write(writePack(kinds, bodies))) {
-        core.warn("gitpush: cannot write the pack");
+      if (!flatten(out.write(writePack(kinds, bodies)).wait()).isOk()) {
+        err.line("gitpush: cannot write the pack");
         return 1;
       }
-      core.warn("gitpush: \{objects.len()} objects for \{ref}");
+      err.line("gitpush: \{objects.len()} objects for \{ref}");
       return 0;
     }
   }

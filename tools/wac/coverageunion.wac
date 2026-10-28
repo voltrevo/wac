@@ -31,8 +31,8 @@
 // together is that there is now one of each. It also gained a task — it had none, and was run by
 // typing `deno run -A tools/coverageUnion.ts` from memory.
 
-import { Core, Cli, Exec, FileResult, Sys } from "std";
-import { Map, hashString, stringEq, Vec } from "core";
+import { Exec, Sys, ChildEnv, Clock, Files, Launch, Output, Procs } from "std";
+import { Map, hashString, stringEq, Vec, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
 import { Task, tasksFile, tasksIn } from "../../packages/wac/src/tasks.wac";
@@ -72,21 +72,25 @@ static i32 ANY = 2;
 static i32 OWN = 4;
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 argc = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  i32 argc = argv.len();
   Vec<string> asked = Vec<string>.create();
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (!startsWith(a, "--")) { asked.push(a); }
   }
 
-  FileResult reg = cli.readFile(tasksFile()).wait();
-  if (!reg.ok) {
-    core.warn("coverage:union: cannot read " + tasksFile());
+  u8[]? reg = flatten(fs.readFile(tasksFile()).wait()).ok();
+  if ((reg is null)) {
+    err.line("coverage:union: cannot read " + tasksFile());
     return 1;
   }
-  Task[] tasks = tasksIn(reg.bytes);
+  Task[] tasks = tasksIn(reg!);
   string[] all = packagesOf(tasks);
 
   // Named packages, or all of them. A name that is not a package is worth saying rather than
@@ -101,7 +105,7 @@ export i32 main(Sys sys) {
   for (i32 k = 0; k < asked.len(); k++) {
     bool known = false;
     for (i32 i = 0; i < all.len(); i++) { if (all[i] == asked.get(k)) { known = true; } }
-    if (!known) { core.warn("coverage:union: no package named " + asked.get(k)); return 2; }
+    if (!known) { err.line("coverage:union: no package named " + asked.get(k)); return 2; }
   }
 
   Map<string, i32> flags = Map.create(hashString, stringEq);
@@ -120,18 +124,19 @@ export i32 main(Sys sys) {
     for (i32 k = 1; k < parts.len(); k++) { args[k - 1] = parts[k]; }
     args[parts.len() - 1] = "--points";
 
-    i64 started = core.nowMillis().wait();
-    Exec r = cli.exec(parts[0], args, u8[]()).wait();
-    i32 rows = absorb(flags, string.fromBytes(r.stdout), pkg);
-    i64 took = core.nowMillis().wait() - started;
+    i64 started = flatten(clock.nowMillis().wait()).unwrap();
+    auto rRan = flatten(procs.exec(parts[0], args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? r = rRan.ok();
+    i32 rows = absorb(flags, string.fromBytes(r!.stdout), pkg);
+    i64 took = flatten(clock.nowMillis().wait()).unwrap() - started;
 
-    string status = r.ran() && r.status == 0 ? "" : "  (exit " + itoa(r.ran() ? r.status : -1) + ")";
-    if (!r.ran() || r.status != 0) { failed.push(pkg); }
-    core.log(padded(pkg, 12) + rightly(itoa(rows), 6) + " points  " + tenths(took) + "s" + status);
+    string status = (r is not null) && r!.status == 0 ? "" : "  (exit " + itoa((r is not null) ? r!.status : -1) + ")";
+    if ((r is null) || r!.status != 0) { failed.push(pkg); }
+    out.line(padded(pkg, 12) + rightly(itoa(rows), 6) + " points  " + tenths(took) + "s" + status);
     if (rows > 0) { ran.set(pkg, 1); }
   }
 
-  report(core, flags, ran, failed);
+  report(out, flags, ran, failed);
   return 0;
 }
 
@@ -187,7 +192,7 @@ export string[] splitOnTabs(string s) {
 }
 
 /** The table, sorted by what each file gained. */
-void report(Core core, Map<string, i32> flags, Map<string, i32> ran, Vec<string> failed) {
+void report(Output out, Map<string, i32> flags, Map<string, i32> ran, Vec<string> failed) {
   string[] keys = flags.keys();
 
   // The distinct files, in first-seen order, so the arrays below can be sized rather than grown.
@@ -236,22 +241,22 @@ void report(Core core, Map<string, i32> flags, Map<string, i32> ran, Vec<string>
     order[at] = v;
   }
 
-  core.log("");
-  core.log("| file | owner | points | its own | across all | gained |");
-  core.log("|---|---|---:|---:|---:|---:|");
+  out.line("");
+  out.line("| file | owner | points | its own | across all | gained |");
+  out.line("|---|---|---:|---:|---:|---:|");
   for (i32 k = 0; k < order.len(); k++) {
     i32 i = order[k];
     string who = owner(files.get(i));
-    core.log("| " + files.get(i) + " | " + (who == "" ? "(shared)" : who) + " | " + itoa(nAll[i])
+    out.line("| " + files.get(i) + " | " + (who == "" ? "(shared)" : who) + " | " + itoa(nAll[i])
              + " | " + itoa(nOwn[i]) + " (" + itoa(percent(nOwn[i], nAll[i])) + "%) | "
              + itoa(nAny[i]) + " (" + itoa(percent(nAny[i], nAll[i])) + "%) | +"
              + itoa(nAny[i] - nOwn[i]) + " |");
   }
 
-  core.log("");
-  core.log(itoa(order.len()) + " file(s) read better across all drivers than from their own package, "
+  out.line("");
+  out.line(itoa(order.len()) + " file(s) read better across all drivers than from their own package, "
            + "by " + itoa(gained) + " point(s) in total.");
-  core.log("A package's own floor is unaffected and should be: this is the reason column, "
+  out.line("A package's own floor is unaffected and should be: this is the reason column, "
            + "not a ratchet.");
 
   // **A driver that exited non-zero contributed a partial table**, and a partial table can only make
@@ -262,7 +267,7 @@ void report(Core core, Map<string, i32> flags, Map<string, i32> ran, Vec<string>
     for (i32 i = 0; i < failed.len(); i++) {
       names = names + (i == 0 ? "" : ", ") + failed.get(i);
     }
-    core.log("\n" + itoa(failed.len()) + " driver(s) exited non-zero — " + names
+    out.line("\n" + itoa(failed.len()) + " driver(s) exited non-zero — " + names
              + ". Their point sets are whatever they reached before stopping, so the gains above are "
              + "understated.");
   }

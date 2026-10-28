@@ -18,9 +18,8 @@
 // takes the answer, it does not go and find it. `wac.wac` imports it back from here, which is
 // cycle-free because nothing in this file knows about the command.
 
-import { Cli, FileResult } from "std";
+import { Env, Files } from "std";
 import { Map, Vec, hashString, stringEq } from "core";
-import { Fs } from "../../fs/src/fs.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, relativeTo, resolveFromAt } from "../../wacc/src/path.wac";
 import { coreSource, isBuiltinSpec, stdSource }
@@ -30,6 +29,7 @@ import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, packageE
   from "../../wacpkg/src/manifest.wac";
 import { Lock, readLock } from "../../wacpkg/src/lock.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
+import { flatten } from "core";
 import { missingForBuildIn } from "../../wacc/src/api.wac";
 import { Reads } from "../../wacc/src/frontend.wac";
 import { Parsed } from "../../wacc/src/reach.wac";
@@ -148,11 +148,11 @@ bool isMappingCandidate(string spec) {
 }
 
 /** `projectRootOf` with the boundary given rather than assumed — see `Mapped.checkout`. */
-async string projectRootIn(Fs fs, string path, string boundary) {
+async string projectRootIn(Files fs, string path, string boundary) {
   string[] dirs = candidateRoots(path, boundary);
   for (i32 i = 0; i < dirs.len(); i++) {
     string at = dirs[i] == "." ? MANIFEST_NAME() : "\{dirs[i]}/\{MANIFEST_NAME()}";
-    if ((await fs.stat(at)).exists) { return dirs[i]; }
+    if ((await fs.stat(at)).isOk()) { return dirs[i]; }
   }
   return "";
 }
@@ -164,10 +164,10 @@ async string projectRootIn(Fs fs, string path, string boundary) {
  * been given one. "" is an ordinary answer rather than a failure: it means no cache can be found, so
  * a mapped import reports that rather than reading from somewhere unrelated.
  */
-export string wacHomeOf(Cli cli) {
-  u8[]? set = cli.env("WAC_HOME").wait();
+export string wacHomeOf(Env env) {
+  u8[]? set = flatten(env.get("WAC_HOME").wait()).orElse(null);
   if (!(set is null) && set!.len() > 0) { return string.fromBytes(set!); }
-  u8[]? home = cli.env("HOME").wait();
+  u8[]? home = flatten(env.get("HOME").wait()).orElse(null);
   if ((home is null) || home!.len() == 0) { return ""; }
   return "\{string.fromBytes(home!)}/.wac";
 }
@@ -217,10 +217,10 @@ struct Mapped {
  * — the triple D8 says identity is. Two mappings naming one repository at one commit produce one
  * key; two mappings at different commits produce two. No separate canonicalisation to keep true.
  */
-async Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
-  FileResult mf = await fs.readFile(root == "." ? MANIFEST_NAME() : "\{root}/\{MANIFEST_NAME()}");
-  if (!mf.ok) { return Mapped(false, false, "", "", "", ""); }
-  Manifest m = readManifest(mf.bytes);
+async Mapped mapSpecifier(Files fs, Env env, string root, string spec) {
+  u8[]? mf = (await fs.readFile(root == "." ? MANIFEST_NAME() : "\{root}/\{MANIFEST_NAME()}")).ok();
+  if (mf is null) { return Mapped(false, false, "", "", "", ""); }
+  Manifest m = readManifest(mf!);
   if (!m.ok) {
     return Mapped(true, false, "", "", "",
                   root + "/" + MANIFEST_NAME() + ": " + manifestWhy(m.code) +
@@ -237,12 +237,12 @@ async Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
   string name = m.imports[hit.index].name;
   string git = m.imports[hit.index].git;
 
-  FileResult lf = await fs.readFile(root == "." ? "wac.lock" : "\{root}/wac.lock");
-  if (!lf.ok) {
+  u8[]? lf = (await fs.readFile(root == "." ? "wac.lock" : "\{root}/wac.lock")).ok();
+  if (lf is null) {
     return Mapped(true, false, "", "", "",
                   "\{spec} needs a locked commit for `\{name}` — run `wac update`");
   }
-  Lock lock = readLock(lf.bytes);
+  Lock lock = readLock(lf!);
   if (!lock.ok) {
     return Mapped(true, false, "", "", "", "\{root}/wac.lock is not usable: \{lock.detail}");
   }
@@ -255,7 +255,7 @@ async Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
                   "`\{name}` has no entry in \{root}/wac.lock — run `wac update`");
   }
 
-  string home = wacHomeOf(cli);
+  string home = wacHomeOf(env);
   if (home == "") {
     return Mapped(true, false, "", "", "",
                   "neither WAC_HOME nor HOME is set, so there is no cache to read `\{name}" +
@@ -265,17 +265,17 @@ async Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
   string dir = at.path == "" ? checkout : "\{checkout}/\{at.path}";
   // **The package selects its entry module** (spec ch04): its directory's own manifest names it
   // in `exports`, and nothing else is tried — no `index.wac`, no file the specifier spells.
-  FileResult pm = await fs.readFile("\{dir}/\{MANIFEST_NAME()}");
-  if (!pm.ok) {
+  u8[]? pm = (await fs.readFile("\{dir}/\{MANIFEST_NAME()}")).ok();
+  if (pm is null) {
     // **Says where it looked.** "not in the cache" without the path leaves the reader guessing
     // between a wrong commit, a wrong subdir and a cache that was never filled — three different
     // things to do about it.
     return Mapped(true, false, "", "", "",
-                  (await fs.stat(checkout)).exists
+                  (await fs.stat(checkout)).isOk()
                     ? "`\{name}` has no \{MANIFEST_NAME()} at \{dir}, so it names no `exports`"
                     : "\{spec} is not in the cache — run `wac update`. Looked for \{checkout}");
   }
-  Manifest pkg = readManifest(pm.bytes);
+  Manifest pkg = readManifest(pm!);
   if (!pkg.ok) {
     return Mapped(true, false, "", "", "", "\{dir}/\{MANIFEST_NAME()}: \{manifestWhy(pkg.code)}");
   }
@@ -288,7 +288,7 @@ async Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
     return Mapped(true, false, "", "", "", "`\{name}`'s `exports` leaves its own directory");
   }
   string file = "\{checkout}/\{entryAt.path}";
-  if (!(await fs.stat(file)).exists) {
+  if (!(await fs.stat(file)).isOk()) {
     return Mapped(true, false, "", "", "",
                   "`\{name}`'s `exports` names \{file}, which is not there");
   }
@@ -319,17 +319,17 @@ async Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
  * *root* is not what has to be in the graph's key space — the resolved import is. `relativeTo` in
  * `path.wac` carries that argument.
  */
-export async string projectRootAbs(Fs fs, string base, string path) {
+export async string projectRootAbs(Files fs, string base, string path) {
   string abs = path.len() > 0 && path.slice(0, 1) == "/" ? path : normalisePath("\{base}/\{path}");
   return await projectRootOf(fs, abs);
 }
 
-async string projectRootOf(Fs fs, string path) {
+async string projectRootOf(Files fs, string path) {
   string boundary = path.len() > 0 && path.slice(0, 1) == "/" ? "/" : ".";
   string[] dirs = candidateRoots(path, boundary);
   for (i32 i = 0; i < dirs.len(); i++) {
     string at = dirs[i] == "." ? MANIFEST_NAME() : "\{dirs[i]}/\{MANIFEST_NAME()}";
-    if ((await fs.stat(at)).exists) { return dirs[i]; }
+    if ((await fs.stat(at)).isOk()) { return dirs[i]; }
   }
   return "";
 }
@@ -355,7 +355,7 @@ struct RootCache {
 
   RootCache create() { return RootCache(string[].filled(256, ""), string[].filled(256, ""), 0); }
 
-  async string rootOf(this, Fs fs, string base, string file) {
+  async string rootOf(this, Files fs, string base, string file) {
     string dir = dirOf(file);
     for (i32 i = 0; i < this.n; i++) { if (this.dirs[i] == dir) { return this.roots[i]; } }
     string root = await projectRootAbs(fs, base, file);
@@ -382,19 +382,19 @@ bool isPathSpecifier(string spec) {
  * through its `exports` and only when it is nested directly in the importer's project. Any other path
  * is refused, and the sentence names the boundary.
  */
-async Boundary crossBoundary(Fs fs, string base, string from, string spec, string next, RootCache cache) {
+async Boundary crossBoundary(Files fs, string base, string from, string spec, string next, RootCache cache) {
   string fromRoot = await cache.rootOf(fs, base, from);
   string nextAbs = next.len() > 0 && next.slice(0, 1) == "/" ? next : normalisePath("\{base}/\{next}");
-  if ((await fs.stat("\{nextAbs}/\{MANIFEST_NAME()}")).exists) {
+  if ((await fs.stat("\{nextAbs}/\{MANIFEST_NAME()}")).isOk()) {
     // The project the nested one sits in, which must be the importer's: one level, no deeper.
     string around = await projectRootAbs(fs, base, "\{dirOf(next)}/x.wac");
     if (around != fromRoot) {
       return Boundary(next, "\{spec} (from \{from}) reaches a project nested inside another — " +
                             "import the project that contains it");
     }
-    FileResult mf = await fs.readFile("\{nextAbs}/\{MANIFEST_NAME()}");
-    if (!mf.ok) { return Boundary(next, "cannot read \{next}/\{MANIFEST_NAME()}"); }
-    Manifest m = readManifest(mf.bytes);
+    u8[]? mf = (await fs.readFile("\{nextAbs}/\{MANIFEST_NAME()}")).ok();
+    if (mf is null) { return Boundary(next, "cannot read \{next}/\{MANIFEST_NAME()}"); }
+    Manifest m = readManifest(mf!);
     if (!m.ok) {
       return Boundary(next, next + "/" + MANIFEST_NAME() + ": " + manifestWhy(m.code) +
                             (m.detail == "" ? "" : " (\{m.detail})"));
@@ -423,7 +423,7 @@ async Boundary crossBoundary(Fs fs, string base, string from, string spec, strin
  * without this, checking `packages/box` read 8,630 files to find 423 (`issues/lang/0398b`).
  */
 export struct ReadCache {
-  Map<string, FileResult> files;
+  Map<string, u8[]> files;
   /** Each file's text and import specifiers, which `gather` derives from its bytes — a lex each time. */
   Map<string, string> texts;
   Map<string, string[]> specs;
@@ -441,9 +441,9 @@ export struct ReadCache {
   }
 }
 
-export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
+export async Sources gather(Files fs, Env env, string entry, bool lazy) {
   ReadCache cache = ReadCache.create();
-  return lazy ? await gatherNeeded(fs, cli, entry, cache) : await gatherWith(fs, cli, entry, false, cache);
+  return lazy ? await gatherNeeded(fs, env, entry, cache) : await gatherWith(fs, env, entry, false, cache);
 }
 
 /**
@@ -463,14 +463,14 @@ export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
  * so no file is read or lexed twice, and a file that cannot be read is asked for again and stops the
  * loop rather than repeating it.
  */
-export async Sources gatherNeeded(Fs fs, Cli cli, string entry, ReadCache cache) {
+export async Sources gatherNeeded(Files fs, Env env, string entry, ReadCache cache) {
   Map<string, bool> want = Map.create(hashString, stringEq);
   want.set(normalisePath(entry), true);
   // Kept across the rounds: each is keyed by text, so a file a round has lowered or parsed is not again.
   Reads reads = Reads.create();
   Parsed parsed = Parsed.create();
   while (true) {
-    Sources src = await gatherIn(fs, cli, entry, true, cache, want);
+    Sources src = await gatherIn(fs, env, entry, true, cache, want);
     if (src.missing != "" || src.why != "") { return src; }
     string[] more = missingForBuildIn(exactly(src.paths, src.n), exactly(src.texts, src.n), resOf(src),
                                       src.paths[0], reads, parsed);
@@ -504,13 +504,13 @@ export struct Gathered {
  * every other one imports was read once per importer (`issues/lang/0398b`). `reads` says how many
  * reads it took, which is what `checkproject_test.wac` asserts.
  */
-export async Gathered gatherRoots(Fs fs, Cli cli, string[] roots) {
+export async Gathered gatherRoots(Files fs, Env env, string[] roots) {
   ReadCache cache = ReadCache.create();
-  Sources first = await gatherWith(fs, cli, normalisePath(roots[0]), false, cache);
+  Sources first = await gatherWith(fs, env, normalisePath(roots[0]), false, cache);
   Vec<string> ps = Vec.create();
   Vec<string> ts = Vec.create();
   for (i32 r = 0; r < roots.len(); r++) {
-    Sources s = r == 0 ? first : (await gatherWith(fs, cli, normalisePath(roots[r]), false, cache));
+    Sources s = r == 0 ? first : (await gatherWith(fs, env, normalisePath(roots[r]), false, cache));
     if (s.missing != "" || s.why != "") {
       return Gathered(first, string[](), string[](), cache.reads, s.why != "" ? s.why : "cannot read \{s.missing}");
     }
@@ -524,8 +524,8 @@ export async Gathered gatherRoots(Fs fs, Cli cli, string[] roots) {
 }
 
 /** `gather`, reading through `cache` — see `ReadCache`. */
-export async Sources gatherWith(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache) {
-  return await gatherIn(fs, cli, entry, lazy, cache, null);
+export async Sources gatherWith(Files fs, Env env, string entry, bool lazy, ReadCache cache) {
+  return await gatherIn(fs, env, entry, lazy, cache, null);
 }
 
 /** Whether a file is outside what a demand-driven read wants yet (`gatherNeeded`). Null wants everything. */
@@ -538,7 +538,7 @@ bool deferred(Map<string, bool>? want, string path) {
  * file read is still resolved, so the mapping table is whole for the files that are here. Without it,
  * everything the import syntax reaches is read, which is what `wac check` asks for (ch06).
  */
-async Sources gatherIn(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache, Map<string, bool>? want) {
+async Sources gatherIn(Files fs, Env env, string entry, bool lazy, ReadCache cache, Map<string, bool>? want) {
   RootCache rootCache = cache.roots;
   // **A file that cannot be read is an error when something needs it** — spec ch05
   // `§wac-reach-import-lazy-2jhptfk`. A build (`lazy`) leaves it out and carries on: if a declaration
@@ -567,7 +567,7 @@ async Sources gatherIn(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache,
   // `candidateRoots` walks the components of the path it is given, so a relative entry could climb
   // only as far as it was spelled — `wac run main.wac` from a subdirectory reported *no wac.json5
   // above main.wac* with the manifest one level up. `issues/lang/0168a`.
-  string base = normalisePath(cli.cwd().wait());
+  string base = normalisePath(flatten(env.cwd().wait()).unwrap());
   i32 mapN = 0;
   i32 n = 0;
   // **The entry in the same spelling its imports will be in.** `resolveFrom` collapses `.` and
@@ -579,9 +579,9 @@ async Sources gatherIn(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache,
   // `§wac-package-key-exact-rme93fh`): a key ending in `/` is a mistake in the file, not in a use of it.
   string entryRoot = await projectRootAbs(fs, base, paths[0]);
   if (entryRoot != "") {
-    FileResult emf = await fs.readFile(entryRoot == "." ? MANIFEST_NAME() : "\{entryRoot}/\{MANIFEST_NAME()}");
-    if (emf.ok) {
-      Manifest em = readManifest(emf.bytes);
+    u8[]? emf = (await fs.readFile(entryRoot == "." ? MANIFEST_NAME() : "\{entryRoot}/\{MANIFEST_NAME()}")).ok();
+    if (emf is not null) {
+      Manifest em = readManifest(emf!);
       if (!em.ok) {
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
                        entryRoot + "/" + MANIFEST_NAME() + ": " + manifestWhy(em.code) +
@@ -602,23 +602,25 @@ async Sources gatherIn(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache,
     string builtin = path == "core" ? coreSource() : path == "std" ? stdSource() : "";
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
-      FileResult? had = cache.files.get(path);
-      if (had is null) { cache.reads = cache.reads + 1; }
-      FileResult r = had is null ? await fs.readFile(path) : had!;
-      if (had is null && r.ok) { cache.files.set(path, r); }
-      if (!r.ok && lazy && at > 0) {
+      u8[]? r = cache.files.get(path);
+      if (r is null) {
+        cache.reads = cache.reads + 1;
+        r = (await fs.readFile(path)).ok();
+        if (r is not null) { cache.files.set(path, r!); }
+      }
+      if ((r is null) && lazy && at > 0) {
         absent[at] = true;
         at = at + 1;
         continue;
       }
-      if (!r.ok) {
+      if (r is null) {
         // `why` carries the whole sentence when there is an importer to name; `missing` stays set
         // either way, so the entry file's own failure still reads `cannot read <entry>`.
         string said = askedBy[at] == "" ? ""
             : "cannot read \{path} (\{askedBy[at]} imports it as \"\{askedAs[at]}\")";
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, path, said);
       }
-      bytes = r.bytes;
+      bytes = r!;
     }
     string? knownText = cache.texts.get(path);
     string[]? knownSpecs = cache.specs.get(path);
@@ -640,7 +642,7 @@ async Sources gatherIn(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache,
       // only for a name the manifest actually declares, so an ordinary relative import falls
       // through untouched. `design/lang/0009` D9.
       if (isMappingCandidate(spec) && roots[at] != "") {
-        Mapped got = await mapSpecifier(fs, cli, roots[at], spec);
+        Mapped got = await mapSpecifier(fs, env, roots[at], spec);
         if (got.named) {
           // **A package is resolved only when a retained declaration needs it** — spec ch04
           // `§wac-package-lazy-j3nmf2p`. A build maps it to a key nothing supplies, as it leaves out a

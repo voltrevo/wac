@@ -22,11 +22,9 @@
 // containing them is the point of the seam, and this file is what the seam looks like from the other
 // side.
 
-import { Cli, Core, Sys } from "std";
-import { Vec } from "core";
+import { Sys } from "std";
 import { Shell } from "./exec.wac";
 import { shellMain } from "./entry.wac";
-import { Fs } from "../../fs/src/fs.wac";
 
 /**
  * The shell, and nothing else — there is no multi-call branch here any more.
@@ -40,14 +38,12 @@ import { Fs } from "../../fs/src/fs.wac";
  * programs.
  */
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  Shell sh = Shell.create(core, cli);
+  Shell sh = Shell.create(sys);
   // Spawnable, though nothing is wired in here: `$WACPATH` is the route a person has, and a spawned
   // child is a real boundary with its own grants. Two platform bugs had to be fixed before that
   // worked at all — a non-UTF-8 argument did not survive a spawn (wac-mono 0065: the argv wire format
   // decoded arguments as text, and now carries bytes), and a spawned child did not receive what the
   // shell had left of its standard input (wac-mono 0066: `Shell.heldInput`).
   sh.externalSpawnable = true;
-  return await shellMain(core, cli, sh, 0);
+  return await shellMain(sys.args(), sh, 0);
 }

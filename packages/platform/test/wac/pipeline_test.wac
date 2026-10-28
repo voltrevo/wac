@@ -25,56 +25,61 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, HostSocket } from "std";
+import { Exec, ChildEnv, Clock, Env, Files, Launch, Net, Procs, Sys, Socket } from "std";
 import { trimmed } from "../../../wactest/src/strings.wac";
 import { Daemon, start, stop, freePort, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/pipeline-\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/pipeline-\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
 
-export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) {
+export string test_stdin_through_two_children_and_out_again(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "pipe");
+  string dir = freshScratch(t, env, fs, "pipe");
   string pipe = "\{dir}/pipe";
   // A worker rather than an executable: `pipe.wac` spawns this path, and what `spawnSelf` and
   // `spawn` take is the worker module. The suffix is what the builder keys the bundle form off.
   string child = "\{dir}/wc.worker.js";
 
-  Exec bp = cli.exec("deno",
-    [
+  auto bpRan = flatten(procs.exec("deno", [
              "run", "-A", "packages/platform/build.ts", "packages/platform/example/pipe.wac",
              "--allow-read", "-o", pipe
-    ], u8[]()).wait();
-  t.isTrue(bp.ran() && bp.status == 0, "pipe.wac built — \{string.fromBytes(bp.stderr)}");
-  Exec bc = cli.exec("deno",
-    [
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? bp = bpRan.ok();
+  t.isTrue((bp is not null) && bp!.status == 0, "pipe.wac built — \{string.fromBytes(bp!.stderr)}");
+  auto bcRan = flatten(procs.exec("deno", [
              "run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
              "--worker", "-o", child
-    ], u8[]()).wait();
-  t.isTrue(bc.ran() && bc.status == 0, "wc.wac built as a worker — \{string.fromBytes(bc.stderr)}");
-  if (!bp.ran() || bp.status != 0 || !bc.ran() || bc.status != 0) {
-    cli.remove(dir, true).wait();
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? bc = bcRan.ok();
+  t.isTrue((bc is not null) && bc!.status == 0, "wc.wac built as a worker — \{string.fromBytes(bc!.stderr)}");
+  if ((bp is null) || bp!.status != 0 || (bc is null) || bc!.status != 0) {
+    fs.remove(dir, true).wait();
     return t.report();
   }
 
   // Empty args: `wc` with no arguments reads standard input, which is the point here.
-  Exec r = cli.exec(pipe, [child, "", ""], "one two three\n".toBytes()).wait();
-  t.isTrue(r.ran(), "the pipeline ran");
-  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
-  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+  auto rRan = flatten(procs.exec(pipe, [child, "", ""], "one two three\n".toBytes(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the pipeline ran");
+  if ((r is null)) { fs.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r!.status, 0, string.fromBytes(r!.stderr));
 
   // `wc` of "one two three\n" is "1 3 14"; `wc` of that is "1 3 7". The second number proves the
   // bytes went *through* the first child rather than around it.
-  t.eqStr(trimmed(string.fromBytes(r.stdout)), "1 3 7",
-          "stderr was: \{string.fromBytes(r.stderr)}");
-  cli.remove(dir, true).wait();
+  t.eqStr(trimmed(string.fromBytes(r!.stdout)), "1 3 7",
+          "stderr was: \{string.fromBytes(r!.stderr)}");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -87,36 +92,41 @@ export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) 
  * before saying anything, so the reply exists only if the client managed to signal end-of-input
  * without also tearing down the direction the reply comes back on.
  */
-export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
+export string test_a_child_serves_a_socket_it_cannot_see(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "inetd");
+  string dir = freshScratch(t, env, fs, "inetd");
   string inetd = "\{dir}/inetd";
   string child = "\{dir}/wc.worker.js";
 
-  Exec bi = cli.exec("deno",
-    [
+  auto biRan = flatten(procs.exec("deno", [
              "run", "-A", "packages/platform/build.ts", "packages/platform/example/inetd.wac",
              "--allow-read", "--allow-net", "-o", inetd
-    ], u8[]()).wait();
-  t.isTrue(bi.ran() && bi.status == 0, "inetd.wac built — \{string.fromBytes(bi.stderr)}");
-  Exec bc = cli.exec("deno",
-    [
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? bi = biRan.ok();
+  t.isTrue((bi is not null) && bi!.status == 0, "inetd.wac built — \{string.fromBytes(bi!.stderr)}");
+  auto bcRan = flatten(procs.exec("deno", [
              "run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
              "--worker", "-o", child
-    ], u8[]()).wait();
-  t.isTrue(bc.ran() && bc.status == 0, "wc.wac built as a worker — \{string.fromBytes(bc.stderr)}");
-  if (!bi.ran() || bi.status != 0 || !bc.ran() || bc.status != 0) {
-    cli.remove(dir, true).wait();
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? bc = bcRan.ok();
+  t.isTrue((bc is not null) && bc!.status == 0, "wc.wac built as a worker — \{string.fromBytes(bc!.stderr)}");
+  if ((bi is null) || bi!.status != 0 || (bc is null) || bc!.status != 0) {
+    fs.remove(dir, true).wait();
     return t.report();
   }
 
-  i32 port = freePort(cli);
+  i32 port = freePort(net);
   t.isTrue(port > 0, "no free port to give inetd");
-  if (port <= 0) { cli.remove(dir, true).wait(); return t.report(); }
+  if (port <= 0) { fs.remove(dir, true).wait(); return t.report(); }
 
-  Daemon d = start(cli, "\{inetd} \{port} \{child}", "\{dir}/inetd.log");
+  Daemon d = start(procs, "\{inetd} \{port} \{child}", "\{dir}/inetd.log");
   t.isTrue(d.ok(), "inetd did not start — \{d.error}");
-  if (!d.ok()) { cli.remove(dir, true).wait(); return t.report(); }
+  if (!d.ok()) { fs.remove(dir, true).wait(); return t.report(); }
 
   // **Its log line, not a connection to its port.** `waitForPortWithin` probes by connecting, and
   // `inetd` accepts: the probe becomes a client, gets handed to a `wc` that sees immediate EOF, and
@@ -124,18 +134,19 @@ export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
   // was `Connection reset by peer` on a socket that works perfectly by hand. The TypeScript this
   // replaces said the same thing about the same server: *"polling the port instead would connect
   // before `accept` and be indistinguishable from a hang."*
-  bool up = waitForLogWithin(core, cli, d, "listening", 20000);
-  t.isTrue(up, "inetd never listened — \{logOf(cli, d)}");
-  if (!up) { stop(cli, d); cli.remove(dir, true).wait(); return t.report(); }
+  bool up = waitForLogWithin(clock, fs, d, "listening", 20000);
+  t.isTrue(up, "inetd never listened — \{logOf(fs, d)}");
+  if (!up) { stop(procs, d); fs.remove(dir, true).wait(); return t.report(); }
 
-  HostSocket s = cli.connect("127.0.0.1", port).wait();
-  t.isTrue(s.error == "", "could not connect — \{s.error}");
-  if (s.error != "") { stop(cli, d); cli.remove(dir, true).wait(); return t.report(); }
+  auto sDial = flatten(net.connect("127.0.0.1", port).wait());
+  Socket? s = sDial.ok();
+  t.isTrue("\{sDial.isErr() ? "\{sDial.err()!}" : ""}" == "", "could not connect — \{sDial.isErr() ? "\{sDial.err()!}" : ""}");
+  if ("\{sDial.isErr() ? "\{sDial.err()!}" : ""}" != "") { stop(procs, d); fs.remove(dir, true).wait(); return t.report(); }
 
-  cli.send(s.handle, "one two three\n".toBytes()).wait();
+  s!.send("one two three\n".toBytes()).wait();
   // **The half-close, and the whole reason this case could not be written before.** `wc` answers
   // only once its input ends; `closeSocket` here would end the direction the answer comes back on.
-  cli.closeSend(s.handle);
+  s!.closeSend();
 
   // Read to the peer's own close, since the reply may arrive in more than one piece. `End` is the
   // peer closing its side, which is the half-close in the other direction and how this loop stops.
@@ -143,19 +154,23 @@ export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
   string why = "";
   bool reading = true;
   while (reading) {
-    match (cli.recv(s.handle).wait()) {
-      Data(got): { reply = reply + string.fromBytes(got); }
-      End: { reading = false; }
-      Failed(e): { reading = false; why = e; }
+    match (flatten(s!.recv().wait())) {
+      Ok(read): {
+        match (read) {
+          Data(got): { reply = reply + string.fromBytes(got); }
+          default: { reading = false; }
+        }
+      }
+      Err(e): { reading = false; why = "\{e}"; }
     }
   }
-  cli.closeSocket(s.handle);
+  s!.close();
   t.eqStr(why, "", "the read failed");
 
   // `wc` of "one two three\n" is "1 3 14" — one line, three words, fourteen bytes.
-  t.eqStr(trimmed(reply), "1 3 14", "reply was \"\{reply}\"; inetd said \{logOf(cli, d)}");
+  t.eqStr(trimmed(reply), "1 3 14", "reply was \"\{reply}\"; inetd said \{logOf(fs, d)}");
 
-  stop(cli, d);
-  cli.remove(dir, true).wait();
+  stop(procs, d);
+  fs.remove(dir, true).wait();
   return t.report();
 }

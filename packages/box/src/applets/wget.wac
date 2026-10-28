@@ -1,59 +1,33 @@
 // The same GET, into a file. `box wget example.com /path out.html`.
 //
-// Three lines different from `get`, and the three lines are the point: `openOutput` moves
-// where `cli.write` goes, so the fetch itself is unchanged and does not know. Switching
-// back to standard output at the end is what closes the file.
+// A few lines different from `get`, and they are the point: the fetch writes to whatever `Output` it is
+// handed, so given the file's it is unchanged and does not know. Closing that is what finishes the file.
 
-import { Captured, Change, Cli, Core, reasonOf } from "std";
-import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Files, Net, Output } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
-export async i32 wget(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 wget(Output err, Files fs, Net net, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   if (a.rest.len() < 3) {
-    core.warn("usage: \{a.name} <host> <path> <outfile> [-<port>]");
+    err.line("usage: \{a.name} <host> <path> <outfile> [-<port>]");
     return 2;
   }
-  string out = a.rest[2];
-  // **Only the host can be written to by redirection.** `openOutput` moves this process's standard
-  // output into a file, which is a capability the host has and a memory image does not — so anywhere
-  // else the body is collected and written with one call. Same split as `split`, `lib/safe.wac` and
-  // `lib/input.wac`'s reading side (wac-mono 0109).
-  bool streaming = await fs.isHostPath(out);
-  // Collected through the same substitute capability the shell uses to run an applet in process:
-  // `fetch` writes with `cli.write` and neither knows nor needs to know where that goes. Built either
-  // way and used only on the collected route — a `Frame` nobody writes to is two empty buffers.
-  Frame f = Frame.of([a.name], u8[](), "", false);
-  if (streaming) {
-    Change opened = cli.openOutput(out).wait();
-    if (!opened.ok()) { core.warn("\{a.name}: \{out}: \{reasonOf(opened)}"); return 1; }
+  string path = a.rest[2];
+  // The response streams into the file on every backing: `openWrite` gives an `Output` per file, so the
+  // body is never held whole, and a memory image takes it the way a disk does.
+  Output to;
+  match (await fs.openWrite(path)) {
+    Ok(o): { to = o; }
+    Err(e): { err.line("\{a.name}: \{path}: \{reason(e)}"); return 1; }
   }
-
-  i32 code = streaming
-    ? fetch(core, cli, a.name, a.rest[0], a.rest[1], a.num == 0 ? 80 : a.num, false)
-    : fetch(childCore(f, core), childCli(f, cli), a.name, a.rest[0], a.rest[1],
-            a.num == 0 ? 80 : a.num, false);
-
-  if (streaming) { cli.openOutput("").wait(); }
-  else {
-    Captured got = f.captured();
-    // **A truncated download is not a download.** The collected route holds the body in memory and
-    // the buffer is capped, and `fetch` cannot tell a full buffer from a peer that hung up — so
-    // without this a response past the cap was written out as a short file and reported as "saved",
-    // which is the one outcome worse than failing: a corrupt file that nothing says is corrupt. See
-    // `Captured.truncated`.
-    if (got.truncated) {
-      core.warn("\{a.name}: \{out}: the response is larger than this program can hold in memory");
-      return 1;
-    }
-    if (code == 0) {
-      Change wrote = await fs.writeFile(out, got.out);
-      if (!wrote.ok()) { core.warn("\{a.name}: \{out}: \{reasonOf(wrote)}"); return 1; }
-    }
+  i32 code = fetch(err, to, net, a.name, a.rest[0], a.rest[1], a.num == 0 ? 80 : a.num, false);
+  match (await to.close()) {
+    Ok(v): { }
+    Err(e): { err.line("\{a.name}: \{path}: \{e}"); return 1; }
   }
-  if (code == 0) { core.warn("\{a.name}: saved \{out}"); }
+  if (code == 0) { err.line("\{a.name}: saved \{path}"); }
   return code;
 }

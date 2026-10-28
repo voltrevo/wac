@@ -1,0 +1,160 @@
+// Tickets the host answers: waited on together, and cancelled. Written in wac because the tickets are
+// faked here — a host ticket is an ordinary `Ticket` with `hostId`, `waitHost` and `release` set, which is
+// exactly what std does when the host hands one over (design/system/0013, settled before step 5).
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Ticket } from "core";
+
+/**
+ * A ticket standing for host work: driving it "blocks" until the host answers, which here traps unless
+ * `ready` says the host already has. `waits` counts the calls to the host's wait-for-any.
+ */
+// Not `hostTicket`, which std has privately: issues/lang/0402a.
+Ticket<i32> fakeHostTicket(i32 id, i32 answer, bool[] ready, i32[] waits, i32[] released) {
+  Ticket<i32> t;
+  t.hostId = id;
+  t.waitHost = (i32[] ids, i32 millis) => {
+    waits[0] = waits[0] + 1;
+    for (i32 k = 0; k < ids.len(); k++) {
+      if (ready[ids[k]]) { return k; }
+    }
+    return -1;
+  };
+  t.drive = () => {
+    if (!ready[id]) { trap "drove a host ticket the host has not answered: this wait would block for ever"; }
+    if (!t.done) { t.resolve(answer); }
+    return true;
+  };
+  t.release = () => { released[0] = released[0] + 1; };
+  return t;
+}
+
+export string test_any_over_host_tickets_asks_the_host_once() {
+  T t = T.create();
+  bool[] ready = [false, false, true];   // id 2 has answered, id 1 never will
+  i32[] waits = [0];
+  i32[] released = [0];
+  Ticket<i32> silent = fakeHostTicket(1, 10, ready, waits, released);
+  Ticket<i32> spoke = fakeHostTicket(2, 20, ready, waits, released);
+  match (Ticket.anyWithIndex(silent, spoke).wait()) {
+    Ok(won): {
+      t.eqI32(won.0, 1, "the one the host answered wins");
+      t.eqI32(won.1, 20, "with its answer");
+    }
+    Err(e): { t.isTrue(false, "the wait refused: " + e.message); }
+  }
+  t.eqI32(waits[0], 1, "one wait over both, not a drive of the first");
+  t.isTrue(!silent.settled(), "the silent one is still outstanding");
+  return t.report();
+}
+
+export string test_a_lone_host_ticket_is_driven_without_asking() {
+  T t = T.create();
+  bool[] ready = [false, true];
+  i32[] waits = [0];
+  i32[] released = [0];
+  Ticket<i32> one = fakeHostTicket(1, 7, ready, waits, released);
+  t.eqI32(one.wait().unwrap(), 7, "answered");
+  t.eqI32(waits[0], 0, "nothing to choose between, so no wait-for-any");
+  return t.report();
+}
+
+export string test_cancel_releases_the_host_slot_and_the_ticket_never_settles() {
+  T t = T.create();
+  bool[] ready = [false, false];
+  i32[] waits = [0];
+  i32[] released = [0];
+  Ticket<i32> gone = fakeHostTicket(1, 5, ready, waits, released);
+  gone.cancel();
+  t.eqI32(released[0], 1, "the host's slot is released");
+  gone.cancel();
+  t.eqI32(released[0], 1, "once");
+  ready[1] = true;                       // the answer arrives anyway, and is discarded
+  t.isTrue(gone.wait().isErr(), "a wait on a cancelled ticket answers Stuck");
+  t.isTrue(!gone.settled(), "and it never settles");
+  return t.report();
+}
+
+export string test_cancel_on_a_ticket_nobody_hosts_does_nothing() {
+  T t = T.create();
+  Ticket<i32> plain;
+  plain.cancel();
+  plain.resolve(3);
+  t.eqI32(plain.wait().unwrap(), 3, "a ticket made directly still settles when resolved");
+  return t.report();
+}
+
+export string test_a_part_settled_by_driving_it_settles_any_once() {
+  T t = T.create();
+  // Driving `a` settles it, which runs `Ticket.any`'s own watcher and settles the combination from inside the drive
+  // that is stepping it — so that drive must not settle it a second time.
+  Ticket<i32> a;
+  a.drive = () => {
+    if (!a.done) { a.resolve(4); }
+    return true;
+  };
+  Ticket<i32> b;
+  t.eqI32(Ticket.any(a, b).wait().unwrap(), 4, "any");
+  Ticket<i32> c;
+  c.drive = () => {
+    if (!c.done) { c.resolve(5); }
+    return true;
+  };
+  Ticket<i32> d;
+  t.eqI32(Ticket.first([c, d]).wait().unwrap(), 0, "first");
+  Ticket<i32> e;
+  e.drive = () => {
+    if (!e.done) { e.resolve(6); }
+    return true;
+  };
+  Ticket<i32> f;
+  f.resolve(1);
+  t.eqI32(Ticket.all(e, f).wait().unwrap().0, 6, "all");
+  return t.report();
+}
+
+/**
+ * A ticket raced over and over settles without recursing once per race.
+ *
+ * Every `Ticket.first` adds a watcher to each of its parts, and a connection polling for input races the
+ * same outstanding read against a zero timer on every look — `packages/ssh`'s `Conn.ready`, thousands of
+ * times during one long command. Each watcher used to be a closure calling the one before it, so the read
+ * settling ran them as one recursion as deep as the polls: `wacsshd` died of *Maximum call stack size
+ * exceeded* the first time a command outlasted a few seconds.
+ */
+export string test_a_ticket_watched_many_times_settles_without_recursing() {
+  T t = T.create();
+  Ticket<i32> read;
+  i32[] seen = [0];
+  for (i32 i = 0; i < 200000; i++) { read.whenSettled(() => { seen[0] = seen[0] + 1; }); }
+  read.resolve(1);
+  t.eqI32(seen[0], 200000, "every watcher ran once");
+  return t.report();
+}
+
+/**
+ * `settledNow` asks the host once, without waiting, and settles the ticket when its answer is in hand.
+ *
+ * What a poll needs: `packages/ssh`'s `Conn.ready` looks for a `^C` between steps of a running command,
+ * and did it by racing the outstanding read against a zero timer — three host calls a look, where one
+ * question is enough, which made a 200,000-step loop under `wacsshd` take minutes instead of a second.
+ */
+export string test_settled_now_asks_the_host_once_and_never_waits() {
+  T t = T.create();
+  bool[] ready = [false, false];
+  i32[] waits = [0];
+  i32[] released = [0];
+  Ticket<i32> read = fakeHostTicket(1, 9, ready, waits, released);
+  t.isTrue(!read.settledNow(), "nothing has arrived");
+  t.eqI32(waits[0], 1, "one question to the host");
+  t.isTrue(!read.settled(), "and it is still outstanding");
+  ready[1] = true;
+  t.isTrue(read.settledNow(), "the answer is here");
+  t.isTrue(read.settled(), "and the ticket has it");
+  t.eqI32(read.value(), 9, "the answer it settled with");
+  Ticket<i32> made;
+  t.isTrue(!made.settledNow(), "a ticket nobody hosts and nobody settled has not settled");
+  made.resolve(1);
+  t.isTrue(made.settledNow(), "and once settled, it has");
+  return t.report();
+}

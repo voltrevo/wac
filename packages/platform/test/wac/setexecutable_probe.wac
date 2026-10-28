@@ -8,12 +8,13 @@
 //
 // Arguments: the path, then `on` or `off`.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Files } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  string path = string.fromBytes(cli.arg(0).wait());
-  bool on = string.fromBytes(cli.arg(1).wait()) == "on";
-  return cli.setExecutable(path, on).wait().ok() ? 0 : 1;
+  string[] argv = sys.args();
+  Files fs = sys.files();
+  string path = argv[0];
+  bool on = argv[1] == "on";
+  return flatten(fs.setExecutable(path, on).wait()).isOk() ? 0 : 1;
 }

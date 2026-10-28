@@ -92,6 +92,8 @@ pub struct StatAnswer {
     pub is_symlink: bool,
     pub is_executable: bool,
     pub fault: i32,
+    /// The mode bits, 0 where there are none.
+    pub mode: i32,
 }
 
 #[derive(Default)]

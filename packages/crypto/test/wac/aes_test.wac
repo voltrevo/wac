@@ -21,7 +21,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { aesEncrypt, aesDecrypt } from "../../src/aes.wac";
 import { aesCtr, CtrStream } from "../../src/aesctr.wac";
 import { gcmEncrypt, gcmTag, gcmDecrypt, gcmInc32 } from "../../src/aesgcm.wac";
@@ -74,11 +74,12 @@ static string ORACLE = "packages/crypto/test/oracle.mjs";
  * It arrived as a callback until 2026-08-17, because `harness/wacTestRun.ts` supplying a synchronous
  * host function was the only way into a wasm call. `issues/system/0161`.
  */
-void checkAes(T t, Cli cli, Lines lines, string what) {
-  check(t, cli, "node", [ORACLE], lines, what);
+void checkAes(T t, Procs procs, Lines lines, string what) {
+  check(t, procs, "node", [ORACLE], lines, what);
 }
 
-export string test_the_block_agrees_with_the_host(Core core, Cli cli) {
+export string test_the_block_agrees_with_the_host(Sys sys) {
+  Procs procs = sys.procs();
   // All three key sizes, because the expansion gains a step at 192 and another at 256
   // that the 128-bit path never runs.
   T t = T.create();
@@ -94,11 +95,12 @@ export string test_the_block_agrees_with_the_host(Core core, Cli cli) {
     }
   }
   t.eqI32(lines.n, 24, "eight blocks at each of three key sizes");
-  checkAes(t, cli, lines, "the bare block transform");
+  checkAes(t, procs, lines, "the bare block transform");
   return t.report();
 }
 
-export string test_ctr_agrees_and_the_counter_carries(Core core, Cli cli) {
+export string test_ctr_agrees_and_the_counter_carries(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Lines lines = Lines.create();
   i32[] keySizes = [16, 24, 32];
@@ -129,11 +131,12 @@ export string test_ctr_agrees_and_the_counter_carries(Core core, Cli cli) {
   for (i32 i = 12; i < 16; i++) { nearWrap[i] = 0xFF; }
   lines.add("ctr \{hex(key)} \{hex(nearWrap)} \{hex(data)} " +
             hex(aesCtr(key, nearWrap, data)));     // carries out of the low word
-  checkAes(t, cli, lines, "ctr and its carries");
+  checkAes(t, procs, lines, "ctr and its carries");
   return t.report();
 }
 
-export string test_gcm_agrees_including_the_short_nonce_path(Core core, Cli cli) {
+export string test_gcm_agrees_including_the_short_nonce_path(Sys sys) {
+  Procs procs = sys.procs();
   // A 96-bit nonce is used directly as J0 || 1; anything else is GHASHed first, which is
   // a different code path that most callers never take and most tests never reach.
   T t = T.create();
@@ -156,7 +159,7 @@ export string test_gcm_agrees_including_the_short_nonce_path(Core core, Cli cli)
     }
   }
   t.eqI32(lines.n, 80, "four nonce lengths by five plaintexts by four aads");
-  checkAes(t, cli, lines, "gcm including the short-nonce path");
+  checkAes(t, procs, lines, "gcm including the short-nonce path");
   return t.report();
 }
 

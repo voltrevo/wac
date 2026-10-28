@@ -27,17 +27,19 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
 import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 
-export string test_a_downcast_out_of_anyref_emits_a_cast_and_the_module_validates(
-    Core core, Cli cli) {
+export string test_a_downcast_out_of_anyref_emits_a_cast_and_the_module_validates(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string source = "export struct S { i32 v; }\n" +
                   "export bool takes(anyref x) { S s = x as! S; return s.v > 0; }\n" +
                   "export i32 main() { S s = S(7); return takes(s) ? 7 : 0; }\n";
 
-  Ran r = runEmittedOne(cli, "/t/m.wac", source, scratchDir(cli), "downcast.wasm");
+  Ran r = runEmittedOne(env, fs, procs, "/t/m.wac", source, scratchDir(env, fs), "downcast.wasm");
   t.isTrue(r.ok, "the module was built and started — " + r.error);
   if (!r.ok) { return t.report(); }
 
@@ -50,8 +52,10 @@ export string test_a_downcast_out_of_anyref_emits_a_cast_and_the_module_validate
   return t.report();
 }
 
-export string test_a_downcast_to_a_nullable_target_lets_a_null_through_instead_of_trapping(
-    Core core, Cli cli) {
+export string test_a_downcast_to_a_nullable_target_lets_a_null_through_instead_of_trapping(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // `ref.cast (ref $T)` and `ref.cast null (ref null $T)` are different instructions, and the
   // difference is exactly whether a null arrives or traps. `S?` is a type a null inhabits.
   T t = T.create();
@@ -63,7 +67,7 @@ export string test_a_downcast_to_a_nullable_target_lets_a_null_through_instead_o
                   "export bool gotNull(anyref? x) { S? s = x as! S?; return s is null; }\n" +
                   "export i32 main() { return gotNull(null) ? 9 : 0; }\n";
 
-  Ran r = runEmittedOne(cli, "/t/n.wac", source, scratchDir(cli), "downcastnull.wasm");
+  Ran r = runEmittedOne(env, fs, procs, "/t/n.wac", source, scratchDir(env, fs), "downcastnull.wasm");
   t.isTrue(r.ok, "the module was built and started — " + r.error);
   if (!r.ok) { return t.report(); }
 

@@ -43,12 +43,13 @@
 // compressor's, so it answers "what would this cost if we compressed it" rather than "what will a CDN
 // serve". The wasm column is unaffected and identical to the TypeScript's, byte for byte.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Clock, Files, Output } from "std";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
 import { Sources, sourcesOf } from "../../packages/wactest/src/built.wac";
 import { blockedFiles, diagnoseFiles, emitFiles } from "../../packages/wacc/src/api.wac";
 import { gzipBest } from "../../packages/gzip/src/gzip.wac";
+import { flatten } from "core";
 
 /** The layers, largest last so the table reads as a build-up. */
 string[] entries() {
@@ -74,20 +75,22 @@ string[] labels() {
 static i32 RUNS = 5;
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Files fs = sys.files();
   string[] ents = entries();
   string[] labs = labels();
 
-  core.log(padded("layer", 36) + "     wasm     gzipped     lines    compile");
-  core.log(dashes(76));
+  out.line(padded("layer", 36) + "     wasm     gzipped     lines    compile");
+  out.line(dashes(76));
 
   i32 broken = 0;
   string firstBroken = "";
   for (i32 i = 0; i < ents.len(); i++) {
-    Sources src = sourcesOf(cli, ents[i]);
+    Sources src = sourcesOf(fs, ents[i]);
     if (src.why != "") {
-      core.log(padded(labs[i], 36) + "  cannot read " + src.why);
+      out.line(padded(labs[i], 36) + "  cannot read " + src.why);
       broken = broken + 1;
       if (firstBroken == "") { firstBroken = ents[i]; }
       continue;
@@ -103,10 +106,10 @@ export i32 main(Sys sys) {
       // Loudly, and non-zero at the end. A size report that prints "did not compile" and exits 0 is
       // green to everything that checks exit codes while measuring nothing — three of these four
       // layers were broken for some time and this is what said so.
-      core.log(padded(labs[i], 36) + "  did not compile");
+      out.line(padded(labs[i], 36) + "  did not compile");
       string[] lines = splitKeepingEmpty(diagnostics == "" ? declined : diagnostics);
       for (i32 k = 0; k < lines.len(); k++) {
-        if (lines[k] != "") { core.log("    " + lines[k]); }
+        if (lines[k] != "") { out.line("    " + lines[k]); }
       }
       broken = broken + 1;
       if (firstBroken == "") { firstBroken = ents[i]; }
@@ -121,14 +124,14 @@ export i32 main(Sys sys) {
     i64[] took = i64[].filled(RUNS, 0);
     u8[] wasm = u8[]();
     for (i32 r = 0; r < RUNS; r++) {
-      i64 t0 = core.monotonicNanos().wait();
+      i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
       wasm = emitFiles(src.paths, src.texts, ents[i]);
-      took[r] = core.monotonicNanos().wait() - t0;
+      took[r] = flatten(clock.monotonicNanos().wait()).unwrap() - t0;
     }
     sortNanos(took);
 
     u8[] gz = gzipBest(wasm);
-    core.log(padded(labs[i], 36)
+    out.line(padded(labs[i], 36)
              + rightly(kib(wasm.len()), 8) + " KiB"
              + rightly(kib(gz.len()), 9) + " KiB"
              + rightly(itoa(lines), 10)
@@ -136,7 +139,7 @@ export i32 main(Sys sys) {
   }
 
   if (broken > 0) {
-    core.warn("\n" + itoa(broken) + " of " + itoa(ents.len()) + " layers did not compile, the first "
+    err.line("\n" + itoa(broken) + " of " + itoa(ents.len()) + " layers did not compile, the first "
               + "being " + firstBroken + ".");
     return 1;
   }

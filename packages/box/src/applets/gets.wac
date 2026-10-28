@@ -13,7 +13,7 @@
 // Ephemeral keys come from `randomBytes`, so the world's one unprivileged source of
 // entropy is what a handshake's secrecy rests on. Worth knowing.
 
-import { Cli, Core, FileResult, readReason, HostSocket } from "std";
+import { Clock, Net, Output, Random, Socket, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { concat } from "../lib/bytes.wac";
@@ -21,44 +21,47 @@ import { recordsReady } from "../../../tls/src/record.wac";
 import { ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure } from "../../../tls/src/client.wac";
 import { Incoming, ParsedResponse, parseResponse } from "../../../http/src/incoming.wac";
-import { Read } from "core";
+import { Read, flatten } from "core";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
 
-export async i32 gets(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 gets(Output err, Output out, Clock clock, Random rnd, Net net, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   if (a.rest.len() < 3) {
-    core.warn("usage: \{a.name} <host> <path> <root.der> [-<port>] [-i]");
+    err.line("usage: \{a.name} <host> <path> <root.der> [-<port>] [-i]");
     return 2;
   }
   string host = a.rest[0];
   string path = a.rest[1];
   i32 port = a.hasNum ? a.num : 443;
 
-  FileResult rootFile = await fs.readFile(a.rest[2]);
-  if (!rootFile.ok) { core.warn("\{a.name}: \{a.rest[2]}: \{readReason(rootFile)}"); return 1; }
-  u8[] root = rootFile.bytes;
+  auto read = await fs.readFile(a.rest[2]);
+
+  u8[]? rootFile = read.ok();
+  if (rootFile is null) { err.line("\{a.name}: \{a.rest[2]}: \{reason(read.err()!)}"); return 1; }
+  u8[] root = rootFile!;
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.
   i32[] offsets = [0, root.len()];
 
   ClientStep s = clientStep(tlsClientInit(
     host.toBytes(), root, offsets,
-    core.randomBytes(32).wait(),      // X25519 ephemeral
-    core.randomBytes(32).wait(),      // P-256 ephemeral
-    core.randomBytes(64).wait(),      // ML-KEM seed, for the hybrid group
-    core.randomBytes(32).wait(),      // client random
+    flatten(rnd.bytes(32).wait()).unwrap(),      // X25519 ephemeral
+    flatten(rnd.bytes(32).wait()).unwrap(),      // P-256 ephemeral
+    flatten(rnd.bytes(64).wait()).unwrap(),      // ML-KEM seed, for the hybrid group
+    flatten(rnd.bytes(32).wait()).unwrap(),      // client random
     // Seconds, not milliseconds. `notBefore`/`notAfter` are parsed from the certificate
     // as seconds since the epoch, and handing this the millisecond clock puts "now"
     // around the year 57000, where every certificate has expired — which arrives as a
     // bad_certificate alert and looks like a chain problem.
-    core.nowMillis().wait() / 1000));
+    flatten(clock.nowMillis().wait()).unwrap() / 1000));
 
-  HostSocket sock = cli.connect(host, port).wait();
-  if (sock.handle < 0) { core.warn("\{a.name}: \{host}: \{sock.error}"); return 1; }
-  if (!cli.send(sock.handle, s.toSend).wait()) {
-    core.warn("\{a.name}: cannot send the client hello");
-    cli.closeSocket(sock.handle);
+  auto sockDial = flatten(net.connect(host, port).wait());
+  Socket? sock = sockDial.ok();
+  if (sock is null) { err.line("\{a.name}: \{host}: \{sockDial.isErr() ? "\{sockDial.err()!}" : ""}"); return 1; }
+  if (flatten(sock!.send(s.toSend).wait()).isErr()) {
+    err.line("\{a.name}: cannot send the client hello");
+    sock!.close();
     return 1;
   }
 
@@ -75,8 +78,8 @@ export async i32 gets(Core core, Cli cli, Fs fs, Args a) {
       // phase. Reading it as a failure reported "handshake failed" on every successful
       // fetch, with the body already in hand.
       if (body.len() > 0) { break; }
-      core.warn("\{a.name}: connection failed (code \{tlsClientFailure(s.state)})");
-      cli.closeSocket(sock.handle);
+      err.line("\{a.name}: connection failed (code \{tlsClientFailure(s.state)})");
+      sock!.close();
       return 1;
     }
 
@@ -86,21 +89,25 @@ export async i32 gets(Core core, Cli cli, Fs fs, Args a) {
         + "Host: \{host}\r\n"
         + "User-Agent: box\r\n"
         + "Connection: close\r\n\r\n";
-      ClientStep out = clientStep(tlsClientSend(s.state, req.toBytes()));
-      s = ClientStep(out.state, out.toSend, u8[]());
-      if (!cli.send(sock.handle, s.toSend).wait()) { break; }
+      ClientStep sent = clientStep(tlsClientSend(s.state, req.toBytes()));
+      s = ClientStep(sent.state, sent.toSend, u8[]());
+      if (flatten(sock!.send(s.toSend).wait()).isErr()) { break; }
       requested = true;
     }
 
     bool closed = false;
-    match (cli.recv(sock.handle).wait()) {
-      Data(bytes): { buffered = concat(buffered, bytes); }
-      End: { closed = true; }            // the peer closed
-      Failed(why): {
-        core.warn("\{a.name}: \{host}: \{why}");
-        cli.closeSocket(sock.handle);
-        return 1;
+    match (flatten(sock!.recv().wait())) {
+      Ok(got): {
+        match (got) {
+          Data(bytes): { buffered = concat(buffered, bytes); }
+          default: { closed = true; }
+        }
       }
+      Err(why): {
+            err.line("\{a.name}: \{host}: \{why}");
+            sock!.close();
+            return 1;
+          }
     }
     if (closed) { break; }
 
@@ -118,34 +125,34 @@ export async i32 gets(Core core, Cli cli, Fs fs, Args a) {
     ClientStep step = clientStep(tlsClientFeed(s.state, slice(buffered, 0, ready)));
     buffered = slice(buffered, ready, buffered.len());
     s = step;
-    if (s.toSend.len() > 0 && !cli.send(sock.handle, s.toSend).wait()) { break; }
+    if (s.toSend.len() > 0 && flatten(sock!.send(s.toSend).wait()).isErr()) { break; }
     if (s.appData.len() > 0) { body = concat(body, s.appData); }
   }
 
   clientStep(tlsClientClose(s.state));
-  cli.closeSocket(sock.handle);
+  sock!.close();
 
   if (body.len() == 0) {
-    core.warn("\{a.name}: the connection closed before any response arrived");
+    err.line("\{a.name}: the connection closed before any response arrived");
     return 1;
   }
-  return show(core, cli, parseResponse(body, "GET".toBytes(), true, 1 << 26), has(a, 'i'), a.name);
+  return show(err, out, parseResponse(body, "GET".toBytes(), true, 1 << 26), has(a, 'i'), a.name);
 }
 
-i32 show(Core core, Cli cli, ParsedResponse p, bool headers, string name) {
+i32 show(Output err, Output out, ParsedResponse p, bool headers, string name) {
   match (p) {
-    Incomplete: { core.warn("\{name}: the response ended mid-message"); return 1; }
-    Bad(code): { core.warn("\{name}: unparseable response (\{code})"); return 1; }
+    Incomplete: { err.line("\{name}: the response ended mid-message"); return 1; }
+    Bad(code): { err.line("\{name}: unparseable response (\{code})"); return 1; }
     Ok(res): {
       if (headers) {
-        core.log("HTTP \{res.status}");
+        out.line("HTTP \{res.status}");
         for (i32 i = 0; i < res.headers.count; i++) {
-          core.log("\{string.fromBytes(res.headers.nameAt(i))}: "
+          out.line("\{string.fromBytes(res.headers.nameAt(i))}: "
                  + string.fromBytes(res.headers.valueAt(i)));
         }
-        core.log("");
+        out.line("");
       }
-      cli.write(res.body);
+      out.write(res.body);
       return res.status >= 400 ? 1 : 0;
     }
   }

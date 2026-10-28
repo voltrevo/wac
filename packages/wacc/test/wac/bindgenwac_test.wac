@@ -20,20 +20,21 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { askArgvCached } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Cli, Exec, Env, Files, Procs, Sys } from "std";
 import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { emitFiles, bindgenDeclinedFiles, bindgenFiles, bindgenWire } from "../../src/api.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string ORACLE = "packages/wacc/test/bindgenOracle.ts";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/bindgenwac-" + name;
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = root(env) + "/.cache/bindgenwac-" + name;
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -82,14 +83,13 @@ string firstDifference(string a, string b) {
  * whatever the cache holds, and the assertions below are what they always were: a differential with
  * one remembered side is still a differential, and one with two is nothing.
  */
-string askOracle(T t, Cli cli, string[] args, string what, string[] inputs) {
+string askOracle(T t, Files fs, Procs procs, string[] args, string what, string[] inputs) {
   string[] argv = string[].filled(args.len() + 3, "");
   argv[0] = "run";
   argv[1] = "-A";
   argv[2] = ORACLE;
   for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
-  return askArgvCached(t, cli, "deno", argv, what + ": the reference generator", "bindgen",
-                       ["compiler", "harness", "packages/wacc/src"], inputs);
+  return askArgvCached(t, fs, procs, "deno", argv, what + ": the reference generator", "bindgen", ["compiler", "harness", "packages/wacc/src"], inputs);
 }
 
 /**
@@ -184,7 +184,7 @@ Program[] cases() {
   ];
 }
 
-void compare(T t, Cli cli, string dir, string what, string entry, string[] paths, string[] sources) {
+void compare(T t, Files fs, Procs procs, string dir, string what, string entry, string[] paths, string[] sources) {
   string[] langs = ["ts", "js"];
 
   // **Emitted once for both languages.** The glue differs between `ts` and `js`; the module it is glue
@@ -200,7 +200,7 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
     string[] inputs = string[].filled(sources.len() + paths.len(), "");
     for (i32 j = 0; j < paths.len(); j++) { inputs[j] = paths[j]; }
     for (i32 j = 0; j < sources.len(); j++) { inputs[paths.len() + j] = sources[j]; }
-    string theirs = askOracle(t, cli, ["files", entry, lang], what + " (" + lang + ")", inputs);
+    string theirs = askOracle(t, fs, procs, ["files", entry, lang], what + " (" + lang + ")", inputs);
     if (theirs == "") { continue; }
     string mine = bindgenFiles(wasm, paths, sources, entry, lang);
 
@@ -212,23 +212,28 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
   }
 }
 
-export string test_the_two_generators_write_the_same_glue_for_each_shape(Core core, Cli cli) {
+export string test_the_two_generators_write_the_same_glue_for_each_shape(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "cases");
+  string dir = freshScratch(t, env, fs, "cases");
   Program[] all = cases();
   for (i32 i = 0; i < all.len(); i++) {
     // Both generators are pointed at the *same path*, because the module's own name is in the output:
     // comparing across two names always differs and says nothing.
     string entry = dir + "/case" + itoa(i) + ".wac";
-    cli.writeFile(entry, all[i].src.toBytes()).wait();
-    compare(t, cli, dir, all[i].what, entry, [entry], [all[i].src]);
+    fs.writeFile(entry, all[i].src.toBytes()).wait();
+    compare(t, fs, procs, dir, all[i].what, entry, [entry], [all[i].src]);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enum_name(
-    Core core, Cli cli) {
+export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enum_name(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // A name the linker keyed, which no program can be made to produce on demand.
   //
   // `Node@2` is what the metadata carries where two files declare one name and the declaring file is
@@ -247,16 +252,14 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
   const string WASM_HEX = "0061736d01000000";
   u8[] wasm = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
 
-  string dir = freshScratch(t, cli, "keyed");
-  cli.writeFile(dir + "/sigs", SIGS.toBytes()).wait();
-  cli.writeFile(dir + "/wire", WIRE.toBytes()).wait();
+  string dir = freshScratch(t, env, fs, "keyed");
+  fs.writeFile(dir + "/sigs", SIGS.toBytes()).wait();
+  fs.writeFile(dir + "/wire", WIRE.toBytes()).wait();
 
   string[] langs = ["ts", "js"];
   for (i32 k = 0; k < langs.len(); k++) {
     string lang = langs[k];
-    string theirs = askOracle(t, cli,
-      ["wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang], "a keyed enum (" + lang + ")",
-      [SIGS, WIRE]);
+    string theirs = askOracle(t, fs, procs, ["wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang], "a keyed enum (" + lang + ")", [SIGS, WIRE]);
     if (theirs == "") { continue; }
     string mine = bindgenWire(wasm, SIGS, WIRE, lang);
 
@@ -266,11 +269,13 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
              "the reference generator wrote no class for the keyed enum: " + theirs.slice(0, 300));
     t.eqStr(mine, theirs, "a linker-keyed enum name (" + lang + ") — " + firstDifference(theirs, mine));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_two_generators_write_the_same_glue_for_whole_programs(Core core, Cli cli) {
+export string test_the_two_generators_write_the_same_glue_for_whole_programs(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The shapes that are not reachable from a one-file program, so they are named by their entry.
   T t = T.create();
   string[] entries = [
@@ -283,10 +288,10 @@ export string test_the_two_generators_write_the_same_glue_for_whole_programs(Cor
   ];
 
   for (i32 i = 0; i < entries.len(); i++) {
-    Graph g = graphOf(cli, entries[i]);
+    Graph g = graphOf(fs, entries[i]);
     t.isTrue(g.ok, entries[i] + ": the import graph — " + g.error);
     if (!g.ok) { continue; }
-    compare(t, cli, "", entries[i], entries[i], g.paths, g.sources);
+    compare(t, fs, procs, "", entries[i], entries[i], g.paths, g.sources);
   }
   return t.report();
 }
@@ -308,7 +313,7 @@ export string test_the_two_generators_write_the_same_glue_for_whole_programs(Cor
  * The reference omits the member. This asserts the same, and that the omission is *named* — silence is
  * the failure `bindtables_test.wac` was written about, one level down.
  */
-export string test_a_callback_returning_a_function_is_left_out_and_named(Core core, Cli cli) {
+export string test_a_callback_returning_a_function_is_left_out_and_named() {
   T t = T.create();
   string[] paths = ["/t/main.wac"];
   string[] sources = [

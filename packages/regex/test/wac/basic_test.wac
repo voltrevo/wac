@@ -38,12 +38,13 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, ChildEnv, Launch, Output, Procs, Sys } from "std";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { search, slotCount } from "../../src/regex.wac";
 import { compileBasic, compileBasicIgnoreCase, toExtended } from "../../src/basic.wac";
 import { Rewritten, compileExtended, compileExtendedIgnoreCase } from "../../src/posix.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 /** 1 matched, 0 did not, -1 the pattern was refused, -2 the step budget ran out. */
 static i32 MATCHED = 1;
@@ -112,13 +113,12 @@ string verdict(i32 v) {
  * mapping is line number to index — so that is refused rather than trusted. None of the callers
  * below has one; the check is here so a later one cannot quietly acquire it.
  */
-i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool extended,
-                    bool ignoreCase) {
+i32[] gnuMatchesAll(Output err, Procs procs, string pattern, u8[][] lines, bool extended, bool ignoreCase) {
   i32 total = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     for (i32 k = 0; k < lines[i].len(); k++) {
       if (lines[i][k] == '\n') {
-        core.warn("regex: a batched subject contains a newline");
+        err.line("regex: a batched subject contains a newline");
         trap;
       }
     }
@@ -138,9 +138,9 @@ i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool exten
   string[] args = extended
     ? (ignoreCase ? ["-E", "-i", "-n", "-e", pattern] : ["-E", "-n", "-e", pattern])
     : (ignoreCase ? ["-i", "-n", "-e", pattern] : ["-n", "-e", pattern]);
-  Exec r = cli.execWith("/bin/grep", args, stdin, ["LC_ALL=C"], true, false).wait();
+  Exec r = flatten(procs.exec("/bin/grep", args, stdin, ChildEnv(true, ["LC_ALL=C"]), Launch("", false, false, false)).wait()).unwrap();
   if (!r.ran()) {
-    core.warn("regex: grep would not start — \{r.error}");
+    err.line("regex: grep would not start — \{r.error}");
     trap;
   }
   i32[] out = i32[].filled(lines.len(), MISSED);
@@ -191,7 +191,9 @@ string showBytes(u8[] b) {
   return out;
 }
 
-export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
+export string test_basic_patterns_mean_what_gnu_grep_says(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   // The six characters whose spelling is inverted between the dialects, each written both ways, plus
   // the rules that are not about them: `*` with nothing to repeat, bracket expressions, the anchors.
@@ -219,7 +221,7 @@ export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
   u8[][] lines = asLines(subjects);
   i32 checked = 0;
   for (i32 p = 0; p < patterns.len(); p++) {
-    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false, false);
+    i32[] wants = gnuMatchesAll(err, procs, patterns[p], lines, false, false);
     for (i32 i = 0; i < subjects.len(); i++) {
       i32 got = run(false, patterns[p], lines[i]);
       t.eqStr(verdict(got), verdict(wants[i]),
@@ -262,7 +264,9 @@ struct Rng {
  * the pieces instead — every one of the inverted six in both spellings, in every position — and is
  * the part that would catch a translation rule I got right in one context and wrong in another.
  */
-export string test_generated_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
+export string test_generated_basic_patterns_mean_what_gnu_grep_says(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] atoms = [
                             "a", "b", ".", "[ab]", "\\.", "\\(a\\)", "(", ")", "|", "\\|", "+",
@@ -276,7 +280,7 @@ export string test_generated_basic_patterns_mean_what_gnu_grep_says(Core core, C
   for (i32 trial = 0; trial < 400; trial++) {
     string p = atoms[rng.upto(atoms.len())] + tails[rng.upto(tails.len())] +
                (rng.upto(2) == 0 ? atoms[rng.upto(atoms.len())] : "");
-    i32[] wants = gnuMatchesAll(core, cli, p, lines, false, false);
+    i32[] wants = gnuMatchesAll(err, procs, p, lines, false, false);
     for (i32 i = 0; i < subjects.len(); i++) {
       i32 got = run(false, p, lines[i]);
       t.eqStr(verdict(got), verdict(wants[i]),
@@ -299,7 +303,9 @@ export string test_generated_basic_patterns_mean_what_gnu_grep_says(Core core, C
  * Every byte, because a class is a claim about all of them and the twelve names were typed by hand:
  * `[:punct:]` is the one nobody can check by reading.
  */
-export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
+export string test_bracket_expressions_byte_by_byte(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] patterns = [
     "[[:alpha:]]", "[[:alnum:]]", "[[:digit:]]", "[[:upper:]]", "[[:lower:]]", "[[:space:]]",
@@ -333,7 +339,7 @@ export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 d = 0; d < 2; d++) {
       bool extended = d == 1;
-      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended, false);
+      i32[] wants = gnuMatchesAll(err, procs, patterns[p], lines, extended, false);
       for (i32 i = 0; i < n; i++) {
         i32 got = run(extended, patterns[p], lines[i]);
         t.eqStr(verdict(got), verdict(wants[i]),
@@ -354,7 +360,9 @@ export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
  * are the line's. Unknown escapes were the character itself, so `grep '\<a'` searched for a `<`,
  * found none, and reported no lines — the same silence as the brackets above, in a different syntax.
  */
-export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
+export string test_gnus_backslash_anchors_are_anchors(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] patterns = [
                                "\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<",
@@ -369,7 +377,7 @@ export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 d = 0; d < 2; d++) {
       bool extended = d == 1;
-      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended, false);
+      i32[] wants = gnuMatchesAll(err, procs, patterns[p], lines, extended, false);
       for (i32 i = 0; i < subjects.len(); i++) {
         i32 got = run(extended, patterns[p], lines[i]);
         t.eqStr(verdict(got), verdict(wants[i]),
@@ -392,7 +400,8 @@ export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
  * one layer down. So: where GNU refuses too, its words; where GNU accepts, a sentence that names
  * *us*.
  */
-export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
+export string test_a_refusal_says_whose_problem_it_is(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string[] patterns = [
                                "[z-a]", "[[:foo:]]", "[[:alpha:]", "[a", "a\\", "\\(a", "a\\)",
@@ -420,8 +429,7 @@ export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
 
     // And the half that keeps this honest: where GNU refuses, it must be refusing for the same
     // reason, in the same words. A message copied from memory drifts from the tool it is copied from.
-    Exec r = cli.execWith("/bin/grep", ["-e", patterns[i]], u8[](),
-                          ["LC_ALL=C"], true, false).wait();
+    Exec r = flatten(procs.exec("/bin/grep", ["-e", patterns[i]], u8[](), ChildEnv(true, ["LC_ALL=C"]), Launch("", false, false, false)).wait()).unwrap();
     t.isTrue(r.ran(), "grep ran — \{r.error}");
     if (!r.ran()) { continue; }
     string theirs = trimmed(string.fromBytes(r.stderr));
@@ -455,7 +463,9 @@ export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
  * a literal in both POSIX dialects"; that is right for basic and wrong for extended, and this comment is
  * the correction.
  */
-export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Core core, Cli cli) {
+export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] subjects = ["", "{2}", "a{2}b", "{2}b", "aa", "a"];
   u8[][] lines = asLines(subjects);
@@ -464,7 +474,7 @@ export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Core core
   string[] patterns = ["{2}", "{2}b", "a{2}"];
   i32 checked = 0;
   for (i32 p = 0; p < patterns.len(); p++) {
-    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false, false);
+    i32[] wants = gnuMatchesAll(err, procs, patterns[p], lines, false, false);
     for (i32 i = 0; i < lines.len(); i++) {
       t.eqI32(run(false, patterns[p], lines[i]), wants[i],
               "grep \"\{patterns[p]}\" against \"\{subjects[i]}\"");
@@ -505,7 +515,9 @@ export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Core core
  * `grep -i` under `LC_ALL=C` folds ASCII only, which is what this engine claims in the README, so the
  * oracle and the subject agree about the *scope* of the question as well as its answer.
  */
-export string test_the_i_flag_in_both_posix_dialects_agrees_with_grep(Core core, Cli cli) {
+export string test_the_i_flag_in_both_posix_dialects_agrees_with_grep(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] patterns = [
     "a", "A", "abc", "ABC", "aBc",
@@ -534,8 +546,8 @@ export string test_the_i_flag_in_both_posix_dialects_agrees_with_grep(Core core,
     string[] extra = extended ? extendedOnly : basicOnly;
     for (i32 p = 0; p < patterns.len() + extra.len(); p++) {
       string pattern = p < patterns.len() ? patterns[p] : extra[p - patterns.len()];
-      i32[] wants = gnuMatchesAll(core, cli, pattern, lines, extended, true);
-      i32[] unfolded = gnuMatchesAll(core, cli, pattern, lines, extended, false);
+      i32[] wants = gnuMatchesAll(err, procs, pattern, lines, extended, true);
+      i32[] unfolded = gnuMatchesAll(err, procs, pattern, lines, extended, false);
       for (i32 i = 0; i < subjects.len(); i++) {
         t.eqStr(verdict(runFolded(extended, pattern, lines[i])), verdict(wants[i]),
                 (extended ? "extended -i \"" : "basic -i \"") + pattern + "\" against \"" +

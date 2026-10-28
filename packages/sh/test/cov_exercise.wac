@@ -20,9 +20,9 @@
 // number: a transcription slip changes which branches are reached, and `cov_ledger.wac` fails by name
 // on the first point that stops being covered.
 
-import { Core, Cli, Sys } from "std";
+import { Sys } from "std";
 import { Vec } from "core";
-import { shErr, shOut, shStatus, shTouchStubs, shWritten } from "./wac/probe.wac";
+import { shErr, shOut, shStatus, shWritten } from "./wac/probe.wac";
 
 /** Every script written out by hand, in the order the TypeScript listed them. */
 string[] scripts() {
@@ -925,38 +925,35 @@ string[] prefixes(string script) {
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
   string[] base = scripts();
-  for (i32 i = 0; i < base.len(); i++) { await drive(base[i]); }
+  for (i32 i = 0; i < base.len(); i++) { await drive(sys, base[i]); }
 
   string[] whole = complete();
   for (i32 i = 0; i < whole.len(); i++) {
-    await drive(whole[i]);
+    await drive(sys, whole[i]);
     string[] cut = prefixes(whole[i]);
-    for (i32 k = 0; k < cut.len(); k++) { await drive(cut[k]); }
+    for (i32 k = 0; k < cut.len(); k++) { await drive(sys, cut[k]); }
   }
 
   string[] strange = odd();
-  for (i32 i = 0; i < strange.len(); i++) { await drive(strange[i]); }
+  for (i32 i = 0; i < strange.len(); i++) { await drive(sys, strange[i]); }
 
-  // The other side of the capture flag: output written through the capability instead of collected.
+  // The other side of the capture flag: output written to the shell's outputs instead of collected.
   string[] out = written();
-  for (i32 i = 0; i < out.len(); i++) { await shWritten(out[i]); }
+  for (i32 i = 0; i < out.len(); i++) { await shWritten(sys, out[i]); }
 
   // **Kept as scripts rather than turned into ledger entries**, and that is the point: a ledger entry
   // is a claim that nothing can reach the code, and one script disproves it. These eight-then-forty
   // moved the package from 66.2% to 68.8% on 2026-08-29.
   string[] more = builtins();
-  for (i32 i = 0; i < more.len(); i++) { await shOut(more[i]); await shStatus(more[i]); }
+  for (i32 i = 0; i < more.len(); i++) { await shOut(sys, more[i]); await shStatus(sys, more[i]); }
 
-  shTouchStubs();
   return 0;
 }
 
 /** One script through all three readers, which is what reaches the capture and the error paths. */
-async void drive(string script) {
-  await shOut(script);
-  await shStatus(script);
-  await shErr(script);
+async void drive(Sys sys, string script) {
+  await shOut(sys, script);
+  await shStatus(sys, script);
+  await shErr(sys, script);
 }

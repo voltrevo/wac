@@ -19,7 +19,7 @@
 // suite — so the interop tests do drive refusal paths. Whether that changes the shape of the gap is
 // the question worth asking of the first number rather than answering in advance.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Clock, Env, Files, Net, Output, Procs, Random } from "std";
 import {
   test_every_single_byte_tampering_is_refused as c__every_single_byte_tampering_is_refused,
 } from "./wac/certtamper_test.wac";
@@ -274,410 +274,415 @@ import {
 } from "./wac/loopback_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   i32 bad = 0;
   if (lb__a_hybrid_share_with_a_dead_x25519_half_is_refused().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_hybrid_share_with_a_dead_x25519_half_is_refused");
+    err.line("error: FAILED loopback_test test_a_hybrid_share_with_a_dead_x25519_half_is_refused");
     bad = bad + 1;
   }
   if (lb__a_key_share_that_forces_a_zero_secret_is_refused().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_key_share_that_forces_a_zero_secret_is_refused");
+    err.line("error: FAILED loopback_test test_a_key_share_that_forces_a_zero_secret_is_refused");
     bad = bad + 1;
   }
   if (lb__the_first_record_back_is_refused_on_its_framing().len() > 0) {
-    core.warn("error: FAILED loopback_test test_the_first_record_back_is_refused_on_its_framing");
+    err.line("error: FAILED loopback_test test_the_first_record_back_is_refused_on_its_framing");
     bad = bad + 1;
   }
   if (lb__a_hostile_serverhello_is_refused_at_each_check().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_hostile_serverhello_is_refused_at_each_check");
+    err.line("error: FAILED loopback_test test_a_hostile_serverhello_is_refused_at_each_check");
     bad = bad + 1;
   }
   if (lb__a_hybrid_share_that_is_not_an_encapsulation_key_is_refused().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused");
+    err.line("error: FAILED loopback_test test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused");
     bad = bad + 1;
   }
   if (lb__a_key_share_that_is_not_a_point_is_refused_rather_than_fatal().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal");
+    err.line("error: FAILED loopback_test test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal");
     bad = bad + 1;
   }
   if (lb__a_clienthello_the_server_will_not_answer_is_refused_in_the_clear().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear");
+    err.line("error: FAILED loopback_test test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear");
     bad = bad + 1;
   }
   if (lb__our_client_and_our_server_complete_a_handshake_in_one_process().len() > 0) {
-    core.warn("error: FAILED loopback_test test_our_client_and_our_server_complete_a_handshake_in_one_process");
+    err.line("error: FAILED loopback_test test_our_client_and_our_server_complete_a_handshake_in_one_process");
     bad = bad + 1;
   }
   if (lb__the_server_answers_and_closes_in_an_orderly_way().len() > 0) {
-    core.warn("error: FAILED loopback_test test_the_server_answers_and_closes_in_an_orderly_way");
+    err.line("error: FAILED loopback_test test_the_server_answers_and_closes_in_an_orderly_way");
     bad = bad + 1;
   }
   if (lb__a_corrupted_server_flight_is_refused_at_every_position().len() > 0) {
-    core.warn("error: FAILED loopback_test test_a_corrupted_server_flight_is_refused_at_every_position");
+    err.line("error: FAILED loopback_test test_a_corrupted_server_flight_is_refused_at_every_position");
     bad = bad + 1;
   }
   if (lb__the_client_says_which_check_the_certificate_failed().len() > 0) {
-    core.warn("error: FAILED loopback_test test_the_client_says_which_check_the_certificate_failed");
+    err.line("error: FAILED loopback_test test_the_client_says_which_check_the_certificate_failed");
     bad = bad + 1;
   }
   if (lb__the_server_refuses_a_record_it_cannot_open().len() > 0) {
-    core.warn("error: FAILED loopback_test test_the_server_refuses_a_record_it_cannot_open");
+    err.line("error: FAILED loopback_test test_the_server_refuses_a_record_it_cannot_open");
     bad = bad + 1;
   }
   if (lb__the_client_refuses_a_flight_it_cannot_open().len() > 0) {
-    core.warn("error: FAILED loopback_test test_the_client_refuses_a_flight_it_cannot_open");
+    err.line("error: FAILED loopback_test test_the_client_refuses_a_flight_it_cannot_open");
     bad = bad + 1;
   }
-  if (c__every_single_byte_tampering_is_refused(core, cli).len() > 0) {
-    core.warn("error: FAILED certtamper_test test_every_single_byte_tampering_is_refused");
+  if (c__every_single_byte_tampering_is_refused(sys).len() > 0) {
+    err.line("error: FAILED certtamper_test test_every_single_byte_tampering_is_refused");
     bad = bad + 1;
   }
-  if (c2__client_talks_to_the_wac_server_end_to_end(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_talks_to_the_wac_server_end_to_end");
+  if (c2__client_talks_to_the_wac_server_end_to_end(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_talks_to_the_wac_server_end_to_end");
     bad = bad + 1;
   }
-  if (c2__client_talks_to_openssls_s_server(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_talks_to_openssls_s_server");
+  if (c2__client_talks_to_openssls_s_server(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_talks_to_openssls_s_server");
     bad = bad + 1;
   }
-  if (c2__client_refuses_a_certificate_that_does_not_cover_the_host_asked_for(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_refuses_a_certificate_that_does_not_cover_the_host_asked_for");
+  if (c2__client_refuses_a_certificate_that_does_not_cover_the_host_asked_for(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_refuses_a_certificate_that_does_not_cover_the_host_asked_for");
     bad = bad + 1;
   }
-  if (c2__client_refuses_a_certificate_from_an_issuer_it_does_not_trust(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust");
+  if (c2__client_refuses_a_certificate_from_an_issuer_it_does_not_trust(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust");
     bad = bad + 1;
   }
-  if (c2__client_refuses_when_the_certificate_is_outside_its_validity_window(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_refuses_when_the_certificate_is_outside_its_validity_window");
+  if (c2__client_refuses_when_the_certificate_is_outside_its_validity_window(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_refuses_when_the_certificate_is_outside_its_validity_window");
     bad = bad + 1;
   }
-  if (c2__client_sends_a_client_hello_a_real_server_understands(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_sends_a_client_hello_a_real_server_understands");
+  if (c2__client_sends_a_client_hello_a_real_server_understands().len() > 0) {
+    err.line("error: FAILED client_test test_client_sends_a_client_hello_a_real_server_understands");
     bad = bad + 1;
   }
-  if (c2__client_completes_a_handshake_against_an_ecdsa_p256_certificate(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_completes_a_handshake_against_an_ecdsa_p256_certificate");
+  if (c2__client_completes_a_handshake_against_an_ecdsa_p256_certificate(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_completes_a_handshake_against_an_ecdsa_p256_certificate");
     bad = bad + 1;
   }
-  if (c2__client_completes_a_handshake_against_an_rsa_2048_certificate(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_completes_a_handshake_against_an_rsa_2048_certificate");
+  if (c2__client_completes_a_handshake_against_an_rsa_2048_certificate(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_completes_a_handshake_against_an_rsa_2048_certificate");
     bad = bad + 1;
   }
-  if (c2__client_completes_a_handshake_when_only_p256_key_exchange_is_offered(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered");
+  if (c2__client_completes_a_handshake_when_only_p256_key_exchange_is_offered(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered");
     bad = bad + 1;
   }
-  if (c2__client_negotiates_x25519mlkem768_against_a_post_quantum_only_server(core, cli).len() > 0) {
-    core.warn("error: FAILED client_test test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server");
+  if (c2__client_negotiates_x25519mlkem768_against_a_post_quantum_only_server(sys).len() > 0) {
+    err.line("error: FAILED client_test test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server");
     bad = bad + 1;
   }
   if (f__record_framing_survives_arbitrary_bytes().len() > 0) {
-    core.warn("error: FAILED fuzz_test test_record_framing_survives_arbitrary_bytes");
+    err.line("error: FAILED fuzz_test test_record_framing_survives_arbitrary_bytes");
     bad = bad + 1;
   }
   if (f__record_framing_at_every_truncation().len() > 0) {
-    core.warn("error: FAILED fuzz_test test_record_framing_at_every_truncation");
+    err.line("error: FAILED fuzz_test test_record_framing_at_every_truncation");
     bad = bad + 1;
   }
   if (f__the_wire_reader_stops_at_its_end().len() > 0) {
-    core.warn("error: FAILED fuzz_test test_the_wire_reader_stops_at_its_end");
+    err.line("error: FAILED fuzz_test test_the_wire_reader_stops_at_its_end");
     bad = bad + 1;
   }
-  if (f__the_client_survives_whatever_a_server_sends(core, cli).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_the_client_survives_whatever_a_server_sends");
+  if (f__the_client_survives_whatever_a_server_sends(sys).len() > 0) {
+    err.line("error: FAILED fuzz_test test_the_client_survives_whatever_a_server_sends");
     bad = bad + 1;
   }
   if (f__inner_plaintext_type_from_arbitrary_bytes().len() > 0) {
-    core.warn("error: FAILED fuzz_test test_inner_plaintext_type_from_arbitrary_bytes");
+    err.line("error: FAILED fuzz_test test_inner_plaintext_type_from_arbitrary_bytes");
     bad = bad + 1;
   }
-  if (f__feeding_a_failed_connection_is_answered_not_fatal(core, cli).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_feeding_a_failed_connection_is_answered_not_fatal");
+  if (f__feeding_a_failed_connection_is_answered_not_fatal(sys).len() > 0) {
+    err.line("error: FAILED fuzz_test test_feeding_a_failed_connection_is_answered_not_fatal");
     bad = bad + 1;
   }
-  if (f__a_certificate_parser_never_aborts(core, cli).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_a_certificate_parser_never_aborts");
+  if (f__a_certificate_parser_never_aborts(sys).len() > 0) {
+    err.line("error: FAILED fuzz_test test_a_certificate_parser_never_aborts");
     bad = bad + 1;
   }
-  if (f__a_malformed_certificate_is_refused_on_its_own_terms(core, cli).len() > 0) {
-    core.warn("error: FAILED fuzz_test test_a_malformed_certificate_is_refused_on_its_own_terms");
+  if (f__a_malformed_certificate_is_refused_on_its_own_terms(sys).len() > 0) {
+    err.line("error: FAILED fuzz_test test_a_malformed_certificate_is_refused_on_its_own_terms");
     bad = bad + 1;
   }
   if (h__the_code_point_and_the_three_lengths().len() > 0) {
-    core.warn("error: FAILED hybrid_test test_the_code_point_and_the_three_lengths");
+    err.line("error: FAILED hybrid_test test_the_code_point_and_the_three_lengths");
     bad = bad + 1;
   }
   if (h__both_sides_reach_the_same_secret().len() > 0) {
-    core.warn("error: FAILED hybrid_test test_both_sides_reach_the_same_secret");
+    err.line("error: FAILED hybrid_test test_both_sides_reach_the_same_secret");
     bad = bad + 1;
   }
   if (h__the_secret_depends_on_both_halves().len() > 0) {
-    core.warn("error: FAILED hybrid_test test_the_secret_depends_on_both_halves");
+    err.line("error: FAILED hybrid_test test_the_secret_depends_on_both_halves");
     bad = bad + 1;
   }
   if (h__ml_kem_comes_first_in_both_directions().len() > 0) {
-    core.warn("error: FAILED hybrid_test test_ml_kem_comes_first_in_both_directions");
+    err.line("error: FAILED hybrid_test test_ml_kem_comes_first_in_both_directions");
     bad = bad + 1;
   }
   if (h__a_tampered_share_gives_a_different_secret_not_an_error().len() > 0) {
-    core.warn("error: FAILED hybrid_test test_a_tampered_share_gives_a_different_secret_not_an_error");
+    err.line("error: FAILED hybrid_test test_a_tampered_share_gives_a_different_secret_not_an_error");
     bad = bad + 1;
   }
   if (h__the_genuine_lengths_still_work().len() > 0) {
-    core.warn("error: FAILED hybrid_test test_the_genuine_lengths_still_work");
+    err.line("error: FAILED hybrid_test test_the_genuine_lengths_still_work");
     bad = bad + 1;
   }
   if (ht__a_real_exchange_derives_a_shared_secret().len() > 0) {
-    core.warn("error: FAILED hybrid_traps_test test_a_real_exchange_derives_a_shared_secret");
+    err.line("error: FAILED hybrid_traps_test test_a_real_exchange_derives_a_shared_secret");
     bad = bad + 1;
   }
-  if (i__openssl_completes_a_tls13_handshake_and_exchanges_data(core, cli).len() > 0) {
-    core.warn("error: FAILED interop_test test_openssl_completes_a_tls13_handshake_and_exchanges_data");
+  if (i__openssl_completes_a_tls13_handshake_and_exchanges_data(sys).len() > 0) {
+    err.line("error: FAILED interop_test test_openssl_completes_a_tls13_handshake_and_exchanges_data");
     bad = bad + 1;
   }
-  if (i__rustls_completes_the_handshake_and_verifies_the_certificate_chain(core, cli).len() > 0) {
-    core.warn("error: FAILED interop_test test_rustls_completes_the_handshake_and_verifies_the_certificate_chain");
+  if (i__rustls_completes_the_handshake_and_verifies_the_certificate_chain(sys).len() > 0) {
+    err.line("error: FAILED interop_test test_rustls_completes_the_handshake_and_verifies_the_certificate_chain");
     bad = bad + 1;
   }
-  if (i__a_client_offering_no_tls13_support_is_rejected(core, cli).len() > 0) {
-    core.warn("error: FAILED interop_test test_a_client_offering_no_tls13_support_is_rejected");
+  if (i__a_client_offering_no_tls13_support_is_rejected(sys).len() > 0) {
+    err.line("error: FAILED interop_test test_a_client_offering_no_tls13_support_is_rejected");
     bad = bad + 1;
   }
-  if (i__the_connection_closes_cleanly_not_as_a_truncation(core, cli).len() > 0) {
-    core.warn("error: FAILED interop_test test_the_connection_closes_cleanly_not_as_a_truncation");
+  if (i__the_connection_closes_cleanly_not_as_a_truncation(sys).len() > 0) {
+    err.line("error: FAILED interop_test test_the_connection_closes_cleanly_not_as_a_truncation");
     bad = bad + 1;
   }
-  if (i__the_server_negotiates_x25519mlkem768_with_a_post_quantum_client(core, cli).len() > 0) {
-    core.warn("error: FAILED interop_test test_the_server_negotiates_x25519mlkem768_with_a_post_quantum_client");
+  if (i__the_server_negotiates_x25519mlkem768_with_a_post_quantum_client(sys).len() > 0) {
+    err.line("error: FAILED interop_test test_the_server_negotiates_x25519mlkem768_with_a_post_quantum_client");
     bad = bad + 1;
   }
-  if (k__the_rfc_8448_chain(core, cli).len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_the_rfc_8448_chain");
+  if (k__the_rfc_8448_chain().len() > 0) {
+    err.line("error: FAILED keyschedule_test test_the_rfc_8448_chain");
     bad = bad + 1;
   }
-  if (k__expand_label_agrees_with_an_independent_build(core, cli).len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_expand_label_agrees_with_an_independent_build");
+  if (k__expand_label_agrees_with_an_independent_build(sys).len() > 0) {
+    err.line("error: FAILED keyschedule_test test_expand_label_agrees_with_an_independent_build");
     bad = bad + 1;
   }
-  if (k__traffic_keys_come_from_the_pinned_secret(core, cli).len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_traffic_keys_come_from_the_pinned_secret");
+  if (k__traffic_keys_come_from_the_pinned_secret(sys).len() > 0) {
+    err.line("error: FAILED keyschedule_test test_traffic_keys_come_from_the_pinned_secret");
     bad = bad + 1;
   }
   if (k__every_derivation_depends_on_everything_it_should().len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_every_derivation_depends_on_everything_it_should");
+    err.line("error: FAILED keyschedule_test test_every_derivation_depends_on_everything_it_should");
     bad = bad + 1;
   }
   if (k__finished_binds_to_the_transcript_and_the_sender().len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_finished_binds_to_the_transcript_and_the_sender");
+    err.line("error: FAILED keyschedule_test test_finished_binds_to_the_transcript_and_the_sender");
     bad = bad + 1;
   }
-  if (k__the_empty_context_hash_is_sha256_of_nothing(core, cli).len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_the_empty_context_hash_is_sha256_of_nothing");
+  if (k__the_empty_context_hash_is_sha256_of_nothing().len() > 0) {
+    err.line("error: FAILED keyschedule_test test_the_empty_context_hash_is_sha256_of_nothing");
     bad = bad + 1;
   }
   if (k__the_largest_label_and_context_that_fit_are_accepted().len() > 0) {
-    core.warn("error: FAILED keyschedule_test test_the_largest_label_and_context_that_fit_are_accepted");
+    err.line("error: FAILED keyschedule_test test_the_largest_label_and_context_that_fit_are_accepted");
     bad = bad + 1;
   }
-  if (o__every_oid_is_the_one_its_comment_says(core, cli).len() > 0) {
-    core.warn("error: FAILED oids_test test_every_oid_is_the_one_its_comment_says");
+  if (o__every_oid_is_the_one_its_comment_says(sys).len() > 0) {
+    err.line("error: FAILED oids_test test_every_oid_is_the_one_its_comment_says");
     bad = bad + 1;
   }
-  if (o__every_oid_in_the_source_is_in_the_table(core, cli).len() > 0) {
-    core.warn("error: FAILED oids_test test_every_oid_in_the_source_is_in_the_table");
+  if (o__every_oid_in_the_source_is_in_the_table(sys).len() > 0) {
+    err.line("error: FAILED oids_test test_every_oid_in_the_source_is_in_the_table");
     bad = bad + 1;
   }
-  if (o__the_encoder_being_checked_against_is_really_doing_the_work(core, cli).len() > 0) {
-    core.warn("error: FAILED oids_test test_the_encoder_being_checked_against_is_really_doing_the_work");
+  if (o__the_encoder_being_checked_against_is_really_doing_the_work(sys).len() > 0) {
+    err.line("error: FAILED oids_test test_the_encoder_being_checked_against_is_really_doing_the_work");
     bad = bad + 1;
   }
   if (r__round_trips_both_suites_at_every_shape().len() > 0) {
-    core.warn("error: FAILED record_test test_round_trips_both_suites_at_every_shape");
+    err.line("error: FAILED record_test test_round_trips_both_suites_at_every_shape");
     bad = bad + 1;
   }
   if (r__the_sequence_number_is_part_of_the_nonce().len() > 0) {
-    core.warn("error: FAILED record_test test_the_sequence_number_is_part_of_the_nonce");
+    err.line("error: FAILED record_test test_the_sequence_number_is_part_of_the_nonce");
     bad = bad + 1;
   }
   if (r__the_content_type_comes_from_inside_not_the_header().len() > 0) {
-    core.warn("error: FAILED record_test test_the_content_type_comes_from_inside_not_the_header");
+    err.line("error: FAILED record_test test_the_content_type_comes_from_inside_not_the_header");
     bad = bad + 1;
   }
   if (r__padding_is_invisible_to_the_reader().len() > 0) {
-    core.warn("error: FAILED record_test test_padding_is_invisible_to_the_reader");
+    err.line("error: FAILED record_test test_padding_is_invisible_to_the_reader");
     bad = bad + 1;
   }
-  if (r__sealing_agrees_with_the_host_aead(core, cli).len() > 0) {
-    core.warn("error: FAILED record_test test_sealing_agrees_with_the_host_aead");
+  if (r__sealing_agrees_with_the_host_aead(sys).len() > 0) {
+    err.line("error: FAILED record_test test_sealing_agrees_with_the_host_aead");
     bad = bad + 1;
   }
-  if (r__the_header_is_authenticated(core, cli).len() > 0) {
-    core.warn("error: FAILED record_test test_the_header_is_authenticated");
+  if (r__the_header_is_authenticated(sys).len() > 0) {
+    err.line("error: FAILED record_test test_the_header_is_authenticated");
     bad = bad + 1;
   }
   if (r__the_alert_codes_are_the_ones_rfc_8446_assigns().len() > 0) {
-    core.warn("error: FAILED record_test test_the_alert_codes_are_the_ones_rfc_8446_assigns");
+    err.line("error: FAILED record_test test_the_alert_codes_are_the_ones_rfc_8446_assigns");
     bad = bad + 1;
   }
   if (r__only_whole_records_are_offered().len() > 0) {
-    core.warn("error: FAILED record_test test_only_whole_records_are_offered");
+    err.line("error: FAILED record_test test_only_whole_records_are_offered");
     bad = bad + 1;
   }
   if (r__a_chunk_of_eighty_records_with_the_last_one_split().len() > 0) {
-    core.warn("error: FAILED record_test test_a_chunk_of_eighty_records_with_the_last_one_split");
+    err.line("error: FAILED record_test test_a_chunk_of_eighty_records_with_the_last_one_split");
     bad = bad + 1;
   }
   if (r__the_genuine_record_still_opens().len() > 0) {
-    core.warn("error: FAILED record_test test_the_genuine_record_still_opens");
+    err.line("error: FAILED record_test test_the_genuine_record_still_opens");
     bad = bad + 1;
   }
   if (r__record_length_reads_the_header_and_says_when_it_cannot().len() > 0) {
-    core.warn("error: FAILED record_test test_record_length_reads_the_header_and_says_when_it_cannot");
+    err.line("error: FAILED record_test test_record_length_reads_the_header_and_says_when_it_cannot");
     bad = bad + 1;
   }
   if (r__the_plaintext_limit_is_sixteen_kilobytes().len() > 0) {
-    core.warn("error: FAILED record_test test_the_plaintext_limit_is_sixteen_kilobytes");
+    err.line("error: FAILED record_test test_the_plaintext_limit_is_sixteen_kilobytes");
     bad = bad + 1;
   }
   if (rt__a_record_inside_the_limits_seals_and_opens().len() > 0) {
-    core.warn("error: FAILED record_traps_test test_a_record_inside_the_limits_seals_and_opens");
+    err.line("error: FAILED record_traps_test test_a_record_inside_the_limits_seals_and_opens");
     bad = bad + 1;
   }
-  if (r2__the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds(core, cli).len() > 0) {
-    core.warn("error: FAILED roots_test test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds");
+  if (r2__the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds(sys).len() > 0) {
+    err.line("error: FAILED roots_test test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds");
     bad = bad + 1;
   }
   if (r2__a_block_that_does_not_decode_is_counted_not_silently_dropped().len() > 0) {
-    core.warn("error: FAILED roots_test test_a_block_that_does_not_decode_is_counted_not_silently_dropped");
+    err.line("error: FAILED roots_test test_a_block_that_does_not_decode_is_counted_not_silently_dropped");
     bad = bad + 1;
   }
   if (r2__text_between_blocks_is_skipped_rather_than_refused().len() > 0) {
-    core.warn("error: FAILED roots_test test_text_between_blocks_is_skipped_rather_than_refused");
+    err.line("error: FAILED roots_test test_text_between_blocks_is_skipped_rather_than_refused");
     bad = bad + 1;
   }
   if (r2__armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation().len() > 0) {
-    core.warn("error: FAILED roots_test test_armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation");
+    err.line("error: FAILED roots_test test_armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation");
     bad = bad + 1;
   }
-  if (ri__openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate(core, cli).len() > 0) {
-    core.warn("error: FAILED rsa_interop_test test_openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate");
+  if (ri__openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate(sys).len() > 0) {
+    err.line("error: FAILED rsa_interop_test test_openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate");
     bad = bad + 1;
   }
-  if (ri__openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate(core, cli).len() > 0) {
-    core.warn("error: FAILED rsa_interop_test test_openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate");
+  if (ri__openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate(sys).len() > 0) {
+    err.line("error: FAILED rsa_interop_test test_openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate");
     bad = bad + 1;
   }
   if (st__a_closed_connection_takes_no_more_and_a_fresh_one_starts().len() > 0) {
-    core.warn("error: FAILED server_traps_test test_a_closed_connection_takes_no_more_and_a_fresh_one_starts");
+    err.line("error: FAILED server_traps_test test_a_closed_connection_takes_no_more_and_a_fresh_one_starts");
     bad = bad + 1;
   }
   if (w__fixed_width_reads_are_big_endian().len() > 0) {
-    core.warn("error: FAILED wire_test test_fixed_width_reads_are_big_endian");
+    err.line("error: FAILED wire_test test_fixed_width_reads_are_big_endian");
     bad = bad + 1;
   }
   if (w__expect_end_measures_what_is_left().len() > 0) {
-    core.warn("error: FAILED wire_test test_expect_end_measures_what_is_left");
+    err.line("error: FAILED wire_test test_expect_end_measures_what_is_left");
     bad = bad + 1;
   }
   if (w__sub_readers_cannot_see_past_their_vector().len() > 0) {
-    core.warn("error: FAILED wire_test test_sub_readers_cannot_see_past_their_vector");
+    err.line("error: FAILED wire_test test_sub_readers_cannot_see_past_their_vector");
     bad = bad + 1;
   }
   if (w__the_writer_round_trips_through_the_reader().len() > 0) {
-    core.warn("error: FAILED wire_test test_the_writer_round_trips_through_the_reader");
+    err.line("error: FAILED wire_test test_the_writer_round_trips_through_the_reader");
     bad = bad + 1;
   }
   if (w__the_writer_grows_without_losing_anything().len() > 0) {
-    core.warn("error: FAILED wire_test test_the_writer_grows_without_losing_anything");
+    err.line("error: FAILED wire_test test_the_writer_grows_without_losing_anything");
     bad = bad + 1;
   }
   if (wt__a_round_trip_inside_the_limits().len() > 0) {
-    core.warn("error: FAILED wire_traps_test test_a_round_trip_inside_the_limits");
+    err.line("error: FAILED wire_traps_test test_a_round_trip_inside_the_limits");
     bad = bad + 1;
   }
-  if (xp__the_fixtures_are_the_shape_the_tests_assume(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_the_fixtures_are_the_shape_the_tests_assume");
+  if (xp__the_fixtures_are_the_shape_the_tests_assume(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_the_fixtures_are_the_shape_the_tests_assume");
     bad = bad + 1;
   }
-  if (xp__a_two_deep_chain_verifies_to_a_p384_root(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_a_two_deep_chain_verifies_to_a_p384_root");
+  if (xp__a_two_deep_chain_verifies_to_a_p384_root(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_a_two_deep_chain_verifies_to_a_p384_root");
     bad = bad + 1;
   }
-  if (xp__the_path_has_to_be_built(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_the_path_has_to_be_built");
+  if (xp__the_path_has_to_be_built(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_the_path_has_to_be_built");
     bad = bad + 1;
   }
-  if (xp__validity_is_checked_at_the_time_given(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_validity_is_checked_at_the_time_given");
+  if (xp__validity_is_checked_at_the_time_given(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_validity_is_checked_at_the_time_given");
     bad = bad + 1;
   }
-  if (xp__the_host_name_is_checked_against_the_leaf(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_the_host_name_is_checked_against_the_leaf");
+  if (xp__the_host_name_is_checked_against_the_leaf(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_the_host_name_is_checked_against_the_leaf");
     bad = bad + 1;
   }
-  if (xp__tampering_and_the_anchors_own_signature(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_tampering_and_the_anchors_own_signature");
+  if (xp__tampering_and_the_anchors_own_signature(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_tampering_and_the_anchors_own_signature");
     bad = bad + 1;
   }
-  if (xp__a_root_with_the_right_name_and_wrong_key(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_a_root_with_the_right_name_and_wrong_key");
+  if (xp__a_root_with_the_right_name_and_wrong_key(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_a_root_with_the_right_name_and_wrong_key");
     bad = bad + 1;
   }
-  if (xp__critical_extensions_and_key_usage(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_critical_extensions_and_key_usage");
+  if (xp__critical_extensions_and_key_usage(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_critical_extensions_and_key_usage");
     bad = bad + 1;
   }
-  if (xp__a_signature_scheme_is_refused_against_the_wrong_key_type(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_a_signature_scheme_is_refused_against_the_wrong_key_type");
+  if (xp__a_signature_scheme_is_refused_against_the_wrong_key_type(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_a_signature_scheme_is_refused_against_the_wrong_key_type");
     bad = bad + 1;
   }
-  if (xp__an_rsa_chain_verifies(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_an_rsa_chain_verifies");
+  if (xp__an_rsa_chain_verifies(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_an_rsa_chain_verifies");
     bad = bad + 1;
   }
-  if (xp__name_constraints(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_name_constraints");
+  if (xp__name_constraints(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_name_constraints");
     bad = bad + 1;
   }
-  if (xp__an_ip_literal_matches_an_ip_san(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_an_ip_literal_matches_an_ip_san");
+  if (xp__an_ip_literal_matches_an_ip_san(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_an_ip_literal_matches_an_ip_san");
     bad = bad + 1;
   }
-  if (xp__an_ip_literal_never_matches_a_dns_entry(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_an_ip_literal_never_matches_a_dns_entry");
+  if (xp__an_ip_literal_never_matches_a_dns_entry(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_an_ip_literal_never_matches_a_dns_entry");
     bad = bad + 1;
   }
-  if (xp__only_a_strict_dotted_quad_is_an_address(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_only_a_strict_dotted_quad_is_an_address");
+  if (xp__only_a_strict_dotted_quad_is_an_address(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_only_a_strict_dotted_quad_is_an_address");
     bad = bad + 1;
   }
-  if (xp__the_system_trust_store_parses(core, cli).len() > 0) {
-    core.warn("error: FAILED x509_path_test test_the_system_trust_store_parses");
+  if (xp__the_system_trust_store_parses(sys).len() > 0) {
+    err.line("error: FAILED x509_path_test test_the_system_trust_store_parses");
     bad = bad + 1;
   }
-  if (x__openssl_reads_and_verifies_an_ed25519_certificate(core, cli).len() > 0) {
-    core.warn("error: FAILED x509gen_test test_openssl_reads_and_verifies_an_ed25519_certificate");
+  if (x__openssl_reads_and_verifies_an_ed25519_certificate(sys).len() > 0) {
+    err.line("error: FAILED x509gen_test test_openssl_reads_and_verifies_an_ed25519_certificate");
     bad = bad + 1;
   }
-  if (x__openssl_reads_and_verifies_an_rsa_certificate(core, cli).len() > 0) {
-    core.warn("error: FAILED x509gen_test test_openssl_reads_and_verifies_an_rsa_certificate");
+  if (x__openssl_reads_and_verifies_an_rsa_certificate(sys).len() > 0) {
+    err.line("error: FAILED x509gen_test test_openssl_reads_and_verifies_an_rsa_certificate");
     bad = bad + 1;
   }
-  if (x__a_certificate_that_cannot_be_valid_is_not_produced(core, cli).len() > 0) {
-    core.warn("error: FAILED x509gen_test test_a_certificate_that_cannot_be_valid_is_not_produced");
+  if (x__a_certificate_that_cannot_be_valid_is_not_produced().len() > 0) {
+    err.line("error: FAILED x509gen_test test_a_certificate_that_cannot_be_valid_is_not_produced");
     bad = bad + 1;
   }
-  if (x__der_lengths_and_integers_are_the_shortest_form(core, cli).len() > 0) {
-    core.warn("error: FAILED x509gen_test test_der_lengths_and_integers_are_the_shortest_form");
+  if (x__der_lengths_and_integers_are_the_shortest_form().len() > 0) {
+    err.line("error: FAILED x509gen_test test_der_lengths_and_integers_are_the_shortest_form");
     bad = bad + 1;
   }
-  if (x__time_crosses_the_utc_boundary_correctly(core, cli).len() > 0) {
-    core.warn("error: FAILED x509gen_test test_time_crosses_the_utc_boundary_correctly");
+  if (x__time_crosses_the_utc_boundary_correctly().len() > 0) {
+    err.line("error: FAILED x509gen_test test_time_crosses_the_utc_boundary_correctly");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("tls: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("tls: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }
 

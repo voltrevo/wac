@@ -15,18 +15,17 @@ import { BuiltPackage, Figures, Totals, commas } from "./figures.wac";
 static string EX_WC = """
   // packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
   export i32 main(Sys sys) {
-    Core core = sys.core;
-    Cli cli = sys.cli;
-    u8[] data = u8[].filled(0, 0);
-    if (cli.argCount().wait() < 1) {
-      data = cli.readStdin().wait();
+    string[] argv = sys.args();
+    u8[] data = u8[]();
+    if (argv.len() < 1) {
+      data = flatten(sys.stdin().readAll().wait()).orElse(u8[]());
     } else {
-      FileResult f = cli.readFile(cli.arg(0).wait()).wait();
-      if (!f.ok) { core.warn("wc: " + f.error); return 1; }
-      data = f.bytes;
+      auto read = flatten(sys.files().readFile(argv[0]).wait());
+      if (read.isErr()) { sys.stderr().line("wc: " + argv[0] + ": cannot read it"); return 1; }
+      data = read.unwrap();
     }
     Counts n = count(data);
-    core.log(itoa(n.lines) + " " + itoa(n.words) + " " + itoa(n.bytes));
+    sys.stdout().line(itoa(n.lines) + " " + itoa(n.words) + " " + itoa(n.bytes));
     return 0;
   }""";
 

@@ -20,7 +20,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { AccountProof, StorageProof, accountAt, storageAt, emptyStorageRoot,
@@ -176,7 +176,7 @@ struct World {
   Answers storage;
 }
 
-World world(T t, Cli cli) {
+World world(T t, Procs procs) {
   World none = World(false, u8[](), u8[](), Answers(false, string[].filled(0, "")),
                      Answers(false, string[].filled(0, "")));
   Lines first = Lines.create();
@@ -189,7 +189,7 @@ World world(T t, Cli cli) {
   for (i32 i = 0; i < absent.len(); i++) {
     first.add("proof storage \{hex(keccak256(word32(absent[i])))}");
   }
-  Answers storage = askDeno(t, cli, ORACLE, first, "the storage trie");
+  Answers storage = askDeno(t, procs, ORACLE, first, "the storage trie");
   if (!storage.ok) { return none; }
   u8[] storageRoot = decoded(word(storage.find("root", "storage"), 2));
 
@@ -197,7 +197,7 @@ World world(T t, Cli cli) {
   second.add(stateTrieLine(storageRoot));
   for (i32 i = 1; i <= 3; i++) { second.add("proof state \{hex(keccak256(address(i)))}"); }
   second.add("proof state \{hex(keccak256(address(99)))}");
-  Answers state = askDeno(t, cli, ORACLE, second, "the state trie");
+  Answers state = askDeno(t, procs, ORACLE, second, "the state trie");
   if (!state.ok) { return none; }
   return World(true, decoded(word(state.find("root", "state"), 2)), storageRoot, state, storage);
 }
@@ -229,9 +229,10 @@ export string test_the_two_empty_constants_are_what_they_claim_to_be() {
   return t.report();
 }
 
-export string test_an_account_is_read_out_of_the_state_trie_fields_and_all(Core core, Cli cli) {
+export string test_an_account_is_read_out_of_the_state_trie_fields_and_all(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  World w = world(t, cli);
+  World w = world(t, procs);
   if (!w.ok) { return t.report(); }
   AccountProof got = accountAt(w.stateRoot, address(2), stateProof(w, 2));
   t.isTrue(got.ok, got.error);
@@ -250,9 +251,10 @@ export string test_an_account_is_read_out_of_the_state_trie_fields_and_all(Core 
   return t.report();
 }
 
-export string test_an_address_the_state_has_never_seen_is_proved_absent(Core core, Cli cli) {
+export string test_an_address_the_state_has_never_seen_is_proved_absent(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  World w = world(t, cli);
+  World w = world(t, procs);
   if (!w.ok) { return t.report(); }
   AccountProof got = accountAt(w.stateRoot, address(99), stateProof(w, 99));
   t.isTrue(got.ok, "absence should verify — \{got.error}");
@@ -260,12 +262,12 @@ export string test_an_address_the_state_has_never_seen_is_proved_absent(Core cor
   return t.report();
 }
 
-export string test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave(
-    Core core, Cli cli) {
+export string test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // The composition: the root is taken from the account proof, never from the test's own variable. A caller
   // that supplies it from elsewhere can be handed a valid proof of a *different* account's storage.
-  World w = world(t, cli);
+  World w = world(t, procs);
   if (!w.ok) { return t.report(); }
   AccountProof acct = accountAt(w.stateRoot, address(2), stateProof(w, 2));
   t.isTrue(acct.ok && acct.present, acct.error);
@@ -282,13 +284,13 @@ export string test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_acc
   return t.report();
 }
 
-export string test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored(
-    Core core, Cli cli) {
+export string test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // Ethereum stores no zero slots: writing zero deletes the entry. So "absent" and "zero" are the same
   // state, and a verifier that reported a zero *value* would be inventing one — the caller has to see
   // `present = false` and decide what zero means in its own terms.
-  World w = world(t, cli);
+  World w = world(t, procs);
   if (!w.ok) { return t.report(); }
   AccountProof acct = accountAt(w.stateRoot, address(2), stateProof(w, 2));
   if (!acct.ok || !acct.present) { return t.report(); }
@@ -303,13 +305,13 @@ export string test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_
   return t.report();
 }
 
-export string test_an_account_with_no_storage_refuses_a_storage_proof_from_another_account(
-    Core core, Cli cli) {
+export string test_an_account_with_no_storage_refuses_a_storage_proof_from_another_account(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // The failure the composition exists to prevent, made concrete: account 1 has the empty storage root, and
   // a provider hands over account 2's perfectly valid storage proof. Every node in it verifies against
   // account 2's root and none of them against this one.
-  World w = world(t, cli);
+  World w = world(t, procs);
   if (!w.ok) { return t.report(); }
   AccountProof eoa = accountAt(w.stateRoot, address(1), stateProof(w, 1));
   t.eqStr(hex(eoa.account.storageRoot), hex(emptyStorageRoot()), "account 1 has no storage");
@@ -318,8 +320,8 @@ export string test_an_account_with_no_storage_refuses_a_storage_proof_from_anoth
   return t.report();
 }
 
-export string test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them(
-    Core core, Cli cli) {
+export string test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // An account that is not four items, or whose roots are the wrong length, has to fail as an *account*
   // rather than survive into a storage walk that then blames the proof. Built by putting a malformed
@@ -347,7 +349,7 @@ export string test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them(
     lines.add("trie bad\{i} \{key}:\{hex(values[i])}");
     lines.add("proof bad\{i} \{key}");
   }
-  Answers a = askDeno(t, cli, ORACLE, lines, "tries of one malformed account");
+  Answers a = askDeno(t, procs, ORACLE, lines, "tries of one malformed account");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < what.len(); i++) {
     u8[] root = decoded(word(a.find("root", "bad\{i}"), 2));
@@ -359,8 +361,8 @@ export string test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them(
   return t.report();
 }
 
-export string test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes(
-    Core core, Cli cli) {
+export string test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // The trie stores `rlp(value)`, so a slot can carry things a slot cannot hold: a list, 33 bytes, or a
   // leading zero — which is a second encoding of a number the trie is supposed to have one encoding for.
@@ -378,7 +380,7 @@ export string test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_byte
     lines.add("trie bad\{i} \{key}:\{hex(values[i])}");
     lines.add("proof bad\{i} \{key}");
   }
-  Answers a = askDeno(t, cli, ORACLE, lines, "tries of one malformed slot");
+  Answers a = askDeno(t, procs, ORACLE, lines, "tries of one malformed slot");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < what.len(); i++) {
     u8[] root = decoded(word(a.find("root", "bad\{i}"), 2));
@@ -389,7 +391,8 @@ export string test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_byte
   return t.report();
 }
 
-export string test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two(Core core, Cli cli) {
+export string test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // The hashing happens inside, because a state trie is a secure trie by definition — so a caller handing
   // over an unhashed or mis-sized key would otherwise get a confident wrong answer instead of an error.
@@ -410,7 +413,7 @@ export string test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two(Core 
   lines.add("proof addr \{hex(keccak256(shortAddr))}");
   lines.add("trie slot \{hex(keccak256(shortSlot))}:\{hex(rlpBytes(minimal(5)))}");
   lines.add("proof slot \{hex(keccak256(shortSlot))}");
-  Answers a = askDeno(t, cli, ORACLE, lines, "tries keyed by a mis-sized key");
+  Answers a = askDeno(t, procs, ORACLE, lines, "tries keyed by a mis-sized key");
   if (!a.ok) { return t.report(); }
 
   AccountProof short = accountAt(decoded(word(a.find("root", "addr"), 2)), shortAddr,

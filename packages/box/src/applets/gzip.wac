@@ -4,18 +4,18 @@
 // awaited — a page's arrives later — so the applet awaits all of it and hands the transform a reader
 // over what it has (`readerOf`). The output still streams as it is produced.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream } from "../lib/input.wac";
+import { Opened, openStream } from "../lib/input.wac";
 import { readerOf } from "../../../platform/src/stream.wac";
+import { flatten } from "core";
 import { gzipStream } from "../../../gzip/src/gzip.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 gzip(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await openStream(core, cli, fs, a, 0, -1);
+export async i32 gzip(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await openStream(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
   u8[] all = await in.fed.rest();
-  return gzipStream(readerOf(all), cli.write);
+  return gzipStream(readerOf(all), (u8[] b) => flatten(out.write(b).wait()).isOk());
 }

@@ -206,7 +206,7 @@ Change changeOf(Answer a) { return Change.of(a.fault, a.fault == FAULT_NONE() ? 
 
 Stat statOf(Answer a) {
   return Stat.of((a.flags & STAT_EXISTS) != 0, (a.flags & STAT_FILE) != 0, (a.flags & STAT_DIR) != 0, a.n, a.m,
-                 false, false, a.fault);
+                 false, false, a.fault, 0);
 }
 
 /** A read's answer as the `Read` it is. */
@@ -270,6 +270,9 @@ Pending<Change> refusedChange(string grant) { return ready(Change.of(FAULT_NOT_G
  */
 Pending<Change> unsupported(string what) { return ready(Change.of(FAULT_UNSUPPORTED(), what)); }
 Pending<HostSocket> noSocket() { return ready(HostSocket.of(0 - 1, "a page has no sockets", "", 0, FAULT_UNSUPPORTED())); }
+Pending<HostSocket> noFileStream() {
+  return ready(HostSocket.of(0 - 1, "a page cannot open a file as a stream yet", "", 0, FAULT_UNSUPPORTED()));
+}
 
 /** A program's world in a page: the answers it waits for, and the `Sys` its `main` is handed. */
 export struct World {
@@ -285,7 +288,7 @@ export struct World {
     Answers answers = Answers.create(sched);
     Core core = coreOf(system, answers, sched);
     Cli cli = cliOf(system, answers, sched, grants);
-    return World(answers, Sys(core, cli));
+    return World(answers, Sys.__wacOf(core, cli));
   }
 }
 
@@ -320,13 +323,23 @@ Core coreOf(System system, Answers answers, Sched sched) {
 Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
   bool read = (grants & GRANT_READ) != 0;
   bool write = (grants & GRANT_WRITE) != 0;
+  // `closeOutput` ends a stream for this program: a page's console has no end to give, so later writes are refused.
+  bool[] closed = bool[].filled(2, false);
   return Cli.of(
     () => ready(system.argCount()),
     (i32 i) => ready(system.arg(i)),
     (string name) => ready(null as u8[]?),
     () => ready(u8[]()),
-    (u8[] bytes) => { system.write(bytes); return true; },
-    (u8[] bytes) => { system.writeErr(bytes); return true; },
+    (u8[] bytes) => {
+      if (closed[0]) { return false; }
+      system.write(bytes);
+      return true;
+    },
+    (u8[] bytes) => {
+      if (closed[1]) { return false; }
+      system.writeErr(bytes);
+      return true;
+    },
     (string p) => {
       if (!read) { return refusedRead(p); }
       i32 req = answers.ask();
@@ -399,6 +412,13 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
     system.closeSocket,
     // Half-closing a child's input is `closeFeed`; a page has no sockets to half-close.
     (i32 h) => { },
+    // No file streams in a page yet: `openFile` is refused as `openOutput` is above, and nothing is open to close.
+    (string path, i32 how) => noFileStream(),
+    (i32 h) => ready(false),
+    (bool toErr) => {
+      closed[toErr ? 1 : 0] = true;
+      return ready(true);
+    },
     (string host, i32 port) => noSocket(),
     (i32 h) => ready(Datagram.of(u8[](), "", 0, "a page has no sockets")),
     (i32 h, string host, i32 port, u8[] bytes) => ready(false),
@@ -437,7 +457,7 @@ HostChild childOf(Answer a) {
 }
 
 Pending<Stat> statFor(System system, Answers answers, bool read, string p) {
-  if (!read) { return ready(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_GRANTED())); }
+  if (!read) { return ready(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_GRANTED(), 0)); }
   i32 req = answers.ask();
   system.stat(req, p);
   return answers.pending<Stat>(req, statOf);

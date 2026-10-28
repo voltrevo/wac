@@ -15,32 +15,34 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0161`.
 
-import { Core, Cli, FileResult, Sys } from "std";
+import { Sys, Files, Output } from "std";
 import { gunzipBytes } from "../../src/inflate.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  i32 n = argv.len();
   if (n < 2) {
-    core.warn("fuzzprobe: expected <original> <corrupt>, got \{n} argument(s)");
+    err.line("fuzzprobe: expected <original> <corrupt>, got \{n} argument(s)");
     return 8;
   }
-  string originalPath = string.fromBytes(cli.arg(n - 2).wait());
-  string corruptPath = string.fromBytes(cli.arg(n - 1).wait());
-  FileResult original = cli.readFile(originalPath).wait();
-  FileResult corrupt = cli.readFile(corruptPath).wait();
-  if (!original.ok || !corrupt.ok) {
-    core.warn("fuzzprobe: cannot read " + (original.ok ? corruptPath : originalPath));
+  string originalPath = argv[n - 2];
+  string corruptPath = argv[n - 1];
+  u8[]? original = flatten(fs.readFile(originalPath).wait()).ok();
+  u8[]? corrupt = flatten(fs.readFile(corruptPath).wait()).ok();
+  if ((original is null) || (corrupt is null)) {
+    err.line("fuzzprobe: cannot read " + ((original is not null) ? corruptPath : originalPath));
     return 8;
   }
 
   // Anything from here on may trap, and that is a pass as far as the caller is concerned.
-  u8[] got = gunzipBytes(corrupt.bytes);
+  u8[] got = gunzipBytes(corrupt!);
 
-  if (got.len() != original.bytes.len()) { return 7; }
+  if (got.len() != original!.len()) { return 7; }
   for (i32 i = 0; i < got.len(); i++) {
-    if (got[i] != original.bytes[i]) { return 7; }
+    if (got[i] != original![i]) { return 7; }
   }
   return 0;
 }

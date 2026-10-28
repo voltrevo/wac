@@ -32,13 +32,14 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std";
+import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { slice, equal } from "../../../bytes/src/slice.wac";
 import { decode, encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { bcryptPbkdf } from "../../src/bcryptpbkdf.wac";
 import { aesCtr } from "../../src/aesctr.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string ORACLE = "packages/crypto/test/oracle.mjs";
 
@@ -103,14 +104,16 @@ u8[]? pemBody(string pem) {
   return decode(joinedText.toBytes());
 }
 
-export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf(
-    Core core, Cli cli) {
+export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
 
   // `.cache` rather than a directory beside the tests: it is gitignored and the corpus walks do not
   // enter it, so a key left behind by an interrupted run is never mistaken for a source file.
-  string dir = "\{cli.cwd().wait()}/.cache/bcryptpbkdf";
-  string whyDir1 = madeDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/bcryptpbkdf";
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
 
   Lines lines = Lines.create();
@@ -121,8 +124,8 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
     string f = "\{dir}/\{c.type}-\{c.cipher}-\{c.rounds}";
     // ssh-keygen refuses to overwrite, and a leftover from an earlier run would otherwise be read
     // instead of a fresh one — a stale key still decrypts, so this would pass without generating.
-    cli.remove(f, false).wait();
-    cli.remove("\{f}.pub", false).wait();
+    fs.remove(f, false).wait();
+    fs.remove("\{f}.pub", false).wait();
 
     string[] argv = c.type == "rsa"
       ? [
@@ -130,17 +133,19 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
                  "-b", "2048"
       ]
       : ["-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", "\{c.rounds}", "-Z", c.cipher];
-    Exec gen = cli.exec("ssh-keygen", argv, u8[]()).wait();
-    t.isTrue(gen.ran(), "ssh-keygen ran — \{gen.error}");
-    if (!gen.ran()) { return t.report(); }
-    t.eqI32(gen.status, 0, "ssh-keygen made \{c.type} — \{string.fromBytes(gen.stderr)}");
-    if (gen.status != 0) { continue; }
+    auto genRan = flatten(procs.exec("ssh-keygen", argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? gen = genRan.ok();
+    t.isTrue((gen is not null), "ssh-keygen ran — \{genRan.isErr() ? "\{genRan.err()!}" : ""}");
+    if ((gen is null)) { return t.report(); }
+    t.eqI32(gen!.status, 0, "ssh-keygen made \{c.type} — \{string.fromBytes(gen!.stderr)}");
+    if (gen!.status != 0) { continue; }
 
-    FileResult priv = cli.readFile(f).wait();
-    t.isTrue(priv.ok, "read the private key — \{priv.error}");
-    if (!priv.ok) { continue; }
+    auto privRead = flatten(fs.readFile(f).wait());
+    u8[]? priv = privRead.ok();
+    t.isTrue((priv is not null), "read the private key — \{privRead.isErr() ? "\{privRead.err()!}" : ""}");
+    if ((priv is null)) { continue; }
 
-    u8[]? blobOpt = pemBody(string.fromBytes(priv.bytes));
+    u8[]? blobOpt = pemBody(string.fromBytes(priv!));
     t.isTrue(blobOpt is not null, "\{c.type}: the PEM body is base64");
     if (blobOpt is null) { continue; }
     u8[] blob = blobOpt!;
@@ -182,12 +187,13 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
             ": the check ints differ — the derived key is wrong");
 
     // Reaches further into the keystream than the check ints do, so the IV is covered too.
-    FileResult pub = cli.readFile("\{f}.pub").wait();
-    t.isTrue(pub.ok, "read the .pub file — \{pub.error}");
-    if (pub.ok) {
+    auto pubRead = flatten(fs.readFile("\{f}.pub").wait());
+    u8[]? pub = pubRead.ok();
+    t.isTrue((pub is not null), "read the .pub file — \{pubRead.isErr() ? "\{pubRead.err()!}" : ""}");
+    if ((pub is not null)) {
       // `<type> <base64> <comment>\n` — the middle field. Taken by slicing past the first space and
       // looking again, because `indexOf` searches from the start and takes no offset.
-      string pubText = string.fromBytes(pub.bytes);
+      string pubText = string.fromBytes(pub!);
       i32 sp = pubText.indexOf(" ");
       string rest = sp < 0 ? "" : trimmed(pubText.slice(sp + 1, pubText.len()));
       i32 sp2 = rest.indexOf(" ");
@@ -201,7 +207,7 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
   // A generation that silently failed for every case would leave nothing compared and everything
   // green.
   t.eqI32(checked, all.len(), "every case was generated and decrypted");
-  check(t, cli, "node", [ORACLE], lines, "aes-ctr against node");
+  check(t, procs, "node", [ORACLE], lines, "aes-ctr against node");
   return t.report();
 }
 

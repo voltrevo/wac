@@ -11,8 +11,8 @@
 // **A fence this cannot read is reported, never skipped.** An unreadable fence counted as met would
 // let a typo in an expectation pass as a language that agrees with the spec.
 
-import { Change, Cli, FileResult, Exec } from "std";
-import { Vec } from "core";
+import { Change, Exec, ChildEnv, Env, Files, Launch, Procs } from "std";
+import { Vec, flatten } from "core";
 import { itoa, utoa64 } from "../../../fmt/src/itoa.wac";
 import { startsWith, endsWith, trimmed, splitKeepingEmpty, splitLines } from "../../../wactest/src/strings.wac";
 import { diagnoseBuildIn, pruneForBuild, diagnoseGraphIn, wireHasErrors, blockedFilesIn, emitFilesSelfDescribingIn,
@@ -333,9 +333,9 @@ export struct ExVerdict {
 }
 
 /** `.md` files under `dir`, recursively, skipping directories whose name begins with `_`. Sorted. */
-export string[] exampleDocs(Cli cli, string dir) {
+export string[] exampleDocs(Files fs, string dir) {
   Vec<string> out = Vec.create();
-  walk(cli, dir, out);
+  walk(fs, dir, out);
   string[] xs = out.toArray();
   for (i32 i = 1; i < xs.len(); i++) {
     string v = xs[i];
@@ -346,8 +346,8 @@ export string[] exampleDocs(Cli cli, string dir) {
   return xs;
 }
 
-void walk(Cli cli, string dir, Vec<string> out) {
-  string[]? entries = cli.readDir(dir).wait();
+void walk(Files fs, string dir, Vec<string> out) {
+  string[]? entries = flatten(fs.readDir(dir).wait()).ok();
   if (entries is null) { return; }
   string[] es = entries!;
   for (i32 i = 0; i < es.len(); i++) {
@@ -358,14 +358,14 @@ void walk(Cli cli, string dir, Vec<string> out) {
     if (name == "cases") { continue; }
     string path = dir + "/" + name;
     if (endsWith(name, ".md")) { out.push(path); continue; }
-    string[]? sub = cli.readDir(path).wait();
-    if (!(sub is null)) { walk(cli, path, out); }
+    string[]? sub = flatten(fs.readDir(path).wait()).ok();
+    if (!(sub is null)) { walk(fs, path, out); }
   }
 }
 
 // ── Judging ──────────────────────────────────────────────────────────────────────────────────────
 
-export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
+export ExVerdict judgeExample(Env env, Files fs, Procs procs, string scratch, ExFence fence, i32 n) {
   if (fence.error != "") { return ExVerdict(fence, "missed", "unreadable: " + fence.error); }
   ExVariant base = fence.variants[0];
   Res res = resolutionFor(base.paths, base.sources);
@@ -381,13 +381,13 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
     // **`wac check` is run, not modelled** (spec ch06): its discovery and its rule that every
     // import is followed are the command's, so the fence is written out and checked in place.
     if (startsWith(x.command, "wac check")) {
-      string cwhy = meetsCheck(cli, scratch, fence, x, base.paths, base.sources, n * 100 + e);
+      string cwhy = meetsCheck(env, fs, procs, scratch, fence, x, base.paths, base.sources, n * 100 + e);
       if (cwhy != "") { return ExVerdict(fence, "missed", cwhy); }
       continue;
     }
     string why = project
-      ? meetsByCommand(cli, scratch, fence, x, base.paths, base.sources, n * 100 + e)
-      : meets(cli, scratch, fence, x, wacPaths, wacSources, res, n * 100 + e);
+      ? meetsByCommand(env, fs, procs, scratch, fence, x, base.paths, base.sources, n * 100 + e)
+      : meets(env, fs, procs, scratch, fence, x, wacPaths, wacSources, res, n * 100 + e);
     if (why != "") { return ExVerdict(fence, "missed", why); }
   }
 
@@ -395,7 +395,7 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
   for (i32 v = 1; v < fence.variants.len(); v++) {
     ExVariant var = fence.variants[v];
     if (project) {
-      if (buildByCommand(cli, scratch, fence, var.paths, var.sources, n * 100 + 50 + v).ok) {
+      if (buildByCommand(env, fs, procs, scratch, fence, var.paths, var.sources, n * 100 + 50 + v).ok) {
         return ExVerdict(fence, "missed", "line " + itoa(var.errorLine) + " uncommented is accepted — ERROR: "
                        + var.reason);
       }
@@ -418,19 +418,19 @@ bool commandSupported(string c) {
 }
 
 /** A `wac check` expectation: the fence written to a directory of its own, the command run from it. */
-string meetsCheck(Cli cli, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, i32 id) {
+string meetsCheck(Env env, Files fs, Procs procs, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, i32 id) {
   string dir = scratch + "/c" + itoa(id);
   for (i32 i = 0; i < paths.len(); i++) {
     string full = dir + "/" + paths[i];
     i32 cut = 0 - 1;
     for (i32 k = 0; k < full.len(); k++) { if (full.slice(k, k + 1) == "/") { cut = k; } }
-    if (cut > 0) { cli.mkdir(full.slice(0, cut), true).wait(); }
-    cli.writeFile(full, sources[i].toBytes()).wait();
+    if (cut > 0) { fs.mkdir(full.slice(0, cut), true).wait(); }
+    fs.writeFile(full, sources[i].toBytes()).wait();
   }
   string[] words = wordsOfCmd(x.command);
-  string line = "cd " + dir + " && exec " + cli.cwd().wait() + "/native/v8/target/release/wac check";
+  string line = "cd " + dir + " && exec " + flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac check";
   for (i32 w = 2; w < words.len(); w++) { line = line + " " + words[w]; }
-  Exec r = withEnv(cli, ["WAC_HOME"], [dir + "-home"], "/bin/sh", ["-c", line]);
+  Exec r = withEnv(procs, ["WAC_HOME"], [dir + "-home"], "/bin/sh", ["-c", line]);
   bool ok = r.ran() && r.status == 0;
   // **Refused means diagnosed** — status 1. A usage error is 2, and `wac check` with no path answered
   // one, so every `(wac check): refused` was met by a command that never looked at the fence.
@@ -447,9 +447,7 @@ string meetsCheck(Cli cli, string scratch, ExFence fence, ExExpect x, string[] p
 }
 
 /** Why `x` does not hold, or "". */
-string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenPaths, string[] givenSources,
-             Res givenRes,
-             i32 id) {
+string meets(Env env, Files fs, Procs procs, string scratch, ExFence fence, ExExpect x, string[] givenPaths, string[] givenSources, Res givenRes, i32 id) {
   // **What a build compiles**: the graph reachability retains — spec ch05. A build in the
   // command does exactly this, so the probe judges the program the command would build.
   // **Building a program** gives `main` its contract — spec ch07 — and its adapter. A case that
@@ -488,9 +486,9 @@ string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenP
   u8[] wasm = emitFilesSelfDescribingIn(paths, sources, res, fence.entry, "example.wasm", 0);
   if (wasm.len() == 0) { return "emitted nothing"; }
   string path = scratch + "/ex" + itoa(id) + ".wasm";
-  Change wrote = cli.writeFile(path, wasm).wait();
-  if (!wrote.ok()) { return "could not write " + path; }
-  return runAndJudge(cli, x, path);
+  auto wrote = flatten(fs.writeFile(path, wasm).wait());
+  if (wrote.isErr()) { return "could not write " + path; }
+  return runAndJudge(env, procs, x, path);
 }
 
 /**
@@ -518,7 +516,7 @@ struct ExBuilt {
   string err;
 }
 
-ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, string[] sources, i32 id) {
+ExBuilt buildByCommand(Env env, Files fs, Procs procs, string scratch, ExFence fence, string[] paths, string[] sources, i32 id) {
   string dir = scratch + "/p" + itoa(id);
   string home = dir + "-home";
   // **A package fence's checkouts go where the command looks for them**: each `<name>/` file into
@@ -549,10 +547,10 @@ ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, s
     }
     i32 cut = 0 - 1;
     for (i32 k = 0; k < full.len(); k++) { if (full.slice(k, k + 1) == "/") { cut = k; } }
-    if (cut > 0) { cli.mkdir(full.slice(0, cut), true).wait(); }
-    cli.writeFile(full, sources[i].toBytes()).wait();
+    if (cut > 0) { fs.mkdir(full.slice(0, cut), true).wait(); }
+    fs.writeFile(full, sources[i].toBytes()).wait();
   }
-  if (anyDep) { cli.writeFile(dir + "/wac.lock", lock.toBytes()).wait(); }
+  if (anyDep) { fs.writeFile(dir + "/wac.lock", lock.toBytes()).wait(); }
   // A dependency with imports of its own carries its lock, as a repository does: each such manifest
   // the fence supplies gets one beside it, at the same made-up commit.
   for (i32 i = 0; i < paths.len(); i++) {
@@ -572,7 +570,7 @@ ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, s
             + dm.imports[k].ref + "\"" + (dm.imports[k].subdir == "" ? "" : ", subdir: \"" + dm.imports[k].subdir + "\"")
             + ", commit: \"" + probeCommit() + "\" },";
     }
-    cli.writeFile(at, (dlock + " } }\n").toBytes()).wait();
+    fs.writeFile(at, (dlock + " } }\n").toBytes()).wait();
   }
   string out = dir + "/out";
   Vec<string> argv = Vec.create();
@@ -580,17 +578,17 @@ ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, s
   argv.push(dir + "/" + fence.entry);
   argv.push("-o");
   argv.push(out);
-  Exec r = withEnv(cli, ["WAC_HOME"], [home], cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray());
+  Exec r = withEnv(procs, ["WAC_HOME"], [home], flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac", argv.toArray());
   bool ok = r.ran() && r.status == 0;
   return ExBuilt(ok, out + ".wasm", string.fromBytes(r.stderr));
 }
 
-string meetsByCommand(Cli cli, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, i32 id) {
-  ExBuilt b = buildByCommand(cli, scratch, fence, paths, sources, id);
+string meetsByCommand(Env env, Files fs, Procs procs, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, i32 id) {
+  ExBuilt b = buildByCommand(env, fs, procs, scratch, fence, paths, sources, id);
   if (x.kind == "refused") { return b.ok ? "accepted, and it must be refused" : ""; }
   if (!b.ok) { return "refused: " + trimmed(firstLineOf(b.err)); }
   if (x.kind == "emits") { return ""; }
-  return runAndJudge(cli, x, b.wasm);
+  return runAndJudge(env, procs, x, b.wasm);
 }
 
 /** The commit every probe lock pins: any forty hex digits name a checkout the probe wrote itself. */
@@ -602,7 +600,7 @@ string firstLineOf(string s) {
 }
 
 /** Run the module at `path` as the expectation asks, and say why it does not hold, or "". */
-string runAndJudge(Cli cli, ExExpect x, string path) {
+string runAndJudge(Env env, Procs procs, ExExpect x, string path) {
   Vec<string> argv = Vec.create();
   argv.push(path);
   if (x.kind == "answers" || x.kind == "traps") {
@@ -613,10 +611,11 @@ string runAndJudge(Cli cli, ExExpect x, string path) {
     string[] words = wordsOfCmd(x.command);
     for (i32 w = 3; w < words.len(); w++) { argv.push(words[w]); }
   }
-  Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray(), u8[]()).wait();
-  if (!r.ran()) { return "the binary did not run: " + r.error; }
-  string out = string.fromBytes(r.stdout);
-  string err = string.fromBytes(r.stderr);
+  auto rRan = flatten(procs.exec(flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac", argv.toArray(), u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return "the binary did not run: " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"; }
+  string out = string.fromBytes(r!.stdout);
+  string err = string.fromBytes(r!.stderr);
   bool trapped = err.indexOf(" trapped") >= 0;
 
   if (x.kind == "traps") { return trapped ? "" : "answered " + trimmed(out) + ", and it must trap"; }
@@ -627,7 +626,7 @@ string runAndJudge(Cli cli, ExExpect x, string path) {
     return sameValue(got, x.value) ? "" : x.call + " answered " + got + ", wanted " + x.value;
   }
   if (x.kind == "exits") {
-    return itoa(r.status) == x.value ? "" : "exited " + itoa(r.status) + ", wanted " + x.value;
+    return itoa(r!.status) == x.value ? "" : "exited " + itoa(r!.status) + ", wanted " + x.value;
   }
   if (x.kind == "prints") {
     string[] got = splitLines(out);
@@ -859,26 +858,26 @@ export struct ExJudged {
   string[] docs;
 }
 
-export ExJudged judgeAll(Cli cli, string dir) {
-  string[] docs = exampleDocs(cli, dir);
-  string scratch = cli.cwd().wait() + "/.cache/specexamples";
-  cli.mkdir(scratch, true).wait();
+export ExJudged judgeAll(Env env, Files fs, Procs procs, string dir) {
+  string[] docs = exampleDocs(fs, dir);
+  string scratch = flatten(env.cwd().wait()).unwrap() + "/.cache/specexamples";
+  fs.mkdir(scratch, true).wait();
   Vec<string> keys = Vec.create();
   Vec<ExVerdict> all = Vec.create();
   i32 n = 0;
   for (i32 d = 0; d < docs.len(); d++) {
-    FileResult r = cli.readFile(docs[d]).wait();
-    if (!r.ok) { continue; }
-    ExFence[] fences = exampleFences(docs[d], string.fromBytes(r.bytes));
+    u8[]? r = flatten(fs.readFile(docs[d]).wait()).ok();
+    if ((r is null)) { continue; }
+    ExFence[] fences = exampleFences(docs[d], string.fromBytes(r!));
     i32 ordinal = 0;
     for (i32 f = 0; f < fences.len(); f++) {
       if (fences[f].fragment) { continue; }
       ordinal = ordinal + 1;
       n = n + 1;
       keys.push(exampleKey(docs[d], ordinal));
-      all.push(judgeExample(cli, scratch, fences[f], n));
+      all.push(judgeExample(env, fs, procs, scratch, fences[f], n));
     }
   }
-  cli.remove(scratch, true).wait();
+  fs.remove(scratch, true).wait();
   return ExJudged(keys.toArray(), all.toArray(), docs);
 }

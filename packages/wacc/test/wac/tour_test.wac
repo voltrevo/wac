@@ -36,7 +36,6 @@
 // somehow true of a module whose exports were all missing, this would still have to be 42.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
 import { selfTest, double, strOps, strIndex, virtualDispatch } from "../../../../spec/tour.wac";
 
 /**
@@ -47,7 +46,7 @@ import { selfTest, double, strOps, strIndex, virtualDispatch } from "../../../..
  * of the language and most of what a call-by-call list cannot reach across two modules anyway: a
  * `Node` built by one compiler's module is not a value the other's can be handed.
  */
-export string test_the_tours_own_self_test_holds_under_wacc(Core core, Cli cli) {
+export string test_the_tours_own_self_test_holds_under_wacc() {
   T t = T.create();
   t.isTrue(selfTest(),
            "spec/tour.wac's selfTest() is false under wacc — some conjunct in the tour disagrees " +
@@ -64,7 +63,7 @@ export string test_the_tours_own_self_test_holds_under_wacc(Core core, Cli cli) 
  * reaches `string` returns at all, since a raw wasm instance hands those back as references. If one
  * ever disagrees, read the tour before believing this file.
  */
-export string test_the_answers_the_tour_writes_beside_its_strings(Core core, Cli cli) {
+export string test_the_answers_the_tour_writes_beside_its_strings() {
   T t = T.create();
   t.eqStr(strOps(), "world", "spec/tour.wac's strOps() says \"world\" beside it");
   t.eqStr(strIndex(), "😀", "spec/tour.wac's strIndex() says \"😀\" beside it");

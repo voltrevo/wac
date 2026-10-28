@@ -31,28 +31,30 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Cli, Files, Output, Sys } from "std";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { Resolved, ownerOf, resolverOf } from "../../src/verified.wac";
 import { namehash } from "../../src/ens.wac";
 import { ownerSlot, resolverSlot } from "../../src/registry.wac";
+import { flatten } from "core";
 
 static string FIXTURE = "packages/ens/test/vendor/registry.json";
 
 // ── Reading the fixture ───────────────────────────────────────────────────────
 
 /** The document, or a trap naming what went wrong — a missing fixture is not a test failure. */
-JsonValue fixture(Core core, Cli cli) {
-  FileResult r = cli.readFile(FIXTURE).wait();
-  if (!r.ok) {
-    core.warn("ens: cannot read \{FIXTURE} — \{r.error}");
+JsonValue fixture(Output err, Files fs) {
+  auto rRead = flatten(fs.readFile(FIXTURE).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("ens: cannot read \{FIXTURE} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  Parser p = Parser.create(r.bytes);
+  Parser p = Parser.create(r!);
   JsonValue? doc = parseDocument(p);
   if (doc is null) {
-    core.warn("ens: \{FIXTURE} is not valid JSON");
+    err.line("ens: \{FIXTURE} is not valid JSON");
     trap;
   }
   return doc!;
@@ -122,9 +124,11 @@ JsonValue firstOwned(JsonArray cs, bool want) {
  * Before the composition means anything, the two steps that turn a name into a place have to be
  * right. `cast namehash` and `cast index bytes32 <node> 0` are Foundry's own, in Rust.
  */
-export string test_the_two_derivations_agree_with_cast(Core core, Cli cli) {
+export string test_the_two_derivations_agree_with_cast(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonArray cs = cases(fixture(core, cli));
+  JsonArray cs = cases(fixture(err, fs));
   t.isTrue(cs.len() >= 3, "only \{cs.len()} cases — is the fixture intact?");
   for (i32 i = 0; i < cs.len(); i++) {
     JsonValue c = cs.get(i);
@@ -139,9 +143,11 @@ export string test_the_two_derivations_agree_with_cast(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_name_resolves_to_its_owner(Core core, Cli cli) {
+export string test_a_name_resolves_to_its_owner(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
+  JsonValue doc = fixture(err, fs);
   u8[] stateRoot = unhex(doc.member("stateRoot")!.text()!);
   u8[] registry = unhex(doc.member("registry")!.text()!);
   u8[][] account = nodes(doc.member("accountProof")!);
@@ -163,9 +169,11 @@ export string test_a_name_resolves_to_its_owner(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_and_to_its_resolver_which_is_the_slot_above(Core core, Cli cli) {
+export string test_and_to_its_resolver_which_is_the_slot_above(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
+  JsonValue doc = fixture(err, fs);
   u8[] stateRoot = unhex(doc.member("stateRoot")!.text()!);
   u8[] registry = unhex(doc.member("registry")!.text()!);
   u8[][] account = nodes(doc.member("accountProof")!);
@@ -184,9 +192,11 @@ export string test_and_to_its_resolver_which_is_the_slot_above(Core core, Cli cl
 }
 
 /** A name nobody owns proves absent, which is an answer and not a failure. */
-export string test_a_name_nobody_owns_proves_absent(Core core, Cli cli) {
+export string test_a_name_nobody_owns_proves_absent(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
+  JsonValue doc = fixture(err, fs);
   JsonValue c = firstOwned(cases(doc), false);
   Resolved got = ownerOf(unhex(doc.member("stateRoot")!.text()!),
                          unhex(doc.member("registry")!.text()!),
@@ -200,9 +210,11 @@ export string test_a_name_nobody_owns_proves_absent(Core core, Cli cli) {
 }
 
 /** The composition refuses what a lying provider would send. */
-export string test_the_composition_refuses_what_a_liar_would_send(Core core, Cli cli) {
+export string test_the_composition_refuses_what_a_liar_would_send(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue doc = fixture(core, cli);
+  JsonValue doc = fixture(err, fs);
   u8[] stateRoot = unhex(doc.member("stateRoot")!.text()!);
   u8[] registry = unhex(doc.member("registry")!.text()!);
   u8[][] account = nodes(doc.member("accountProof")!);

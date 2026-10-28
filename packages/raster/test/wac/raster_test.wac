@@ -17,7 +17,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFill, freshIsClean,
          clippedAt, textEnd, inkOf, strideOf, damageOfTwo, undamageClears, negativeIsEmpty,
          atOutside, rectDegenerate, glyphOffscreen, damagedShape, regionFirst, cleanHasNoPixels,
@@ -28,6 +28,7 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          gridClamped, gridPressWithoutDrag, gridSelectedBackwards, gridSelectionAbsent, gridSelectedAt,
          gridCursorColumn, gridDrawnAt, deskClosedOutOfRange, deskTypedWithNoWindows,
          damageOfDegenerate, glyphAt} from "./scenes.wac";
+import { flatten } from "core";
 
 static string HEX = "packages/raster/tools/unscii-16.hex";
 
@@ -120,8 +121,8 @@ i32 hexAt(u8[] b, i32 from, i32 to) {
   return v;
 }
 
-Font font(T t, Cli cli) {
-  u8[] text = cli.readFile(HEX).wait().bytes;
+Font font(T t, Files fs) {
+  u8[] text = flatten(fs.readFile(HEX).wait()).orElse(u8[]());
   t.isTrue(text.len() > 0, "the vendored \{HEX} could not be read");
 
   // Two passes, so the arrays are the size of the file rather than a guess that could truncate.
@@ -155,9 +156,10 @@ Font font(T t, Cli cli) {
   return f;
 }
 
-export string test_the_generated_font_is_the_font_that_was_vendored(Core core, Cli cli) {
+export string test_the_generated_font_is_the_font_that_was_vendored(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Font f = font(t, cli);
+  Font f = font(t, fs);
   if (f.n == 0) { return t.report(); }
   t.eqI32(glyphs(), f.n, "the table has a different number of glyphs than the .hex");
   t.eqI32(cellW(), 8, "the cell width");
@@ -188,10 +190,10 @@ export string test_the_generated_font_is_the_font_that_was_vendored(Core core, C
   return t.report();
 }
 
-export string test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell(
-    Core core, Cli cli) {
+export string test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Font f = font(t, cli);
+  Font f = font(t, fs);
   if (f.n == 0) { return t.report(); }
   // U+E000 is a private-use point unscii does not draw.
   t.eqI32(f.find(0xE000), -1, "the font unexpectedly has U+E000");
@@ -211,9 +213,10 @@ export string test_a_wide_glyph_advances_two_cells_and_a_narrow_one_advances_one
   return t.report();
 }
 
-export string test_a_is_drawn_where_the_font_says_it_is_and_nowhere_else(Core core, Cli cli) {
+export string test_a_is_drawn_where_the_font_says_it_is_and_nowhere_else(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Font f = font(t, cli);
+  Font f = font(t, fs);
   if (f.n == 0) { return t.report(); }
   // The ink count is the whole glyph, so this is a check on the *blit* rather than on the table:
   // a shift by one column would keep the count and move the pixels, so both are asserted.
@@ -248,10 +251,10 @@ export string test_drawing_off_every_edge_writes_inside_the_surface_and_does_not
   return t.report();
 }
 
-export string test_a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes(
-    Core core, Cli cli) {
+export string test_a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Font f = font(t, cli);
+  Font f = font(t, fs);
   if (f.n == 0) { return t.report(); }
   i32 w = 96;
   i32 h = 48;

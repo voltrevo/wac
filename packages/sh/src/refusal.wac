@@ -7,7 +7,7 @@
 //
 // These two outlived them because neither is a program:
 //
-// - `Output` is the shape of *any* command's result — bytes out, bytes err, a status, and `found` to
+// - `Ran` is the shape of *any* command's result — bytes out, bytes err, a status, and `found` to
 //   tell "ran and failed" from "no such command", because a shell reports 127 for one and the
 //   program's own code for the other and one integer cannot say both. Builtins return it, applets
 //   return it through `Shell.external`, and `packages/box`'s `shrun` speaks it.
@@ -16,7 +16,7 @@
 //   the applets answer in `packages/box/src/lib/flags.wac`.
 
 /** The result of running a command: what it wrote, what it complained, and how it ended. */
-export struct Output {
+export struct Ran {
   u8[] out;
   u8[] err;
   i32 status;
@@ -43,11 +43,11 @@ export struct Output {
    */
   bool refusedByShell;
 
-  Output ok(u8[] out) { return Output(out, u8[](), 0, true, false); }
-  Output fail(u8[] err, i32 status) { return Output(u8[](), err, status, true, false); }
-  Output missing() { return Output(u8[](), u8[](), 127, false, false); }
+  Ran ok(u8[] out) { return Ran(out, u8[](), 0, true, false); }
+  Ran fail(u8[] err, i32 status) { return Ran(u8[](), err, status, true, false); }
+  Ran missing() { return Ran(u8[](), u8[](), 127, false, false); }
   /** A failure that is the shell's own limit rather than the command's — see `refusedByShell`. */
-  Output refused(u8[] err, i32 status) { return Output(u8[](), err, status, true, true); }
+  Ran refused(u8[] err, i32 status) { return Ran(u8[](), err, status, true, true); }
 }
 
 /**

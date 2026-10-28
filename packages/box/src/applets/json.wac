@@ -4,28 +4,28 @@
 // out. Two documents that mean the same thing come out byte-identical, which is the
 // property that makes this worth having on a pipe rather than a pretty-printer.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, readAll } from "../lib/input.wac";
+import { Opened, readAll } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
 
 import { canonicalize } from "../../../json/src/json.wac";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { flatten } from "core";
 
-export async i32 json(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await readAll(core, cli, fs, a, 0);
+export async i32 json(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await readAll(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
   match (canonicalize(in.bytes)) {
     Ok(text): {
       // Without `-c` this is a validator: exit 0 and say nothing, so it composes in a test.
-      if (has(a, 'c')) { cli.write(withNewline(text)); }
+      if (has(a, 'c')) { flatten(out.write(withNewline(text)).wait()).isOk(); }
       return 0;
     }
     Err(e): {
-      core.warn("\{a.name}: invalid JSON: \{e.text()}");
+      err.line("\{a.name}: invalid JSON: \{e.text()}");
       return 1;
     }
   }

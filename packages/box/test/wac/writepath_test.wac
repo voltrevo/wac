@@ -10,13 +10,14 @@
 // version of "none of this happens without the write grant" would assert nothing. That is the same
 // attenuation gap `issues/system/0296c` notes; it is not this file's to close.
 
-import { Cli, Core, FileResult } from "std";
+import { Env, Files, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
 import { Ran, differs, layFixtures, runApplet, runCase } from "./replay.wac";
+import { flatten } from "core";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-writepath"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-writepath"; }
 
 /**
  * Several times the 64K chunk and not a multiple of it, so boundaries land inside the data.
@@ -41,67 +42,73 @@ i32 firstDifference(u8[] a, u8[] b) {
   return 0 - 1;
 }
 
-export async string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
+export async string test_cp_copies_across_chunk_boundaries(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   u8[] data = pattern(500003);
-  t.isTrue(cli.writeFile("\{dir}/src", data).wait().ok(), "wrote the source");
+  t.isTrue(flatten(fs.writeFile("\{dir}/src", data).wait()).isOk(), "wrote the source");
 
-  Ran r = await runCase(core, cli, dir, "cp src dst");
+  Ran r = await runCase(sys, dir, "cp src dst");
   t.eqI32(r.status, 0, "cp succeeded: \{r.err}");
 
-  FileResult got = cli.readFile("\{dir}/dst").wait();
-  t.isTrue(got.ok, "the copy is readable");
-  t.eqI32(firstDifference(data, got.bytes), 0 - 1,
+  u8[]? got = flatten(fs.readFile("\{dir}/dst").wait()).ok();
+  t.isTrue((got is not null), "the copy is readable");
+  t.eqI32(firstDifference(data, got!), 0 - 1,
           "the copy is byte-identical — -2 means the length differs");
 
   // Over an existing file, and the rename must not leave the old contents behind.
-  cli.writeFile("\{dir}/dst", "stale".toBytes()).wait();
-  t.eqI32((await runCase(core, cli, dir, "cp src dst")).status, 0, "cp over an existing file");
-  FileResult again = cli.readFile("\{dir}/dst").wait();
-  t.eqI32(firstDifference(data, again.bytes), 0 - 1, "and it is the new contents, whole");
+  fs.writeFile("\{dir}/dst", "stale".toBytes()).wait();
+  t.eqI32((await runCase(sys, dir, "cp src dst")).status, 0, "cp over an existing file");
+  u8[]? again = flatten(fs.readFile("\{dir}/dst").wait()).ok();
+  t.eqI32(firstDifference(data, again!), 0 - 1, "and it is the new contents, whole");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export async string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, Cli cli) {
+export async string test_a_failed_cp_leaves_no_temporary_beside_the_target(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
-  cli.writeFile("\{dir}/src", "small\n".toBytes()).wait();
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
+  fs.writeFile("\{dir}/src", "small\n".toBytes()).wait();
 
-  t.eqI32((await runCase(core, cli, dir, "cp absent never")).status, 1, "a missing source fails");
+  t.eqI32((await runCase(sys, dir, "cp absent never")).status, 1, "a missing source fails");
 
   // **The assertion the temporary-name strategy needs.** `cp` writes beside its target and renames,
   // so a failure must leave nothing: a stray `never.tmp` would be a file a later run reads as real.
-  string[]? names = cli.readDir(dir).wait();
+  string[]? names = flatten(fs.readDir(dir).wait()).ok();
   t.isTrue(!(names is null), "the directory is readable");
   string joined = "";
   for (i32 i = 0; i < names!.len(); i++) { joined = joined + " \{names![i]}"; }
   t.eqStr(joined, " src", "only the source survives —\{joined}");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export async string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli cli) {
+export async string test_tee_writes_to_standard_output_and_to_the_file(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   // `tee` is the first applet with two destinations at once, so both are asked.
-  Ran r = await runCase(core, cli, dir, "printf 'through\\n' | tee out");
+  Ran r = await runCase(sys, dir, "printf 'through\\n' | tee out");
   t.eqI32(r.status, 0, "tee succeeded: \{r.err}");
   t.eqStr(r.out, "through\n", "tee wrote to standard output");
 
-  FileResult f = cli.readFile("\{dir}/out").wait();
-  t.isTrue(f.ok, "and made the file");
-  t.eqStr(string.fromBytes(f.bytes), "through\n", "and wrote the same bytes to it");
+  u8[]? f = flatten(fs.readFile("\{dir}/out").wait()).ok();
+  t.isTrue((f is not null), "and made the file");
+  t.eqStr(string.fromBytes(f!), "through\n", "and wrote the same bytes to it");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -116,28 +123,30 @@ export async string test_tee_writes_to_standard_output_and_to_the_file(Core core
  * would pass every content check here and fail only under a reader that arrived mid-write, which is not
  * a thing a test can schedule. What it cannot hide is the temporary it left behind.
  */
-export async string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
+export async string test_cp_leaves_no_temporary_behind(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
-  string source = "\{cli.cwd().wait()}/README.md";
-  u8[] want = cli.readFile(source).wait().bytes;
+  string source = "\{flatten(env.cwd().wait()).unwrap()}/README.md";
+  u8[] want = flatten(fs.readFile(source).wait()).orElse(u8[]());
   t.isTrue(want.len() > 0, "README.md is readable and not empty");
 
-  t.eqI32((await runApplet(core, cli, dir, ["cp", source, "\{dir}/copy"])).status, 0, "cp ran");
-  t.eqStr(differs(cli.readFile("\{dir}/copy").wait().bytes, want), "", "cp copied it");
+  t.eqI32((await runApplet(sys, dir, ["cp", source, "\{dir}/copy"])).status, 0, "cp ran");
+  t.eqStr(differs(flatten(fs.readFile("\{dir}/copy").wait()).orElse(u8[]()), want), "", "cp copied it");
 
-  string[]? listed = cli.readDir(dir).wait();
+  string[]? listed = flatten(fs.readDir(dir).wait()).ok();
   if (listed is null) {
     t.fail("the case directory is not listable");
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
     return t.report();
   }
   string[] left = listed!;
   t.eqI32(left.len(), 1, "a temporary file survived: \{left.len()} entries");
   if (left.len() > 0) { t.eqStr(left[0], "copy", "and the one left is the copy"); }
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

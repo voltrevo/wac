@@ -28,7 +28,7 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          hitAt, partOf, partNone, partBody, partBar, partClose, raiseThenHit, gridRow, gridCursor,
          gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
          deskCloseDuringDrag, deskTyped, deskDrawn } from "./wac/scenes.wac";
-import { Core, Cli, Sys } from "std";
+import { Core, Cli, Sys, Files, Output } from "std";
 import {
   test_the_generated_font_is_the_font_that_was_vendored as rt__the_generated_font_is_the_font_that_was_vendored,
   test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell as rt__a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell,
@@ -59,8 +59,8 @@ import {
 } from "./wac/raster_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Files fs = sys.files();
   i32 seen = 0;
 
   seen = seen + glyphs() + cellW() + cellH();
@@ -205,111 +205,111 @@ export i32 main(Sys sys) {
   //
   // None of the 25 expects a trap, so there is no `trapCase` sweep.
   i32 bad = 0;
-  if (rt__the_generated_font_is_the_font_that_was_vendored(core, cli).len() > 0) {
-    core.warn("error: FAILED raster_test test_the_generated_font_is_the_font_that_was_vendored");
+  if (rt__the_generated_font_is_the_font_that_was_vendored(sys).len() > 0) {
+    err.line("error: FAILED raster_test test_the_generated_font_is_the_font_that_was_vendored");
     bad = bad + 1;
   }
-  if (rt__a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell(core, cli).len() > 0) {
-    core.warn("error: FAILED raster_test test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell");
+  if (rt__a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell(sys).len() > 0) {
+    err.line("error: FAILED raster_test test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell");
     bad = bad + 1;
   }
   if (rt__a_wide_glyph_advances_two_cells_and_a_narrow_one_advances_one().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_wide_glyph_advances_two_cells_and_a_narrow_one_advances_one");
+    err.line("error: FAILED raster_test test_a_wide_glyph_advances_two_cells_and_a_narrow_one_advances_one");
     bad = bad + 1;
   }
-  if (rt__a_is_drawn_where_the_font_says_it_is_and_nowhere_else(core, cli).len() > 0) {
-    core.warn("error: FAILED raster_test test_a_is_drawn_where_the_font_says_it_is_and_nowhere_else");
+  if (rt__a_is_drawn_where_the_font_says_it_is_and_nowhere_else(sys).len() > 0) {
+    err.line("error: FAILED raster_test test_a_is_drawn_where_the_font_says_it_is_and_nowhere_else");
     bad = bad + 1;
   }
   if (rt__a_fresh_surface_is_clean_and_damage_is_what_was_drawn_rather_than_everything().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_fresh_surface_is_clean_and_damage_is_what_was_drawn_rather_than_everything");
+    err.line("error: FAILED raster_test test_a_fresh_surface_is_clean_and_damage_is_what_was_drawn_rather_than_everything");
     bad = bad + 1;
   }
   if (rt__drawing_off_every_edge_writes_inside_the_surface_and_does_not_trap().len() > 0) {
-    core.warn("error: FAILED raster_test test_drawing_off_every_edge_writes_inside_the_surface_and_does_not_trap");
+    err.line("error: FAILED raster_test test_drawing_off_every_edge_writes_inside_the_surface_and_does_not_trap");
     bad = bad + 1;
   }
-  if (rt__a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes(core, cli).len() > 0) {
-    core.warn("error: FAILED raster_test test_a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes");
+  if (rt__a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes(sys).len() > 0) {
+    err.line("error: FAILED raster_test test_a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes");
     bad = bad + 1;
   }
   if (rt__damage_widens_in_each_direction_and_clears_when_it_is_taken().len() > 0) {
-    core.warn("error: FAILED raster_test test_damage_widens_in_each_direction_and_clears_when_it_is_taken");
+    err.line("error: FAILED raster_test test_damage_widens_in_each_direction_and_clears_when_it_is_taken");
     bad = bad + 1;
   }
   if (rt__the_degenerate_cases_answer_rather_than_trap().len() > 0) {
-    core.warn("error: FAILED raster_test test_the_degenerate_cases_answer_rather_than_trap");
+    err.line("error: FAILED raster_test test_the_degenerate_cases_answer_rather_than_trap");
     bad = bad + 1;
   }
   if (rt__the_damaged_pixels_are_the_payload_a_partial_blit_takes().len() > 0) {
-    core.warn("error: FAILED raster_test test_the_damaged_pixels_are_the_payload_a_partial_blit_takes");
+    err.line("error: FAILED raster_test test_the_damaged_pixels_are_the_payload_a_partial_blit_takes");
     bad = bad + 1;
   }
   if (rt__the_topmost_window_answers_and_the_desktop_is_a_real_answer().len() > 0) {
-    core.warn("error: FAILED raster_test test_the_topmost_window_answers_and_the_desktop_is_a_real_answer");
+    err.line("error: FAILED raster_test test_the_topmost_window_answers_and_the_desktop_is_a_real_answer");
     bad = bad + 1;
   }
   if (rt__a_windows_parts_are_where_a_desktop_puts_them().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_windows_parts_are_where_a_desktop_puts_them");
+    err.line("error: FAILED raster_test test_a_windows_parts_are_where_a_desktop_puts_them");
     bad = bad + 1;
   }
   if (rt__raising_changes_which_window_answers_for_a_point_they_share().len() > 0) {
-    core.warn("error: FAILED raster_test test_raising_changes_which_window_answers_for_a_point_they_share");
+    err.line("error: FAILED raster_test test_raising_changes_which_window_answers_for_a_point_they_share");
     bad = bad + 1;
   }
   if (rt__text_wraps_at_the_last_column_and_newlines_do_what_newlines_do().len() > 0) {
-    core.warn("error: FAILED raster_test test_text_wraps_at_the_last_column_and_newlines_do_what_newlines_do");
+    err.line("error: FAILED raster_test test_text_wraps_at_the_last_column_and_newlines_do_what_newlines_do");
     bad = bad + 1;
   }
   if (rt__a_double_width_glyph_takes_two_cells_and_never_straddles_the_edge().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_double_width_glyph_takes_two_cells_and_never_straddles_the_edge");
+    err.line("error: FAILED raster_test test_a_double_width_glyph_takes_two_cells_and_never_straddles_the_edge");
     bad = bad + 1;
   }
   if (rt__scrolling_keeps_what_went_off_the_top_and_drops_the_oldest_when_full().len() > 0) {
-    core.warn("error: FAILED raster_test test_scrolling_keeps_what_went_off_the_top_and_drops_the_oldest_when_full");
+    err.line("error: FAILED raster_test test_scrolling_keeps_what_went_off_the_top_and_drops_the_oldest_when_full");
     bad = bad + 1;
   }
   if (rt__the_caret_is_a_block_and_it_covers_exactly_one_cell().len() > 0) {
-    core.warn("error: FAILED raster_test test_the_caret_is_a_block_and_it_covers_exactly_one_cell");
+    err.line("error: FAILED raster_test test_the_caret_is_a_block_and_it_covers_exactly_one_cell");
     bad = bad + 1;
   }
   if (rt__a_press_raises_what_it_hit_and_the_desktop_is_not_a_window().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_press_raises_what_it_hit_and_the_desktop_is_not_a_window");
+    err.line("error: FAILED raster_test test_a_press_raises_what_it_hit_and_the_desktop_is_not_a_window");
     bad = bad + 1;
   }
   if (rt__a_drag_carries_the_window_by_where_it_was_grabbed_and_stops_on_release().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_drag_carries_the_window_by_where_it_was_grabbed_and_stops_on_release");
+    err.line("error: FAILED raster_test test_a_drag_carries_the_window_by_where_it_was_grabbed_and_stops_on_release");
     bad = bad + 1;
   }
   if (rt__closing_a_window_does_not_hand_the_drag_to_another_one().len() > 0) {
-    core.warn("error: FAILED raster_test test_closing_a_window_does_not_hand_the_drag_to_another_one");
+    err.line("error: FAILED raster_test test_closing_a_window_does_not_hand_the_drag_to_another_one");
     bad = bad + 1;
   }
   if (rt__typing_goes_to_the_focused_window_which_is_the_one_on_top().len() > 0) {
-    core.warn("error: FAILED raster_test test_typing_goes_to_the_focused_window_which_is_the_one_on_top");
+    err.line("error: FAILED raster_test test_typing_goes_to_the_focused_window_which_is_the_one_on_top");
     bad = bad + 1;
   }
   if (rt__a_drawn_desk_damages_what_it_drew_and_its_frames_are_on_the_frame_colour().len() > 0) {
-    core.warn("error: FAILED raster_test test_a_drawn_desk_damages_what_it_drew_and_its_frames_are_on_the_frame_colour");
+    err.line("error: FAILED raster_test test_a_drawn_desk_damages_what_it_drew_and_its_frames_are_on_the_frame_colour");
     bad = bad + 1;
   }
   if (rt__grid_the_viewport_scrolled_back_shows_the_lines_that_left_the_screen().len() > 0) {
-    core.warn("error: FAILED raster_test test_grid_the_viewport_scrolled_back_shows_the_lines_that_left_the_screen");
+    err.line("error: FAILED raster_test test_grid_the_viewport_scrolled_back_shows_the_lines_that_left_the_screen");
     bad = bad + 1;
   }
   if (rt__grid_a_selection_runs_in_reading_order_and_drops_trailing_blanks().len() > 0) {
-    core.warn("error: FAILED raster_test test_grid_a_selection_runs_in_reading_order_and_drops_trailing_blanks");
+    err.line("error: FAILED raster_test test_grid_a_selection_runs_in_reading_order_and_drops_trailing_blanks");
     bad = bad + 1;
   }
   if (rt__the_documented_degenerate_contracts_all_hold().len() > 0) {
-    core.warn("error: FAILED raster_test test_the_documented_degenerate_contracts_all_hold");
+    err.line("error: FAILED raster_test test_the_documented_degenerate_contracts_all_hold");
     bad = bad + 1;
   }
   if (rt__grid_a_selected_cell_is_drawn_inverted_and_only_where_the_selection_is().len() > 0) {
-    core.warn("error: FAILED raster_test test_grid_a_selected_cell_is_drawn_inverted_and_only_where_the_selection_is");
+    err.line("error: FAILED raster_test test_grid_a_selected_cell_is_drawn_inverted_and_only_where_the_selection_is");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("raster: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("raster: \{bad} test(s) failed under the coverage driver"); }
   seen = seen + bad;
 
   return seen;

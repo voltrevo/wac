@@ -17,8 +17,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { dumpTypeErrorsFiles, emitFilesChecked } from "../../src/api.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "std";
-
 string LIB() { return "export enum E { A, B }\n"; }
 
 /** How many type errors this pair of files produces. */
@@ -27,7 +25,7 @@ i32 errs(string main) {
                              [main, LIB()], "/main.wac").len();
 }
 
-export string test_a_variant_is_reachable_through_an_aliased_enum(Core core, Cli cli) {
+export string test_a_variant_is_reachable_through_an_aliased_enum() {
   T t = T.create();
   i32 n = errs("import { E as E2 } from \"/lib.wac\";\n" +
                "export i32 f() { E2 e = E2.A; return 1; }\n");
@@ -35,7 +33,7 @@ export string test_a_variant_is_reachable_through_an_aliased_enum(Core core, Cli
   return t.report();
 }
 
-export string test_the_unaliased_form_is_unaffected(Core core, Cli cli) {
+export string test_the_unaliased_form_is_unaffected() {
   T t = T.create();
   i32 n = errs("import { E } from \"/lib.wac\";\n" +
                "export i32 f() { E e = E.A; return 1; }\n");
@@ -43,7 +41,7 @@ export string test_the_unaliased_form_is_unaffected(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_variant_that_does_not_exist_is_still_refused(Core core, Cli cli) {
+export string test_a_variant_that_does_not_exist_is_still_refused() {
   T t = T.create();
   // The canary. Reaching a real variant through an alias must not be bought by no longer checking.
   i32 n = errs("import { E as E2 } from \"/lib.wac\";\n" +
@@ -68,7 +66,7 @@ export string test_a_variant_that_does_not_exist_is_still_refused(Core core, Cli
  * `import { Point, Point as P }` — so two spellings collapsing onto one declaration is a stated rule
  * rather than a convenience. The reference implements it; wacc does not.
  */
-export string test_two_spellings_of_one_enum_are_one_type(Core core, Cli cli) {
+export string test_two_spellings_of_one_enum_are_one_type() {
   T t = T.create();
   string both = "import { E, E as E2 } from \"/lib.wac\";\n";
   i32 toAlias = errs(both + "i32 take(E2 e) { return 1; }\n" +
@@ -91,7 +89,7 @@ export string test_two_spellings_of_one_enum_are_one_type(Core core, Cli cli) {
  * imported `disconnect` plainly and as `srvDisconnect` and used both, so two call sites in a green
  * package had no arity check at all.
  */
-export string test_neither_spelling_is_exempt_from_checking(Core core, Cli cli) {
+export string test_neither_spelling_is_exempt_from_checking() {
   T t = T.create();
   string both = "import { E, E as E2 } from \"/lib.wac\";\n";
   t.isTrue(errs(both + "export i32 f() { E e = E.Nope; return 1; }\n") > 0,
@@ -120,7 +118,7 @@ export string test_neither_spelling_is_exempt_from_checking(Core core, Cli cli) 
 }
 
 /** The controls: the shapes that are *not* this have to keep working. */
-export string test_the_shapes_that_are_not_this_are_still_accepted(Core core, Cli cli) {
+export string test_the_shapes_that_are_not_this_are_still_accepted() {
   T t = T.create();
   t.eqI32(errs("import { E } from \"/lib.wac\";\nexport i32 f() { E e = E.A; return 1; }\n"), 0,
           "a plain import");
@@ -153,7 +151,7 @@ export string test_the_shapes_that_are_not_this_are_still_accepted(Core core, Cl
  * only when every export survived the export-parity net, so an empty answer here is exactly that
  * disagreement.
  */
-export string test_the_emitter_builds_one_declaration_for_both_spellings(Core core, Cli cli) {
+export string test_the_emitter_builds_one_declaration_for_both_spellings() {
   T t = T.create();
   u8[] mod = emitFilesChecked(
     ["/main.wac", "/lib.wac"],

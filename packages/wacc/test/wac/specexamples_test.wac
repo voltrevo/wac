@@ -6,20 +6,25 @@
 // meets more examples passes and says so; running the status program records them, and from then on they
 // are held too.
 
-import { Cli, Core, FileResult } from "std";
+import { Env, Files, Output, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";
 import { ExJudged, judgeAll } from "./specexamples.wac";
+import { flatten } from "core";
 
-export string test_every_spec_example_once_met_is_still_met(Core core, Cli cli) {
+export string test_every_spec_example_once_met_is_still_met(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  FileResult f = cli.readFile("spec/_status/MET").wait();
-  t.isTrue(f.ok, "spec/_status/MET cannot be read — run packages/wacc/tools/specstatus.wac");
-  if (!f.ok) { return t.report(); }
-  string[] held = splitLines(string.fromBytes(f.bytes));
+  u8[]? f = flatten(fs.readFile("spec/_status/MET").wait()).ok();
+  t.isTrue((f is not null), "spec/_status/MET cannot be read — run packages/wacc/tools/specstatus.wac");
+  if ((f is null)) { return t.report(); }
+  string[] held = splitLines(string.fromBytes(f!));
 
-  ExJudged j = judgeAll(cli, "spec");
+  ExJudged j = judgeAll(env, fs, procs, "spec");
   // A walk that found nothing would hold every listed example to nothing.
   t.isTrue(j.verdicts.len() >= 400, "only " + itoa(j.verdicts.len()) + " examples read — did the walk resolve?");
 
@@ -42,7 +47,7 @@ export string test_every_spec_example_once_met_is_still_met(Core core, Cli cli) 
   }
   i32 met = 0;
   for (i32 i = 0; i < j.verdicts.len(); i++) { if (j.verdicts[i].state == "met") { met = met + 1; } }
-  core.log("    spec examples: " + itoa(met) + " of " + itoa(j.verdicts.len()) + " met; " + itoa(held.len())
+  out.line("    spec examples: " + itoa(met) + " of " + itoa(j.verdicts.len()) + " met; " + itoa(held.len())
            + " held");
   t.eqI32(regressed, 0, itoa(regressed) + " example(s) once met are not met now:" + detail);
   return t.report();

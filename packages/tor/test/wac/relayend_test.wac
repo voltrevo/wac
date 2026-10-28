@@ -17,11 +17,11 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { endForFault, endMisc, endNotDirectory, endProtocol, endReason, endResourceLimit }
-  from "../../src/relayd.wac";
+  from "../../src/relayend.wac";
 import { replyForEndReason, endReasonName, repFailure, repNetUnreachable, repOk, repRefused,
          repTtlExpired } from "../../src/socks5.wac";
-import { Cli, Core, FileResult, FAULT_NONE, FAULT_NOT_GRANTED, FAULT_REFUSED, FAULT_TIMED_OUT,
-         FAULT_UNREACHABLE } from "std";
+import { Files, NotGranted, Other, Refused, Sys, TimedOut, Unreachable } from "std";
+import { flatten } from "core";
 
 /**
  * A failed connect reaches a person as what actually happened.
@@ -32,11 +32,11 @@ import { Cli, Core, FileResult, FAULT_NONE, FAULT_NOT_GRANTED, FAULT_REFUSED, FA
  */
 export string test_a_failed_connect_reaches_a_person_as_what_happened() {
   T t = T.create();
-  t.eqI32(replyForEndReason(endForFault(FAULT_REFUSED())), repRefused(),
+  t.eqI32(replyForEndReason(endForFault(Refused("refused"))), repRefused(),
           "a refused connection is refused, not a general failure");
-  t.eqI32(replyForEndReason(endForFault(FAULT_UNREACHABLE())), repNetUnreachable(),
+  t.eqI32(replyForEndReason(endForFault(Unreachable("no route"))), repNetUnreachable(),
           "no route is network unreachable");
-  t.eqI32(replyForEndReason(endForFault(FAULT_TIMED_OUT())), repTtlExpired(),
+  t.eqI32(replyForEndReason(endForFault(TimedOut("late"))), repTtlExpired(),
           "a timeout is TTL expired");
   return t.report();
 }
@@ -91,9 +91,9 @@ export string test_every_reason_we_send_has_a_name() {
   T t = T.create();
   u8[][] ours = [
                        endReason(), endMisc(), endResourceLimit(), endProtocol(), endNotDirectory(),
-                       endForFault(FAULT_REFUSED()), endForFault(FAULT_UNREACHABLE()),
-                       endForFault(FAULT_TIMED_OUT()), endForFault(FAULT_NOT_GRANTED()),
-                       endForFault(FAULT_NONE())
+                       endForFault(Refused("refused")), endForFault(Unreachable("no route")),
+                       endForFault(TimedOut("late")), endForFault(NotGranted("withheld")),
+                       endForFault(Other("anything else"))
   ];
   for (i32 i = 0; i < ours.len(); i++) {
     t.eqBool(ours[i].len() == 1, true, "a RELAY_END body is one byte");
@@ -112,11 +112,11 @@ export string test_every_reason_we_send_has_a_name() {
  */
 export string test_a_fault_with_no_network_meaning_says_nothing_about_the_network() {
   T t = T.create();
-  t.eqI32(endForFault(FAULT_NOT_GRANTED())[0] as i32, endMisc()[0] as i32,
+  t.eqI32(endForFault(NotGranted("withheld"))[0] as i32, endMisc()[0] as i32,
           "not granted is MISC — our problem, not a statement about the address");
-  t.eqI32(endForFault(FAULT_NONE())[0] as i32, endMisc()[0] as i32,
+  t.eqI32(endForFault(Other("anything else"))[0] as i32, endMisc()[0] as i32,
           "and a fault we have no mapping for does not guess");
-  t.eqBool(replyForEndReason(endForFault(FAULT_NOT_GRANTED())) != repNetUnreachable(), true,
+  t.eqBool(replyForEndReason(endForFault(NotGranted("withheld"))) != repNetUnreachable(), true,
            "so it never comes out as `network unreachable`");
   return t.report();
 }
@@ -137,17 +137,18 @@ export string test_a_fault_with_no_network_meaning_says_nothing_about_the_networ
  * A third appearing means a failure path is claiming the stream finished. If you are adding a
  * deliberate one, add it here and say which.
  */
-export string test_no_failure_path_sends_done(Core core, Cli cli) {
+export string test_no_failure_path_sends_done(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   string path = "packages/tor/src/relayd.wac";
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  if ((f is null)) {
     // Read from the repository root, as every other source-reading guard here is. Said rather than
     // skipped: a guard that cannot find its subject has checked nothing.
     t.fail("could not read \{path} — this guard runs from the repository root");
     return t.report();
   }
-  string src = string.fromBytes(f.bytes);
+  string src = string.fromBytes(f!);
   string[] lines = splitLines(src);
   i32 calls = 0;
   for (string l in lines) {

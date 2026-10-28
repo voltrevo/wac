@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
 import { emitFiles, emitFilesChecked, manifestFiles } from "../../src/api.wac";
 import { withManifestSection } from "../../src/manifest.wac";
 import { equal } from "../../../bytes/src/slice.wac";
@@ -126,7 +126,7 @@ string foldProgram(i32 shift) {
 }
 
 /** Emit `source` with or without the flag, run it, and say what happened. */
-Ran runWith(Cli cli, string source, bool flagOn, string dir, string name) {
+Ran runWith(Env env, Files fs, Procs procs, string source, bool flagOn, string dir, string name) {
   string[] paths = [ENTRY];
   string[] sources = [source];
   u8[] wasm = flagOn ? emitFilesChecked(paths, sources, ENTRY) : emitFiles(paths, sources, ENTRY);
@@ -134,22 +134,23 @@ Ran runWith(Cli cli, string source, bool flagOn, string dir, string name) {
   // usual way to that, and there is no checked spelling of it — so the manifest is put on by hand,
   // the same call it makes. Without one the binary answers "carries no wac.manifest section" and
   // exits 1, which is neither a trap nor an answer and reads like both.
-  return runModule(cli, withManifestSection(wasm, manifestFiles(wasm, paths, sources, ENTRY, name, 0)),
-                   dir, name, string[].filled(0, ""));
+  return runModule(env, fs, procs, withManifestSection(wasm, manifestFiles(wasm, paths, sources, ENTRY, name, 0)), dir, name, string[].filled(0, ""));
 }
 
-export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit(
-    Core core, Cli cli) {
+export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   string[] cases = overflows();
   string[] wrong = string[].filled(cases.len() * 2, "");
   i32 nWrong = 0;
 
   for (i32 i = 0; i < cases.len(); i++) {
     string src = caseProgram(cases[i]);
-    Ran off = runWith(cli, src, false, dir, "chk_off.wasm");
-    Ran on = runWith(cli, src, true, dir, "chk_on.wasm");
+    Ran off = runWith(env, fs, procs, src, false, dir, "chk_off.wasm");
+    Ran on = runWith(env, fs, procs, src, true, dir, "chk_on.wasm");
     if (!off.ok || !on.ok) {
       wrong[nWrong] = cases[i] + " did not build — " + (off.ok ? on.error : off.error);
       nWrong = nWrong + 1;
@@ -171,11 +172,14 @@ export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit
   return t.report();
 }
 
-export string test_the_in_range_answers_are_the_same_either_way(Core core, Cli cli) {
+export string test_the_in_range_answers_are_the_same_either_way(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Folded rather than one program per case: the answers are equal or they are not, and a checksum
   // over all nineteen says so in eight runs instead of a hundred and fifty.
   T t = T.create();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   i32[] shifts = [0, 8, 16, 24];
   i32 off = 0;
   i32 on = 0;
@@ -183,8 +187,8 @@ export string test_the_in_range_answers_are_the_same_either_way(Core core, Cli c
 
   for (i32 i = 0; i < shifts.len(); i++) {
     string src = foldProgram(shifts[i]);
-    Ran a = runWith(cli, src, false, dir, "chkfold_off.wasm");
-    Ran b = runWith(cli, src, true, dir, "chkfold_on.wasm");
+    Ran a = runWith(env, fs, procs, src, false, dir, "chkfold_off.wasm");
+    Ran b = runWith(env, fs, procs, src, true, dir, "chkfold_on.wasm");
     if (!a.ok || !b.ok || a.trapped || b.trapped) {
       t.fail("the fold at shift " + itoa(shifts[i]) + " did not answer — " +
              (a.trapped ? "the unflagged build trapped" : "") + a.error + b.error + a.stderr);
@@ -236,9 +240,10 @@ export string test_the_in_range_answers_are_the_same_either_way(Core core, Cli c
  * against rather than today's build compared with itself. That is still not here, and is still not
  * worth a re-recording on every compiler commit.
  */
-export string test_the_flag_adds_code_and_the_emitter_is_deterministic(Core core, Cli cli) {
+export string test_the_flag_adds_code_and_the_emitter_is_deterministic(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "checked_test");
+  Corpus c = loadCorpus(fs, "checked_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 

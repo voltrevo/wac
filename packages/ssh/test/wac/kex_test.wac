@@ -12,14 +12,15 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Cli, Procs, Sys } from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { deriveKey, ephemeralPublic, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
 import { cat, str, strOf, ramp, filled } from "./build.wac";
 
 static string ORACLE = "packages/ssh/test/kdf_oracle.ts";
 
-export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core core, Cli cli) {
+export string test_key_derivation_extends_by_hashing_the_accumulated_output(Sys sys) {
+  Procs procs = sys.procs();
   // Written out against the RFC rather than round-tripped, because the interesting rule only
   // appears for keys longer than one hash: the extension hashes **everything produced so far**,
   // not just the previous block.
@@ -52,7 +53,7 @@ export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core
       }
     }
   }
-  check(t, cli, "deno", ["run", "--no-check", ORACLE], lines, "RFC 4253 §7.2");
+  check(t, procs, "deno", ["run", "--no-check", ORACLE], lines, "RFC 4253 §7.2");
   return t.report();
 }
 

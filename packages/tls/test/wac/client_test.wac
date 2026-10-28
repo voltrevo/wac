@@ -15,7 +15,7 @@
 // a wac test is one thread and cannot both `accept` and dial.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, Clock, Env, Files, Net, Output, Procs, Random, Sys } from "std";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
@@ -26,14 +26,15 @@ import { ClientStep } from "../../src/client.wac";
 import { Reply, request, rootsFrom, noRoots, fixedFirstFlight } from "./tlsclient.wac";
 import { Server, startServer, stopServer, have, openssl35 } from "./openssl.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string DATA = "packages/tls/test/data";
 static string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
 static string BODY = "hello from the wac server";
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/tls/\{name}";
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/tls/\{name}";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -45,29 +46,28 @@ struct Ours {
   string error;
 }
 
-Ours ourServer(T t, Cli cli, Core core, string dir) {
+Ours ourServer(T t, Clock clock, Env env, Files fs, Procs procs, string dir) {
   string bin = "\{dir}/tlsserved";
   // **`builtProgram` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is
   // removing that builder's non-browser targets. It answers a cached `.wasm` at a stable path and
   // rebuilds only when the sources or the compiler move, which is what keeps this cheap: a `wac app`
   // executable to a fresh temporary name cannot be cached at all, because the output's base name is
   // in the manifest and two destinations are two artefacts. Measured: 2s cached against 8s not.
-  string mod = builtProgram(cli, "packages/tls/test/wac/tlsserved.wac", "tlsserved",
-                            ["--allow-read", "--allow-net"]);
+  string mod = builtProgram(env, fs, procs, "packages/tls/test/wac/tlsserved.wac", "tlsserved", ["--allow-read", "--allow-net"]);
   if (mod == "") { return Ours(Daemon(-1, "", ""), -1, "tlsserved did not build"); }
   // Port 0, and the program says which it got — two agents running the suite cannot collide on it.
   // **The artefact finds its runtime on PATH**, with `command -v wac` — and `Cli.exec` passes no
   // environment, so `/bin/sh` starts from its own default and this checkout's binary is not on it.
   // **The binary runs the module**, which needs no `wac` on PATH and no `env` wrapper: `wac
   // <module.wasm>` is how a module with a manifest is started.
-  Daemon d = start(cli, "\{quoted(binaryPath(cli))} \{quoted(mod)} 0", "\{dir}/log");
+  Daemon d = start(procs, "\{quoted(binaryPath(env))} \{quoted(mod)} 0", "\{dir}/log");
   if (!d.ok()) { return Ours(d, -1, "tlsserved did not start: \{d.error}"); }
   const string MARK = "listening on 127.0.0.1:";
-  if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
-    stop(cli, d);
-    return Ours(d, -1, "tlsserved never listened. Its output was: \{logOf(cli, d)}");
+  if (!waitForLogWithin(clock, fs, d, MARK, 20000)) {
+    stop(procs, d);
+    return Ours(d, -1, "tlsserved never listened. Its output was: \{logOf(fs, d)}");
   }
-  string log = logOf(cli, d);
+  string log = logOf(fs, d);
   u8[] b = log.toBytes();
   i32 at = log.indexOf(MARK) + MARK.len();
   i32 port = 0;
@@ -76,113 +76,135 @@ Ours ourServer(T t, Cli cli, Core core, string dir) {
 }
 
 /** `now` for the cases that do not care: seconds since the epoch, from the clock. */
-i64 nowSeconds(Core core) { return core.nowMillis().wait() / (1000 as i64); }
+i64 nowSeconds(Clock clock) { return flatten(clock.nowMillis().wait()).unwrap() / (1000 as i64); }
 
-export string test_client_talks_to_the_wac_server_end_to_end(Core core, Cli cli) {
+export string test_client_talks_to_the_wac_server_end_to_end(Sys sys) {
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "roundtrip");
-  Ours s = ourServer(t, cli, core, dir);
+  string dir = freshScratch(t, env, fs, "roundtrip");
+  Ours s = ourServer(t, clock, env, fs, procs, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
 
-  Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, "\{DATA}/ca.pem"), REQ, nowSeconds(core));
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "wac.test", rootsFrom(fs, "\{DATA}/ca.pem"), REQ, nowSeconds(clock));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "the handshake succeeded");
   t.isTrue(contains(r.response, "HTTP/1.1 200 OK"), "the server answered: \{r.response}");
   t.isTrue(contains(r.response, BODY), "and with its body");
-  stop(cli, s.d);
-  cli.remove(dir, true).wait();
+  stop(procs, s.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_client_talks_to_openssls_s_server(Core core, Cli cli) {
+export string test_client_talks_to_openssls_s_server(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The round trip above would pass even if both halves misread the spec the same way. OpenSSL cannot
   // make that mistake with us.
   T t = T.create();
-  t.isTrue(have(cli, "openssl"), "openssl is on the path");
-  if (!have(cli, "openssl")) { return t.report(); }
-  string dir = freshScratch(t, cli, "ossl");
-  Server s = startServer(core, cli, "openssl", "\{DATA}/leaf.pem", "\{DATA}/leaf.key",
-                         string[].filled(0, ""), "\{dir}/log");
+  t.isTrue(have(procs, "openssl"), "openssl is on the path");
+  if (!have(procs, "openssl")) { return t.report(); }
+  string dir = freshScratch(t, env, fs, "ossl");
+  Server s = startServer(err, clock, env, fs, net, procs, "openssl", "\{DATA}/leaf.pem", "\{DATA}/leaf.key", string[].filled(0, ""), "\{dir}/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
-  Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, "\{DATA}/ca.pem"), REQ, nowSeconds(core));
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "wac.test", rootsFrom(fs, "\{DATA}/ca.pem"), REQ, nowSeconds(clock));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "the handshake with openssl succeeded");
   t.isTrue(contains(r.response, "200 ok") || contains(r.response, "200 OK"),
            "openssl answered: \{r.response.slice(0, 200)}");
-  stopServer(cli, s);
-  cli.remove(dir, true).wait();
+  stopServer(procs, s);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_client_refuses_a_certificate_that_does_not_cover_the_host_asked_for(
-    Core core, Cli cli) {
+export string test_client_refuses_a_certificate_that_does_not_cover_the_host_asked_for(Sys sys) {
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The classic failure. The certificate is genuine, in date, and signed by the CA we trust — it is
   // simply for a different name. A client that checks only the signature accepts it, and an attacker
   // who can get a certificate for any domain can then impersonate every domain.
   T t = T.create();
-  string dir = freshScratch(t, cli, "wrongname");
-  Ours s = ourServer(t, cli, core, dir);
+  string dir = freshScratch(t, env, fs, "wrongname");
+  Ours s = ourServer(t, clock, env, fs, procs, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
 
-  Reply r = request(core, cli, "127.0.0.1", s.port, "not-our-name.test",
-                    rootsFrom(cli, "\{DATA}/ca.pem"), "GET / HTTP/1.1\r\n\r\n", nowSeconds(core));
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "not-our-name.test", rootsFrom(fs, "\{DATA}/ca.pem"), "GET / HTTP/1.1\r\n\r\n", nowSeconds(clock));
   t.neI32(r.failure, 0, "accepted a certificate for the wrong host");
   // 40 + 7: verifyChain's "no matching name".
   t.eqI32(r.failure, 47, "the name check is what failed");
-  stop(cli, s.d);
-  cli.remove(dir, true).wait();
+  stop(procs, s.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust(Core core, Cli cli) {
+export string test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust(Sys sys) {
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The same server, and a root that did not sign its certificate. Nothing about the certificate has
   // changed; what changed is whether we have a reason to believe it.
   T t = T.create();
-  string dir = freshScratch(t, cli, "wrongissuer");
-  Ours s = ourServer(t, cli, core, dir);
+  string dir = freshScratch(t, env, fs, "wrongissuer");
+  Ours s = ourServer(t, clock, env, fs, procs, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
 
-  Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, "\{DATA}/other_ca.pem"), "GET / HTTP/1.1\r\n\r\n",
-                    nowSeconds(core));
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "wac.test", rootsFrom(fs, "\{DATA}/other_ca.pem"), "GET / HTTP/1.1\r\n\r\n", nowSeconds(clock));
   t.neI32(r.failure, 0, "accepted a certificate from an untrusted issuer");
   // 45 is "issuer name does not match the root's subject", 46 is "signature does not verify". Either
   // is a correct refusal; which one depends on whether the names collide.
   t.isTrue(r.failure == 45 || r.failure == 46,
            "an issuer failure, got code \{r.failure}");
-  stop(cli, s.d);
-  cli.remove(dir, true).wait();
+  stop(procs, s.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_client_refuses_when_the_certificate_is_outside_its_validity_window(
-    Core core, Cli cli) {
+export string test_client_refuses_when_the_certificate_is_outside_its_validity_window(Sys sys) {
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // Time is passed in rather than read, so this needs no clock trickery: ask the client to evaluate
   // the same handshake as though it were 1990.
   T t = T.create();
-  string dir = freshScratch(t, cli, "expired");
-  Ours s = ourServer(t, cli, core, dir);
+  string dir = freshScratch(t, env, fs, "expired");
+  Ours s = ourServer(t, clock, env, fs, procs, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
 
   const i64 LONG_AGO = 631152000 as i64;    // 1990-01-01T00:00:00Z
-  Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, "\{DATA}/ca.pem"), "GET / HTTP/1.1\r\n\r\n", LONG_AGO);
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "wac.test", rootsFrom(fs, "\{DATA}/ca.pem"), "GET / HTTP/1.1\r\n\r\n", LONG_AGO);
   t.neI32(r.failure, 0, "accepted a certificate that was not yet valid");
   t.eqI32(r.failure, 41, "the notBefore check is what failed");
-  stop(cli, s.d);
-  cli.remove(dir, true).wait();
+  stop(procs, s.d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_client_sends_a_client_hello_a_real_server_understands(Core core, Cli cli) {
+export string test_client_sends_a_client_hello_a_real_server_understands() {
   // Narrower than the interop tests and much faster to diagnose when it breaks: does the very first
   // flight parse at all? A malformed extension list fails the handshake with no useful signal, and
   // this at least says the failure is later than the hello.
@@ -205,81 +227,102 @@ export string test_client_sends_a_client_hello_a_real_server_understands(Core co
 }
 
 /** One handshake against `s_server` with the named key pair. */
-string againstOpenSsl(Core core, Cli cli, string kind, string[] extra, string name) {
+string againstOpenSsl(Output err, Clock clock, Random rnd, Env env, Files fs, Net net, Procs procs, string kind, string[] extra, string name) {
   T t = T.create();
-  t.isTrue(have(cli, "openssl"), "openssl is on the path");
-  if (!have(cli, "openssl")) { return t.report(); }
-  string dir = freshScratch(t, cli, name);
-  Server s = startServer(core, cli, "openssl",
-                         "\{DATA}/\{kind}_leaf.pem", "\{DATA}/\{kind}_leaf.key",
-                         extra, "\{dir}/log");
+  t.isTrue(have(procs, "openssl"), "openssl is on the path");
+  if (!have(procs, "openssl")) { return t.report(); }
+  string dir = freshScratch(t, env, fs, name);
+  Server s = startServer(err, clock, env, fs, net, procs, "openssl", "\{DATA}/\{kind}_leaf.pem", "\{DATA}/\{kind}_leaf.key", extra, "\{dir}/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
-  Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, "\{DATA}/\{kind}_ca.pem"), REQ, nowSeconds(core));
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "wac.test", rootsFrom(fs, "\{DATA}/\{kind}_ca.pem"), REQ, nowSeconds(clock));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "\{kind}: the handshake succeeded");
   t.isTrue(contains(r.response, "200 ok") || contains(r.response, "200 OK"),
            "\{kind}: openssl answered — \{r.response.slice(0, 120)}");
-  stopServer(cli, s);
-  cli.remove(dir, true).wait();
+  stopServer(procs, s);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_client_completes_a_handshake_against_an_ecdsa_p256_certificate(Core core, Cli cli) {
+export string test_client_completes_a_handshake_against_an_ecdsa_p256_certificate(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // Ed25519 is what this repo issues itself; ECDSA-P256 is what the web mostly uses, and it exercises
   // a different key type in the certificate, a different signature in CertificateVerify, and a
   // different DER shape — ECDSA signatures arrive wrapped in a SEQUENCE of two INTEGERs, which have to
   // be unwrapped and zero-padded back to 32.
-  return againstOpenSsl(core, cli, "ec", string[].filled(0, ""), "ec");
+  return againstOpenSsl(err, clock, rnd, env, fs, net, procs, "ec", string[].filled(0, ""), "ec");
 }
 
-export string test_client_completes_a_handshake_against_an_rsa_2048_certificate(Core core, Cli cli) {
+export string test_client_completes_a_handshake_against_an_rsa_2048_certificate(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The other half of the web. RSA brings a third encoding quirk: the modulus is a DER INTEGER, which
   // is signed, so almost every modulus carries a leading zero byte that is not part of the key — and
   // using that length as the key size fails every signature.
-  return againstOpenSsl(core, cli, "rsa", string[].filled(0, ""), "rsa");
+  return againstOpenSsl(err, clock, rnd, env, fs, net, procs, "rsa", string[].filled(0, ""), "rsa");
 }
 
-export string test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered(
-    Core core, Cli cli) {
+export string test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // Pins `groupP256()` — 0x0017 — against a server that will accept nothing else. Our client offers
   // three groups and a server normally picks the hybrid or x25519, so the P-256 code point was never
   // exercised: mutation testing replaced `groupP256`'s body with a constant and every test stayed
   // green. A wrong code point here is not a parse error, it is a HelloRetryRequest loop or a handshake
   // failure against the one group RFC 8446 §9.1 makes mandatory.
-  return againstOpenSsl(core, cli, "ec", ["-groups", "P-256"], "p256only");
+  return againstOpenSsl(err, clock, rnd, env, fs, net, procs, "ec", ["-groups", "P-256"], "p256only");
 }
 
-export string test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server(
-    Core core, Cli cli) {
+export string test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // The server accepts nothing else, so a client whose 1216-byte share were built the wrong way round
   // — ML-KEM and X25519 are concatenated in one order for this group and the other order for
   // SecP256r1MLKEM768 — would fail rather than fall back.
   T t = T.create();
-  string binary = openssl35(cli);
+  string binary = openssl35(env, fs);
   if (binary == "") {
     // A skip that prints nothing reads as coverage. Ubuntu 24.04 ships 3.0.13, which predates
     // X25519MLKEM768 entirely; `tools/openssl35.sh` builds one, and this says so rather than passing
     // quietly.
-    core.warn("tls client test: skipped — no OpenSSL 3.5, so the ML-KEM interop did not run. " +
+    err.line("tls client test: skipped — no OpenSSL 3.5, so the ML-KEM interop did not run. " +
               "`tools/openssl35.sh` builds one.");
     return t.report();
   }
-  string dir = freshScratch(t, cli, "mlkem");
-  Server s = startServer(core, cli, binary, "\{DATA}/ec_leaf.pem", "\{DATA}/ec_leaf.key",
-                         ["-groups", "X25519MLKEM768"], "\{dir}/log");
+  string dir = freshScratch(t, env, fs, "mlkem");
+  Server s = startServer(err, clock, env, fs, net, procs, binary, "\{DATA}/ec_leaf.pem", "\{DATA}/ec_leaf.key", ["-groups", "X25519MLKEM768"], "\{dir}/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
-  Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, "\{DATA}/ec_ca.pem"), REQ, nowSeconds(core));
+  Reply r = request(clock, rnd, net, "127.0.0.1", s.port, "wac.test", rootsFrom(fs, "\{DATA}/ec_ca.pem"), REQ, nowSeconds(clock));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "the hybrid handshake succeeded");
   t.isTrue(contains(r.response, "200 ok") || contains(r.response, "200 OK"),
            "openssl 3.5 answered — \{r.response.slice(0, 120)}");
-  stopServer(cli, s);
-  cli.remove(dir, true).wait();
+  stopServer(procs, s);
+  fs.remove(dir, true).wait();
   return t.report();
 }

@@ -42,7 +42,7 @@ import { T } from "../../wactest/src/assert.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { Lines } from "../../wactest/src/oracle.wac";
 import { askScript } from "../../wactest/src/inline.wac";
-import { Core, Sys } from "std";
+import { Output, Sys } from "std";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
          opMulSmall, opDivSmall, opRemSmall, opCmp, opCmpAbs, opBitLen, opIsZero,
          roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64,
@@ -169,7 +169,7 @@ i32 both(string x, string y) {
 string neg(string x) { return x == "0" ? "0" : "-\{x}"; }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
+  Output err = sys.stderr();
   T t = T.create();
   i32 seen = 0;
 
@@ -255,7 +255,7 @@ export async i32 main(Sys sys) {
 
   string[] a1 = await askScript(t, sys.procs(), OPERANDS, b1, "the operand oracle");
   if (a1.len() == 0) {
-    core.warn("bignum coverage: the operand oracle did not answer — is --allow-run granted?");
+    err.line("bignum coverage: the operand oracle did not answer — is --allow-run granted?");
     return 0;
   }
 
@@ -431,151 +431,151 @@ export async i32 main(Sys sys) {
   // run, and the report then looks exactly like the one before the change.
   i32 bad = 0;
   if ((await arith__arith_exhaustive_over_small_values(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_exhaustive_over_small_values");
+    err.line("error: FAILED arith_test test_arith_exhaustive_over_small_values");
     bad = bad + 1;
   }
   if ((await arith__arith_limb_boundaries(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_limb_boundaries");
+    err.line("error: FAILED arith_test test_arith_limb_boundaries");
     bad = bad + 1;
   }
   if ((await arith__arith_all_ones_and_all_zeros_limb_runs(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_all_ones_and_all_zeros_limb_runs");
+    err.line("error: FAILED arith_test test_arith_all_ones_and_all_zeros_limb_runs");
     bad = bad + 1;
   }
   if ((await arith__arith_random_operands_across_a_wide_size_range(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_random_operands_across_a_wide_size_range");
+    err.line("error: FAILED arith_test test_arith_random_operands_across_a_wide_size_range");
     bad = bad + 1;
   }
   if ((await arith__arith_divisors_engineered_to_need_the_add_back(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_divisors_engineered_to_need_the_add_back");
+    err.line("error: FAILED arith_test test_arith_divisors_engineered_to_need_the_add_back");
     bad = bad + 1;
   }
   if ((await arith__arith_the_quotient_estimate_survives_rhat_reaching_base(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_the_quotient_estimate_survives_rhat_reaching_base");
+    err.line("error: FAILED arith_test test_arith_the_quotient_estimate_survives_rhat_reaching_base");
     bad = bad + 1;
   }
   if ((await arith__arith_division_identity_holds(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_division_identity_holds");
+    err.line("error: FAILED arith_test test_arith_division_identity_holds");
     bad = bad + 1;
   }
   if (arith__arith_truncated_division_on_every_sign().len() > 0) {
-    core.warn("error: FAILED arith_test test_arith_truncated_division_on_every_sign");
+    err.line("error: FAILED arith_test test_arith_truncated_division_on_every_sign");
     bad = bad + 1;
   }
   if ((await arith__shifts_match_bigint_including_negative_values(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_shifts_match_bigint_including_negative_values");
+    err.line("error: FAILED arith_test test_shifts_match_bigint_including_negative_values");
     bad = bad + 1;
   }
   if (arith__shifts_the_most_negative_count().len() > 0) {
-    core.warn("error: FAILED arith_test test_shifts_the_most_negative_count");
+    err.line("error: FAILED arith_test test_shifts_the_most_negative_count");
     bad = bad + 1;
   }
   if ((await arith__shifts_a_negative_count_reverses_direction(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_shifts_a_negative_count_reverses_direction");
+    err.line("error: FAILED arith_test test_shifts_a_negative_count_reverses_direction");
     bad = bad + 1;
   }
   if ((await arith__shifts_shifting_everything_out(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_shifts_shifting_everything_out");
+    err.line("error: FAILED arith_test test_shifts_shifting_everything_out");
     bad = bad + 1;
   }
   if ((await arith__mul_small_and_div_small_match_the_general_operations(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_mul_small_and_div_small_match_the_general_operations");
+    err.line("error: FAILED arith_test test_mul_small_and_div_small_match_the_general_operations");
     bad = bad + 1;
   }
   if ((await arith__cmp_and_cmp_abs_match_bigint(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_cmp_and_cmp_abs_match_bigint");
+    err.line("error: FAILED arith_test test_cmp_and_cmp_abs_match_bigint");
     bad = bad + 1;
   }
   if ((await arith__negate_abs_and_copy_preserve_value(sys)).len() > 0) {
-    core.warn("error: FAILED arith_test test_negate_abs_and_copy_preserve_value");
+    err.line("error: FAILED arith_test test_negate_abs_and_copy_preserve_value");
     bad = bad + 1;
   }
   if (arith__negating_zero_cannot_produce_minus_zero().len() > 0) {
-    core.warn("error: FAILED arith_test test_negating_zero_cannot_produce_minus_zero");
+    err.line("error: FAILED arith_test test_negating_zero_cannot_produce_minus_zero");
     bad = bad + 1;
   }
   if (big__arithmetic_from_wac().len() > 0) {
-    core.warn("error: FAILED big_test test_arithmetic_from_wac");
+    err.line("error: FAILED big_test test_arithmetic_from_wac");
     bad = bad + 1;
   }
   if (big__signs_and_predicates().len() > 0) {
-    core.warn("error: FAILED big_test test_signs_and_predicates");
+    err.line("error: FAILED big_test test_signs_and_predicates");
     bad = bad + 1;
   }
   if (big__shifts_floor_for_negatives().len() > 0) {
-    core.warn("error: FAILED big_test test_shifts_floor_for_negatives");
+    err.line("error: FAILED big_test test_shifts_floor_for_negatives");
     bad = bad + 1;
   }
   if (big__truncated_division().len() > 0) {
-    core.warn("error: FAILED big_test test_truncated_division");
+    err.line("error: FAILED big_test test_truncated_division");
     bad = bad + 1;
   }
   if ((await text__decimal_small_values_round_trip(sys)).len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_small_values_round_trip");
+    err.line("error: FAILED text_test test_decimal_small_values_round_trip");
     bad = bad + 1;
   }
   if ((await text__decimal_limb_boundaries_round_trip(sys)).len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_limb_boundaries_round_trip");
+    err.line("error: FAILED text_test test_decimal_limb_boundaries_round_trip");
     bad = bad + 1;
   }
   if ((await text__decimal_random_values_round_trip_across_sizes(sys)).len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_random_values_round_trip_across_sizes");
+    err.line("error: FAILED text_test test_decimal_random_values_round_trip_across_sizes");
     bad = bad + 1;
   }
   if (text__decimal_zero_has_one_spelling().len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_zero_has_one_spelling");
+    err.line("error: FAILED text_test test_decimal_zero_has_one_spelling");
     bad = bad + 1;
   }
   if (text__decimal_leading_zeros_are_accepted_and_dropped().len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_leading_zeros_are_accepted_and_dropped");
+    err.line("error: FAILED text_test test_decimal_leading_zeros_are_accepted_and_dropped");
     bad = bad + 1;
   }
   if (text__decimal_malformed_input_is_rejected().len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_malformed_input_is_rejected");
+    err.line("error: FAILED text_test test_decimal_malformed_input_is_rejected");
     bad = bad + 1;
   }
   if (text__decimal_a_non_digit_in_a_later_chunk_is_rejected().len() > 0) {
-    core.warn("error: FAILED text_test test_decimal_a_non_digit_in_a_later_chunk_is_rejected");
+    err.line("error: FAILED text_test test_decimal_a_non_digit_in_a_later_chunk_is_rejected");
     bad = bad + 1;
   }
   if ((await text__hex_matches_bigints_to_string(sys)).len() > 0) {
-    core.warn("error: FAILED text_test test_hex_matches_bigints_to_string");
+    err.line("error: FAILED text_test test_hex_matches_bigints_to_string");
     bad = bad + 1;
   }
   if (text__hex_prefix_case_and_malformed_input().len() > 0) {
-    core.warn("error: FAILED text_test test_hex_prefix_case_and_malformed_input");
+    err.line("error: FAILED text_test test_hex_prefix_case_and_malformed_input");
     bad = bad + 1;
   }
   if ((await text__from_i64_and_from_u64_cover_the_extremes(sys)).len() > 0) {
-    core.warn("error: FAILED text_test test_from_i64_and_from_u64_cover_the_extremes");
+    err.line("error: FAILED text_test test_from_i64_and_from_u64_cover_the_extremes");
     bad = bad + 1;
   }
   if ((await text__bit_len_matches_bigint(sys)).len() > 0) {
-    core.warn("error: FAILED text_test test_bit_len_matches_bigint");
+    err.line("error: FAILED text_test test_bit_len_matches_bigint");
     bad = bad + 1;
   }
   if ((await u64__u64_division_and_remainder_are_unsigned(sys)).len() > 0) {
-    core.warn("error: FAILED u64_test test_u64_division_and_remainder_are_unsigned");
+    err.line("error: FAILED u64_test test_u64_division_and_remainder_are_unsigned");
     bad = bad + 1;
   }
   if ((await u64__u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four(sys)).len() > 0) {
-    core.warn("error: FAILED u64_test test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four");
+    err.line("error: FAILED u64_test test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four");
     bad = bad + 1;
   }
   if ((await u64__u64_shift_right_does_not_sign_extend(sys)).len() > 0) {
-    core.warn("error: FAILED u64_test test_u64_shift_right_does_not_sign_extend");
+    err.line("error: FAILED u64_test test_u64_shift_right_does_not_sign_extend");
     bad = bad + 1;
   }
   if ((await u64__u64_comparison_is_unsigned(sys)).len() > 0) {
-    core.warn("error: FAILED u64_test test_u64_comparison_is_unsigned");
+    err.line("error: FAILED u64_test test_u64_comparison_is_unsigned");
     bad = bad + 1;
   }
   if ((await u64__u64_truncation_keeps_the_low_thirty_two_bits(sys)).len() > 0) {
-    core.warn("error: FAILED u64_test test_u64_truncation_keeps_the_low_thirty_two_bits");
+    err.line("error: FAILED u64_test test_u64_truncation_keeps_the_low_thirty_two_bits");
     bad = bad + 1;
   }
   if ((await u64__u64_a_u32_product_widens(sys)).len() > 0) {
-    core.warn("error: FAILED u64_test test_u64_a_u32_product_widens");
+    err.line("error: FAILED u64_test test_u64_a_u32_product_widens");
     bad = bad + 1;
   }
   seen = seen + bad;

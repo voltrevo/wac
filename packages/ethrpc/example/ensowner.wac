@@ -18,7 +18,7 @@
 // exactly like one that is.
 
 import { Result } from "core";
-import { Cli, Core, Sys } from "std";
+import { Sys, Net, Output } from "std";
 import { proofOfSlots, Proof } from "../src/getproof.wac";
 import { recordOf, Record } from "../../ens/src/verified.wac";
 import { ownerSlot, resolverSlot } from "../../ens/src/registry.wac";
@@ -29,20 +29,22 @@ import { encode as hexEncode } from "../../codec/src/hex.wac";
 string REGISTRY() { return "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"; }
 
 export Result<i32, string> main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
+  i32 n = argv.len();
   if (n < 1) {
-    core.warn("usage: ensowner <name> [host] [port] [registry] [expected-block-hash]");
+    err.line("usage: ensowner <name> [host] [port] [registry] [expected-block-hash]");
     return Result.Ok(2);
   }
-  u8[] name = cli.arg(0).wait();
-  string host = n > 1 ? string.fromBytes(cli.arg(1).wait()) : "127.0.0.1";
-  i32 port = n > 2 ? atoiOr(string.fromBytes(cli.arg(2).wait()), 8545) : 8545;
-  string registry = n > 3 ? string.fromBytes(cli.arg(3).wait()) : REGISTRY();
+  u8[] name = argv[0].toBytes();
+  string host = n > 1 ? argv[1] : "127.0.0.1";
+  i32 port = n > 2 ? atoiOr(argv[2], 8545) : 8545;
+  string registry = n > 3 ? argv[3] : REGISTRY();
   // A block hash the caller got from somewhere that is not this node — a friend, an explorer, a
   // checkpoint. With one, the state root is anchored; without one, it is the node's own word.
-  u8[] expected = n > 4 ? hexOf(string.fromBytes(cli.arg(4).wait())) : u8[]();
+  u8[] expected = n > 4 ? hexOf(argv[4]) : u8[]();
 
   // Both slots in one request: one round trip, one account proof, one block. Asking twice would answer
   // about two states, and a name transferred between them gives an owner and a resolver that never
@@ -52,28 +54,28 @@ export Result<i32, string> main(Sys sys) {
     "0x" + string.fromBytes(hexEncode(ownerSlot(node))),
     "0x" + string.fromBytes(hexEncode(resolverSlot(node)))
   ];
-  Proof p = match (proofOfSlots(cli, host, port, registry, slots, expected)) {
+  Proof p = match (proofOfSlots(net, host, port, registry, slots, expected)) {
     Ok(v): v,
     Err(e): return Result.Err("ensowner: \{e}"),
   };
 
   u8[] registryBytes = hexOf(registry);
-  if (registryBytes.len() != 20) { core.warn("ensowner: the registry address is not 20 bytes"); return Result.Ok(2); }
+  if (registryBytes.len() != 20) { err.line("ensowner: the registry address is not 20 bytes"); return Result.Ok(2); }
 
   Record r = recordOf(p.stateRoot, registryBytes, name, p.accountNodes, p.slots[0], p.slots[1]);
   if (!r.ok) { return Result.Err("ensowner: \{r.error}"); }
   if (!r.present) {
-    core.log("no owner");
+    out.line("no owner");
     // Absence is an answer and the exit code says so: 0, because the question was answered.
-    core.warn(anchorNote(expected));
+    err.line(anchorNote(expected));
     return Result.Ok(0);
   }
-  core.log("0x\{string.fromBytes(hexEncode(r.owner))}");
+  out.line("0x\{string.fromBytes(hexEncode(r.owner))}");
   // The resolver, when the name has one — proved from the same account and the same block as the owner.
   if (r.resolver.len() == 20) {
-    core.log("resolver 0x\{string.fromBytes(hexEncode(r.resolver))}");
+    out.line("resolver 0x\{string.fromBytes(hexEncode(r.resolver))}");
   }
-  core.warn(anchorNote(expected));
+  err.line(anchorNote(expected));
   return Result.Ok(0);
 }
 

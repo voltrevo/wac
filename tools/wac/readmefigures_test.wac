@@ -35,23 +35,25 @@
 // something and had not run. A wac test has no such mode.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Exec, ChildEnv, Files, Launch, Output, Procs, Sys } from "std";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { contains, splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
+import { flatten } from "core";
 
 /** Ten per cent either way. Rot, not drift. */
 static i32 TOLERANCE_PERCENT = 10;
 
-string read(Core core, Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
-    core.warn("readmeFigures: cannot read " + path + " — " + r.error);
+string read(Output err, Files fs, string path) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  if ((r is null)) {
+    err.line("readmeFigures: cannot read " + path + " — " + "\{rRead.isErr() ? "\{rRead.err()!}" : ""}");
     trap;
   }
-  return string.fromBytes(r.bytes);
+  return string.fromBytes(r!);
 }
 
 /**
@@ -109,8 +111,8 @@ string driftOf(i32 claimed, i32 actual) {
  * TypeScript version gave: the link check scans source comments too, and a plausible-looking path in
  * one is a link it goes looking for — which is how that file first turned the suite red.
  */
-i32[] mapFigures(Core core, Cli cli) {
-  string map = read(core, cli, "MAP.md");
+i32[] mapFigures(Output err, Files fs) {
+  string map = read(err, fs, "MAP.md");
   Program? row = compile("^\\| \\[`[^`]+`\\]\\(packages/[^)]+\\) \\|[^|]*\\| *([0-9,]+) *\\|".toBytes());
   if (row is null) { trap; }
   i32 packages = 0;
@@ -136,10 +138,12 @@ i32[] mapFigures(Core core, Cli cli) {
  * rather than a variable. **A pattern that stops matching is itself a failure**: the figure was
  * reworded or dropped, and this would otherwise pass by checking nothing.
  */
-export string test_the_readmes_figures_are_still_true_of_the_tree(Core core, Cli cli) {
+export string test_the_readmes_figures_are_still_true_of_the_tree(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string readme = read(core, cli, "README.md");
-  i32[] fig = mapFigures(core, cli);
+  string readme = read(err, fs, "README.md");
+  i32[] fig = mapFigures(err, fs);
   i32 packages = fig[0];
   i32 wacLines = fig[1];
   t.isTrue(packages > 10, "MAP.md still has package rows — found " + itoa(packages));
@@ -164,7 +168,7 @@ export string test_the_readmes_figures_are_still_true_of_the_tree(Core core, Cli
   }
 
   // The applet count, which `packages/box`'s own README states and MAP.md repeats.
-  string[] appletsIn = firstMatch("([0-9]+) applets in one program", read(core, cli, "MAP.md"));
+  string[] appletsIn = firstMatch("([0-9]+) applets in one program", read(err, fs, "MAP.md"));
   t.isTrue(appletsIn.len() > 0,
            "MAP.md no longer states an applet count — this check's source is gone");
   string[] appletClaim = firstMatch("A shell, ([0-9]+) applets and a filesystem", readme);
@@ -192,7 +196,9 @@ export string test_the_readmes_figures_are_still_true_of_the_tree(Core core, Cli
  * generated and this one is a copy of it: what is checked is whether the copy still says what the
  * original does.
  */
-export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli cli) {
+export string test_packages_readme_repeats_what_the_map_generates(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
   string shape = "([0-9,]+) packages, ([0-9,]+) lines of wac, ([0-9,]+) tests[^,]*, " +
                  "([0-9,]+) command-line programs and ([0-9,]+) browser pages";
@@ -201,11 +207,11 @@ export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli
                             "browser pages"
   ];
 
-  string[] generated = firstMatch(shape, flat(read(core, cli, "MAP.md")));
+  string[] generated = firstMatch(shape, flat(read(err, fs, "MAP.md")));
   t.isTrue(generated.len() > 0,
            "MAP.md no longer states its figures in the shape this reads — the map generator writes " +
            "that sentence, so reword this check with it rather than deleting it");
-  string[] copied = firstMatch(shape, flat(read(core, cli, "packages/README.md")));
+  string[] copied = firstMatch(shape, flat(read(err, fs, "packages/README.md")));
   t.isTrue(copied.len() > 0,
            "packages/README.md no longer states the figures MAP.md does. If they were dropped on " +
            "purpose, delete this check in the same commit; one that matches nothing passes by " +
@@ -229,10 +235,12 @@ export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli
  * copy is a second transcription with nothing behind it. The README says out loud that the lines are
  * tested, which is only true while the two agree, so this is what makes that sentence honest.
  */
-export string test_the_readmes_transcript_is_the_front_pages(Core core, Cli cli) {
+export string test_the_readmes_transcript_is_the_front_pages(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string home = read(core, cli, "site/wac/home.wac");
-  string readme = read(core, cli, "README.md");
+  string home = read(err, fs, "site/wac/home.wac");
+  string readme = read(err, fs, "README.md");
 
   i32 open = home.indexOf("Said[] transcript() {");
   t.isTrue(open >= 0, "site/wac/home.wac has no transcript() table — has it been renamed?");
@@ -393,14 +401,15 @@ string[][] notTheTotal() {
  * and this directory has grown two of them. `vision/packages/box/README.md` says "17 applets"
  * because it is a rewrite that counts something else, and it was the file that found this.
  */
-string[] liveDocs(Core core, Cli cli) {
-  Exec r = cli.exec("git", ["ls-files", "*.md"], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("readmeFigures: git ls-files failed: " +
-              (r.ran() ? string.fromBytes(r.stderr) : r.error));
+string[] liveDocs(Output err, Procs procs) {
+  auto rRan = flatten(procs.exec("git", ["ls-files", "*.md"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    err.line("readmeFigures: git ls-files failed: " +
+              ((r is not null) ? string.fromBytes(r!.stderr) : "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"));
     trap;
   }
-  string[] all = lines(trimEnd(string.fromBytes(r.stdout)));
+  string[] all = lines(trimEnd(string.fromBytes(r!.stdout)));
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
     if (live(all[i])) { n = n + 1; }
@@ -449,21 +458,24 @@ bool allDigits(string s) {
   return true;
 }
 
-export string test_every_document_counts_the_applets_the_same_and_in_digits(Core core, Cli cli) {
+export string test_every_document_counts_the_applets_the_same_and_in_digits(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string[] appletsIn = firstMatch("([0-9]+) applets in one program", read(core, cli, "MAP.md"));
+  string[] appletsIn = firstMatch("([0-9]+) applets in one program", read(err, fs, "MAP.md"));
   t.isTrue(appletsIn.len() > 0, "MAP.md no longer states an applet count");
   if (appletsIn.len() == 0) { return t.report(); }
   i32 actual = number(appletsIn[1]);
 
-  string[] docs = liveDocs(core, cli);
+  string[] docs = liveDocs(err, procs);
   t.isTrue(docs.len() > 20, "git ls-files listed " + itoa(docs.len()) +
                             " live markdown files — this check would pass by seeing nothing");
   string[][] excused = notTheTotal();
   i32 checked = 0;
 
   for (i32 d = 0; d < docs.len(); d++) {
-    string[] ls = lines(read(core, cli, docs[d]));
+    string[] ls = lines(read(err, fs, docs[d]));
     for (i32 li = 0; li < ls.len(); li++) {
       string line = ls[li];
       if (line.indexOf("applets") < 0) { continue; }
@@ -587,10 +599,12 @@ string flat(string s) {
  * header makes — "published figures that cannot be regenerated go stale silently". The argument was
  * there; what was missing was a generator for the timings and a check that the two agree.
  */
-export string test_the_speed_table_lists_what_the_bench_measures(Core core, Cli cli) {
+export string test_the_speed_table_lists_what_the_bench_measures(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string bench = read(core, cli, "packages/crypto/tools/bench.wac");
-  string readme = read(core, cli, "packages/crypto/README.md");
+  string bench = read(err, fs, "packages/crypto/tools/bench.wac");
+  string readme = read(err, fs, "packages/crypto/README.md");
 
   string[] measured = identifiersMatching(bench, "row\\(core, \"([A-Za-z0-9]+)");
   // **Bounded to that one section**, because this README has other tables whose rows are also a
@@ -694,10 +708,12 @@ string sectionNamed(string text, string heading) {
  * the verdicts are *not* compared — those move with the code and the tool prints them; what cannot be
  * allowed to drift is which routines the table speaks for.
  */
-export string test_the_side_channel_table_lists_what_ct_wac_traces(Core core, Cli cli) {
+export string test_the_side_channel_table_lists_what_ct_wac_traces(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string tool = read(core, cli, "packages/crypto/tools/ct.wac");
-  string readme = read(core, cli, "packages/crypto/README.md");
+  string tool = read(err, fs, "packages/crypto/tools/ct.wac");
+  string readme = read(err, fs, "packages/crypto/README.md");
 
   string[] traced = identifiersMatching(tool, "Case\\(\"([A-Za-z0-9]+)\"");
   string[] published = identifiersMatching(sectionNamed(readme, "## Side channels"),
@@ -748,13 +764,15 @@ export string test_the_side_channel_table_lists_what_ct_wac_traces(Core core, Cl
  * operator's instruction for this table is to keep it current; naming the printer is what makes
  * "current" a question with an answer.
  */
-export string test_every_measurement_in_the_wacc_table_names_its_printer(Core core, Cli cli) {
+export string test_every_measurement_in_the_wacc_table_names_its_printer(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   string path = "packages/wacc/README.md";
-  FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, "could not read " + path + " — " + f.error);
-  if (!f.ok) { return t.report(); }
-  string[] lines = splitLines(string.fromBytes(f.bytes));
+  auto fRead = flatten(fs.readFile(path).wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "could not read " + path + " — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  string[] lines = splitLines(string.fromBytes(f!));
 
   // The table is the one whose header names the reference; there is one.
   i32 at = 0 - 1;
@@ -826,9 +844,11 @@ i32 newlines(string text) {
   return n;
 }
 
-export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Core core, Cli cli) {
+export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string readme = read(core, cli, "bootstrap/README.md");
+  string readme = read(err, fs, "bootstrap/README.md");
   string[] paths = [
                             "bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0",
                             "bootstrap/rust-ladder/src/flatten.rs"
@@ -839,7 +859,7 @@ export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Core 
   ];
   i32 total = 0;
   for (i32 i = 0; i < paths.len(); i++) {
-    i32 lines = newlines(read(core, cli, paths[i]));
+    i32 lines = newlines(read(err, fs, paths[i]));
     total = total + lines;
     string[] caps = firstMatch(labels[i] + "\\s+([0-9,]+) lines", readme);
     t.isTrue(caps.len() > 1, "the table no longer states a size for `" + labels[i] + "`");
@@ -881,9 +901,11 @@ export string test_the_bootstrap_readmes_trust_table_is_the_files_it_names(Core 
  * is the half that nearly went wrong — updating the rung sum without the headline leaves a sentence
  * whose parts do not add up.
  */
-export string test_the_bootstrap_readmes_rung_table_is_the_files_it_names(Core core, Cli cli) {
+export string test_the_bootstrap_readmes_rung_table_is_the_files_it_names(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  string readme = read(core, cli, "bootstrap/README.md");
+  string readme = read(err, fs, "bootstrap/README.md");
   string[] paths = [
                             "bootstrap/boot/l1.l0", "bootstrap/boot/l2.l1", "bootstrap/boot/l3.l2",
                             "bootstrap/boot/l4.l3", "bootstrap/boot/l5.l4"
@@ -891,7 +913,7 @@ export string test_the_bootstrap_readmes_rung_table_is_the_files_it_names(Core c
   string[] labels = ["wac-L1", "wac-L2", "wac-L3", "wac-L4", "wac-L5"];
   i32 rungs = 0;
   for (i32 i = 0; i < paths.len(); i++) {
-    i32 lines = newlines(read(core, cli, paths[i]));
+    i32 lines = newlines(read(err, fs, paths[i]));
     rungs = rungs + lines;
     string[] caps = firstMatch("\\*\\*" + labels[i] + "\\*\\*.*?([0-9,]+) lines", readme);
     t.isTrue(caps.len() > 1, "the rung table no longer states a size for `" + labels[i] + "`");

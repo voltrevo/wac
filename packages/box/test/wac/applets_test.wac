@@ -13,15 +13,15 @@
 // reading what we wrote, `httpd`, `nc`, the grants a *built* applet asks for, and the memory a streaming
 // applet holds. `issues/system/0193` has the list and the reasons.
 
-import { Cli, Core, Exec } from "std";
-import { Buf } from "core";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Stat, Sys } from "std";
+import { Buf, flatten } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
 import { Loaded, Ran, differs, layFixtures, load, runApplet, runCase, show } from "./replay.wac";
 import { UNKNOWN } from "../../src/box.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-applets"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-applets"; }
 
 /**
  * Three wac programs in a row, which is the thing a file-to-file tool could never do.
@@ -30,16 +30,18 @@ string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-applets"; }
  * test, and running the stages separately would assert that three applets work and say nothing about the
  * thing between them.
  */
-export async string test_boxs_applets_compose_in_a_pipeline(Core core, Cli cli) {
+export async string test_boxs_applets_compose_in_a_pipeline(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
-  t.eqStr((await runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u")).out, "a\nb\nc\n", "sort -u");
-  t.eqStr((await runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | wc -l")).out, "3\n",
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
+  t.eqStr((await runCase(sys, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u")).out, "a\nb\nc\n", "sort -u");
+  t.eqStr((await runCase(sys, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | wc -l")).out, "3\n",
           "and counted");
-  t.eqStr((await runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | tac")).out, "c\nb\na\n",
+  t.eqStr((await runCase(sys, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | tac")).out, "c\nb\na\n",
           "and reversed");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -50,21 +52,23 @@ export async string test_boxs_applets_compose_in_a_pipeline(Core core, Cli cli) 
  * that is an out-of-memory kill rather than a hang, which is how it was found — by hand, since nothing in
  * the suite passes a zero. GNU refuses it and so does this.
  */
-export async string test_a_count_that_cannot_make_progress_is_refused(Core core, Cli cli) {
+export async string test_a_count_that_cannot_make_progress_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, [Fixture("a.txt", "alpha\nbeta\n".toBytes(), false)]),
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, [Fixture("a.txt", "alpha\nbeta\n".toBytes(), false)]),
            "cannot make \{dir}");
 
   string[] refused = ["fold -w0 a.txt", "split -0 a.txt part-"];
   for (i32 i = 0; i < refused.len(); i++) {
-    Ran got = await runCase(core, cli, dir, refused[i]);
+    Ran got = await runCase(sys, dir, refused[i]);
     t.eqI32(got.status, 1, "\{refused[i]}: expected a refusal");
     t.isTrue(got.err.indexOf("invalid number") >= 0, "\{refused[i]}: \{show(got.err)}");
   }
   // And the ordinary case still works, or the refusal above is just a broken applet.
-  t.eqStr((await runCase(core, cli, dir, "fold -w4 a.txt")).out, "alph\na\nbeta\n", "fold -w4");
-  cli.remove(dir, true).wait();
+  t.eqStr((await runCase(sys, dir, "fold -w4 a.txt")).out, "alph\na\nbeta\n", "fold -w4");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -74,22 +78,24 @@ export async string test_a_count_that_cannot_make_progress_is_refused(Core core,
  * One test rather than one per applet, because the assertion is the same for all of them and the list is
  * `cases.wac`'s. What a particular case is *for* is written beside it there.
  */
-export async string test_the_lifted_invocations_still_answer_what_the_real_tool_answered(Core core, Cli cli) {
+export async string test_the_lifted_invocations_still_answer_what_the_real_tool_answered(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, "packages/box/test/applet-vectors.txt");
+  Loaded v = load(fs, "packages/box/test/applet-vectors.txt");
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
   string[] list = appletCases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 ran = 0;
   i32 wrong = 0;
   i32 unknown = 0;
   string detail = "";
   for (i32 i = 0; i < list.len() && i < v.n; i++) {
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
-    t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make \{dir}");
-    Ran r = await runCase(core, cli, dir, list[i]);
+    t.isTrue(layFixtures(fs, dir, appletFixtures()), "cannot make \{dir}");
+    Ran r = await runCase(sys, dir, list[i]);
     ran = ran + 1;
     if (r.out != v.items[i].out || r.status != v.items[i].status) {
       wrong = wrong + 1;
@@ -101,7 +107,7 @@ export async string test_the_lifted_invocations_still_answer_what_the_real_tool_
       }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   t.eqI32(ran, list.len(), "not every case replayed — \{list.len()} cases, \{v.n}" +
                            " vectors");
   t.eqI32(unknown, 0, "\{unknown} cases do not match the recorded invocation — recapture with " +
@@ -112,14 +118,16 @@ export async string test_the_lifted_invocations_still_answer_what_the_real_tool_
 }
 
 /** A zero step loops forever if nobody checks, so it is refused rather than attempted. */
-export async string test_seq_refuses_a_zero_step(Core core, Cli cli) {
+export async string test_seq_refuses_a_zero_step(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
-  Ran zero = await runCase(core, cli, dir, "seq 1 0 9");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
+  Ran zero = await runCase(sys, dir, "seq 1 0 9");
   t.eqI32(zero.status, 1, "seq 1 0 9");
   t.isTrue(zero.err.indexOf("must not be zero") >= 0, zero.err);
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -134,50 +142,52 @@ export async string test_seq_refuses_a_zero_step(Core core, Cli cli) {
  * happens without the write grant, whatever the arguments say. That is a claim about a *built* program's
  * manifest and the host that enforces it, and this process holds grants of its own.
  */
-export async string test_boxs_mutation_tier(Core core, Cli cli) {
+export async string test_boxs_mutation_tier(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string root = caseDir(cli);
-  t.isTrue(layFixtures(cli, root, Fixture[]()), "cannot make \{root}");
+  string root = caseDir(env);
+  t.isTrue(layFixtures(fs, root, Fixture[]()), "cannot make \{root}");
 
-  t.eqI32((await runCase(core, cli, root, "mkdir -p a/b/c")).status, 0, "mkdir -p");
-  t.isTrue(cli.stat("\{root}/a/b/c").wait().isDir, "mkdir -p made the parents");
+  t.eqI32((await runCase(sys, root, "mkdir -p a/b/c")).status, 0, "mkdir -p");
+  t.isTrue(flatten(fs.stat("\{root}/a/b/c").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isDir, "mkdir -p made the parents");
   // Without -p a missing parent is an error, which is the difference between them.
-  t.eqI32((await runCase(core, cli, root, "mkdir x/y")).status, 1, "mkdir without -p needs the parent");
+  t.eqI32((await runCase(sys, root, "mkdir x/y")).status, 1, "mkdir without -p needs the parent");
 
-  t.eqI32((await runCase(core, cli, root, "touch a/b/c/f")).status, 0, "touch");
-  t.isTrue(cli.stat("\{root}/a/b/c/f").wait().size == 0, "touch made it empty");
-  t.isTrue(cli.writeFile("\{root}/a/b/c/f", "kept".toBytes()).wait().ok(), "cannot write the fixture");
-  t.eqI32((await runCase(core, cli, root, "touch a/b/c/f")).status, 0, "touch again");
-  t.eqStr(string.fromBytes(cli.readFile("\{root}/a/b/c/f").wait().bytes), "kept",
+  t.eqI32((await runCase(sys, root, "touch a/b/c/f")).status, 0, "touch");
+  t.isTrue(flatten(fs.stat("\{root}/a/b/c/f").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).size == 0, "touch made it empty");
+  t.isTrue(flatten(fs.writeFile("\{root}/a/b/c/f", "kept".toBytes()).wait()).isOk(), "cannot write the fixture");
+  t.eqI32((await runCase(sys, root, "touch a/b/c/f")).status, 0, "touch again");
+  t.eqStr(string.fromBytes(flatten(fs.readFile("\{root}/a/b/c/f").wait()).orElse(u8[]())), "kept",
           "touch left an existing file alone");
 
-  t.eqI32((await runCase(core, cli, root, "mv a/b/c/f moved")).status, 0, "mv");
-  t.isTrue(!cli.stat("\{root}/a/b/c/f").wait().exists, "mv left nothing behind");
-  t.eqStr(string.fromBytes(cli.readFile("\{root}/moved").wait().bytes), "kept", "mv kept the contents");
+  t.eqI32((await runCase(sys, root, "mv a/b/c/f moved")).status, 0, "mv");
+  t.isTrue(!flatten(fs.stat("\{root}/a/b/c/f").wait()).isOk(), "mv left nothing behind");
+  t.eqStr(string.fromBytes(flatten(fs.readFile("\{root}/moved").wait()).orElse(u8[]())), "kept", "mv kept the contents");
 
   // `rmdir` is never recursive; that distinction is the reason it is its own command.
-  t.isTrue(cli.writeFile("\{root}/a/b/c/g", "x".toBytes()).wait().ok(), "cannot write the fixture");
-  t.eqI32((await runCase(core, cli, root, "rmdir a/b/c")).status, 1, "rmdir refuses a non-empty directory");
-  t.eqI32((await runCase(core, cli, root, "rm a/b/c/g")).status, 0, "rm");
-  t.eqI32((await runCase(core, cli, root, "rmdir a/b/c")).status, 0, "rmdir takes an empty one");
+  t.isTrue(flatten(fs.writeFile("\{root}/a/b/c/g", "x".toBytes()).wait()).isOk(), "cannot write the fixture");
+  t.eqI32((await runCase(sys, root, "rmdir a/b/c")).status, 1, "rmdir refuses a non-empty directory");
+  t.eqI32((await runCase(sys, root, "rm a/b/c/g")).status, 0, "rm");
+  t.eqI32((await runCase(sys, root, "rmdir a/b/c")).status, 0, "rmdir takes an empty one");
 
   // Absence is an error unless you say it is not, as `rm -f` says.
-  t.eqI32((await runCase(core, cli, root, "rm never")).status, 1, "rm of what is not there");
-  t.eqI32((await runCase(core, cli, root, "rm -f never")).status, 0, "rm -f of what is not there");
-  t.eqI32((await runCase(core, cli, root, "rm a")).status, 1, "rm needs -r for a directory");
-  t.eqI32((await runCase(core, cli, root, "rm -r a")).status, 0, "rm -r");
-  t.isTrue(!cli.stat("\{root}/a").wait().exists, "rm -r took the tree");
+  t.eqI32((await runCase(sys, root, "rm never")).status, 1, "rm of what is not there");
+  t.eqI32((await runCase(sys, root, "rm -f never")).status, 0, "rm -f of what is not there");
+  t.eqI32((await runCase(sys, root, "rm a")).status, 1, "rm needs -r for a directory");
+  t.eqI32((await runCase(sys, root, "rm -r a")).status, 0, "rm -r");
+  t.isTrue(!flatten(fs.stat("\{root}/a").wait()).isOk(), "rm -r took the tree");
 
   // The point of the tier: `cp` writes beside its target and renames, so the destination is never seen
   // half-written and no temporary name survives a successful copy. **This could not be asserted in
   // process until `issues/system/0166`** — a frame kept the bytes `cp` redirected to its temporary, so the
   // copy printed itself and wrote nothing.
-  t.isTrue(cli.writeFile("\{root}/src", "some bytes to copy\n".toBytes()).wait().ok(), "fixture");
-  t.eqI32((await runCase(core, cli, root, "cp src copy")).status, 0, "cp");
-  t.eqStr(string.fromBytes(cli.readFile("\{root}/copy").wait().bytes), "some bytes to copy\n",
+  t.isTrue(flatten(fs.writeFile("\{root}/src", "some bytes to copy\n".toBytes()).wait()).isOk(), "fixture");
+  t.eqI32((await runCase(sys, root, "cp src copy")).status, 0, "cp");
+  t.eqStr(string.fromBytes(flatten(fs.readFile("\{root}/copy").wait()).orElse(u8[]())), "some bytes to copy\n",
           "cp copied it");
-  t.eqStr(sortedJoin(cli.readDir(root).wait()), "copy moved src", "a temporary file survived");
-  cli.remove(root, true).wait();
+  t.eqStr(sortedJoin(flatten(fs.readDir(root).wait()).ok()), "copy moved src", "a temporary file survived");
+  fs.remove(root, true).wait();
   return t.report();
 }
 
@@ -205,31 +215,33 @@ string sortedJoin(string[]? entries) {
  * few applets whose expectation is written down rather than captured, and each row says which rule it
  * is about.
  */
-export async string test_urlencode_escapes_a_component(Core core, Cli cli) {
+export async string test_urlencode_escapes_a_component(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   // A slash is data here, not structure — the whole point of the applet.
-  t.eqStr(await one(core, cli, dir, "a/b"), "a%2Fb\n", "a slash becomes %2F");
-  t.eqStr(await one(core, cli, dir, "a b&c=d"), "a%20b%26c%3Dd\n", "space, ampersand and equals");
+  t.eqStr(await one(sys, fs, dir, "a/b"), "a%2Fb\n", "a slash becomes %2F");
+  t.eqStr(await one(sys, fs, dir, "a b&c=d"), "a%20b%26c%3Dd\n", "space, ampersand and equals");
   // Encoding is not idempotent: an input that already looks encoded is encoded again, or a caller
   // cannot round-trip a literal percent.
-  t.eqStr(await one(core, cli, dir, "%20"), "%2520\n", "a literal percent is escaped, not preserved");
+  t.eqStr(await one(sys, fs, dir, "%20"), "%2520\n", "a literal percent is escaped, not preserved");
   // RFC 3986's unreserved set, which must survive untouched — including the tilde, which is where
   // implementations differ.
-  t.eqStr(await one(core, cli, dir, "plain-text_1.2~"), "plain-text_1.2~\n", "the unreserved set is left alone");
+  t.eqStr(await one(sys, fs, dir, "plain-text_1.2~"), "plain-text_1.2~\n", "the unreserved set is left alone");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** `urlencode` over one datum, written to a file the applet then reads. Its trailing newline
  *  is kept rather than trimmed — wac's strings have no `trim`, and the newline is part of what the
  *  applet writes, so asserting it is asserting more rather than less. */
-async string one(Core core, Cli cli, string dir, string given) {
-  cli.writeFile("\{dir}/datum", given.toBytes()).wait();
-  return (await runCase(core, cli, dir, "urlencode datum")).out;
+async string one(Sys sys, Files fs, string dir, string given) {
+  fs.writeFile("\{dir}/datum", given.toBytes()).wait();
+  return (await runCase(sys, dir, "urlencode datum")).out;
 }
 
 /**
@@ -243,31 +255,36 @@ async string one(Core core, Cli cli, string dir, string given) {
  * Live rather than captured for that reason: a vector holds stderr byte for byte, and these two lines
  * are deliberately not byte-identical.
  */
-export async string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) {
+export async string test_mkdir_and_rmdir_give_the_categorys_words(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
-  t.isTrue(cli.mkdir("\{dir}/full/inner", true).wait().ok(), "a directory with something in it");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
+  t.isTrue(flatten(fs.mkdir("\{dir}/full/inner", true).wait()).isOk(), "a directory with something in it");
 
-  Ran twice = await runCase(core, cli, dir, "mkdir full");
+  Ran twice = await runCase(sys, dir, "mkdir full");
   t.eqI32(twice.status, 1, "mkdir over an existing directory fails");
-  Ran notEmpty = await runCase(core, cli, dir, "rmdir full");
+  Ran notEmpty = await runCase(sys, dir, "rmdir full");
   t.eqI32(notEmpty.status, 1, "rmdir of a non-empty directory fails");
 
   // GNU's wording, which is where the two strings below come from rather than from memory.
-  Exec gnuMkdir = cli.exec("mkdir", ["\{dir}/full"], u8[]()).wait();
-  Exec gnuRmdir = cli.exec("rmdir", ["\{dir}/full"], u8[]()).wait();
-  t.isTrue(gnuMkdir.ran() && gnuRmdir.ran(), "the real tools ran");
-  t.isTrue(string.fromBytes(gnuMkdir.stderr).indexOf("File exists") >= 0,
-           string.fromBytes(gnuMkdir.stderr));
-  t.isTrue(string.fromBytes(gnuRmdir.stderr).indexOf("Directory not empty") >= 0,
-           string.fromBytes(gnuRmdir.stderr));
+  auto gnuMkdirRan = flatten(procs.exec("mkdir", ["\{dir}/full"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? gnuMkdir = gnuMkdirRan.ok();
+  auto gnuRmdirRan = flatten(procs.exec("rmdir", ["\{dir}/full"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? gnuRmdir = gnuRmdirRan.ok();
+  t.isTrue((gnuMkdir is not null) && (gnuRmdir is not null), "the real tools ran");
+  t.isTrue(string.fromBytes(gnuMkdir!.stderr).indexOf("File exists") >= 0,
+           string.fromBytes(gnuMkdir!.stderr));
+  t.isTrue(string.fromBytes(gnuRmdir!.stderr).indexOf("Directory not empty") >= 0,
+           string.fromBytes(gnuRmdir!.stderr));
 
   // ...and box says the same reason, in its own shape.
   t.isTrue(twice.err.indexOf("File exists") >= 0, twice.err);
   t.isTrue(notEmpty.err.indexOf("Directory not empty") >= 0, notEmpty.err);
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -283,22 +300,24 @@ export async string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli
  * this test passed while asserting nothing (wac-mono 0104). `\(a\|a\)*b` is the same pattern in the
  * dialect `grep` actually speaks, and `-E` is the other way round.
  */
-export async string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core core, Cli cli) {
+export async string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
   // Thirty `a`s and no `b`: the pattern can never succeed, and every path has to be tried to know it.
-  cli.writeFile("\{dir}/patho", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".toBytes()).wait();
+  fs.writeFile("\{dir}/patho", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".toBytes()).wait();
 
-  Ran basic = await runCase(core, cli, dir, "grep '\\(a\\|a\\)*b' patho");
+  Ran basic = await runCase(sys, dir, "grep '\\(a\\|a\\)*b' patho");
   t.eqI32(basic.status, 2, "budget exhaustion exits 2 in the basic dialect: \{basic.err}");
   t.eqStr(basic.out, "", "and prints no matches");
 
-  Ran extended = await runCase(core, cli, dir, "grep -E '(a|a)*b' patho");
+  Ran extended = await runCase(sys, dir, "grep -E '(a|a)*b' patho");
   t.eqI32(extended.status, 2, "and the same pattern under -E: \{extended.err}");
   t.eqStr(extended.out, "", "and prints no matches either");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -314,25 +333,27 @@ export async string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core 
  * what `split` writes to stdout is nothing at all. GNU runs in a directory of its own through
  * `execWithIn`, so the two sets of names cannot be confused for each other.
  */
-export async string test_splits_suffixes_are_gnus_past_zz(Core core, Cli cli) {
+export async string test_splits_suffixes_are_gnus_past_zz(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   string body = "";
   for (i32 i = 0; i < 700; i++) { body = body + "\{i}\n"; }
-  t.isTrue(cli.mkdir("\{dir}/ours", true).wait().ok(), "made ours");
-  t.isTrue(cli.mkdir("\{dir}/theirs", true).wait().ok(), "made theirs");
-  t.isTrue(cli.writeFile("\{dir}/ours/seven", body.toBytes()).wait().ok(), "wrote the source");
-  t.isTrue(cli.writeFile("\{dir}/theirs/seven", body.toBytes()).wait().ok(), "and its twin");
+  t.isTrue(flatten(fs.mkdir("\{dir}/ours", true).wait()).isOk(), "made ours");
+  t.isTrue(flatten(fs.mkdir("\{dir}/theirs", true).wait()).isOk(), "made theirs");
+  t.isTrue(flatten(fs.writeFile("\{dir}/ours/seven", body.toBytes()).wait()).isOk(), "wrote the source");
+  t.isTrue(flatten(fs.writeFile("\{dir}/theirs/seven", body.toBytes()).wait()).isOk(), "and its twin");
 
-  await runCase(core, cli, "\{dir}/ours", "split -1 seven");
-  Exec real = cli.execWithIn("split", ["-l", "1", "seven"], u8[](), string[](),
-                             false, false, "\{dir}/theirs").wait();
+  await runCase(sys, "\{dir}/ours", "split -1 seven");
+  Exec real = flatten(procs.exec("split", ["-l", "1", "seven"], u8[](), ChildEnv(false, string[]()), Launch("\{dir}/theirs", false, false, false)).wait()).unwrap();
   t.isTrue(real.ran(), "the real split ran: \{real.error}");
 
-  string ours = sortedNames(cli, "\{dir}/ours");
-  string theirs = sortedNames(cli, "\{dir}/theirs");
+  string ours = sortedNames(fs, "\{dir}/ours");
+  string theirs = sortedNames(fs, "\{dir}/theirs");
   // **A floor, because two empty listings compare equal.** Counted rather than measured in
   // characters: the first version asked for 3000 bytes and 701 short names came to about 2900, so the
   // floor failed on a listing that was entirely correct.
@@ -340,7 +361,7 @@ export async string test_splits_suffixes_are_gnus_past_zz(Core core, Cli cli) {
            "\{real.status} err \{string.fromBytes(real.stderr)}");
   t.eqStr(ours, theirs, "every split suffix, all 700");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -353,8 +374,8 @@ i32 count(string listing) {
 }
 
 /** A directory's entries, sorted, as one line — the shape a listing comparison wants. */
-string sortedNames(Cli cli, string dir) {
-  string[]? got = cli.readDir(dir).wait();
+string sortedNames(Files fs, string dir) {
+  string[]? got = flatten(fs.readDir(dir).wait()).ok();
   if (got is null) { return "(unreadable)"; }
   string[] names = got!;
   // Insertion sort: the lists are a few hundred short strings and this file has no sort to hand.
@@ -380,22 +401,24 @@ string sortedNames(Cli cli, string dir) {
  * `crc32` are ours — bash answers 127 for them, so there is nothing to capture and the expectation is
  * written down.
  */
-export async string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli) {
+export async string test_a_failed_read_is_not_an_end_of_input(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, appletFixtures()), "cannot make \{dir}");
 
-  Ran hex = await runCase(core, cli, dir, "hex adir");
+  Ran hex = await runCase(sys, dir, "hex adir");
   t.eqI32(hex.status, 1, "hex of a directory fails rather than reading nothing");
   t.eqStr(hex.out, "", "and writes no output");
   t.isTrue(hex.err.indexOf("Is a directory") >= 0, hex.err);
 
-  Ran crc = await runCase(core, cli, dir, "crc32 adir");
+  Ran crc = await runCase(sys, dir, "crc32 adir");
   t.eqI32(crc.status, 1, "and so does crc32");
   t.eqStr(crc.out, "", "which is the half that mattered: a checksum of nothing is a number");
   t.isTrue(crc.err.indexOf("Is a directory") >= 0, crc.err);
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -413,32 +436,35 @@ export async string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli
  * and sorted on the other, so both are sorted before comparing. A vector holds one script and one
  * answer, and neither of those pairs is one script.
  */
-export async string test_find_and_du_descend(Core core, Cli cli) {
+export async string test_find_and_du_descend(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
-  t.isTrue(cli.mkdir("\{dir}/t/a/b", true).wait().ok(), "three levels");
-  cli.writeFile("\{dir}/t/f", "one\n".toBytes()).wait();
-  cli.writeFile("\{dir}/t/a/g", "two\n".toBytes()).wait();
-  cli.writeFile("\{dir}/t/a/b/h", "three\n".toBytes()).wait();
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
+  t.isTrue(flatten(fs.mkdir("\{dir}/t/a/b", true).wait()).isOk(), "three levels");
+  fs.writeFile("\{dir}/t/f", "one\n".toBytes()).wait();
+  fs.writeFile("\{dir}/t/a/g", "two\n".toBytes()).wait();
+  fs.writeFile("\{dir}/t/a/b/h", "three\n".toBytes()).wait();
 
   // The guard: a walk that never descended would still match a flat tree, which is how the mutants
   // survived. `t/a/b/h` is three levels down, so an answer without it is an answer that stopped.
-  Ran ours = await runCase(core, cli, dir, "find t");
+  Ran ours = await runCase(sys, dir, "find t");
   t.isTrue(ours.out.indexOf("t/a/b/h") >= 0,
            "the walk reached the deepest file — without this a MAX_DEPTH of zero passes: \{ours.out}");
 
-  Exec realFind = cli.execWithIn("find", ["t"], u8[](), string[](), false, false, dir).wait();
+  Exec realFind = flatten(procs.exec("find", ["t"], u8[](), ChildEnv(false, string[]()), Launch(dir, false, false, false)).wait()).unwrap();
   t.isTrue(realFind.ran(), "the real find ran: \{realFind.error}");
   t.eqStr(sortedLines(ours.out), sortedLines(string.fromBytes(realFind.stdout)), "find differs");
 
   // `du -sb` is the invocation box's `du` answers, and it refuses `-s` itself, so only GNU is given it.
-  Ran mine = await runCase(core, cli, dir, "du t");
-  Exec realDu = cli.execWithIn("du", ["-sb", "t"], u8[](), string[](), false, false, dir).wait();
+  Ran mine = await runCase(sys, dir, "du t");
+  Exec realDu = flatten(procs.exec("du", ["-sb", "t"], u8[](), ChildEnv(false, string[]()), Launch(dir, false, false, false)).wait()).unwrap();
   t.isTrue(realDu.ran(), "the real du ran: \{realDu.error}");
   t.eqStr(firstField(mine.out), firstField(string.fromBytes(realDu.stdout)), "du differs from du -sb");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -507,35 +533,39 @@ string reasonOf(string line) {
  * along with the variable: box's table is English, so a run under a translated locale is a real
  * disagreement and this should be the test that shows it.
  */
-export async string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli) {
+export async string test_a_failed_read_says_what_the_real_tool_says(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   string denied = "\{dir}/unreadable";
   string missing = "\{dir}/definitely-not-here";
-  t.isTrue(cli.writeFile(denied, "secret\n".toBytes()).wait().ok(), "wrote the file");
-  t.isTrue(cli.chmod(denied, 0).wait().ok(), "and closed it");
+  t.isTrue(flatten(fs.writeFile(denied, "secret\n".toBytes()).wait()).isOk(), "wrote the file");
+  t.isTrue(flatten(fs.chmod(denied, 0).wait()).isOk(), "and closed it");
 
   // **A control, as in `unreadable_test.wac`.** Mode 0 denies nothing to root, so as root the denied
   // half of this test would compare two successes and pass without asking anything.
-  t.eqI32(cli.exec("cat", [denied], u8[]()).wait().status, 1,
+  t.eqI32(flatten(procs.exec("cat", [denied], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap().status, 1,
           "the fixture is genuinely unreadable — running as root would make it 0");
 
   string[] applets = ["cat", "cat", "base64", "base64"];
   string[] paths = [missing, denied, missing, denied];
   for (i32 i = 0; i < applets.len(); i++) {
     string what = applets[i] + " on " + (i % 2 == 0 ? "a missing file" : "an unreadable one");
-    Ran ours = await runCase(core, cli, dir, "\{applets[i]} \{paths[i]}");
-    Exec theirs = cli.exec(applets[i], [paths[i]], u8[]()).wait();
-    t.isTrue(theirs.error == "", "the oracle ran: \{theirs.error}");
-    t.eqStr(reasonOf(ours.err), reasonOf(string.fromBytes(theirs.stderr)),
+    Ran ours = await runCase(sys, dir, "\{applets[i]} \{paths[i]}");
+    auto theirsRan = flatten(procs.exec(applets[i], [paths[i]], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? theirs = theirsRan.ok();
+    t.isTrue("\{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}" == "", "the oracle ran: \{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}");
+    t.eqStr(reasonOf(ours.err), reasonOf(string.fromBytes(theirs!.stderr)),
             "the reason for \{what} differs from the real one's: \{ours.err}");
     t.eqI32(ours.status, 1, "a failed read exits 1, as \{applets[i]} does");
   }
 
-  cli.chmod(denied, 384).wait();          // 0600, so the cleanup can unlink it
-  cli.remove(dir, true).wait();
+  fs.chmod(denied, 384).wait();          // 0600, so the cleanup can unlink it
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -550,27 +580,29 @@ export async string test_a_failed_read_says_what_the_real_tool_says(Core core, C
  * `-a` and answers 0; the first version of this test asserted 2 and got 0 from a command that was never
  * box's. The five shadowed names all have this hole and this is the way through it.
  */
-export async string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
+export async string test_an_unimplemented_flag_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, appletFixtures()), "cannot make \{dir}");
 
-  Ran r = await runApplet(core, cli, dir, ["ls", "-a", dir]);
+  Ran r = await runApplet(sys, dir, ["ls", "-a", dir]);
   t.eqI32(r.status, 2, "an unimplemented flag is a usage error: \{r.err}");
   t.isTrue(r.err.indexOf("not implemented") >= 0, r.err);
 
   // The control, and it is not decoration: without it a broken `ls` gives the same 2 for a different
   // reason, and the test would be asserting that `ls` does not work.
-  Ran plain = await runApplet(core, cli, dir, ["ls", dir]);
+  Ran plain = await runApplet(sys, dir, ["ls", dir]);
   t.eqI32(plain.status, 0, "and ls itself still answers: \{plain.err}");
   t.isTrue(plain.out.indexOf("m1.txt") >= 0, plain.out);
 
   // The name box does not have. `dispatch` says so with a sentinel rather than a status, because "no
   // such applet" and "it ran and failed" are different facts — `box` turns this into the usage error
   // that `box.test.ts` still asserts end to end, since `main` reads argv from the process.
-  t.eqI32((await runApplet(core, cli, dir, ["nope"])).status, UNKNOWN, "an unknown applet is UNKNOWN");
+  t.eqI32((await runApplet(sys, dir, ["nope"])).status, UNKNOWN, "an unknown applet is UNKNOWN");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -589,35 +621,39 @@ export async string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
  * `split -100` and `split -l 100` are the same request; ours takes the attached form and GNU wants the
  * flag, which is a spelling difference rather than a divergence.
  */
-export async string test_split_writes_the_same_pieces_as_the_real_split(Core core, Cli cli) {
+export async string test_split_writes_the_same_pieces_as_the_real_split(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   Buf b = Buf.create();
   for (i32 i = 1; i <= 250; i++) { b.pushAll("\{i}\n".toBytes()); }
   string big = "\{dir}/big.txt";
-  t.isTrue(cli.writeFile(big, b.bytes()).wait().ok(), "wrote 250 lines");
+  t.isTrue(flatten(fs.writeFile(big, b.bytes()).wait()).isOk(), "wrote 250 lines");
 
-  t.eqI32((await runApplet(core, cli, dir, ["split", "-100", big, "\{dir}/part-"])).status, 0,
+  t.eqI32((await runApplet(sys, dir, ["split", "-100", big, "\{dir}/part-"])).status, 0,
           "split ran");
-  Exec theirs = cli.exec("split", ["-l", "100", big, "\{dir}/real-"], u8[]()).wait();
-  t.isTrue(theirs.error == "", "there is a real split: \{theirs.error}");
-  t.eqI32(theirs.status, 0, "and it ran: \{string.fromBytes(theirs.stderr)}");
+  auto theirsRan = flatten(procs.exec("split", ["-l", "100", big, "\{dir}/real-"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? theirs = theirsRan.ok();
+  t.isTrue("\{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}" == "", "there is a real split: \{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}");
+  t.eqI32(theirs!.status, 0, "and it ran: \{string.fromBytes(theirs!.stderr)}");
 
   string[] suffixes = ["aa", "ab", "ac"];
   for (i32 i = 0; i < suffixes.len(); i++) {
-    u8[] mine = cli.readFile("\{dir}/part-\{suffixes[i]}").wait().bytes;
-    u8[] real = cli.readFile("\{dir}/real-\{suffixes[i]}").wait().bytes;
+    u8[] mine = flatten(fs.readFile("\{dir}/part-\{suffixes[i]}").wait()).orElse(u8[]());
+    u8[] real = flatten(fs.readFile("\{dir}/real-\{suffixes[i]}").wait()).orElse(u8[]());
     t.isTrue(real.len() > 0, "the real split wrote real-\{suffixes[i]}");
     t.eqStr(differs(mine, real), "", "part-\{suffixes[i]} differs");
   }
 
   // No fourth piece. 250 lines at 100 is three, and an applet that opens the next output before it
   // knows there is anything to write leaves an empty one behind.
-  t.isFalse(cli.stat("\{dir}/part-ad").wait().exists, "an empty fourth piece was created");
-  t.isFalse(cli.stat("\{dir}/real-ad").wait().exists, "and the real one did not make one either");
+  t.isFalse(flatten(fs.stat("\{dir}/part-ad").wait()).isOk(), "an empty fourth piece was created");
+  t.isFalse(flatten(fs.stat("\{dir}/real-ad").wait()).isOk(), "and the real one did not make one either");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

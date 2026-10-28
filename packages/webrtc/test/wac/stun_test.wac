@@ -38,7 +38,7 @@
 // and a dropped datagram.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Pending, HostSocket } from "std";
+import { Cli, Datagram, Pending, Clock, Env, Files, Net, Output, Procs, Sys, Datagrams } from "std";
 import { Lines, Answers, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
@@ -47,6 +47,7 @@ import { addFingerprint, addIntegrity, attrCount, attrOf, checkFingerprint, chec
          isSuccess, kFingerprint, kIntegrity, kSoftware, kUsername, kXorMapped, looksStun,
          mappedAddress, parses, request, requestWithSoftware, roundTripAddress, tidOf }
   from "./stun_probe.wac";
+import { flatten } from "core";
 
 static string ORACLE = "packages/webrtc/test/stun_oracle.py";
 
@@ -145,18 +146,24 @@ export string test_rfc_5769_2_4_a_non_ascii_username_padded_parsed_but_not_verif
   return t.report();
 }
 
-export string test_coturn_answers_our_binding_request(Core core, Cli cli) {
+export string test_coturn_answers_our_binding_request(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Turn server = startCoturn(cli);
-  if (!server.ok) { t.fail(server.error); stopCoturn(cli, server); return t.report(); }
+  Turn server = startCoturn(err, clock, env, fs, net, procs);
+  if (!server.ok) { t.fail(server.error); stopCoturn(fs, procs, server); return t.report(); }
 
   u8[] req = request(tid());
   t.eqI32(req.len(), 20, "a Binding request with no attributes is the header alone");
   t.eqStr(hexOf(slice(req, 0, 8)), "000100002112a442", "type, length, cookie");
 
-  Exchange got = exchange(core, cli, server.port, req);
+  Exchange got = exchange(clock, net, server.port, req);
   t.isTrue(got.ok, "coturn did not answer our Binding request — \{got.error}");
-  if (!got.ok) { stopCoturn(cli, server); return t.report(); }
+  if (!got.ok) { stopCoturn(fs, procs, server); return t.report(); }
 
   // **Everything below is about their bytes, not ours.**
   u8[] reply = got.reply;
@@ -174,14 +181,20 @@ export string test_coturn_answers_our_binding_request(Core core, Cli cli) {
           "the xor is undone correctly or this number is wrong by 0x2112");
   t.eqStr(dotted(addr), "127.0.0.1", "and the address");
 
-  stopCoturn(cli, server);
+  stopCoturn(fs, procs, server);
   return t.report();
 }
 
-export string test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire(Core core, Cli cli) {
+export string test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Turn server = startCoturn(cli);
-  if (!server.ok) { t.fail(server.error); stopCoturn(cli, server); return t.report(); }
+  Turn server = startCoturn(err, clock, env, fs, net, procs);
+  if (!server.ok) { t.fail(server.error); stopCoturn(fs, procs, server); return t.report(); }
 
   // Five bytes of SOFTWARE, which pads to eight — the case where an encoder that forgot the padding
   // produces a length coturn will reject or misread.
@@ -189,32 +202,34 @@ export string test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire
   t.eqI32(req.len(), 20 + 4 + 8, "five bytes of value occupy eight, plus four of header");
   t.eqStr(hexOf(slice(req, 2, 4)), "000c", "and the header counts twelve, padding included");
 
-  Exchange got = exchange(core, cli, server.port, req);
+  Exchange got = exchange(clock, net, server.port, req);
   t.isTrue(got.ok, "coturn did not answer a request carrying SOFTWARE — \{got.error}");
   if (got.ok) {
     t.isTrue(isSuccess(got.reply),
              "coturn accepted the padded attribute — a length that disagreed with the bytes would " +
              "have been rejected or ignored");
   }
-  stopCoturn(cli, server);
+  stopCoturn(fs, procs, server);
   return t.report();
 }
 
-export string test_aioice_parses_what_we_build_attribute_for_attribute(Core core, Cli cli) {
+export string test_aioice_parses_what_we_build_attribute_for_attribute(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] req = requestWithSoftware(tid(), ("wac-webrtc").toBytes());
   Lines lines = Lines.create();
   // Method 1 is Binding, class 0 is request.
   lines.add("parse \{hexOf(req)} 1 0 \{TID} wac-webrtc");
-  check(t, cli, "python3", [ORACLE], lines, "aioice parsing ours");
+  check(t, procs, "python3", [ORACLE], lines, "aioice parsing ours");
   return t.report();
 }
 
-export string test_and_we_parse_what_aioice_builds(Core core, Cli cli) {
+export string test_and_we_parse_what_aioice_builds(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   Lines lines = Lines.create();
   lines.add("build \{TID}");
-  Answers a = ask(t, cli, "python3", [ORACLE], lines, "aioice building a response");
+  Answers a = ask(t, procs, "python3", [ORACLE], lines, "aioice building a response");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
 
   u8[] msg = decoded(word(a.lines[0], 1));
@@ -248,7 +263,8 @@ export string test_an_address_survives_our_own_encode_and_decode() {
   return t.report();
 }
 
-export string test_message_integrity_aioice_verifies_ours_and_we_verify_aioices(Core core, Cli cli) {
+export string test_message_integrity_aioice_verifies_ours_and_we_verify_aioices(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] key = ("VOkJxbRl1RmTxUk/WvJxBt").toBytes();
   u8[] signed = addIntegrity(requestWithSoftware(tid(), ("wac").toBytes()), key);
@@ -265,7 +281,7 @@ export string test_message_integrity_aioice_verifies_ours_and_we_verify_aioices(
   Lines lines = Lines.create();
   lines.add("sign \{TID} \{hexOf(key)}");
   lines.add("verify \{hexOf(signed)} \{hexOf(key)} wac");
-  Answers a = ask(t, cli, "python3", [ORACLE], lines, "aioice and MESSAGE-INTEGRITY");
+  Answers a = ask(t, procs, "python3", [ORACLE], lines, "aioice and MESSAGE-INTEGRITY");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
 
   u8[] built = decoded(word(a.lines[0], 1));
@@ -303,7 +319,8 @@ export string test_a_wrong_key_a_changed_byte_and_no_integrity_are_all_refused()
   return t.report();
 }
 
-export string test_fingerprint_aioice_agrees_with_our_crc(Core core, Cli cli) {
+export string test_fingerprint_aioice_agrees_with_our_crc(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] msg = addFingerprint(requestWithSoftware(tid(), ("wac").toBytes()));
   t.isTrue(checkFingerprint(msg), "ours checks");
@@ -312,7 +329,7 @@ export string test_fingerprint_aioice_agrees_with_our_crc(Core core, Cli cli) {
   // with — and one it rejects raises, which the oracle turns into a `FAIL`.
   Lines lines = Lines.create();
   lines.add("fingerprint \{hexOf(msg)}");
-  check(t, cli, "python3", [ORACLE], lines, "aioice and FINGERPRINT");
+  check(t, procs, "python3", [ORACLE], lines, "aioice and FINGERPRINT");
 
   u8[] tampered = copyOf(msg);
   tampered[20] = tampered[20] ^ 0x40;
@@ -359,24 +376,23 @@ struct Turn {
  * timed out waiting for an answer, which says nothing about the port. `Held` binds it, so the number
  * is one the kernel had free, and gives it up one statement before coturn takes it. wac-mono 0069.
  */
-Turn startCoturn(Cli cli) {
-  string dir = "\{cli.cwd().wait()}/.cache/coturn";
-  cli.mkdir(dir, true).wait();
-  Held held = Held.take(cli);
+Turn startCoturn(Output err, Clock clock, Env env, Files fs, Net net, Procs procs) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/coturn";
+  fs.mkdir(dir, true).wait();
+  Held held = Held.take(net);
   if (held.port < 0) { return Turn(false, "no port could be bound", -1, Daemon(-1, "", ""), dir); }
   i32 port = held.port;
   string log = "\{dir}/turn-\{port}.log";
 
-  held.release(cli);
-  Daemon d = start(cli,
-    "turnserver -n --no-auth --no-tls --no-dtls --no-cli -L 127.0.0.1 -p \{port}", log);
+  held.release();
+  Daemon d = start(procs, "turnserver -n --no-auth --no-tls --no-dtls --no-cli -L 127.0.0.1 -p \{port}", log);
   if (!d.ok()) { return Turn(false, "turnserver did not start — \{d.error}", port, d, dir); }
   return Turn(true, "", port, d, dir);
 }
 
-void stopCoturn(Cli cli, Turn s) {
-  stop(cli, s.daemon);
-  if (s.port > 0) { cli.remove("\{s.dir}/turn-\{s.port}.log", false).wait(); }
+void stopCoturn(Files fs, Procs procs, Turn s) {
+  stop(procs, s.daemon);
+  if (s.port > 0) { fs.remove("\{s.dir}/turn-\{s.port}.log", false).wait(); }
 }
 
 /** One datagram out, one back — with the port we sent from, which is what STUN reports. */
@@ -404,23 +420,23 @@ struct Exchange {
  * This needed `issues/system/0206` fixed first: the native host ran `recv_from` inline and built the
  * ticket from the finished answer, so there was no id to wait on until the datagram had arrived.
  */
-Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
+Exchange exchange(Clock clock, Net net, i32 port, u8[] msg) {
   for (i32 attempt = 0; attempt < 20; attempt++) {
-    HostSocket s = cli.bindDatagram("127.0.0.1", 0).wait();
-    if (s.handle < 0) { return Exchange(false, "bindDatagram: \{s.error}", u8[](), -1); }
-    i32 from = s.port;
-    if (!cli.sendTo(s.handle, "127.0.0.1", port, msg).wait()) {
-      cli.closeSocket(s.handle);
+    auto sBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+    Datagrams? s = sBind.ok();
+    if (s is null) { return Exchange(false, "bindDatagram: \{sBind.isErr() ? "\{sBind.err()!}" : ""}", u8[](), -1); }
+    i32 from = s!.port;
+    if (flatten(s!.sendTo("127.0.0.1", port, msg).wait()).isErr()) {
+      s!.close();
       continue;
     }
-    Pending<Datagram> p = cli.receiveFrom(s.handle);
-    if (core.waitAny([p.id], 1500) < 0) {
-      p.drop(p.id);
-      cli.closeSocket(s.handle);
+    auto pGot = flatten(clock.within(s!.receive(), 1500).wait());
+    if (pGot.isErr()) {
+      s!.close();
       continue;
     }
-    Datagram d = p.wait();
-    cli.closeSocket(s.handle);
+    Datagram d = pGot.unwrap();
+    s!.close();
     if (d.error == "" && d.bytes.len() > 0) { return Exchange(true, "", d.bytes, from); }
   }
   return Exchange(false, "no answer in twenty attempts of a second and a half", u8[](), -1);

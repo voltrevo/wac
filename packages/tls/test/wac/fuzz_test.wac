@@ -31,10 +31,11 @@ import { tlsClientInit, tlsClientFeed, tlsClientFailure, tlsClientPhase, tlsClie
   from "../../src/client.wac";
 import { parseCert, verifyChain, Cert } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
-import { Core, Cli, FileResult } from "std";
+import { Core, Files, Output, Random, Sys } from "std";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Tampered, sweepTampering } from "./certtamper.wac";
 import { Rng64, rng, next, randomBytes } from "../../../wactest/src/rng64.wac";
+import { flatten } from "core";
 
 /**
  * The key material a client needs, in the sizes `tlsClientInit` takes them.
@@ -42,25 +43,26 @@ import { Rng64, rng, next, randomBytes } from "../../../wactest/src/rng64.wac";
  * Real entropy rather than the PRNG above: everything the *fuzzer* chooses is deterministic, and a
  * client whose own keys were too would be exercising a different program.
  */
-u8[] entropy(Core core, i32 which) {
+u8[] entropy(Random rnd, i32 which) {
   i32[] sizes = [32, 32, 64, 32];
-  return core.randomBytes(sizes[which]).wait();
+  return flatten(rnd.bytes(sizes[which]).wait()).unwrap();
 }
 
 /** The certificates to mutate: a real leaf and its issuer, decoded by the client's own PEM reader. */
-Store fixtures(Core core, Cli cli) {
+Store fixtures(Output err, Files fs) {
   u8[] all = u8[]();
   string[] names = ["ec_leaf", "ec_ca"];
   for (i32 i = 0; i < names.len(); i++) {
     string path = "packages/tls/test/data/\{names[i]}.pem";
-    FileResult r = cli.readFile(path).wait();
-    if (!r.ok) {
-      core.warn("tls fuzz: cannot read \{path} — \{r.error}");
+    auto rRead = flatten(fs.readFile(path).wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) {
+      err.line("tls fuzz: cannot read \{path} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
       trap;
     }
-    u8[] joined = u8[].filled(all.len() + r.bytes.len(), 0);
+    u8[] joined = u8[].filled(all.len() + r!.len(), 0);
     joined.copyFrom(all, 0, 0, all.len());
-    joined.copyFrom(r.bytes, 0, all.len(), r.bytes.len());
+    joined.copyFrom(r!, 0, all.len(), r!.len());
     all = joined;
   }
   Store store = pemBundle(all);
@@ -142,7 +144,8 @@ export string test_the_wire_reader_stops_at_its_end() {
   return t.report();
 }
 
-export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cli) {
+export string test_the_client_survives_whatever_a_server_sends(Sys sys) {
+  Random rnd = sys.random();
   // The real exposure, and the reason this file exists. `tlsClientFeed` is the whole of what
   // a TLS peer can reach before it has proved anything: record framing, handshake messages,
   // extensions, a certificate chain. Every length in all of it is a number the peer wrote.
@@ -156,7 +159,7 @@ export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cl
     // forgetting that fed the whole blob back in as state. The trap that produced was in
     // decodeConn and looked exactly like a client bug until the stack was read.
     u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[](), i32[](),
-                            entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
+                            entropy(rnd, 0), entropy(rnd, 1), entropy(rnd, 2), entropy(rnd, 3), 1785715200));
     // Between one and four records of noise, sometimes with a plausible header so the
     // framing accepts them and the handshake parser gets a turn.
     for (i32 k = 0; k < 4; k++) {
@@ -199,7 +202,8 @@ export string test_inner_plaintext_type_from_arbitrary_bytes() {
   return t.report();
 }
 
-export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, Cli cli) {
+export string test_feeding_a_failed_connection_is_answered_not_fatal(Sys sys) {
+  Random rnd = sys.random();
   // The bug the fuzzer found, pinned. Nothing below the failure check expects to run without
   // keys, so a record arriving after a failure reached the decrypt path and aborted the
   // process. An unknown content type followed by anything at all was enough.
@@ -214,7 +218,7 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, 
   // what notices.
   T t = T.create();
   u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[](), i32[](),
-                          entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
+                          entropy(rnd, 0), entropy(rnd, 1), entropy(rnd, 2), entropy(rnd, 3), 1785715200));
 
   // Content type 126 is not one TLS defines, so the client gives up here.
   state = firstField(tlsClientFeed(state, [126, 3, 3, 0, 1, 9] as u8[]));
@@ -241,7 +245,7 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, 
   // fell through to a `trap`. Checking the phase between calls, which every caller here does, cannot
   // help when both records are inside one of them.
   u8[] closing = firstField(tlsClientInit("example.com".toBytes(), u8[](), i32[](),
-                          entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
+                          entropy(rnd, 0), entropy(rnd, 1), entropy(rnd, 2), entropy(rnd, 3), 1785715200));
   closing = firstField(tlsClientClose(closing));
   t.eqI32(tlsClientPhase(closing), 4, "a closed connection is in phase 4");
   t.eqI32(tlsClientFailure(closing), 0, "and it did not fail — it was closed");
@@ -255,7 +259,9 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, 
 
 // ── Certificates ─────────────────────────────────────────────────────────────
 
-export string test_a_certificate_parser_never_aborts(Core core, Cli cli) {
+export string test_a_certificate_parser_never_aborts(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   // The most exposed parser in the repo. A chain is parsed *before* it is verified — it has
   // to be, since a signature cannot be checked before it is found — so every byte reaching
   // `parseCert` was chosen by whoever answered the connection. No handshake has completed,
@@ -266,7 +272,7 @@ export string test_a_certificate_parser_never_aborts(Core core, Cli cli) {
   // the first random inputs tried. That was a remote crash needing no credentials at all.
   T t = T.create();
   Rng64 r = rng(21);
-  Store certs = fixtures(core, cli);
+  Store certs = fixtures(err, fs);
   u8[] real = fixture(certs, 0);
   t.isTrue(parseCert(real).wellFormed, "the genuine certificate parses");
 
@@ -286,7 +292,9 @@ export string test_a_certificate_parser_never_aborts(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core, Cli cli) {
+export string test_a_malformed_certificate_is_refused_on_its_own_terms(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   // Total is not the same as permissive. Every tampered certificate must still be rejected,
   // and an unparseable one must be rejected as unparseable rather than as a bad signature —
   // the signature check would catch it, but reporting "the signature did not verify" about
@@ -294,7 +302,7 @@ export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core
   // to read a name never reaches that check at all.
   T t = T.create();
   Rng64 r = rng(22);
-  Store certs = fixtures(core, cli);
+  Store certs = fixtures(err, fs);
   u8[] real = fixture(certs, 0);
   u8[] ca = fixture(certs, 1);
 

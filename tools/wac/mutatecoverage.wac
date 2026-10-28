@@ -12,10 +12,10 @@
 // so no translation is wanted — translating them is how a filter comes to match nothing and a mutant
 // is scored against a run of zero tests. `issues/system/0183`, `issues/system/0161` step 6.
 
-import { Change, Cli, Core, Exec, FileResult, Stat } from "std";
+import { Change, Exec, Stat, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { JsonArray, JsonObject, JsonValue } from "../../packages/json/src/value.wac";
 import { parse } from "../../packages/json/src/json.wac";
-import { Map, hashString, stringEq, Vec } from "core";
+import { Map, hashString, stringEq, Vec, flatten } from "core";
 import { Profile } from "./mutateplan.wac";
 import { Decoded, KEEP, cachePath, decodeProfile, encodeProfile, isProfileFile, toEvict }
   from "./mutateprofile.wac";
@@ -67,9 +67,8 @@ Share none(string why) {
  * spawns, and that is the wrong place: put it there and profiling from a test stops working, leave it
  * out of `buildProfile` and a sweep started from inside the suite never terminates.
  */
-export Share shareOf(Core core, Cli cli, string binary, string work, string entry,
-                     string profileDir) {
-  cli.mkdir(profileDir, true).wait();
+export Share shareOf(Files fs, Procs procs, string binary, string work, string entry, string profileDir) {
+  fs.mkdir(profileDir, true).wait();
   string[] grants = WAC_LANE_GRANTS();
   string[] args = string[].filled(3 + grants.len(), "");
   args[0] = "test";
@@ -77,19 +76,18 @@ export Share shareOf(Core core, Cli cli, string binary, string work, string entr
   args.copyFrom(grants, 0, 2, grants.len());
   args[2 + grants.len()] = entry;
 
-  Exec r = cli.execWithIn(binary, args, u8[](),
-                          ["WAC_PROFILE=" + profileDir], false, false, work).wait();
+  Exec r = flatten(procs.exec(binary, args, u8[](), ChildEnv(false, ["WAC_PROFILE=" + profileDir]), Launch(work, false, false, false)).wait()).unwrap();
   if (!r.ran()) { return none("the binary did not run"); }
 
-  string[]? listed = cli.readDir(profileDir).wait();
+  string[]? listed = flatten(fs.readDir(profileDir).wait()).ok();
   if (listed is null) { return none("no profile directory after the run"); }
   string[] names = listed!;
   for (i32 i = 0; i < names.len(); i++) {
     string name = names[i];
     if (name.len() < 6 || name.slice(name.len() - 5, name.len()) != ".json") { continue; }
-    FileResult f = cli.readFile(profileDir + "/" + name).wait();
-    if (!f.ok) { continue; }
-    Share got = shareFrom(string.fromBytes(f.bytes), entry);
+    u8[]? f = flatten(fs.readFile(profileDir + "/" + name).wait()).ok();
+    if ((f is null)) { continue; }
+    Share got = shareFrom(string.fromBytes(f!), entry);
     // The directory can hold profiles from other entries; the one that names this entry is ours.
     if (got.ok || got.why != "not this entry") { return got; }
   }
@@ -232,9 +230,8 @@ string[] splitSpaces(string s) {
  * `cost` is wall-clock milliseconds per file, and `-1` for a file whose profile was refused — the
  * value `byCost` already reads as unmeasured.
  */
-export Profiled buildProfile(Core core, Cli cli, string binary, string work, string[] testFiles,
-                             string profileDir, string cacheDir, string key) {
-  if (refuseIfNested(core, cli, "mutate: building a coverage profile") != 0) {
+export Profiled buildProfile(Output err, Clock clock, Env env, Files fs, Procs procs, string binary, string work, string[] testFiles, string profileDir, string cacheDir, string key) {
+  if (refuseIfNested(err, env, "mutate: building a coverage profile") != 0) {
     return Profiled(false,
                     "refused: a profile pass runs every test file, so it must not start from inside"
                     + " the suite — see wac-mono 0077",
@@ -249,9 +246,9 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
   // cache rather than weakening it.
   string cached = (key == "" || cacheDir == "") ? "" : cachePath(cacheDir, key);
   if (cached != "") {
-    FileResult hit = cli.readFile(cached).wait();
-    if (hit.ok) {
-      Decoded d = decodeProfile(string.fromBytes(hit.bytes));
+    u8[]? hit = flatten(fs.readFile(cached).wait()).ok();
+    if ((hit is not null)) {
+      Decoded d = decodeProfile(string.fromBytes(hit!));
       // A file that is not a profile is rebuilt over rather than treated as a failure: the cache is
       // an optimisation, and a corrupt entry should cost time and nothing else.
       if (d.ok && d.known.len() > 0) {
@@ -272,13 +269,13 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
   i32 malformed = 0;
 
   for (i32 f = 0; f < testFiles.len(); f++) {
-    i64 started = core.monotonicNanos().wait() / (1000000 as i64);
-    Share s = shareOf(core, cli, binary, work, testFiles[f], profileDir);
-    i32 took = (core.monotonicNanos().wait() / (1000000 as i64) - started) as! i32;
+    i64 started = flatten(clock.monotonicNanos().wait()).unwrap() / (1000000 as i64);
+    Share s = shareOf(fs, procs, binary, work, testFiles[f], profileDir);
+    i32 took = (flatten(clock.monotonicNanos().wait()).unwrap() / (1000000 as i64) - started) as! i32;
 
     files.push(testFiles[f]);
     if (!s.ok) {
-      core.warn("  no profile for " + testFiles[f] + ": " + s.why
+      err.line("  no profile for " + testFiles[f] + ": " + s.why
                 + " — its mutants will run the whole scope");
       cost.push(-1);
       continue;
@@ -321,17 +318,17 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
   if (malformed > 0) {
     // Not fatal: some points landed, and those narrow. But a spelling `selectTests` cannot look up
     // is a profile that silently stops narrowing, which is the one failure worth naming out loud.
-    core.warn("  " + itoa(malformed) + " coverage point(s) were not in the file:line shape "
+    err.line("  " + itoa(malformed) + " coverage point(s) were not in the file:line shape "
               + "`selectTests` looks up, and were dropped");
   }
   if (cached != "") {
-    cli.mkdir(cacheDir, true).wait();
-    Change wrote = cli.writeFile(cached,
+    fs.mkdir(cacheDir, true).wait();
+    auto wrote = flatten(fs.writeFile(cached,
                                  encodeProfile(p.known, p.tests, p.files, p.cost,
                                                homeNames.toArray(),
-                                               homeFiles.toArray()).toBytes()).wait();
-    if (!wrote.ok()) { core.warn("  could not cache the profile: " + wrote.message); }
-    else { evict(cli, cacheDir); }
+                                               homeFiles.toArray()).toBytes()).wait());
+    if (wrote.isErr()) { err.line("  could not cache the profile: " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}"); }
+    else { evict(fs, cacheDir); }
   }
   return Profiled(true, "", p, homeNames.toArray(), homeFiles.toArray());
 }
@@ -344,19 +341,19 @@ export Profiled buildProfile(Core core, Cli cli, string binary, string work, str
  * again. `toEvict` takes the times rather than reading them, so the rule is tested without a
  * filesystem and this is only the part that has to touch one.
  */
-void evict(Cli cli, string dir) {
-  string[]? listed = cli.readDir(dir).wait();
+void evict(Files fs, string dir) {
+  string[]? listed = flatten(fs.readDir(dir).wait()).ok();
   if (listed is null) { return; }
   string[] names = listed!;
   Vec<string> paths = Vec.create();
   Vec<i64> when = Vec.create();
   for (i32 i = 0; i < names.len(); i++) {
     if (!isProfileFile(names[i])) { continue; }
-    Stat st = cli.stat(dir + "/" + names[i]).wait();
-    if (!st.exists) { continue; }
+    Stat? st = flatten(fs.stat(dir + "/" + names[i]).wait()).ok();
+    if ((st is null)) { continue; }
     paths.push(dir + "/" + names[i]);
-    when.push(st.modifiedMillis);
+    when.push(st!.modifiedMillis);
   }
   string[] gone = toEvict(paths.toArray(), when.toArray(), KEEP());
-  for (i32 i = 0; i < gone.len(); i++) { cli.remove(gone[i], false).wait(); }
+  for (i32 i = 0; i < gone.len(); i++) { fs.remove(gone[i], false).wait(); }
 }

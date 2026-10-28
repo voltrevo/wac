@@ -7,12 +7,12 @@
 // in this package. `external.wac` is the one copy now. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { gzipStored } from "../../src/gzip.wac";
 import { roundTrip } from "./external.wac";
 
-string same(Cli cli, u8[] input, string what) {
-  return roundTrip(cli, gzipStored(input), what, input);
+string same(Procs procs, u8[] input, string what) {
+  return roundTrip(procs, gzipStored(input), what, input);
 }
 
 /** Little-endian u32 at `at`, as an i64 so the top bit does not read as negative. */
@@ -41,15 +41,16 @@ export string test_the_trailer_carries_the_crc_and_isize() {
   return t.report();
 }
 
-export string test_gunzip_accepts_it(Core core, Cli cli) {
+export string test_gunzip_accepts_it(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  t.eqStr(same(cli, u8[](), "empty"), "", "an empty input");
-  t.eqStr(same(cli, u8[].filled(1, 0), "one byte"), "", "one zero byte");
+  t.eqStr(same(procs, u8[](), "empty"), "", "an empty input");
+  t.eqStr(same(procs, u8[].filled(1, 0), "one byte"), "", "one zero byte");
   u8[] hw = "hello world".toBytes();
-  t.eqStr(same(cli, hw, "hello world"), "", "a short string");
+  t.eqStr(same(procs, hw, "hello world"), "", "a short string");
   u8[] all = u8[].filled(256, 0);
   for (i32 i = 0; i < 256; i++) { all[i] = i as@ u8; }
-  t.eqStr(same(cli, all, "all 256 byte values"), "", "every byte value");
+  t.eqStr(same(procs, all, "all 256 byte values"), "", "every byte value");
   return t.report();
 }
 
@@ -57,22 +58,24 @@ export string test_gunzip_accepts_it(Core core, Cli cli) {
  * 65535 is the largest single stored block, so these exercise one, two and three blocks — and the
  * final-block flag landing on the right one.
  */
-export string test_multi_block_input_crosses_the_65535_boundary(Core core, Cli cli) {
+export string test_multi_block_input_crosses_the_65535_boundary(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   i32[] sizes = [65534, 65535, 65536, 131070, 131071];
   for (i32 n in sizes) {
     u8[] input = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { input[i] = ((i * 131 + 17) & 0xFF) as@ u8; }
-    t.eqStr(same(cli, input, "\{n} bytes"), "", "\{n} bytes");
+    t.eqStr(same(procs, input, "\{n} bytes"), "", "\{n} bytes");
   }
   return t.report();
 }
 
-export string test_incompressible_and_repetitive_data_both_survive(Core core, Cli cli) {
+export string test_incompressible_and_repetitive_data_both_survive(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   string ab = "";
   for (i32 i = 0; i < 5000; i++) { ab = ab + "ab"; }
-  t.eqStr(same(cli, ab.toBytes(), "repetitive"), "", "highly repetitive");
+  t.eqStr(same(procs, ab.toBytes(), "repetitive"), "", "highly repetitive");
 
   // Deterministic pseudo-random bytes — a stored block must not care either way.
   u8[] random = u8[].filled(20000, 0);
@@ -81,6 +84,6 @@ export string test_incompressible_and_repetitive_data_both_survive(Core core, Cl
     s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
     random[i] = ((s >> 16) & 0xFF) as@ u8;
   }
-  t.eqStr(same(cli, random, "pseudo-random"), "", "incompressible");
+  t.eqStr(same(procs, random, "pseudo-random"), "", "incompressible");
   return t.report();
 }

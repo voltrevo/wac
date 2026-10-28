@@ -34,9 +34,10 @@
 // three bundles and a compile. 82s of CPU across both, and the ladder is nearly all of it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Change, Exec, FileResult } from "std";
+import { Cli, Core, Change, Exec, FileResult, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /**
  * A program whose *transcript* differs between hosts if a redirect is mishandled.
@@ -55,8 +56,8 @@ static string PROBE =
   "  cli.openOutput(\"probe.out\").wait();\n" +
   "  cli.write(\"redirected\\n\".toBytes());\n" +
   "  cli.openOutput(\"\").wait();\n" +
-  "  FileResult f = cli.readFile(\"probe.out\").wait();\n" +
-  "  core.log(f.ok ? \"file holds: \" + string.fromBytes(f.bytes) : \"file: MISSING\");\n" +
+  "  auto fRead = flatten(fs.readFile(\"probe.out\").wait());\n" +
+  "  core.log(fRead.isOk() ? \"file holds: \" + string.fromBytes(fRead.unwrap()) : \"file: MISSING\");\n" +
   "  return 0;\n" +
   "}\n";
 
@@ -65,8 +66,8 @@ static string PROGRAM =
   "import { Core, Sys } from \"std\";\n" +
   "export i32 main(Sys sys) { Core core = sys.core; core.log(\"it compiled and it ran\"); return 0; }\n";
 
-Exec sh(Cli cli, string script) {
-  return cli.exec("/bin/sh", ["-c", script], u8[]()).wait();
+Exec sh(Procs procs, string script) {
+  return flatten(procs.exec("/bin/sh", ["-c", script], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /**
@@ -77,18 +78,18 @@ Exec sh(Cli cli, string script) {
  * binary is `node`, and that difference is carried rather than derived: getting it wrong would skip
  * silently and read as a pass.
  */
-string oneHost(Core core, Cli cli, T t, string host, string runtime) {
-  string dir = scratch(cli, "bootstrap-\{host}");
-  string why = freshDir(cli, dir);
+string oneHost(Output out, Env env, Files fs, Procs procs, T t, string host, string runtime) {
+  string dir = scratch(env, "bootstrap-\{host}");
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   if (why != "") { return ""; }
 
   // **Skipped rather than failed where the runtime is absent**, which is the honest answer: this
   // tests what `--host <x>` does, and a machine without `<x>` is not one where that is broken. The
   // native hosts are what such a machine builds, and they have their own tests.
-  Exec have = sh(cli, "command -v \{runtime} >/dev/null 2>&1 && echo yes || echo no");
+  Exec have = sh(procs, "command -v \{runtime} >/dev/null 2>&1 && echo yes || echo no");
   if (trimmed(string.fromBytes(have.stdout)) != "yes") {
-    core.log("   no \{runtime} on this machine — skipping --host \{host}");
+    out.line("   no \{runtime} on this machine — skipping --host \{host}");
     return "";
   }
 
@@ -96,7 +97,7 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
   // checkout and every working tree is full of leftovers: `.cache/`, two `target/` directories, a
   // seed. Each of the Pages deploy's breaks has been a script that was right here and wrong there.
   string tree = "\{dir}/tree";
-  Exec copied = sh(cli, "mkdir -p '\{tree}' && git ls-files -z | tar --null -T - -cf - | tar -xf - -C '\{tree}'");
+  Exec copied = sh(procs, "mkdir -p '\{tree}' && git ls-files -z | tar --null -T - -cf - | tar -xf - -C '\{tree}'");
   t.eqI32(copied.status, 0, "could not copy the tree: \{string.fromBytes(copied.stdout)}");
   if (copied.status != 0) { return ""; }
 
@@ -107,21 +108,21 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
   string mark = "\{dir}/a-leftover-ran";
   string decoy = "#!/bin/sh\necho \"$0\" >> '\{mark}'\nexit 1\n";
   for (string p in ["native/target/release/wac", "native/v8/target/release/wac"]) {
-    cli.mkdir("\{tree}/\{p.slice(0, p.len() - 4)}", true).wait();
-    Change wrote = cli.writeFile("\{tree}/\{p}", decoy.toBytes()).wait();
-    Exec made = sh(cli, "chmod +x '\{tree}/\{p}'");
-    t.isTrue(wrote.ok() && made.status == 0, "could not plant \{p} — \{wrote.message}");
+    fs.mkdir("\{tree}/\{p.slice(0, p.len() - 4)}", true).wait();
+    auto wrote = flatten(fs.writeFile("\{tree}/\{p}", decoy.toBytes()).wait());
+    Exec made = sh(procs, "chmod +x '\{tree}/\{p}'");
+    t.isTrue(wrote.isOk() && made.status == 0, "could not plant \{p} — \{wrote.isErr() ? "\{wrote.err()!}" : "chmod failed"}");
   }
 
   // **Into a directory that does not exist yet**, because that is what CI hands it: `syncDemos.ts`
   // asks for `.cache/wac-deno`, `.cache/` is gitignored, and a fresh checkout has none. Every working
   // tree has one, so a `-o` into an existing directory passed here while the Pages deploy failed on
   // `cp: cannot create regular file` after a complete, correct bootstrap.
-  string out = "\{dir}/not-made-yet/wac";
-  Exec built = sh(cli, "cd '\{tree}' && bash bootstrap.sh --host \{host} -o '\{out}' 2>&1");
-  FileResult ran = cli.readFile(mark).wait();
-  t.isTrue(!ran.ok, "\{host}: bootstrap.sh ran a command left over from an earlier build:\n"
-                    + (ran.ok ? string.fromBytes(ran.bytes) : ""));
+  string bin = "\{dir}/not-made-yet/wac";
+  Exec built = sh(procs, "cd '\{tree}' && bash bootstrap.sh --host \{host} -o '\{bin}' 2>&1");
+  u8[]? ran = flatten(fs.readFile(mark).wait()).ok();
+  t.isTrue(ran is null, "\{host}: bootstrap.sh ran a command left over from an earlier build:\n"
+                        + (ran is not null ? string.fromBytes(ran!) : ""));
   t.eqI32(built.status, 0,
           "bootstrap.sh --host \{host} failed:\n\{string.fromBytes(built.stdout)}");
   if (built.status != 0) { return ""; }
@@ -131,21 +132,21 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
   t.isTrue(contains(string.fromBytes(built.stdout), "fixed point"),
            "\{host}: no fixed point reported:\n\{string.fromBytes(built.stdout)}");
 
-  Change wrote = cli.writeFile("\{dir}/hello.wac", PROGRAM.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the program — \{wrote.message}");
-  if (!wrote.ok()) { return ""; }
+  auto wrote = flatten(fs.writeFile("\{dir}/hello.wac", PROGRAM.toBytes()).wait());
+  t.isTrue(wrote.isOk(), "could not write the program — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
+  if (wrote.isErr()) { return ""; }
 
   // **The question a user asks.** Everything above is machinery; this is whether the artefact is a
   // compiler. `--allow-read` because the program is on disk and the command has no ambient authority.
-  Exec ran = sh(cli, "'\{out}' run --allow-read '\{dir}/hello.wac' 2>&1");
+  Exec ran = sh(procs, "'\{bin}' run --allow-read '\{dir}/hello.wac' 2>&1");
   t.eqI32(ran.status, 0, "\{host}: the built command could not run a program: "
                        + string.fromBytes(ran.stdout));
   t.eqStr(trimmed(string.fromBytes(ran.stdout)), "it compiled and it ran",
           "\{host} printed: \{string.fromBytes(ran.stdout)}");
 
-  sameAnswerOnBothHosts(core, cli, t, host, dir, out);
+  sameAnswerOnBothHosts(env, fs, procs, t, host, dir, bin);
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return "";
 }
 
@@ -170,30 +171,29 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
  * while while checking the *write* denial and claiming to check the stat". So the transcript is also
  * checked for the line the probe is known to print.
  */
-void sameAnswerOnBothHosts(Core core, Cli cli, T t, string host, string dir, string jsWac) {
-  Change wrote = cli.writeFile("\{dir}/probe.wac", PROBE.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the probe — \{wrote.message}");
-  if (!wrote.ok()) { return; }
+void sameAnswerOnBothHosts(Env env, Files fs, Procs procs, T t, string host, string dir, string jsWac) {
+  auto wrote = flatten(fs.writeFile("\{dir}/probe.wac", PROBE.toBytes()).wait());
+  t.isTrue(wrote.isOk(), "could not write the probe — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
+  if (wrote.isErr()) { return; }
 
   // Built **once**, by the binary running this test, and run by both. That is the whole point.
-  Exec made = cli.exec(binaryPath(cli),
-                       [
+  auto madeRan = flatten(procs.exec(binaryPath(env), [
                                 "app", "\{dir}/probe.wac", "--allow-read", "--allow-write",
                                 "-o", "\{dir}/probe"
-                       ],
-                       u8[]()).wait();
-  t.eqI32(made.status, 0, "wac app failed: \{string.fromBytes(made.stderr)}");
-  if (made.status != 0) { return; }
+                       ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? made = madeRan.ok();
+  t.eqI32(made!.status, 0, "wac app failed: \{string.fromBytes(made!.stderr)}");
+  if (made!.status != 0) { return; }
 
   // `cd` into the directory so the probe's relative `probe.out` lands somewhere writable, and so both
   // runs stand in the same place — a difference in *where* they ran would read as a host difference.
-  string native = "cd '\{dir}' && '\{binaryPath(cli)}' app-run ./probe 2>&1";
+  string native = "cd '\{dir}' && '\{binaryPath(env)}' app-run ./probe 2>&1";
   // **The JS command is named outright rather than found on PATH.** A `wac app` artefact resolves
   // its runtime with `command -v wac`, and putting the JS one there would decide *both* runs — the
   // point is to name the host each time and keep everything else the same.
   string js = "cd '\{dir}' && '\{jsWac}' app-run ./probe 2>&1";
-  Exec a = sh(cli, native);
-  Exec b = sh(cli, js);
+  Exec a = sh(procs, native);
+  Exec b = sh(procs, js);
 
   string sa = trimmed(string.fromBytes(a.stdout));
   string sb = trimmed(string.fromBytes(b.stdout));
@@ -204,14 +204,22 @@ void sameAnswerOnBothHosts(Core core, Cli cli, T t, string host, string dir, str
            "neither host redirected — the comparison above is worth nothing: \{sa}");
 }
 
-export string test_bootstrap_host_deno_builds_a_working_wac(Core core, Cli cli) {
+export string test_bootstrap_host_deno_builds_a_working_wac(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  oneHost(core, cli, t, "deno", "deno");
+  oneHost(out, env, fs, procs, t, "deno", "deno");
   return t.report();
 }
 
-export string test_bootstrap_host_nodejs_builds_a_working_wac(Core core, Cli cli) {
+export string test_bootstrap_host_nodejs_builds_a_working_wac(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  oneHost(core, cli, t, "nodejs", "node");
+  oneHost(out, env, fs, procs, t, "nodejs", "node");
   return t.report();
 }

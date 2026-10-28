@@ -4,9 +4,9 @@
 // any divergence between those two is a VFS bug with a reference answer." The three differ only underneath
 // the boundary:
 //
-//   **memory** `Fs.inMemory` — what `bin/sealedsh.wac` builds, with no grants at all
-//   **image**  `boot`/`save` — the same, read from a file and written back to it
-//   **host**   `Fs.onHost`   — the real disk through a `Cli`, which is what `bin/sh.wac` builds
+//   **memory** `MemoryStore`           — what `bin/sealedsh.wac` builds, with no grants at all
+//   **image**  `bootStore`/`saveStore` — the same, read from a file and written back to it
+//   **host**   `sys.files()`           — the real disk, which is what `bin/sh.wac` builds
 //
 // ## This used to spawn, and it used to run forty scripts
 //
@@ -16,14 +16,14 @@
 //
 // In this process a script costs about a millisecond, so **the whole corpus runs here** — 946 scripts on
 // three backings inside one wasm module, in less wall clock than building one of the three binaries took.
-// The claim was always about what sits *under* one program, and three `Fs` values in one process is that
+// The claim was always about what sits *under* one program, and three `Files` values in one process is that
 // claim more directly: the code above the boundary is now literally the same code rather than three builds
 // of it.
 //
 // What cannot move *into this file* is the canary — that an image survives its own *process* and a
 // sealed session does not. That one is about processes, so it spawns; it is
 // `test/wac/backingsprocess_test.wac` beside this one, which builds the three binaries with `wac
-// build` and runs them with `Cli.exec`.
+// build` and runs them with `Procs.exec`.
 //
 // ## Three differences are levelled
 //
@@ -35,14 +35,15 @@
 // real binaries outside the gate; the third is counted and reported rather than quietly applied, and the
 // predicate behind it is `packages/sh/test/wac/machinepaths.wac`, which both of them import.
 
-import { Cli, Core, Stat } from "std";
-import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
-import { Fs, mountSystem } from "../../../fs/src/fs.wac";
-import { Booted, boot, save } from "../../../fs/src/image.wac";
-import { Vec } from "core";
+import { Clock, Env, Files, MemoryStore, Sys } from "std";
+import { flatten } from "core";
+import { Kept } from "../../../platform/src/stream.wac";
+import { bytesInput } from "../../../fs/src/trees.wac";
+import { ProcTable } from "../../../fs/src/proc.wac";
+import { bootStore, saveStore } from "../../../fs/src/image.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
-import { boxNames, boxRun } from "../../src/shrun.wac";
+import { wireBox } from "../../src/shrun.wac";
 // **The memory filesystem and the in-process shell are `memory.wac`**, shared with
 // `sealedapplets_test.wac`: one definition of what `sealedsh` builds, two files measuring different
 // things on it.
@@ -53,50 +54,49 @@ import { reachesTheMachine } from "../../../sh/test/wac/machinepaths.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 
-/** The same, on the real disk: `Shell.create` builds `Fs.onHost`, and the frame's cwd is where it lands. */
-async Ran runHost(Core core, Cli cli, string cwd, string script) {
-  Frame f = Frame.of(["sh", "-c", script], u8[](), cwd, false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Shell sh = Shell.create(c, l);
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  i32 status = await shellMain(c, l, sh, 1);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+/** The same, on the real disk, standing in `cwd`. */
+async Ran runHost(Sys sys, string cwd, string script) {
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  Shell sh = Shell.of(bytesInput(u8[]()), out.out, err.out, sys.clock(), sys.env(), sys.net(), sys.procs(),
+                      sys.files(), ProcTable.create(), cwd, true);
+  wireBox(sh, sys.random());
+  i32 status = await shellMain(["sh", "-c", script], sh, 1);
+  return Ran(string.fromBytes(out.bytes()), string.fromBytes(err.bytes()), status);
 }
 
 
 /**
  * An image backing, read from `path`.
  *
- * **`boot` on a path that does not exist is an empty world**, deliberately, so that a first run needs no
- * separate step. That makes booting a name nothing has written indistinguishable from `Fs.inMemory`, and a
+ * **`bootStore` on a path that does not exist is an empty world**, deliberately, so that a first run needs
+ * no separate step. That makes booting a name nothing has written indistinguishable from a fresh store, and a
  * differential whose second arm is secretly its first arm agrees with itself perfectly. So the file is
  * seeded by `seedImage` first, and every boot here parses real image bytes.
  */
-Fs imageFs(Core core, Cli cli, string path) {
-  Booted booted = boot(core, cli, path, Vec.fromArray(["imaged"]), Vec.fromArray(boxNames()));
-  return booted.fs;
+async MemoryStore? imageStore(Clock clock, Files fs, string path) {
+  return (await bootStore(fs, clock, path)).ok();
 }
 
 /** Write an empty world to `path`, so the boots that follow are reads of a file rather than of nothing. */
-bool seedImage(Core core, Cli cli, string path) {
-  Fs fs = Fs.inMemory(0);
-  mountSystem(fs, core.randomBytes, Vec.fromArray(["imaged"]), Vec.fromArray(boxNames()));
-  return save(core, cli, "backings", path, fs);
+async bool seedImage(Clock clock, Files fs, string path) {
+  return (await saveStore(fs, MemoryStore.create(clock), path)).isOk();
 }
 
-string workRoot(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-backings"; }
+string workRoot(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-backings"; }
 
-export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mount(Core core, Cli cli) {
+export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mount(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   string[] scripts = corpus();
-  string root = workRoot(cli);
-  string whyDir1 = madeDir(cli, root);
+  string root = workRoot(env);
+  string whyDir1 = madeDir(fs, root);
   t.isTrue(whyDir1 == "", whyDir1);
   string seed = "\{root}/seed.wacimg";
   string scratch = "\{root}/saved.wacimg";
-  t.isTrue(seedImage(core, cli, seed), "could not write the seed image");
+  t.isTrue(await seedImage(clock, fs, seed), "could not write the seed image");
 
   i32 agree = 0;
   i32 machineOnly = 0;
@@ -106,22 +106,26 @@ export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_ho
   for (i32 i = 0; i < scripts.len(); i++) {
     string script = "mkdir -p /tmp; \{scripts[i]}";
     // A directory of its own per script, because the corpus writes files and reads them back. Absolute,
-    // because a relative frame `cwd` does not resolve — `issues/system/0194`.
+    // because a relative `cwd` did not resolve — `issues/system/0194`.
     string work = "\{root}/host\{i}";
-    string whyDir2 = madeDir(cli, work);
+    string whyDir2 = madeDir(fs, work);
     t.isTrue(whyDir2 == "", whyDir2);
 
-    Ran memory = await runOn(core, cli, (await memoryFs(core, "sealedsh")), script);
-    Fs image = imageFs(core, cli, seed);
-    Ran onImage = await runOn(core, cli, image, script);
+    Ran memory = await runOn(sys, await memoryFs(sys), script);
+    MemoryStore? image = await imageStore(clock, fs, seed);
+    if (image is null) {
+      t.isTrue(false, "the seed image did not boot");
+      return t.report();
+    }
+    Ran onImage = await runOn(sys, image!.asUser("root"), script);
     // And written back, because a session that ran and could not be saved is a session lost: the write
     // half of the image backing is as much of it as the read half.
-    if (!save(core, cli, "backings", scratch, image)) { unsaved = unsaved + 1; }
-    Ran onHost = await runHost(core, cli, work, script);
+    if ((await saveStore(fs, image!, scratch)).isErr()) { unsaved = unsaved + 1; }
+    Ran onHost = await runHost(sys, work, script);
 
-    cli.remove(work, true).wait();
+    fs.remove(work, true).wait();
 
-    if (reachesTheMachine(cli, scripts[i])) {
+    if (reachesTheMachine(fs, scripts[i])) {
       machineOnly = machineOnly + 1;
       if (same(memory, onImage)) { agree = agree + 1; continue; }
       differ = differ + 1;
@@ -140,8 +144,8 @@ export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_ho
                "\n    host   \{shape(onHost)}";
     }
   }
-  cli.remove(scratch, false).wait();
-  cli.remove(seed, false).wait();
+  fs.remove(scratch, false).wait();
+  fs.remove(seed, false).wait();
 
   t.isTrue(scripts.len() > 900, "only \{scripts.len()} scripts — did the corpus load?");
   t.eqI32(unsaved, 0, "\{unsaved} sessions could not be written back to an image");
@@ -165,27 +169,33 @@ export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_ho
  * it is a *shell language* corpus, and only 43 of its 946 scripts redirect anywhere — so this is what
  * stands behind the run above being about filesystems at all.
  */
-export async string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Core core, Cli cli) {
+export async string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   string script = "mkdir -p /tmp/d; echo hello > /tmp/d/f; cat /tmp/d/f; ls /tmp/d | wc -l";
-  string root = workRoot(cli);
-  string whyDir3 = madeDir(cli, root);
+  string root = workRoot(env);
+  string whyDir3 = madeDir(fs, root);
   t.isTrue(whyDir3 == "", whyDir3);
 
-  Ran memory = await runOn(core, cli, (await memoryFs(core, "sealedsh")), script);
+  Ran memory = await runOn(sys, await memoryFs(sys), script);
   t.eqStr(memory.out, "hello\n1\n", "memory: \{shape(memory)}");
 
   string image = "\{root}/alive.wacimg";
-  t.isTrue(seedImage(core, cli, image), "could not write the seed image");
-  Ran onImage = await runOn(core, cli, imageFs(core, cli, image), script);
-  cli.remove(image, false).wait();
+  t.isTrue(await seedImage(clock, fs, image), "could not write the seed image");
+  MemoryStore? booted = await imageStore(clock, fs, image);
+  t.isTrue(booted is not null, "the image did not boot");
+  if (booted is null) { return t.report(); }
+  Ran onImage = await runOn(sys, booted!.asUser("root"), script);
+  fs.remove(image, false).wait();
   t.eqStr(onImage.out, "hello\n1\n", "image: \{shape(onImage)}");
 
   string work = "\{root}/alive";
-  string whyDir4 = madeDir(cli, work);
+  string whyDir4 = madeDir(fs, work);
   t.isTrue(whyDir4 == "", whyDir4);
-  Ran onHost = await runHost(core, cli, work, script);
-  cli.remove(work, true).wait();
+  Ran onHost = await runHost(sys, work, script);
+  fs.remove(work, true).wait();
   t.eqStr(onHost.out, "hello\n1\n", "host: \{shape(onHost)}");
   return t.report();
 }

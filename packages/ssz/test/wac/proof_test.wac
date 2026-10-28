@@ -72,7 +72,7 @@ struct Proof {
 
 /** Every proof in the fixture, or an empty list when it could not be loaded. */
 Proof[] proofs(T t, Sys sys) {
-  Loaded f = json(sys.core, sys.cli, "ssz", "light_client_proofs", MANIFEST);
+  Loaded f = json(sys.stderr(), sys.files(), sys.procs(), "ssz", "light_client_proofs", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return Proof[].filled(0, Proof("", "", u8[](), 0, u8[](), 0)); }
   JsonArray? cases = f.doc.member("cases")?.array();

@@ -9,61 +9,73 @@
 //   wac task app:build packages/box/src/box.wac --worker -o box.worker.js
 //   printf 'b\na\nb\n' | pipe box.worker.js sort uniq      ->  a  b
 //
-// Three handles are live at once — standard input, and one per child — and the loop waits on
-// whichever moves. It never asks which kind a handle is, because there is nothing to ask:
-// `recv` reads standard input at handle 0 exactly as it reads a child or a socket. That is
-// the property being demonstrated, more than the pipeline itself.
+// Three streams are live at once — standard input, and one per child — and each has its own
+// `async` leg forwarding it to the next. None of them asks which kind of stream it reads, because
+// there is nothing to ask: standard input, a child's output and a socket are each an `Input`, and
+// a child's input is an `Output` exactly as standard output is. That is the property being
+// demonstrated, more than the pipeline itself.
 //
 // Note the deadlock this cannot have. A shell pipeline needs an OS buffer between the stages,
 // and a stage that stops reading while the one before it keeps writing wedges both. Here the
-// three reads are in flight together, so a slow second stage parks this loop rather than the
+// three reads are in flight together, so a slow second stage parks its own leg rather than the
 // first child, and the ring supplies the backpressure.
 //
-// It does need a slot per watched handle, plus one for the write. Two stages is four of
-// `CALL_SLOTS` — the number rather than the constant is what this line used to carry, and it went
+// It does need a slot per live read, plus one per write. Two stages is a handful of `CALL_SLOTS`,
+// which is why the number rather than the constant is what this line used to carry, and it went
 // on saying sixteen after the ring had 128. When the ring *did* have four, four of four is why a
 // third stage was not something this could grow.
 
-import { HostChild, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending, Sys } from "std";
-import { argvOf } from "../src/stream.wac";
-import { Read } from "core";
+import { Authority, Child, Input, Launch, Sys, Files, Output, Procs } from "std";
+import { Ticket } from "core";
 
-/** Standard input, in the same handle space as sockets and children. */
-static i32 STDIN = 0;
-
-export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 3) {
-    core.warn("usage: pipe <worker.js> <argsA> <argsB>");
+export async i32 main(Sys sys) {
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  if (argv.len() < 3) {
+    err.line("usage: pipe <worker.js> <argsA> <argsB>");
     return 2;
   }
-  string path = string.fromBytes(cli.arg(0).wait());
+  string path = argv[0];
 
-  FileResult prog = cli.readFile(path).wait();
-  if (!prog.ok) {
-    core.warn("pipe: \{path}: \{prog.error}");
+  auto progRead = await fs.readFile(path);
+  if (progRead.isErr()) {
+    err.line("pipe: \{path}: \{progRead.err()!}");
     return 1;
   }
-  u8[] source = prog.bytes;
+  u8[] source = progRead.unwrap();
 
   // The same bundle twice, differing only in argv. Nothing stops them being different
   // programs — one bundle just makes the example short.
-  HostChild a = cli.spawn(source, argvOf(argv(string.fromBytes(cli.arg(1).wait()))), GRANT_NONE, "", INHERIT_NONE, false).wait();
-  HostChild b = cli.spawn(source, argvOf(argv(string.fromBytes(cli.arg(2).wait()))), GRANT_NONE, "", INHERIT_NONE, false).wait();
-  if (a.handle < 0 || b.handle < 0) {
-    core.warn("pipe: \{(a.handle < 0 ? a.error : b.error)}");
+  auto spawnedA = await procs.spawn(source, argsOf(argv[1]), Authority.none(), Launch.plain());
+  auto spawnedB = await procs.spawn(source, argsOf(argv[2]), Authority.none(), Launch.plain());
+  if (spawnedA.isErr() || spawnedB.isErr()) {
+    err.line("pipe: \{spawnedA.isErr() ? "\{spawnedA.err()!}" : "\{spawnedB.err()!}"}");
     return 1;
   }
+  Child a = spawnedA.unwrap();
+  Child b = spawnedB.unwrap();
 
-  pump(core, cli, a.handle, b.handle);
+  // stdin -> a -> b -> stdout, every leg at once, until each source ends. Each source's end is
+  // passed on rather than ending the pipeline: `sort` emits nothing until its input closes, so a
+  // stage's own end is the only thing that finishes it.
+  Ticket<void> intoA = forward(err, "input", sys.stdin(), a.input(), true);
+  Ticket<void> intoB = forward(err, "first stage", a.output(), b.input(), true);
+  Ticket<void> intoOut = forward(err, "second stage", b.output(), out, false);
+  await intoA;
+  await intoB;
+  await intoOut;
 
-  i32 ca = cli.exitCode(a.handle).wait();
-  i32 cb = cli.exitCode(b.handle).wait();
-  cli.closeSocket(a.handle);
-  cli.closeSocket(b.handle);
+  auto ca = await a.exit();
+  auto cb = await b.exit();
+  a.stop();
+  b.stop();
+  i32 codeA = ca.isOk() ? ca.unwrap() : 1;
+  i32 codeB = cb.isOk() ? cb.unwrap() : 1;
   // A pipeline's status is its last stage's, as in a shell.
-  return cb != 0 ? cb : (ca != 0 ? ca : 0);
+  return codeB != 0 ? codeB : (codeA != 0 ? codeA : 0);
 }
 
 /**
@@ -73,59 +85,33 @@ export i32 main(Sys sys) {
  * `""` through as an argument is not the same thing: `wc ""` reads a file called nothing and
  * reports that it cannot, which is how this example first failed.
  */
-string[] argv(string s) {
+string[] argsOf(string s) {
   return s == "" ? string[]() : [s];
 }
 
 /**
- * stdin -> a -> b -> stdout, until the second child stops writing.
+ * Everything `from` says, written to `to`, and then — when `closing` — `to` closed.
  *
- * Each source's end is passed on rather than ending the pipeline: `sort` emits nothing until
- * its input closes, so a stage's own end is the only thing that finishes it.
+ * A failed read ends the leg the way its end does, and says so: a pipeline that loses a stage to a
+ * broken pipe and reports success is the reason a read has three outcomes.
  */
-void pump(Core core, Cli cli, i32 a, i32 b) {
-  Pending<Read> tIn = cli.recv(STDIN);
-  Pending<Read> tA = cli.recv(a);
-  Pending<Read> tB = cli.recv(b);
-  bool inLive = true;
-  bool aLive = true;
-
+async void forward(Output err, string label, Input from, Output to, bool closing) {
   while (true) {
-    // The waited-on set shrinks as sources end, so the index `waitAny` returns means
-    // different things at different times — hence the parallel list of what each one is.
-    i32 n = (inLive ? 1 : 0) + (aLive ? 1 : 0) + 1;
-    i32[] ids = i32[].filled(n, 0);
-    i32[] from = i32[].filled(n, 0);
-    i32 k = 0;
-    if (inLive) { ids[k] = tIn.id; from[k] = 0; k++; }
-    if (aLive) { ids[k] = tA.id; from[k] = 1; k++; }
-    ids[k] = tB.id; from[k] = 2;
-
-    i32 got = core.waitAny(ids, -1);
-    if (got < 0) { return; }
-
-    // A failed read ends that leg the way its end does, and says so — a pipeline that loses a stage
-    // to a broken pipe and reports success is the reason `Read` has three cases.
-    if (from[got] == 0) {
-      match (tIn.wait()) {
-        Data(bytes): { cli.send(a, bytes).wait(); tIn = cli.recv(STDIN); }
-        End: { cli.closeFeed(a); inLive = false; }
-        Failed(why): { core.warn("pipe: input: \{why}"); cli.closeFeed(a); inLive = false; }
-      }
-    } else if (from[got] == 1) {
-      match (tA.wait()) {
-        Data(bytes): { cli.send(b, bytes).wait(); tA = cli.recv(a); }
-        End: { cli.closeFeed(b); aLive = false; }
-        Failed(why): { core.warn("pipe: first stage: \{why}"); cli.closeFeed(b); aLive = false; }
-      }
-    } else {
-      bool over = false;
-      match (tB.wait()) {
-        Data(bytes): { cli.write(bytes); tB = cli.recv(b); }
-        End: { over = true; }
-        Failed(why): { core.warn("pipe: second stage: \{why}"); over = true; }
-      }
-      if (over) { return; }
+    auto got = await from.chunk();
+    if (got.isErr()) {
+      err.line("pipe: \{label}: \{got.err()!}");
+      break;
     }
+    bool over = false;
+    match (got.unwrap()) {
+      Data(bytes): {
+        auto wrote = await to.write(bytes);
+        if (wrote.isErr()) { err.line("pipe: \{label}: \{wrote.err()!}"); over = true; }
+      }
+      End: { over = true; }
+      Failed(why): { err.line("pipe: \{label}: \{why}"); over = true; }
+    }
+    if (over) { break; }
   }
+  if (closing) { await to.close(); }
 }

@@ -10,12 +10,13 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsExpandMessage, blsHashToField, blsMapToCurve, blsMapLandsOnCurve, blsHashToG2,
          blsHashToG2InSubgroup } from "./probe.wac";
+import { flatten } from "core";
 
 /** One CFRG vector: the message, its two `u` values, and the points at each checkpoint. */
 struct Vector {
@@ -77,13 +78,14 @@ struct Suite {
   Vector[] vectors;
 }
 
-Suite suite(T t, Cli cli) {
+Suite suite(T t, Files fs) {
   Suite none = Suite(false, "", Vector[].filled(0, Vector("", string[].filled(0, ""), "", "", "", "",
                                                        "", "")));
-  FileResult f = cli.readFile("packages/bls/test/vendor/hash_to_G2.json").wait();
-  t.isTrue(f.ok, "hash_to_G2.json could not be read: \{f.error}");
-  if (!f.ok) { return none; }
-  JsonValue? doc = parse(f.bytes).ok();
+  auto fRead = flatten(fs.readFile("packages/bls/test/vendor/hash_to_G2.json").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "hash_to_G2.json could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return none; }
+  JsonValue? doc = parse(f!).ok();
   t.isTrue(!(doc is null), "hash_to_G2.json did not parse");
   if (doc is null) { return none; }
   JsonArray? list = doc!.member("vectors")?.array();
@@ -111,9 +113,10 @@ Suite suite(T t, Cli cli) {
   return Suite(true, doc!.member("dst")?.text() ?? "", out);
 }
 
-export string test_hash_to_field_matches_every_cfrg_vector(Core core, Cli cli) {
+export string test_hash_to_field_matches_every_cfrg_vector(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Suite s = suite(t, cli);
+  Suite s = suite(t, fs);
   if (!s.ok) { return t.report(); }
   t.isTrue(s.vectors.len() > 0, "the suite has no vectors");
   u8[] dst = s.dst.toBytes();
@@ -126,9 +129,10 @@ export string test_hash_to_field_matches_every_cfrg_vector(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(Core core, Cli cli) {
+export string test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Suite s = suite(t, cli);
+  Suite s = suite(t, fs);
   if (!s.ok) { return t.report(); }
   u8[] dst = s.dst.toBytes();
   // A DST over 255 bytes, and a length needing more than 255 blocks, are both defined as errors
@@ -143,12 +147,13 @@ export string test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(Cor
   return t.report();
 }
 
-export string test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(Core core, Cli cli) {
+export string test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The second checkpoint. `Q0` and `Q1` are the map's output *before* the cofactor is cleared,
   // so a wrong isogeny coefficient fails here and a wrong cofactor clearing does not — which is
   // what makes a failure mean something specific rather than "hash_to_G2 is wrong".
-  Suite s = suite(t, cli);
+  Suite s = suite(t, fs);
   if (!s.ok) { return t.report(); }
   for (i32 i = 0; i < s.vectors.len(); i++) {
     Vector v = s.vectors[i];
@@ -166,11 +171,12 @@ export string test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(Core core
   return t.report();
 }
 
-export string test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one(Core core, Cli cli) {
+export string test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // If the isogeny were skipped or wrong the point would satisfy E' rather than E, and every
   // later step would still run.
-  Suite s = suite(t, cli);
+  Suite s = suite(t, fs);
   if (!s.ok) { return t.report(); }
   for (i32 i = 0; i < s.vectors.len(); i++) {
     Vector v = s.vectors[i];
@@ -183,11 +189,12 @@ export string test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one(Co
   return t.report();
 }
 
-export string test_hash_to_g2_matches_p_in_every_cfrg_vector(Core core, Cli cli) {
+export string test_hash_to_g2_matches_p_in_every_cfrg_vector(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The third and last checkpoint of this stage. With `u` and `Q0`/`Q1` already passing, a
   // failure here can only be the addition or the cofactor clearing.
-  Suite s = suite(t, cli);
+  Suite s = suite(t, fs);
   if (!s.ok) { return t.report(); }
   u8[] dst = s.dst.toBytes();
   for (i32 i = 0; i < s.vectors.len(); i++) {
@@ -197,11 +204,12 @@ export string test_hash_to_g2_matches_p_in_every_cfrg_vector(Core core, Cli cli)
   return t.report();
 }
 
-export string test_hash_to_g2_lands_in_the_order_r_subgroup(Core core, Cli cli) {
+export string test_hash_to_g2_lands_in_the_order_r_subgroup(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // Which is the entire purpose of clearing the cofactor, and is not implied by the vectors
   // above: a point could match P and still be checked wrongly by `g2InSubgroup`.
-  Suite s = suite(t, cli);
+  Suite s = suite(t, fs);
   if (!s.ok) { return t.report(); }
   u8[] dst = s.dst.toBytes();
   for (i32 i = 0; i < s.vectors.len(); i++) {
@@ -211,16 +219,18 @@ export string test_hash_to_g2_lands_in_the_order_r_subgroup(Core core, Cli cli) 
   return t.report();
 }
 
-export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli cli) {
+export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // A second corpus for the same function. Their generator uses the draft's DST — checked by
   // reading `main.py` rather than by trying both — so these add messages rather than a new
   // configuration. Worth having for one of them in particular: a 517-byte message, which is the
   // only case here that drives `expand_message_xmd` past a single output block.
-  FileResult f = cli.readFile("packages/bls/test/vendor/eth_hash_to_G2.json").wait();
-  t.isTrue(f.ok, "eth_hash_to_G2.json could not be read: \{f.error}");
-  if (!f.ok) { return t.report(); }
-  JsonValue? doc = parse(f.bytes).ok();
+  auto fRead = flatten(fs.readFile("packages/bls/test/vendor/eth_hash_to_G2.json").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "eth_hash_to_G2.json could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  JsonValue? doc = parse(f!).ok();
   t.isTrue(!(doc is null), "eth_hash_to_G2.json did not parse");
   if (doc is null) { return t.report(); }
   JsonObject cases = JsonObject.create();

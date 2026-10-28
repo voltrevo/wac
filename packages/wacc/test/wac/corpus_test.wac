@@ -5,14 +5,16 @@
 // asserts the shape of what came back rather than trusting `ok`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, endsWith, contains } from "../../../wactest/src/strings.wac";
 import { Corpus, loadCorpus, waccSources } from "./corpus_probe.wac";
+import { flatten } from "core";
 
-export string test_the_walk_finds_the_repositorys_wac_and_reads_all_of_it(Core core, Cli cli) {
+export string test_the_walk_finds_the_repositorys_wac_and_reads_all_of_it(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "corpus_test");
+  Corpus c = loadCorpus(fs, "corpus_test");
   t.isTrue(c.ok, "the walk ran — " + c.error);
   if (!c.ok) { return t.report(); }
 
@@ -33,12 +35,13 @@ export string test_the_walk_finds_the_repositorys_wac_and_reads_all_of_it(Core c
   return t.report();
 }
 
-export string test_spec_tour_wac_is_present_because_it_is_the_richest_entry(Core core, Cli cli) {
+export string test_spec_tour_wac_is_present_because_it_is_the_richest_entry(Sys sys) {
+  Files fs = sys.files();
   // The one entry that used to be allowed to go missing, and the one that cannot: it is written to
   // exercise every feature in the language, which no working package does. A corpus without it is a
   // different and much weaker corpus that still reports a large number of files.
   T t = T.create();
-  Corpus c = loadCorpus(cli, "corpus_test");
+  Corpus c = loadCorpus(fs, "corpus_test");
   if (!c.ok) { t.fail(c.error); return t.report(); }
 
   t.isTrue(has(c.paths, "spec/tour.wac"), "the tour is in the corpus");
@@ -50,10 +53,10 @@ export string test_spec_tour_wac_is_present_because_it_is_the_richest_entry(Core
   return t.report();
 }
 
-export string test_waccs_own_sources_are_found_since_the_bootstrap_rung_is_about_them(
-    Core core, Cli cli) {
+export string test_waccs_own_sources_are_found_since_the_bootstrap_rung_is_about_them(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "corpus_test");
+  Corpus c = loadCorpus(fs, "corpus_test");
   if (!c.ok) { t.fail(c.error); return t.report(); }
 
   string[] own = waccSources(c);
@@ -79,16 +82,18 @@ export string test_waccs_own_sources_are_found_since_the_bootstrap_rung_is_about
  * prose that has to be edited by whoever adds one is a figure that will be wrong between edits and
  * red in between — `site/tools/site.test.ts` makes the same argument about the seed's size.
  */
-export string test_the_corpus_size_the_site_quotes_is_the_corpus(Core core, Cli cli) {
+export string test_the_corpus_size_the_site_quotes_is_the_corpus(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "corpus_test");
+  Corpus c = loadCorpus(fs, "corpus_test");
   t.isTrue(c.ok, "the walk: " + c.error);
   if (!c.ok) { return t.report(); }
 
-  FileResult f = cli.readFile("site/wac/stack.wac").wait();
-  t.isTrue(f.ok, "reading the page — " + f.error);
-  if (!f.ok) { return t.report(); }
-  string page = string.fromBytes(f.bytes);
+  auto fRead = flatten(fs.readFile("site/wac/stack.wac").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "reading the page — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  string page = string.fromBytes(f!);
 
   // The figure is written with a thousands separator, which is how the page writes every other one.
   i32 at = page.indexOf("own 1,");
@@ -150,10 +155,11 @@ export string test_the_corpus_size_the_site_quotes_is_the_corpus(Core core, Cli 
   //
   // Checked here rather than there for the reason at the top of this file: the corpus is whatever
   // `loadCorpus` walks, and this is where that walk already is.
-  FileResult rf = cli.readFile("README.md").wait();
-  t.isTrue(rf.ok, "reading README.md — " + rf.error);
-  if (rf.ok) {
-    string readme = string.fromBytes(rf.bytes);
+  auto rfRead = flatten(fs.readFile("README.md").wait());
+  u8[]? rf = rfRead.ok();
+  t.isTrue((rf is not null), "reading README.md — " + "\{rfRead.isErr() ? "\{rfRead.err()!}" : ""}");
+  if ((rf is not null)) {
+    string readme = string.fromBytes(rf!);
     i32 size = numberFrom(boldBefore(readme, "** wac files"));
     i32 whole = numberFrom(between(readme, "**all ", "**"));
     t.isTrue(size > 0 && size >= have - slack && size <= have + slack,

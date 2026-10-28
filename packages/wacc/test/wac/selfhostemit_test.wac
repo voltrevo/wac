@@ -82,8 +82,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { Buf } from "core";
-import { Core, Cli, Exec, Change, Stat, FileResult } from "std";
+import { Buf, flatten } from "core";
+import { Exec, Change, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { emitFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
@@ -178,21 +178,21 @@ static string STAGE_A = ".cache/_selfhost_stageA.txt";
  * seed inside `wac` and *run* by its runtime, so a rebuilt host can change this test's answer with
  * every source in the repository untouched.
  */
-string stageAKey(Cli cli, u8[] driver) {
+string stageAKey(Env env, Files fs, u8[] driver) {
   i64 newest = 0 as i64;
-  Stat run = cli.stat("harness/ladderRun.ts").wait();
-  if (run.exists) { newest = run.modifiedMillis; }
-  Stat bin = cli.stat(cli.cwd().wait() + "/native/v8/target/release/wac").wait();
+  Stat? run = flatten(fs.stat("harness/ladderRun.ts").wait()).ok();
+  if ((run is not null)) { newest = run!.modifiedMillis; }
+  Stat bin = flatten(fs.stat(flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac").wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0));
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
   // The rungs and the JavaScript that drives them: what wac-L5 is built out of.
   string[] dirs = ["bootstrap/boot", "bootstrap/js", "bootstrap/drivers"];
   for (i32 d = 0; d < dirs.len(); d++) {
-    string[]? names = cli.readDir(dirs[d]).wait();
+    string[]? names = flatten(fs.readDir(dirs[d]).wait()).ok();
     if (names is null) { return ""; }
     string[] here = names!;
     for (i32 i = 0; i < here.len(); i++) {
-      Stat f = cli.stat(dirs[d] + "/" + here[i]).wait();
-      if (f.exists && f.modifiedMillis > newest) { newest = f.modifiedMillis; }
+      Stat? f = flatten(fs.stat(dirs[d] + "/" + here[i]).wait()).ok();
+      if ((f is not null) && f!.modifiedMillis > newest) { newest = f!.modifiedMillis; }
     }
   }
   // An empty key is "cannot say", and a cache that cannot say is not read or written.
@@ -213,12 +213,12 @@ string stageAKey(Cli cli, u8[] driver) {
  * Cold — a wacc source changed, or `compiler/` did — it costs exactly what it always did, which is
  * the run where this test has something to say.
  */
-i32[] cachedStageA(Cli cli, string key, i32 want, i32[] okOut) {
+i32[] cachedStageA(Files fs, string key, i32 want, i32[] okOut) {
   okOut[0] = 0;
   if (key == "") { return i32[].filled(want, 0); }
-  FileResult f = cli.readFile(STAGE_A).wait();
-  if (!f.ok) { return i32[].filled(want, 0); }
-  string[] lines = splitLines(string.fromBytes(f.bytes));
+  u8[]? f = flatten(fs.readFile(STAGE_A).wait()).ok();
+  if ((f is null)) { return i32[].filled(want, 0); }
+  string[] lines = splitLines(string.fromBytes(f!));
   if (lines.len() < want + 1) { return i32[].filled(want, 0); }
   if (trimmed(lines[0]) != key) { return i32[].filled(want, 0); }
   i32[] out = i32[].filled(want, 0);
@@ -227,11 +227,11 @@ i32[] cachedStageA(Cli cli, string key, i32 want, i32[] okOut) {
   return out;
 }
 
-void writeStageA(Cli cli, string key, i32[] said) {
+void writeStageA(Files fs, string key, i32[] said) {
   if (key == "") { return; }
   string body = key + "\n";
   for (i32 i = 0; i < said.len(); i++) { body = body + itoa(said[i]) + "\n"; }
-  cli.writeFile(STAGE_A, body.toBytes()).wait();
+  fs.writeFile(STAGE_A, body.toBytes()).wait();
 }
 
 /**
@@ -241,12 +241,12 @@ void writeStageA(Cli cli, string key, i32[] said) {
  * process — and this test asks it three things. Asking for them together is the difference between
  * one of those compiles and three.
  */
-i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
+i32[] ladderAnswers(Procs procs, string exports, i32 want, i32[] okOut) {
   okOut[0] = 0;
-  Exec r = cli.exec("deno", ["run", "-A", "harness/ladderRun.ts", DRIVER, exports],
-                    u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return i32[].filled(want, 0); }
-  string[] lines = splitLines(string.fromBytes(r.stdout));
+  auto rRan = flatten(procs.exec("deno", ["run", "-A", "harness/ladderRun.ts", DRIVER, exports], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return i32[].filled(want, 0); }
+  string[] lines = splitLines(string.fromBytes(r!.stdout));
   i32[] out = i32[].filled(want, 0);
   i32 n = 0;
   for (i32 i = 0; i < lines.len() && n < want; i++) {
@@ -260,10 +260,12 @@ i32[] ladderAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
   return out;
 }
 
-export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
-    Core core, Cli cli) {
+export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Corpus c = loadCorpus(cli, "selfhostemit_test");
+  Corpus c = loadCorpus(fs, "selfhostemit_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
@@ -293,25 +295,25 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
   for (i32 i = 0; i < near.len(); i++) { paths[i] = cp[i]; sources[i] = cs[i]; }
   paths[near.len()] = DRIVER;
 
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   // **Built once.** It is 1.4 MB of generated source and was built twice — once to write for the
   // reference and once to hand to stage B — for a string that is the same both times.
   string driver = driverFor(cp, cs);
-  Change wrote = cli.writeFile(DRIVER, driver.toBytes()).wait();
-  t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
-  if (wrote.fault != 0) { return t.report(); }
+  auto wrote = flatten(fs.writeFile(DRIVER, driver.toBytes()).wait());
+  t.isTrue(wrote.isOk(), "the driver was written to " + DRIVER);
+  if (wrote.isErr()) { return t.report(); }
 
   // **The canaries, before the comparison.** A stage that declined the whole compiler would emit an
   // eight-byte header, and two eight-byte headers agree about nothing at all.
   i32[] ok = i32[].filled(1, 0);
-  string key = stageAKey(cli, driver.toBytes());
-  i32[] said = cachedStageA(cli, key, 3, ok);
+  string key = stageAKey(env, fs, driver.toBytes());
+  i32[] said = cachedStageA(fs, key, 3, ok);
   if (ok[0] != 1) {
-    said = ladderAnswers(cli, "blockedLen,wholeLen,fold", 3, ok);
-    if (ok[0] == 1) { writeStageA(cli, key, said); }
+    said = ladderAnswers(procs, "blockedLen,wholeLen,fold", 3, ok);
+    if (ok[0] == 1) { writeStageA(fs, key, said); }
   }
   t.eqI32(ok[0], 1, "the ladder's wacc ran the driver and answered all three");
-  if (ok[0] != 1) { cli.remove(DRIVER, false).wait(); return t.report(); }
+  if (ok[0] != 1) { fs.remove(DRIVER, false).wait(); return t.report(); }
   i32 blocked = said[0];
   t.eqI32(blocked, 0,
           "stage A declines wacc itself (" + itoa(blocked) + " characters of reason), so both " +
@@ -322,8 +324,8 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
 
   sources[near.len()] = driver;
   u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "selfhost.wasm", 0);
-  Ran r = runModule(cli, wasm, dir, "selfhost.wasm", ["fold"]);
-  cli.remove(DRIVER, false).wait();
+  Ran r = runModule(env, fs, procs, wasm, dir, "selfhost.wasm", ["fold"]);
+  fs.remove(DRIVER, false).wait();
   if (!r.ok || wasRejected(r) || r.trapped) {
     t.fail("stage B did not run — " + (r.ok ? r.stderr : r.error));
     return t.report();

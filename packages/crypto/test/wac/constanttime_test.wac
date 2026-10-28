@@ -48,13 +48,14 @@
 // export name is a call that never happens.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Pending, execReason} from "std";
+import { Exec, ChildEnv, Launch, SpawnFault, execReason, Env, Files, Procs, Sys } from "std";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { builtProgram, writeIfDifferent } from "../../../wactest/src/built.wac";
 import { traceSite, describeSite } from "../../../wactest/src/tracesite.wac";
+import { Result, Ticket, flatten } from "core";
 
-string root(Cli cli) { return cli.cwd().wait(); }
-string binary(Cli cli) { return "\{root(cli)}/native/v8/target/release/wac"; }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
+string binary(Env env) { return "\{root(env)}/native/v8/target/release/wac"; }
 
 /**
  * Structured secrets, not random ones: a leak shows at the extremes first.
@@ -96,9 +97,9 @@ string literal(i32[] v) {
  * by accident: each case's drivers are written by name, and `writeIfDifferent` rewrites one the moment
  * its bytes change.
  */
-string scratchDir(Cli cli, string name) {
-  string dir = "\{root(cli)}/.cache/ct-\{name}";
-  cli.mkdir(dir, true).wait();
+string scratchDir(Env env, Files fs, string name) {
+  string dir = "\{root(env)}/.cache/ct-\{name}";
+  fs.mkdir(dir, true).wait();
   return dir;
 }
 
@@ -108,7 +109,7 @@ string scratchDir(Cli cli, string name) {
  * `body` is the call, written once per routine with `$KEY` where the literal goes — so the two
  * programs of a comparison are the same source with different digits.
  */
-string driver(T t, Cli cli, string dir, string name, string src, string body, i32[] key) {
+string driver(T t, string dir, string name, string src, string body, i32[] key) {
   i32 at = -1;
   for (i32 i = 0; i + 4 <= body.len() && at < 0; i++) {
     if (body.slice(i, i + 4) == "$KEY") { at = i; }
@@ -142,14 +143,13 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
  * is 8.19 million events, so the *proof it is uniform* needs a journal twice the default's size,
  * where the leak it used to have needed nothing.
  */
-string builtDriver(T t, Cli cli, string dir, string label, string tag, string program, i32 slots) {
+string builtDriver(T t, Env env, Files fs, Procs procs, string dir, string label, string tag, string program, i32 slots) {
   string entry = "\{dir}/\{tag}.wac";
-  t.isTrue(writeIfDifferent(cli, entry, program.toBytes()), "\{tag}: writing the driver");
-  string mod = builtProgram(cli, entry, "ct-\{label}-\{tag}",
-                            slots > 0
+  t.isTrue(writeIfDifferent(fs, entry, program.toBytes()), "\{tag}: writing the driver");
+  string mod = builtProgram(env, fs, procs, entry, "ct-\{label}-\{tag}", slots > 0
                               ? ["--trace", "--trace-slots", "\{slots}", "--quiet"]
                               : ["--trace", "--quiet"]);
-  if (!cli.stat(mod).wait().exists) {
+  if (!flatten(fs.stat(mod).wait()).isOk()) {
     t.fail("\{tag}: the traced build produced nothing — see \{mod}");
     return "";
   }
@@ -158,22 +158,29 @@ string builtDriver(T t, Cli cli, string dir, string label, string tag, string pr
 
 
 /** `wac ctcompare`, started. Every comparison of one routine is against the same first module. */
-Pending<Exec> submitCompare(Cli cli, string a, string b, bool all) {
+Ticket<Result<Exec, SpawnFault>> submitCompare(Env env, Procs procs, string a, string b, bool all) {
   string[] argv = all ? ["ctcompare", "--all", "\{a}.wasm", "\{b}.wasm"]
                       : ["ctcompare", "\{a}.wasm", "\{b}.wasm"];
-  return cli.exec(binary(cli), argv, u8[]());
+  return procs.exec(binary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain());
 }
 
 /** Its whole answer, trimmed. */
-string collected(T t, Pending<Exec> p) {
-  Exec r = p.wait();
-  t.isTrue(r.ran() && r.status == 0, "ctcompare ran — \{execReason(r)}");
-  return (r.ran() && r.status == 0) ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
+string collected(T t, Ticket<Result<Exec, SpawnFault>> p) {
+  match (flatten(p.wait())) {
+    Ok(r): {
+      t.isTrue(r.status == 0, "ctcompare ran — \{execReason(r)}");
+      return r.status == 0 ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
+    }
+    Err(e): {
+      t.fail("ctcompare did not start — \{e}");
+      return "<did not run>";
+    }
+  }
 }
 
 /** `wac ctcompare`, whole answer trimmed — for the callers that want exactly one. */
-string compared(T t, Cli cli, string a, string b, bool all) {
-  return collected(t, submitCompare(cli, a, b, all));
+string compared(T t, Env env, Procs procs, string a, string b, bool all) {
+  return collected(t, submitCompare(env, procs, a, b, all));
 }
 
 /** Digits to an integer; -1 when it is not one. */
@@ -208,8 +215,8 @@ string word(string line, i32 n) {
 }
 
 /** `kind@file:line` for a site, out of the table the build wrote beside the module. */
-string siteAt(Cli cli, string stem, i32 site) {
-  return describeSite(traceSite(cli, stem, site));
+string siteAt(Env env, Files fs, string stem, i32 site) {
+  return describeSite(traceSite(env, fs, stem, site));
 }
 
 /**
@@ -218,10 +225,10 @@ string siteAt(Cli cli, string stem, i32 site) {
  * The same reason as `noSecretDependence`: two programs differing in one literal, two independent
  * `wac build` processes, and no order between them.
  */
-string[] pair(T t, Cli cli, string dir, string label, string progA, string progB) {
+string[] pair(T t, Env env, Files fs, Procs procs, string dir, string label, string progA, string progB) {
   return [
-                  builtDriver(t, cli, dir, label, "a", progA, 0),
-                  builtDriver(t, cli, dir, label, "b", progB, 0)
+                  builtDriver(t, env, fs, procs, dir, label, "a", progA, 0),
+                  builtDriver(t, env, fs, procs, dir, label, "b", progB, 0)
   ];
 }
 
@@ -231,9 +238,8 @@ string[] pair(T t, Cli cli, string dir, string label, string progA, string progB
  * The empty-journal case is a failure rather than a pass, which is what `same` carrying its count is
  * for: a routine that never ran agrees with another routine that never ran.
  */
-void noSecretDependence(T t, Cli cli, string label, string src, string name, string body,
-                        i32[] which, i32 len, i32 slots) {
-  string dir = scratchDir(cli, label);
+void noSecretDependence(T t, Env env, Files fs, Procs procs, string label, string src, string name, string body, i32[] which, i32 len, i32 slots) {
+  string dir = scratchDir(env, fs, label);
   i32 n = which.len();
 
   // **Kept, not rebuilt.** Four drivers a routine, each the same bytes as last time unless the routine
@@ -241,23 +247,22 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   // are what still run every time, and they are what this test is about.
   string[] stems = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) {
-    stems[i] = builtDriver(t, cli, dir, label, "k\{i}",
-                           driver(t, cli, dir, name, src, body, keyOf(which[i], len)), slots);
+    stems[i] = builtDriver(t, env, fs, procs, dir, label, "k\{i}", driver(t, dir, name, src, body, keyOf(which[i], len)), slots);
   }
   if (stems[0] == "") { return; }
 
   // The comparisons are all against `stems[0]`, so they wait for the builds and then run together too.
-  Pending<Exec>[] cmps = Pending<Exec>[].defaulted(n);
+  Ticket<Result<Exec, SpawnFault>>[] cmps = Ticket<Result<Exec, SpawnFault>>[].defaulted(n);
   for (i32 i = 1; i < n; i++) {
     if (stems[i] == "") { continue; }
-    cmps[i] = submitCompare(cli, stems[0], stems[i], false);
+    cmps[i] = submitCompare(env, procs, stems[0], stems[i], false);
   }
   for (i32 i = 1; i < n; i++) {
     if (stems[i] == "") { continue; }
     string said = collected(t, cmps[i]);
     t.isTrue(startsWith(said, "same "),
              label + ": behaviour depends on the secret — #0 against #\{i}: " + said +
-             (startsWith(said, "differs ") ? " at " + siteAt(cli, stems[0], numberOf(word(said, 2))) : ""));
+             (startsWith(said, "differs ") ? " at " + siteAt(env, fs, stems[0], numberOf(word(said, 2))) : ""));
     // **Only when it says `same`.** This used to be one assertion with the check above, so a
     // `differs` answer failed twice — once correctly, and once claiming the call never happened. The
     // empty-journal case it is really for is `same 0`: two routines that never ran agree perfectly.
@@ -268,38 +273,49 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   }
 }
 
-export string test_sha256_does_not_vary_with_its_inputs_content(Core core, Cli cli) {
+export string test_sha256_does_not_vary_with_its_inputs_content(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  noSecretDependence(t, cli, "sha256", "packages/crypto/src/sha256.wac", "sha256",
-                     "sha256($KEY)", [0, 1, 2, 3] as i32[], 16, 0);
+  noSecretDependence(t, env, fs, procs, "sha256", "packages/crypto/src/sha256.wac", "sha256", "sha256($KEY)", [0, 1, 2, 3] as i32[], 16, 0);
   return t.report();
 }
 
-export string test_chacha20s_block_function_does_not_vary_with_the_key(Core core, Cli cli) {
+export string test_chacha20s_block_function_does_not_vary_with_the_key(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  noSecretDependence(t, cli, "chacha", "packages/crypto/src/chacha20.wac", "chachaBlock",
-                     "chachaBlock($KEY, 1, u8[].filled(12, 1))", [0, 1, 2, 3] as i32[], 32, 0);
+  noSecretDependence(t, env, fs, procs, "chacha", "packages/crypto/src/chacha20.wac", "chachaBlock", "chachaBlock($KEY, 1, u8[].filled(12, 1))", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
-export string test_poly1305_does_not_vary_with_the_key(Core core, Cli cli) {
+export string test_poly1305_does_not_vary_with_the_key(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  noSecretDependence(t, cli, "poly1305", "packages/crypto/src/poly1305.wac", "poly1305",
-                     "poly1305($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 32, 0);
+  noSecretDependence(t, env, fs, procs, "poly1305", "packages/crypto/src/poly1305.wac", "poly1305", "poly1305($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
-export string test_x25519s_ladder_does_not_vary_with_the_scalar(Core core, Cli cli) {
+export string test_x25519s_ladder_does_not_vary_with_the_scalar(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The expensive one — about 1.6 million events per run, which is also the answer to "is the ladder
   // really uniform": it is, over every one of them. Two secrets rather than four, as the TypeScript
   // had it: each is a compile and a run of the ladder.
   T t = T.create();
-  noSecretDependence(t, cli, "x25519", "packages/crypto/src/x25519.wac", "x25519Base",
-                     "x25519Base($KEY)", [0, 1] as i32[], 32, 0);
+  noSecretDependence(t, env, fs, procs, "x25519", "packages/crypto/src/x25519.wac", "x25519Base", "x25519Base($KEY)", [0, 1] as i32[], 32, 0);
   return t.report();
 }
 
-export string test_ed25519_signing_does_not_vary_with_the_secret_key(Core core, Cli cli) {
+export string test_ed25519_signing_does_not_vary_with_the_secret_key(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The row `x25519Base` above was standing in for.** A uniform ladder is a fact about a ladder;
   // signing reduces `sha512(prefix ++ msg)` modulo L, where `prefix` is half the secret key
   // expansion — a different scalar, a different modulus and a different piece of arithmetic. It
@@ -311,13 +327,14 @@ export string test_ed25519_signing_does_not_vary_with_the_secret_key(Core core, 
   // default first, which is 2^22 and about 4.19 million — and `ctcompare` said `truncated` rather
   // than agreeing, which is the whole reason that answer is not a pass.
   T t = T.create();
-  noSecretDependence(t, cli, "ed25519", "packages/crypto/src/ed25519.wac", "ed25519Sign",
-                     "ed25519Sign($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 32,
-                     16777216);
+  noSecretDependence(t, env, fs, procs, "ed25519", "packages/crypto/src/ed25519.wac", "ed25519Sign", "ed25519Sign($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 32, 16777216);
   return t.report();
 }
 
-export string test_p256_public_key_does_not_vary_with_the_private_key(Core core, Cli cli) {
+export string test_p256_public_key_does_not_vary_with_the_private_key(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **This was a known leak in two places, and is neither.** Both are worth stating, because the
   // second was invisible while the first was live.
   //
@@ -343,13 +360,14 @@ export string test_p256_public_key_does_not_vary_with_the_private_key(Core core,
   // Not the all-zero key: `curvePublicKey` traps on a scalar of zero or one past the group order, so
   // the secrets here have to be valid keys as well as different.
   T t = T.create();
-  noSecretDependence(t, cli, "p256", "packages/crypto/src/p256.wac", "p256PublicKey",
-                     "p256PublicKey($KEY)", [2, 3] as i32[], 32, 16777216);
+  noSecretDependence(t, env, fs, procs, "p256", "packages/crypto/src/p256.wac", "p256PublicKey", "p256PublicKey($KEY)", [2, 3] as i32[], 32, 16777216);
   return t.report();
 }
 
-export string test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_operand(Core core,
-                                                                                    Cli cli) {
+export string test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_operand(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The routine, not the signature, and on purpose.** `scMul` — multiplication modulo the group
   // *order*, a different field from the coordinates — was double-and-add adding only when the bit was
   // set, which is `issues/system/0210`'s defect a second time. `ecdsaSign` puts the private key in
@@ -362,13 +380,14 @@ export string test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_oper
   // The four structured secrets all work here: unlike a private key, an operand of `scMul` has no
   // range condition to satisfy, so zero is a legal input and is the extreme worth having.
   T t = T.create();
-  noSecretDependence(t, cli, "scmul", "packages/crypto/test/wac/p256_probe.wac", "scalarMulOrder",
-                     "scalarMulOrder($KEY)", [0, 1, 2, 3] as i32[], 32, 0);
+  noSecretDependence(t, env, fs, procs, "scmul", "packages/crypto/test/wac/p256_probe.wac", "scalarMulOrder", "scalarMulOrder($KEY)", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
-export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_was_valid(Core core,
-                                                                                        Cli cli) {
+export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_was_valid(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The one question the side-channel table cannot ask.** Its `Case` varies the secret and holds
   // the public input; a KEM's most important property is the other way round — an attacker submits
   // chosen ciphertexts to the *same* key and wants to learn which were valid, which is exactly the
@@ -380,19 +399,17 @@ export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_w
   // polynomial coefficient, a million events inside `pkeDecrypt` and long before the rejection
   // itself. `issues/system/0226`.
   T t = T.create();
-  string dir = scratchDir(cli, "mlkem");
+  string dir = scratchDir(env, fs, "mlkem");
   const string SRC = "packages/crypto/test/wac/mlkem_probe.wac";
-  string[] ab = pair(t, cli, dir, "kemDecapsFlip",
-                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", [0] as i32[]),
-                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", [255] as i32[]));
+  string[] ab = pair(t, env, fs, procs, dir, "kemDecapsFlip", driver(t, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", [0] as i32[]), driver(t, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", [255] as i32[]));
   string a = ab[0];
   string b = ab[1];
   if (a == "" || b == "") { return t.report(); }
 
-  string said = compared(t, cli, a, b, false);
+  string said = compared(t, env, procs, a, b, false);
   t.isTrue(startsWith(said, "same "),
            "a valid and an invalid ciphertext are distinguishable: " + said +
-           (startsWith(said, "differs ") ? " at \{siteAt(cli, a, numberOf(word(said, 2)))}" : ""));
+           (startsWith(said, "differs ") ? " at \{siteAt(env, fs, a, numberOf(word(said, 2)))}" : ""));
   // `truncated` is not a pass here any more than anywhere else, and the count is the evidence the
   // programs ran at all: two empty journals agree perfectly.
   if (startsWith(said, "same ")) {
@@ -401,7 +418,10 @@ export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_w
   return t.report();
 }
 
-export string test_ghash_does_not_vary_with_the_authentication_key(Core core, Cli cli) {
+export string test_ghash_does_not_vary_with_the_authentication_key(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **A known leak until 2026-08-20, and the one whose consequence is forgery.** `gfMul` was
   // shift-and-add with the add taken only when the bit was set, and reduced only when a one fell off
   // the bottom — two branches per iteration, over the accumulator and over H itself. `ghash(h, data)`
@@ -415,8 +435,7 @@ export string test_ghash_does_not_vary_with_the_authentication_key(Core core, Cl
   // key-derived bytes and always will without a bitsliced implementation — what changed is that one
   // of the two halves of GCM no longer branches on its key.
   T t = T.create();
-  noSecretDependence(t, cli, "ghash", "packages/crypto/src/ghash.wac", "ghash",
-                     "ghash($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 16, 0);
+  noSecretDependence(t, env, fs, procs, "ghash", "packages/crypto/src/ghash.wac", "ghash", "ghash($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 16, 0);
   return t.report();
 }
 
@@ -424,29 +443,30 @@ export string test_ghash_does_not_vary_with_the_authentication_key(Core core, Cl
 // Asserted as leaks so that fixing one fails here and forces the README to change with it. A README
 // that describes yesterday's side channels is worse than none.
 
-export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Core core, Cli cli) {
+export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratchDir(cli, "aes");
+  string dir = scratchDir(env, fs, "aes");
   const string SRC = "packages/crypto/src/aes.wac";
   string call = "aesEncrypt($KEY, \{literal(block16())})";
-  string[] ab = pair(t, cli, dir, "aesEncrypt",
-                     driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(0, 16)),
-                     driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
+  string[] ab = pair(t, env, fs, procs, dir, "aesEncrypt", driver(t, dir, "aesEncrypt", SRC, call, keyOf(0, 16)), driver(t, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
   string a = ab[0];
   string b = ab[1];
   if (a == "" || b == "") { return t.report(); }
 
-  string said = compared(t, cli, a, b, false);
+  string said = compared(t, env, procs, a, b, false);
   t.isTrue(startsWith(said, "differs "),
            "aes no longer leaks — update the README and delete this test: \{said}");
-  if (!startsWith(said, "differs ")) { cli.remove(dir, true).wait(); return t.report(); }
+  if (!startsWith(said, "differs ")) { fs.remove(dir, true).wait(); return t.report(); }
 
   // The point of the whole exercise: this one has no branch to find. Counting branches reports AES's
   // S-box lookup as perfectly uniform, so the two runs stand at *the same site* with different
   // indices — which `--all` reports as `site` and a branch leak reports as `split`.
-  string all = compared(t, cli, a, b, true);
+  string all = compared(t, env, procs, a, b, true);
   t.isTrue(startsWith(all, "site "),
-           "expected an index leak, got: \{all} — \{siteAt(cli, a, numberOf(word(said, 2)))}");
+           "expected an index leak, got: \{all} — \{siteAt(env, fs, a, numberOf(word(said, 2)))}");
 
   // The README names these lines. Asserting them here is what stops the table drifting away from the
   // code — a published measurement nothing checks is the failure this package already has an issue
@@ -455,7 +475,7 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   string found = "";
   for (string row in rows) {
     if (!startsWith(row, "site ")) { continue; }
-    found = found + siteAt(cli, a, numberOf(word(row, 2))) + " ";
+    found = found + siteAt(env, fs, a, numberOf(word(row, 2))) + " ";
   }
   // **All five, and now that is the whole of it.** Until 2026-08-20 `xtime`'s conditional reduction
   // split the two runs at `aes.wac:66`, so everything after was unexamined — `--all` stops at a split

@@ -29,7 +29,7 @@
 // candidate, and it takes the address to advertise on the command line rather than enumerating
 // interfaces — so it works on a known address and would not traverse a NAT.
 
-import { Cli, Core, Datagram, HostSocket, Sys } from "std";
+import { Datagram, Sys, Clock, Input, Net, Output, Random, Datagrams } from "std";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { selfSignedP256 } from "../../tls/src/x509gen.wac";
 import { Association } from "../src/sctp.wac";
@@ -39,6 +39,7 @@ import { Session } from "../src/session.wac";
 import { candidateLineOf, dataChannelDescription, attribute, fingerprintOf,
          hexColons } from "../src/sdp.wac";
 import { candidateLine, candidatePriority, prefHost, Candidate } from "../src/ice.wac";
+import { flatten } from "core";
 
 /** Ten years, in the seconds since the epoch a certificate counts in. */
 i64 notBefore() { return 1735689600 as i64; }      // 2025-01-01
@@ -79,8 +80,8 @@ u8[] ipv4(string s) {
 }
 
 /** A random printable fragment, since an ICE ufrag and password must be ASCII. */
-string fragment(Core core, i32 n) {
-  u8[] raw = core.randomBytes(n).wait();
+string fragment(Random rnd, i32 n) {
+  u8[] raw = flatten(rnd.bytes(n).wait()).unwrap();
   u8[] out = u8[].filled(n, 0);
   u8[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toBytes();
   for (i32 i = 0; i < n; i++) { out[i] = alphabet[raw[i] as i32 % alphabet.len()]; }
@@ -88,14 +89,19 @@ string fragment(Core core, i32 n) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: answer <host> <port>   (the peer's SDP offer on standard input)");
+  string[] argv = sys.args();
+  Input stdin = sys.stdin();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Net net = sys.net();
+  if (argv.len() < 2) {
+    err.line("usage: answer <host> <port>   (the peer's SDP offer on standard input)");
     return 2;
   }
-  string host = string.fromBytes(cli.arg(0).wait());
-  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
+  string host = argv[0];
+  i32 port = atoi(argv[1]);
 
   // ── An identity, made here and thrown away when this exits ──────────────────────────────────
   //
@@ -103,24 +109,24 @@ export i32 main(Sys sys) {
   // peer is the fingerprint in the SDP, which travels over the signalling channel. So the
   // signalling channel is the trust: an attacker who can rewrite the offer can substitute their own
   // fingerprint and there is nothing in the DTLS handshake that would notice.
-  u8[] priv = core.randomBytes(32).wait();
-  u8[] certNonce = core.randomBytes(32).wait();
+  u8[] priv = flatten(rnd.bytes(32).wait()).unwrap();
+  u8[] certNonce = flatten(rnd.bytes(32).wait()).unwrap();
   u8[] der = selfSignedP256("wac", 1 as i64, notBefore(), notAfter(), priv, certNonce);
   if (der.len() == 0) {
-    core.warn("could not build a certificate");
+    err.line("could not build a certificate");
     return 1;
   }
   string fingerprint = hexColons(sha256(der));
 
-  string ourUfrag = fragment(core, 8);
-  string ourPwd = fragment(core, 24);
+  string ourUfrag = fragment(rnd, 8);
+  string ourPwd = fragment(rnd, 24);
 
   // ── The peer's half, from the offer on standard input ───────────────────────────────────────
-  string offer = string.fromBytes(cli.readStdin().wait());
+  string offer = string.fromBytes(flatten(stdin.readAll().wait()).orElse(u8[]()));
   string theirUfrag = attribute(offer, "ice-ufrag");
   string theirPwd = attribute(offer, "ice-pwd");
   if (theirUfrag.len() == 0 || theirPwd.len() == 0) {
-    core.warn("the offer on standard input carries no ICE credentials");
+    err.line("the offer on standard input carries no ICE credentials");
     return 1;
   }
 
@@ -135,20 +141,21 @@ export i32 main(Sys sys) {
   // attribute — which is what the first version of this did, and it parses as neither.
   string answer = dataChannelDescription(1 as i64, ourUfrag, ourPwd, fingerprint, "passive",
                                          candidateLineOf(candidateLine(c)));
-  cli.write(answer.toBytes());
+  out.write(answer.toBytes());
 
-  HostSocket sock = cli.bindDatagram(host, port).wait();
-  if (sock.error.len() > 0) {
-    core.warn("could not bind \{host}:\{port}: \{sock.error}");
+  auto sockBind = flatten(net.bindDatagram(host, port).wait());
+  Datagrams? sock = sockBind.ok();
+  if ("\{sockBind.isErr() ? "\{sockBind.err()!}" : ""}".len() > 0) {
+    err.line("could not bind \{host}:\{port}: \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
     return 1;
   }
 
   Session session = Session.of(
-    Peer.of(der, priv, core.randomBytes(32).wait(), core.randomBytes(32).wait(),
-            core.randomBytes(32).wait(), core.randomBytes(8).wait()),
+    Peer.of(der, priv, flatten(rnd.bytes(32).wait()).unwrap(), flatten(rnd.bytes(32).wait()).unwrap(),
+            flatten(rnd.bytes(32).wait()).unwrap(), flatten(rnd.bytes(8).wait()).unwrap()),
     Association.of(0x77777777, 1, 65536),
-    Consent.of(5000 as i64, 30000 as i64, core.nowMillis().wait()),
-    ourUfrag, ourPwd, theirUfrag, theirPwd, core.randomBytes(24).wait(),
+    Consent.of(5000 as i64, 30000 as i64, flatten(clock.nowMillis().wait()).unwrap()),
+    ourUfrag, ourPwd, theirUfrag, theirPwd, flatten(rnd.bytes(24).wait()).unwrap(),
     // **The fingerprint from the offer, and it is the whole of the peer's identity.** Without it
     // the session carries nothing: a peer nobody named is a peer nobody vouched for.
     fingerprintOf(offer));
@@ -158,14 +165,15 @@ export i32 main(Sys sys) {
   // Everything protocol-shaped is behind `receive`: a datagram goes in and the datagrams to send
   // come out, whether that is a check response, a DTLS flight, a SACK or a data channel's ack.
   for (i32 forever = 0; forever < 1000000; forever++) {
-    Datagram in = cli.receiveFrom(sock.handle).wait();
-    if (in.error.len() > 0) { break; }
-    i64 now = core.nowMillis().wait();
+    auto arrived = flatten(sock!.receive().wait());
+    if (arrived.isErr()) { break; }
+    Datagram in = arrived.unwrap();
+    i64 now = flatten(clock.nowMillis().wait()).unwrap();
     u8[] fromIp = ipv4(in.peer);
 
-    u8[][] out = session.receive(in.bytes, fromIp, in.port, now);
-    for (i32 i = 0; i < out.len(); i++) {
-      cli.sendTo(sock.handle, in.peer, in.port, out[i]).wait();
+    u8[][] replies = session.receive(in.bytes, fromIp, in.port, now);
+    for (i32 i = 0; i < replies.len(); i++) {
+      sock!.sendTo(in.peer, in.port, replies[i]).wait();
     }
 
     // **Echo whatever arrived whole**, which is what makes this demonstrable rather than merely
@@ -173,18 +181,18 @@ export i32 main(Sys sys) {
     for (i32 guard = 0; guard < 64; guard++) {
       u8[] msg = session.take();
       if (msg.len() == 0) { break; }
-      core.log("received \{msg.len()} bytes");
+      out.line("received \{msg.len()} bytes");
       u8[][] back = session.send(0, msg, now);
       for (i32 i = 0; i < back.len(); i++) {
-        cli.sendTo(sock.handle, in.peer, in.port, back[i]).wait();
+        sock!.sendTo(in.peer, in.port, back[i]).wait();
       }
     }
     // Whatever the congestion window now allows, which is where the rest of a large message goes.
     u8[][] more = session.tick(now);
     for (i32 i = 0; i < more.len(); i++) {
-      cli.sendTo(sock.handle, in.peer, in.port, more[i]).wait();
+      sock!.sendTo(in.peer, in.port, more[i]).wait();
     }
   }
-  cli.closeSocket(sock.handle);
+  sock!.close();
   return 0;
 }

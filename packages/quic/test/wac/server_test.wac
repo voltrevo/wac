@@ -29,8 +29,8 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, HostSocket } from "std";
-import { Buf } from "core";
+import { Datagram, Exec, Pending, HostSocket, ChildEnv, Env, Files, Launch, Net, Procs, Sys, Datagrams, Clock } from "std";
+import { Buf, flatten } from "core";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
@@ -67,21 +67,22 @@ struct Identity {
   u8[] d;
 }
 
-bool openssl(Cli cli, string[] args) {
-  Exec r = cli.exec("openssl", args, u8[]()).wait();
-  return r.ran() && r.status == 0;
+bool openssl(Procs procs, string[] args) {
+  auto rRan = flatten(procs.exec("openssl", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return (r is not null) && r!.status == 0;
 }
 
-Identity identity(Cli cli, string name) {
-  string dir = "\{cli.cwd().wait()}/.cache/quic/\{name}";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+Identity identity(Env env, Files fs, Procs procs, string name) {
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/quic/\{name}";
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
 
   // **A CA and a leaf, not one self-signed certificate.** The first version used `req -x509` for
   // both roles at once and rustls refused it: `CaUsedAsEndEntity`. A certificate with
   // `basicConstraints CA:TRUE` may sign others and may not be the end of a chain, and a client that
   // let one be both would accept any certificate any CA had ever issued as that CA's own identity.
-  if (!openssl(cli, [
+  if (!openssl(procs, [
                              "req", "-x509", "-newkey", "rsa:2048", "-keyout", "\{dir}/ca.key",
                              "-out", "\{dir}/ca.pem", "-days", "1", "-nodes", "-subj",
                              "/CN=wac-quic-ca", "-addext",
@@ -89,7 +90,7 @@ Identity identity(Cli cli, string name) {
   ])) {
     return Identity(false, "openssl could not make a CA", dir, u8[](), u8[](), u8[](), u8[]());
   }
-  if (!openssl(cli, [
+  if (!openssl(procs, [
                              "req", "-newkey", "rsa:2048", "-keyout", "\{dir}/leaf.key", "-out",
                              "\{dir}/leaf.csr", "-nodes", "-subj", "/CN=wac.test"
   ])) {
@@ -97,9 +98,9 @@ Identity identity(Cli cli, string name) {
                     u8[]());
   }
   // The IP SAN is what lets the client dial an address.
-  cli.writeFile("\{dir}/ext.cnf",
+  fs.writeFile("\{dir}/ext.cnf",
                 ("subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\n").toBytes()).wait();
-  if (!openssl(cli, [
+  if (!openssl(procs, [
                              "x509", "-req", "-in", "\{dir}/leaf.csr", "-CA", "\{dir}/ca.pem",
                              "-CAkey", "\{dir}/ca.key", "-CAcreateserial", "-out", "\{dir}/leaf.pem",
                              "-days", "1", "-extfile", "\{dir}/ext.cnf"
@@ -108,9 +109,9 @@ Identity identity(Cli cli, string name) {
                     u8[]());
   }
 
-  Exec der = cli.exec("openssl", ["x509", "-in", "\{dir}/leaf.pem", "-outform", "DER"],
-                      u8[]()).wait();
-  if (!der.ran() || der.status != 0) {
+  auto derRan = flatten(procs.exec("openssl", ["x509", "-in", "\{dir}/leaf.pem", "-outform", "DER"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? der = derRan.ok();
+  if ((der is null) || der!.status != 0) {
     return Identity(false, "openssl could not write DER", dir, u8[](), u8[](), u8[](), u8[]());
   }
 
@@ -118,20 +119,20 @@ Identity identity(Cli cli, string name) {
   // `packages/tls`'s RSA interop test already takes: `crypto.subtle` will not import this key, and
   // parsing the DER with our own ASN.1 would put our code on both sides of a test whose whole
   // purpose is that it is not.
-  Exec text = cli.exec("openssl", ["rsa", "-in", "\{dir}/leaf.key", "-noout", "-text"],
-                       u8[]()).wait();
-  if (!text.ran() || text.status != 0) {
+  auto textRan = flatten(procs.exec("openssl", ["rsa", "-in", "\{dir}/leaf.key", "-noout", "-text"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? text = textRan.ok();
+  if ((text is null) || text!.status != 0) {
     return Identity(false, "openssl could not print the key", dir, u8[](), u8[](), u8[](),
                     u8[]());
   }
-  string said = string.fromBytes(text.stdout);
+  string said = string.fromBytes(text!.stdout);
   u8[] n = fieldOf(said, "modulus:");
   u8[] d = fieldOf(said, "privateExponent:");
   if (n.len() == 0 || d.len() == 0) {
     return Identity(false, "no modulus or privateExponent in the key", dir, u8[](), u8[](),
                     u8[](), u8[]());
   }
-  return Identity(true, "", dir, der.stdout, n, decoded("010001"), d);
+  return Identity(true, "", dir, der!.stdout, n, decoded("010001"), d);
 }
 
 /**
@@ -179,37 +180,39 @@ struct Got {
   i32 port;
 }
 
-Got receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
-  Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny([p.id], ms) < 0) {
-    p.drop(p.id);
-    return Got(false, u8[](), "", 0);
+Got receiveWithin(Clock clock, Datagrams sock, i32 ms) {
+  match (flatten(clock.within(sock.receive(), ms).wait())) {
+    Ok(d): { return Got(true, d.bytes, d.peer, d.port); }
+    Err(e): { return Got(false, u8[](), "", 0); }
   }
-  Datagram d = p.wait();
-  if (d.error != "") { return Got(false, u8[](), "", 0); }
-  return Got(true, d.bytes, d.peer, d.port);
 }
 
-Daemon dial(Cli cli, Identity id, i32 port, string say) {
+Daemon dial(Procs procs, Identity id, i32 port, string say) {
   string line = "deno run -A --unstable-net " + quoted(CLIENT) + " \{port}" +
                 " --dir " + quoted(id.dir) + " --ca " + quoted("\{id.dir}/ca.pem") +
                 (say == "" ? "" : " --say \{quoted(say)}");
-  return start(cli, line, "\{id.dir}/client.log");
+  return start(procs, line, "\{id.dir}/client.log");
 }
 
-export string test_a_real_quic_client_completes_a_handshake_with_our_server(Core core, Cli cli) {
+export string test_a_real_quic_client_completes_a_handshake_with_our_server(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  Identity id = identity(cli, "srv-handshake");
+  Identity id = identity(env, fs, procs, "srv-handshake");
   t.isTrue(id.ok, id.error);
   if (!id.ok) { return t.report(); }
 
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
-  if (sock.handle < 0) { return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  t.isTrue(sock is not null, "our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+  if (sock is null) { return t.report(); }
 
-  Daemon client = dial(cli, id, sock.port, "");
+  Daemon client = dial(procs, id, sock!.port, "");
   t.isTrue(client.ok(), "the client did not start — \{client.error}");
-  if (!client.ok()) { cli.closeSocket(sock.handle); return t.report(); }
+  if (!client.ok()) { sock!.close(); return t.report(); }
 
   // The server loop: one datagram in, one flight out. It runs for the length of the connect attempt
   // and then stops, which is all a single handshake needs.
@@ -217,7 +220,7 @@ export string test_a_real_quic_client_completes_a_handshake_with_our_server(Core
   bool answered = false;
   bool connected = false;
   for (i32 i = 0; i < 12 && !connected; i++) {
-    Got got = receiveWithin(core, cli, sock, 4000);
+    Got got = receiveWithin(clock, sock!, 4000);
     if (got.ok) {
       if (readable(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), got.bytes)) {
         readOk = true;
@@ -225,10 +228,10 @@ export string test_a_real_quic_client_completes_a_handshake_with_our_server(Core
       u8[] out = flight(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), got.bytes);
       if (out.len() > 0) {
         answered = true;
-        cli.sendTo(sock.handle, got.peer, got.port, out).wait();
+        sock!.sendTo(got.peer, got.port, out).wait();
       }
     }
-    connected = readIfPresent(cli, "\{id.dir}/connected.json") != "";
+    connected = readIfPresent(fs, "\{id.dir}/connected.json") != "";
   }
 
   t.isTrue(readOk, "the server did not read the client's Initial");
@@ -242,15 +245,20 @@ export string test_a_real_quic_client_completes_a_handshake_with_our_server(Core
            "ServerHello, the transport parameters (a client checks " +
            "original_destination_connection_id), the certificate chain, the CertificateVerify " +
            "signature, or the Finished. The client said:\n" +
-           readIfPresent(cli, "\{id.dir}/client.log"));
+           readIfPresent(fs, "\{id.dir}/client.log"));
 
-  stop(cli, client);
-  cli.closeSocket(sock.handle);
-  cli.remove(id.dir, true).wait();
+  stop(procs, client);
+  sock!.close();
+  fs.remove(id.dir, true).wait();
   return t.report();
 }
 
-export string test_and_a_real_client_opens_a_stream_on_it(Core core, Cli cli) {
+export string test_and_a_real_client_opens_a_stream_on_it(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   // **Step 5's test with the roles swapped.** The handshake test above proves the flight. This
   // proves the epoch after it, which is a different set of keys taken at a different point in the
   // transcript — through *our* Finished — and a different packet shape, since 1-RTT packets have
@@ -261,35 +269,36 @@ export string test_and_a_real_client_opens_a_stream_on_it(Core core, Cli cli) {
   // is what counts packets, and a server wants one of those per client, which is the next thing
   // rather than this one.
   T t = T.create();
-  Identity id = identity(cli, "srv-stream");
+  Identity id = identity(env, fs, procs, "srv-stream");
   t.isTrue(id.ok, id.error);
   if (!id.ok) { return t.report(); }
 
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
-  if (sock.handle < 0) { return t.report(); }
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  t.isTrue(sock is not null, "our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+  if (sock is null) { return t.report(); }
 
-  Daemon client = dial(cli, id, sock.port, "hello server");
+  Daemon client = dial(procs, id, sock!.port, "hello server");
   t.isTrue(client.ok(), "the client did not start — \{client.error}");
-  if (!client.ok()) { cli.closeSocket(sock.handle); return t.report(); }
+  if (!client.ok()) { sock!.close(); return t.report(); }
 
   u8[] first = u8[]();
   string heard = "";
   i32 number = 0;
   string reply = "";
   for (i32 i = 0; i < 60 && reply == ""; i++) {
-    Got got = receiveWithin(core, cli, sock, 2000);
+    Got got = receiveWithin(clock, sock!, 2000);
     if (got.ok) {
       if (first.len() == 0) {
         // The client's Initial. Answer it, and remember it: every key on this side derives from the
         // handshake it started, and `Server.of` is a pure function of that one datagram.
         first = got.bytes;
         u8[] out = flight(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first);
-        if (out.len() > 0) { cli.sendTo(sock.handle, got.peer, got.port, out).wait(); }
+        if (out.len() > 0) { sock!.sendTo(got.peer, got.port, out).wait(); }
         // HANDSHAKE_DONE, which is what lets a client consider the handshake confirmed.
         u8[] hd = done(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first, number);
         number = number + 1;
-        if (hd.len() > 0) { cli.sendTo(sock.handle, got.peer, got.port, hd).wait(); }
+        if (hd.len() > 0) { sock!.sendTo(got.peer, got.port, hd).wait(); }
       } else if ((got.bytes[0] & 0x80) == 0) {   // a long header is still handshake traffic
         u8[] bytes = streamBytes(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first,
                                  got.bytes, 0);
@@ -298,25 +307,25 @@ export string test_and_a_real_client_opens_a_stream_on_it(Core core, Cli cli) {
           u8[] out = answer(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first, 0,
                             upper(heard).toBytes(), number);
           number = number + 1;
-          if (out.len() > 0) { cli.sendTo(sock.handle, got.peer, got.port, out).wait(); }
+          if (out.len() > 0) { sock!.sendTo(got.peer, got.port, out).wait(); }
         }
       }
     }
-    reply = readIfPresent(cli, "\{id.dir}/heard.json");
+    reply = readIfPresent(fs, "\{id.dir}/heard.json");
   }
 
   t.eqStr(heard, "hello server", "the server read what the client sent");
   t.isTrue(reply != "",
            "the client never read an answer. It said:\n" +
-           readIfPresent(cli, "\{id.dir}/client.log"));
+           readIfPresent(fs, "\{id.dir}/client.log"));
   if (reply != "") {
     t.eqStr(string.fromBytes(decoded(hexIn(reply))), "HELLO SERVER",
             "and the client read what the server said back");
   }
 
-  stop(cli, client);
-  cli.closeSocket(sock.handle);
-  cli.remove(id.dir, true).wait();
+  stop(procs, client);
+  sock!.close();
+  fs.remove(id.dir, true).wait();
   return t.report();
 }
 

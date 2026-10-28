@@ -20,8 +20,7 @@
 // *is* another way to put a file somewhere — and the bytes are `cases.wac`'s, the same ones the host
 // replay uses, so the two cannot drift into testing different files.
 
-import { Cli, Core } from "std";
-import { Fs } from "../../../fs/src/fs.wac";
+import { Files, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, cases, fixtures } from "./cases.wac";
 import { Loaded, load, show } from "./replay.wac";
@@ -30,20 +29,21 @@ import { Ran, memoryFs, runOn } from "./memory.wac";
 string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 
 /** The fixtures, on a filesystem with nothing else in it. */
-async bool layOn(Fs fs, Fixture[] fs_) {
-  for (i32 i = 0; i < fs_.len(); i++) {
-    if (fs_[i].isDir) {
-      if (!(await fs.mkdir("/\{fs_[i].name}", true)).ok()) { return false; }
+async bool layOn(Files fs, Fixture[] fixtures) {
+  for (i32 i = 0; i < fixtures.len(); i++) {
+    if (fixtures[i].isDir) {
+      if ((await fs.mkdir("/\{fixtures[i].name}", true)).isErr()) { return false; }
       continue;
     }
-    if (!(await fs.writeFile("/\{fs_[i].name}", fs_[i].bytes)).ok()) { return false; }
+    if ((await fs.writeFile("/\{fixtures[i].name}", fixtures[i].bytes)).isErr()) { return false; }
   }
   return true;
 }
 
-export async string test_the_applets_answer_the_same_over_memory_as_the_real_tools_did(Core core, Cli cli) {
+export async string test_the_applets_answer_the_same_over_memory_as_the_real_tools_did(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -56,12 +56,12 @@ export async string test_the_applets_answer_the_same_over_memory_as_the_real_too
     // Checked against the recorded case, not just the recorded answer — `behaviour_test.wac`'s reason.
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
     // A world per case, because a case that writes a file must not be visible to the next one.
-    Fs fs = await memoryFs(core, "sealedsh");
+    Files fs = await memoryFs(sys);
     if (!(await layOn(fs, fixtures()))) {
       t.isTrue(false, "cannot lay the fixtures on a memory filesystem");
       return t.report();
     }
-    Ran r = await runOn(core, cli, fs, list[i]);
+    Ran r = await runOn(sys, fs, list[i]);
     ran = ran + 1;
     if (r.out != v.items[i].out || r.status != v.items[i].status) {
       wrong = wrong + 1;
@@ -92,21 +92,21 @@ export async string test_the_applets_answer_the_same_over_memory_as_the_real_too
  * built with no grants, which is a claim about a manifest and still spawns — that half stays there.
  * This is the claim about the filesystem, which is the one every applet above depends on.
  */
-export async string test_nothing_of_the_host_is_reachable_over_memory(Core core, Cli cli) {
+export async string test_nothing_of_the_host_is_reachable_over_memory(Sys sys) {
   T t = T.create();
-  Fs fs = await memoryFs(core, "sealedsh");
+  Files fs = await memoryFs(sys);
 
-  Ran passwd = await runOn(core, cli, fs, "cat /etc/passwd; echo rc=$?");
+  Ran passwd = await runOn(sys, fs, "cat /etc/passwd; echo rc=$?");
   t.eqStr(passwd.out, "rc=1\n", "the host's /etc/passwd was readable: \{show(passwd.out)}");
   t.isTrue(passwd.err.indexOf("No such file or directory") >= 0, passwd.err);
 
-  Ran home = await runOn(core, cli, fs, "ls /home; echo rc=$?");
+  Ran home = await runOn(sys, fs, "ls /home; echo rc=$?");
   t.eqStr(home.out, "rc=2\n", "the host's /home was listable: \{show(home.out)}");
 
   // And the world it does have is its own: what the shell wrote is what an applet reads, and `ls` sees
   // the mounts. This is the canary — a filesystem that answered "absent" to everything would satisfy
   // both assertions above.
-  Ran own = await runOn(core, cli, fs, "echo hi > /f; cat /f; ls /");
+  Ran own = await runOn(sys, fs, "echo hi > /f; cat /f; ls /");
   t.eqStr(own.out, "hi\nbin\ndev\nf\nproc\ntmp\n", "its own world: \{show(own.out)}\{own.err}");
   return t.report();
 }

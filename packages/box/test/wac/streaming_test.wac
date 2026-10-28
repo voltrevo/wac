@@ -11,18 +11,16 @@
 //     crc32    the checksum is order-dependent across every chunk
 //     tr, hex  per byte, so only the framing can go wrong
 //
-// **What did not come with them is the grant case.** `box.test.ts` still builds a world with no grants
-// at all and checks that a denied read says why. It cannot move: `childCli` hands the applet the
-// *parent's* grants, so an in-process frame cannot be given fewer than the test itself holds, and a
-// refusal test needs exactly that.
+// **What did not come with them is the grant case.** It lives in `grants_test.wac`, which hands an applet
+// a narrowed `Files`, and `box.test.ts` keeps the one that asks a real host for its sentence.
 
-import { Cli, Core, Exec } from "std";
+import { Exec, Env, Files, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Buf } from "core";
+import { Buf, flatten } from "core";
 import { Ran, realOut, runApplet, runAppletIn } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-streaming"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-streaming"; }
 
 /** One 64 KiB read. The fixture is sized against this rather than against a round number. */
 static i32 CHUNK = 65536;
@@ -60,28 +58,31 @@ string cols(string s) {
   return out.toStr();
 }
 
-export async string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cli cli) {
+export async string test_streaming_applets_agree_across_chunk_boundaries(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
   u8[] text = spanningText();
   t.isTrue(text.len() > 3 * CHUNK, "the fixture must span several chunks: \{text.len()}");
   string path = "\{dir}/spanning.txt";
-  t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
+  t.isTrue(flatten(fs.writeFile(path, text).wait()).isOk(), "wrote the fixture");
 
-  t.eqStr(cols((await runApplet(core, cli, dir, ["wc", path])).out),
-          cols(realOut(cli, "wc", [path])), "wc across chunks");
+  t.eqStr(cols((await runApplet(sys, dir, ["wc", path])).out),
+          cols(realOut(procs, "wc", [path])), "wc across chunks");
 
-  t.eqStr((await runApplet(core, cli, dir, ["strings", path])).out,
-          realOut(cli, "strings", ["-n4", path]), "strings across chunks");
+  t.eqStr((await runApplet(sys, dir, ["strings", path])).out,
+          realOut(procs, "strings", ["-n4", path]), "strings across chunks");
 
   // Two hex characters a byte, and a newline. A framing error is the only thing that can go wrong in a
   // per-byte applet, and a length is what catches it.
-  t.eqI32((await runApplet(core, cli, dir, ["hex", path])).out.len(), text.len() * 2 + 1,
+  t.eqI32((await runApplet(sys, dir, ["hex", path])).out.len(), text.len() * 2 + 1,
           "hex is two characters a byte");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -92,10 +93,13 @@ export async string test_streaming_applets_agree_across_chunk_boundaries(Core co
  * shorter ones, each ending where a read did. A fixture of ordinary text cannot show it, because no
  * run in it is longer than a word.
  */
-export async string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli) {
+export async string test_a_run_spanning_three_chunks_is_one_string(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
   string path = "\{dir}/run.bin";
 
   // NUL, 200,000 'A's, NUL: the terminators are what make it a *run* to `strings` rather than the
@@ -104,13 +108,13 @@ export async string test_a_run_spanning_three_chunks_is_one_string(Core core, Cl
   u8[] run = u8[].filled(width + 2, 0x41);
   run[0] = 0x00;
   run[width + 1] = 0x00;
-  t.isTrue(cli.writeFile(path, run).wait().ok(), "wrote the spanning run");
+  t.isTrue(flatten(fs.writeFile(path, run).wait()).isOk(), "wrote the spanning run");
 
-  t.eqStr((await runApplet(core, cli, dir, ["strings", path])).out,
-          realOut(cli, "strings", ["-n4", path]),
+  t.eqStr((await runApplet(sys, dir, ["strings", path])).out,
+          realOut(procs, "strings", ["-n4", path]),
           "a 200K run spanning three chunks is one string");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -121,10 +125,12 @@ export async string test_a_run_spanning_three_chunks_is_one_string(Core core, Cl
  * the same either way, and the expectation is written down rather than spawned: `tr a-z A-Z` over
  * ASCII is the one transformation this file can state exactly.
  */
-export async string test_tr_uppercases_across_chunks(Core core, Cli cli) {
+export async string test_tr_uppercases_across_chunks(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
   u8[] text = spanningText();
   Buf want = Buf.create();
@@ -133,11 +139,11 @@ export async string test_tr_uppercases_across_chunks(Core core, Cli cli) {
     want.push((c >= 0x61 && c <= 0x7a ? c - 32 : c) as@ u8);
   }
 
-  Ran got = await runAppletIn(core, cli, dir, ["tr", "a-z", "A-Z"], text);
+  Ran got = await runAppletIn(sys, dir, ["tr", "a-z", "A-Z"], text);
   t.eqI32(got.status, 0, "tr ran: \{got.err}");
   t.eqStr(got.out, want.toStr(), "tr across chunks");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -150,14 +156,16 @@ export async string test_tr_uppercases_across_chunks(Core core, Cli cli) {
  * rather than imported: importing the implementation under test would make this assert that a function
  * equals itself.
  */
-export async string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
+export async string test_crc32_is_order_dependent_across_chunks(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
   u8[] text = spanningText();
   string path = "\{dir}/crc.txt";
-  t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
+  t.isTrue(flatten(fs.writeFile(path, text).wait()).isOk(), "wrote the fixture");
 
   u32[] table = u32[].filled(256, 0);
   for (i32 n = 0; n < 256; n++) {
@@ -180,10 +188,10 @@ export async string test_crc32_is_order_dependent_across_chunks(Core core, Cli c
     want = want + "0123456789abcdef".slice(nib, nib + 1);
   }
 
-  Ran got = await runApplet(core, cli, dir, ["crc32", path]);
+  Ran got = await runApplet(sys, dir, ["crc32", path]);
   i32 sp = got.out.indexOf(" ");
   t.eqStr(sp < 0 ? got.out : got.out.slice(0, sp), want, "crc32 across chunks: \{got.out}");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

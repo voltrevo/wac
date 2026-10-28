@@ -19,11 +19,12 @@
 // `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat, Pending } from "std";
+import { Exec, Change, Stat, Pending, Env, Files, Output, Procs, Sys } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
 /**
  * The entries, written out.
@@ -64,17 +65,21 @@ string[] entries() {
   ];
 }
 
-export string test_every_entry_file_compiles(Core core, Cli cli) {
+export string test_every_entry_file_compiles(Sys sys) {
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary that builds these is where the seed task writes it");
-  if (!bin.exists) { return t.report(); }
+  Stat? bin = flatten(fs.stat(binary(env)).wait()).ok();
+  t.isTrue((bin is not null), "the binary that builds these is where the seed task writes it");
+  if ((bin is null)) { return t.report(); }
 
-  string who = agentDir(cli);
+  string who = agentDir(env);
   string work = "/tmp/wac-tor-entries" + (who == "" ? "" : "-\{who}");
-  Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  if (!made.ok()) { return t.report(); }
+  auto made = flatten(fs.mkdir(work, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   string[] es = entries();
   // A floor, because a list that emptied would leave this reporting a clean sweep of nothing.
@@ -92,13 +97,12 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // case, which is now serial. A cold pass is slower than it was; every other pass is the price of
   // asking, and `tor`'s sources change on the days somebody works in `tor`.
   for (i32 i = 0; i < es.len(); i++) {
-    string mod = builtProgram(cli, es[i], "torentry-\{stemOf(es[i])}",
-                              ["--allow-read", "--allow-write"]);
-    t.isTrue(cli.stat(mod).wait().exists,
+    string mod = builtProgram(env, fs, procs, es[i], "torentry-\{stemOf(es[i])}", ["--allow-read", "--allow-write"]);
+    t.isTrue(flatten(fs.stat(mod).wait()).isOk(),
              "\{es[i]} did not compile — see \{mod} and the build's own message above");
   }
 
-  Change gone = cli.remove(work, true).wait();
-  if (!gone.ok()) { core.warn("entries: could not remove \{work} — \{gone.message}"); }
+  auto gone = flatten(fs.remove(work, true).wait());
+  if (gone.isErr()) { err.line("entries: could not remove \{work} — \{gone.isErr() ? "\{gone.err()!}" : ""}"); }
   return t.report();
 }

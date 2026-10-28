@@ -42,7 +42,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 import {
   feAdd, feSub, feMul, feSquare, feMulSmall, feInvert, feNeg, feZero, feOne,
@@ -359,7 +359,8 @@ void claimF25(Lines lines, string what, u8[] a, u8[] b, u8[] got) {
   lines.add("f25 \{what} \{hex(a)} \{hex(b)} \{hex(got)}");
 }
 
-export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Core core, Cli cli) {
+export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[][] all = corpus();
   Lines lines = Lines.create();
@@ -376,11 +377,12 @@ export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Core c
     withTopBit[31] = withTopBit[31] | 0x80;
     claimF25(lines, "round", withTopBit, u8[](), feToBytes(feFromBytes(withTopBit)));
   }
-  check(t, cli, "node", [ORACLE], lines, "every encoding round trip");
+  check(t, procs, "node", [ORACLE], lines, "every encoding round trip");
   return t.report();
 }
 
-export string test_add_sub_mul_and_square_agree_with_bigint(Core core, Cli cli) {
+export string test_add_sub_mul_and_square_agree_with_bigint(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[][] all = corpus();
   Lines lines = Lines.create();
@@ -392,11 +394,12 @@ export string test_add_sub_mul_and_square_agree_with_bigint(Core core, Cli cli) 
     claimF25(lines, "mul", a, b, feToBytes(feMul(feFromBytes(a), feFromBytes(b))));
     claimF25(lines, "sqr", a, u8[](), feToBytes(feSquare(feFromBytes(a))));
   }
-  check(t, cli, "node", [ORACLE], lines, "add, sub, mul and square over the corpus");
+  check(t, procs, "node", [ORACLE], lines, "add, sub, mul and square over the corpus");
   return t.report();
 }
 
-export string test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses(Core core, Cli cli) {
+export string test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses(Sys sys) {
+  Procs procs = sys.procs();
   // 121665 is a24, the constant in the ladder's differential-add step. 121666 is beside it because
   // that is the constant a *different* arrangement of the same step uses, and confusing the two is
   // the classic Curve25519 transcription error — it produces a ladder that is wrong for every
@@ -411,18 +414,19 @@ export string test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses(
                feToBytes(feMulSmall(feFromBytes(all[i]), mults[k])));
     }
   }
-  check(t, cli, "node", [ORACLE], lines, "the small multiply at seven multipliers");
+  check(t, procs, "node", [ORACLE], lines, "the small multiply at seven multipliers");
   return t.report();
 }
 
-export string test_inversion_agrees_with_bigint_including_zero(Core core, Cli cli) {
+export string test_inversion_agrees_with_bigint_including_zero(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[][] all = corpus();
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
     claimF25(lines, "inv", all[i], u8[](), feToBytes(feInvert(feFromBytes(all[i]))));
   }
-  check(t, cli, "node", [ORACLE], lines, "inversion over the corpus");
+  check(t, procs, "node", [ORACLE], lines, "inversion over the corpus");
 
   // The defining property, checked here rather than through the exponent: `a * (1/a)` is 1. This
   // catches an inversion that agreed with a wrong reference.

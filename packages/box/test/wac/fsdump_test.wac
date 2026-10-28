@@ -12,49 +12,51 @@
 // `runApplet` is that something: the frame's `cwd` is this test's, so an absolute path built from
 // `cli.cwd()` reaches the fixture.
 //
-// The oracle here is the shape. `packages/fs/test/wac/image_test.wac` is where the *format* is checked;
+// The oracle here is the shape. `packages/fs/test/wac/storeimage_test.wac` is where the *format* is checked;
 // what matters at this end is that the applet is wired up, labels its operands, and **fails** on
 // something that is not an image rather than printing an empty tree.
 
-import { Cli, Core } from "std";
+import { Env, Files, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runApplet, runAppletIn } from "./replay.wac";
+import { flatten } from "core";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-fsdump"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-fsdump"; }
 
-export async string test_fsdump_reads_an_image_names_its_operands_and_refuses_what_is_not_one(Core core,
-                                                                                        Cli cli) {
+export async string test_fsdump_reads_an_image_names_its_operands_and_refuses_what_is_not_one(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(flatten(fs.mkdir(dir, true).wait()).isOk(), "cannot make \{dir}");
 
-  string img = "\{cli.cwd().wait()}/packages/fs/test/fixtures/image-v1.wacimg";
-  t.isTrue(cli.stat(img).wait().exists, "the image fixture is at \{img}");
+  string img = "\{flatten(env.cwd().wait()).unwrap()}/packages/fs/test/fixtures/image-v2.wacimg";
+  t.isTrue(flatten(fs.stat(img).wait()).isOk(), "the image fixture is at \{img}");
 
-  Ran dumped = await runApplet(core, cli, dir, ["fsdump", img]);
+  Ran dumped = await runApplet(sys, dir, ["fsdump", img]);
   t.eqI32(dumped.status, 0, "fsdump ran: \{dumped.err}");
-  t.isTrue(dumped.out.indexOf("mount /mnt") >= 0, dumped.out);
+  t.isTrue(dumped.out.indexOf("d 0755 claude /home/claude") >= 0, dumped.out);
   t.isTrue(dumped.out.indexOf("0600 claude") >= 0, dumped.out);
 
   // An image on standard input reads the same as one named, which is the claim that the operand path
   // and the stdin path are one reader rather than two.
-  Ran piped = await runAppletIn(core, cli, dir, ["fsdump"], cli.readFile(img).wait().bytes);
+  Ran piped = await runAppletIn(sys, dir, ["fsdump"], flatten(fs.readFile(img).wait()).orElse(u8[]()));
   t.eqStr(piped.out, dumped.out, "an image on standard input reads the same as one named");
 
   // Two operands are labelled. This is the property wac-mono 0096 was about, in the one applet that
   // could not be captured: reading only the first would print half of this and exit 0.
-  Ran twice = await runApplet(core, cli, dir, ["fsdump", img, img]);
+  Ran twice = await runApplet(sys, dir, ["fsdump", img, img]);
   t.eqStr(twice.out, "\{img}:\n\{dumped.out}\{img}:\n\{dumped.out}", "two images are labelled");
 
   // And something that is not an image fails, rather than printing an empty tree — which is what a
   // reader that trusted its input would do, and is indistinguishable from an image with nothing in it.
   string notAnImage = "\{dir}/plain.txt";
-  t.isTrue(cli.writeFile(notAnImage, "alpha\nbeta\n".toBytes()).wait().ok(), "wrote a plain file");
-  Ran refused = await runApplet(core, cli, dir, ["fsdump", notAnImage]);
+  t.isTrue(flatten(fs.writeFile(notAnImage, "alpha\nbeta\n".toBytes()).wait()).isOk(), "wrote a plain file");
+  Ran refused = await runApplet(sys, dir, ["fsdump", notAnImage]);
   t.eqI32(refused.status, 1, "a file that is not an image should fail");
   t.isTrue(refused.out.indexOf("cannot read this image") >= 0, refused.out + refused.err);
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

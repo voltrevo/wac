@@ -10,7 +10,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { diagnoseFiles } from "../../src/api.wac";
-import { Core } from "std";
+import { Clock, Sys } from "std";
 
 /** `n` names imported from `/t/lib.wac`, one per line from line 2, of which the lib declares `declared`. */
 string[] graph(i32 n, i32 declared) {
@@ -23,21 +23,24 @@ string[] graph(i32 n, i32 declared) {
   return [entry + "} from \"./lib.wac\";\nexport i32 main() { return f0(); }\n", lib] as string[];
 }
 
-export string test_six_hundred_imported_names_check(Core core) {
+export string test_six_hundred_imported_names_check(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string said = diagnoseFiles(["/t/m.wac", "/t/lib.wac"], graph(600, 600), "/t/m.wac");
   t.eqStr(said, "", "every name exists");
   return t.report();
 }
 
-export string test_the_six_hundredth_is_reported_where_it_is_written(Core core) {
+export string test_the_six_hundredth_is_reported_where_it_is_written(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string said = diagnoseFiles(["/t/m.wac", "/t/lib.wac"], graph(600, 599), "/t/m.wac");
   t.isTrue(contains(said, "/t/m.wac\t601\t"), "`f599`, on line 601, is not exported — " + said);
   return t.report();
 }
 
-export string test_a_name_declared_twice_past_the_512th_declaration_is_reported(Core core) {
+export string test_a_name_declared_twice_past_the_512th_declaration_is_reported(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   string lib = "";
   for (i32 i = 0; i < 600; i++) { lib = lib + "export i32 f" + itoa(i) + "() { return 0; }\n"; }

@@ -4,46 +4,51 @@
 // bytes, or the end, or why it stopped — and the three cases are different answers rather than an
 // empty buffer standing in for all of them.
 
-import { Read } from "core";
-import { Cli, Core, Socket, Sys } from "std";
+import { Read, flatten } from "core";
+import { Listener, Net, Output, Socket, Sys } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: echo <address> <port>");
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  string[] argv = sys.args();
+  if (argv.len() < 2) {
+    err.line("usage: echo <address> <port>");
     return 2;
   }
-  string address = string.fromBytes(cli.arg(0).wait());
-  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
-
-  Socket listener = cli.listen(address, port).wait();
-  if (listener.handle < 0) {
-    core.warn("echo: cannot listen: " + listener.error);
+  Net net = sys.net();
+  auto listening = flatten(net.listen(argv[0], atoi(argv[1])).wait());
+  if (listening.isErr()) {
+    err.line("echo: cannot listen: \{listening.err()!}");
     return 1;
   }
-  core.log("echo: listening on " + itoa(listener.port));
+  Listener listener = listening.unwrap();
+  out.line("echo: listening on " + itoa(listener.port));
 
-  Socket peer = cli.accept(listener.handle).wait();
-  if (peer.handle < 0) {
-    core.warn("echo: cannot accept: " + peer.error);
+  auto accepted = flatten(listener.accept().wait());
+  if (accepted.isErr()) {
+    err.line("echo: cannot accept: \{accepted.err()!}");
     return 1;
   }
+  Socket peer = accepted.unwrap();
   while (true) {
-    Read got = cli.recv(peer.handle).wait();
-    match (got) {
+    auto got = flatten(peer.recv().wait());
+    if (got.isErr()) {
+      err.line("echo: \{got.err()!}");
+      return 1;
+    }
+    match (got.unwrap()) {
       Data(bytes): {
-        core.log("echo: " + itoa(bytes.len()) + " bytes back");
-        cli.send(peer.handle, bytes).wait();
+        out.line("echo: " + itoa(bytes.len()) + " bytes back");
+        peer.send(bytes).wait();
       }
       End: {
-        core.log("echo: the client hung up");
-        cli.closeSocket(peer.handle);
-        cli.closeSocket(listener.handle);
+        out.line("echo: the client hung up");
+        peer.close();
+        listener.close();
         return 0;
       }
       Failed(why): {
-        core.warn("echo: " + why);
+        err.line("echo: " + why);
         return 1;
       }
     }

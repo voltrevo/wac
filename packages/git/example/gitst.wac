@@ -17,8 +17,7 @@
 // answer a question about ignore rules. The program that already knows about environments resolves the
 // path and passes the bytes.
 
-import { Cli, Core, FileResult, Sys } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { Cli, Sys, Env, Output, Files } from "std";
 import { Vec } from "core";
 import { configOf } from "../src/config.wac";
 import { configChain, expandTilde } from "../src/configfiles.wac";
@@ -32,41 +31,43 @@ import { RepoAt, openRepo, statusOf } from "../src/repo.wac";
  * unreadable file all mean the same thing to the caller — no rules from this source — but they are not the
  * same event, so the unreadable one is worth a word on stderr rather than silence.
  */
-async u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
+async u8[] excludesFileOf(Output err, Env env, Files fs, string gitDir) {
   // **The whole chain, not just `.git/config`.** A global ignore file is a preference about how one
   // person works rather than a fact about one repository, so it is nearly always set in `~/.gitconfig` —
   // reading only the local file would find it in the one place it is least likely to be.
   //
   // Lowercased, because that is how the parser stores every key — `excludesFile` in the file is
   // `core.excludesfile` here, and asking with the file's spelling would find nothing.
-  string path = expandTilde(cli, configOf((await configChain(cli, fs, gitDir)), "core.excludesfile"));
+  string path = expandTilde(env, configOf((await configChain(env, fs, gitDir)), "core.excludesfile"));
   if (path == "") { return u8[](); }
-  FileResult f = await fs.readFile(path);
-  if (!f.ok) {
-    core.warn("gitst: core.excludesFile names \{path}, which could not be read");
+  u8[]? f = (await fs.readFile(path)).ok();
+  if (f is null) {
+    err.line("gitst: core.excludesFile names \{path}, which could not be read");
     return u8[]();
   }
-  return f.bytes;
+  return f!;
 }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  i32 n = argv.len();
   if (n < 1) {
-    core.warn("usage: gitst <repo-dir>");
+    err.line("usage: gitst <repo-dir>");
     return 2;
   }
-  string root = string.fromBytes(cli.arg(0).wait());
-  Fs fs = Fs.onHost(cli, 0);
+  string root = argv[0];
+  Files fs = sys.files();
   match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
-      core.warn("gitst: \{why}");
+      err.line("gitst: \{why}");
       return 1;
     }
     Opened(repo): {
-      Vec<string> lines = (await statusOf(repo, (await excludesFileOf(core, cli, fs, "\{root}/.git"))));
-      for (string line in lines) { core.log(line); }
+      Vec<string> lines = (await statusOf(repo, (await excludesFileOf(err, env, fs, "\{root}/.git"))));
+      for (string line in lines) { out.line(line); }
       return 0;
     }
   }

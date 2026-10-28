@@ -547,6 +547,24 @@ export string greeting(string? name, i32[] xs) {
 `[§wac-conversion-none-compound-r6tn2hx]` Nullable values, arrays, tuples, structs and enums have no built-in
 `toString`; interpolating one whose type does not implement the symbol is refused.
 
+A union converts when every one of its members does, through the member it holds — which is how a capability's
+error, a union of fault types ([44](../7-library/44-std.md)), reaches its message:
+
+```wac
+// expect: said() = "gone: x late"
+import { toString } from "core";
+
+struct Gone { string why; string [toString](const this) { return "gone: " + this.why; } }
+struct Late { i32 ms; string [toString](const this) { return "late"; } }
+
+string say(union<Gone, Late> e) { return "\{e}"; }
+
+export string said() { return say(Gone("x")) + " " + say(Late(5)); }
+```
+
+`[§wac-interp-union-member-m3vq8ke]` A union whose every member converts converts through the member it holds; a
+union with a member that does not convert has no conversion.
+
 ## Open
 
 - **Float formatting.** Exact scientific-notation thresholds and the remaining formatting details belong to the

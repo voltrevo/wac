@@ -24,12 +24,13 @@
 // test writing the real path would be a second writer on the file the run around it is about to
 // write.
 
-import { Core, Cli, Change, Exec, FileResult, execReason } from "std";
+import { Change, Exec, execReason, ChildEnv, Env, Files, Procs, Sys, Launch } from "std";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, freshDir } from "../../packages/wactest/src/host.wac";
 import { contains, splitLines, startsWith, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { mergedTimes } from "./suitehouse.wac";
+import { flatten } from "core";
 
 /** One `--dry` chunk line, reduced to the key `chunksOf` would have given it. */
 struct Parsed {
@@ -66,10 +67,8 @@ Parsed parseChunk(string line) {
 }
 
 /** `wac task test -- --dry`, with the times file pointed wherever the caller wants. */
-string dryRun(T t, Cli cli, string times) {
-  Exec r = cli.execWith(binaryPath(cli),
-      ["task", "test", "--", "--dry"], u8[](),
-      ["WAC_SUITE_TIMES=" + times], false, false).wait();
+string dryRun(T t, Env env, Procs procs, string times) {
+  Exec r = flatten(procs.exec(binaryPath(env), ["task", "test", "--", "--dry"], u8[](), ChildEnv(false, ["WAC_SUITE_TIMES=" + times]), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(r.ran() && r.status == 0, "the dry run — " + execReason(r));
   if (!r.ran() || r.status != 0) { return ""; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
@@ -87,17 +86,19 @@ i32 positionOf(string[] lines, string key) {
   return 0 - 1;
 }
 
-export string test_a_chunk_recorded_as_slow_is_dispatched_before_one_recorded_as_fast(
-    Core core, Cli cli) {
+export string test_a_chunk_recorded_as_slow_is_dispatched_before_one_recorded_as_fast(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/suiteorder-probe";
-  string why = freshDir(cli, dir);
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/suiteorder-probe";
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   string times = dir + "/times";
 
   // A file that does not exist is the fresh-checkout case, and the order it gives is the one the
   // proxy always gave. It is also where the pair to swap comes from.
-  string[] first = splitLines(dryRun(t, cli, times));
+  string[] first = splitLines(dryRun(t, env, procs, times));
   string a = "";
   string b = "";
   for (i32 i = 0; i < first.len(); i++) {
@@ -107,16 +108,16 @@ export string test_a_chunk_recorded_as_slow_is_dispatched_before_one_recorded_as
     if (b == "") { b = p.key; }
   }
   t.isTrue(a != "" && b != "", "the dry run named two split chunks — got '" + a + "' and '" + b + "'");
-  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+  if (a == "" || b == "") { fs.remove(dir, true).wait(); return t.report(); }
   t.isTrue(positionOf(first, a) < positionOf(first, b),
            "with no file, " + a + " should still come before " + b);
 
   // Now say the second one is the expensive one. Nothing else is recorded, so every other chunk is
   // unknown and sorts above both — what is being checked is this pair's order relative to each other.
-  Change wrote = cli.writeFile(times, (a + "\t1000\n" + b + "\t900000\n").toBytes()).wait();
-  t.isTrue(wrote.ok(), "writing the times file — " + wrote.message);
+  auto wrote = flatten(fs.writeFile(times, (a + "\t1000\n" + b + "\t900000\n").toBytes()).wait());
+  t.isTrue(wrote.isOk(), "writing the times file — " + "\{wrote.isErr() ? "\{wrote.err()!}" : ""}");
 
-  string[] second = splitLines(dryRun(t, cli, times));
+  string[] second = splitLines(dryRun(t, env, procs, times));
   i32 pa = positionOf(second, a);
   i32 pb = positionOf(second, b);
   t.isTrue(pa >= 0 && pb >= 0, "both chunks are still in the order: " + itoa(pa) + " and " + itoa(pb));
@@ -124,17 +125,15 @@ export string test_a_chunk_recorded_as_slow_is_dispatched_before_one_recorded_as
            "900,000ms should be dispatched before 1,000ms — " + b + " is at " + itoa(pb) +
            " and " + a + " at " + itoa(pa));
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** `--dry` narrowed to one directory, answering its output and its exit status. */
 struct Dry { bool ok; i32 status; string out; }
 
-Dry dryRunOn(Cli cli, string times, string target) {
-  Exec r = cli.execWith(binaryPath(cli),
-      ["task", "test", "--", "--dry", target], u8[](),
-      ["WAC_SUITE_TIMES=" + times], false, false).wait();
+Dry dryRunOn(Env env, Procs procs, string times, string target) {
+  Exec r = flatten(procs.exec(binaryPath(env), ["task", "test", "--", "--dry", target], u8[](), ChildEnv(false, ["WAC_SUITE_TIMES=" + times]), Launch("", false, false, false)).wait()).unwrap();
   if (!r.ran()) { return Dry(false, 0 - 1, r.error); }
   return Dry(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
 }
@@ -175,12 +174,15 @@ i32 filesReported(string out) {
  * have overflowed — more than `chunkSize()` x 4 files. If wacc's tests are ever split up, that
  * assertion fails and says to point this somewhere still large rather than leaving it vacuous.
  */
-export string test_a_dry_run_of_one_large_directory_does_not_overflow_its_chunks(Core core, Cli cli) {
+export string test_a_dry_run_of_one_large_directory_does_not_overflow_its_chunks(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/suiteorder-narrow";
-  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/suiteorder-narrow";
+  t.isTrue(freshDir(fs, dir) == "", "the fixture directory could not be made");
 
-  Dry d = dryRunOn(cli, dir + "/times", "packages/wacc/test/wac");
+  Dry d = dryRunOn(env, procs, dir + "/times", "packages/wacc/test/wac");
   t.isTrue(d.ok, "the dry run did not start — " + d.out);
   t.eqI32(d.status, 0, "`--dry packages/wacc/test/wac` failed, and a trap here is the chunk array "
       + "being sized from a guess rather than from the work: " + d.out);
@@ -190,7 +192,7 @@ export string test_a_dry_run_of_one_large_directory_does_not_overflow_its_chunks
       + "chunks of " + itoa(12) + " — so this case no longer reaches the bound it is about, and "
       + "wants pointing at whichever directory is now the largest");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -217,7 +219,7 @@ export string test_a_dry_run_of_one_large_directory_does_not_overflow_its_chunks
  * that called it would refuse on a machine that had just pushed and would sabotage the gate on one
  * that was about to. That is why the merge is in `suitehouse.wac`.
  */
-export string test_merging_the_times_file_keeps_what_this_run_did_not_measure(Core core, Cli cli) {
+export string test_merging_the_times_file_keeps_what_this_run_did_not_measure() {
   T t = T.create();
   string was = "packages/a/test/wac\t100\npackages/b/test/wac#0\t200\npackages/b/test/wac#1\t300\n";
 

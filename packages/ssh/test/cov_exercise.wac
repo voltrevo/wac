@@ -24,7 +24,7 @@
 // an offset, and the traps only for a caller that got an argument wrong — neither is reachable through
 // the whole-buffer forms, which is why the offset forms exist and are driven separately.
 
-import { Core, Cli, Sys } from "std";
+import { Core, Cli, Sys, Env, Files, Output, Procs } from "std";
 import { decoded } from "../../codec/src/hex.wac";
 
 import { sshClientVersion, sshClientVersionLine, sshScanStatus, sshScanUsed, sshScanLine,
@@ -466,7 +466,7 @@ u8[] kdfOpts(i32 saltLen, i32 rounds) {
   return joinBytes(wireStr(filledWith(saltLen, 1)), be32(rounds));
 }
 
-void privateKeys(Core core, Cli cli) {
+void privateKeys() {
   sshMsgUserAuthSuccess();
   sshMsgUserAuthFailure();
   sshMsgServiceAccept();
@@ -1006,8 +1006,10 @@ import { test_mpint_is_minimal_and_signed as transport__mpint_is_minimal_and_sig
   from "./wac/transport_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   versions();
   framing();
   wireTypes();
@@ -1015,7 +1017,7 @@ export i32 main(Sys sys) {
   ranges();
   keyExchange();
   cipher();
-  privateKeys(core, cli);
+  privateKeys();
   knownHosts();
   channels();
   serverHalf();
@@ -1023,40 +1025,40 @@ export i32 main(Sys sys) {
   // The 32 tests that need no port. harness/wacCoverage.ts could call three of them: 29 take
   // capabilities and `runTestExports` skips any test whose `fn.length > 0`.
   i32 bad = 0;
-  if (channel__the_window_returns_credit_before_it_runs_out_not_after().len() > 0) { core.warn("error: FAILED channel_test test_the_window_returns_credit_before_it_runs_out_not_after"); bad = bad + 1; }
-  if (channel__channel_messages_parse_to_their_fields().len() > 0) { core.warn("error: FAILED channel_test test_channel_messages_parse_to_their_fields"); bad = bad + 1; }
-  if (channel__channel_messages_address_the_recipients_channel_number().len() > 0) { core.warn("error: FAILED channel_test test_channel_messages_address_the_recipients_channel_number"); bad = bad + 1; }
-  if (cipher__sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one().len() > 0) { core.warn("error: FAILED cipher_test test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one"); bad = bad + 1; }
-  if (cipher__a_packet_does_not_open_under_the_wrong_sequence_number().len() > 0) { core.warn("error: FAILED cipher_test test_a_packet_does_not_open_under_the_wrong_sequence_number"); bad = bad + 1; }
-  if (cipher__any_single_flipped_bit_is_caught_wherever_it_lands().len() > 0) { core.warn("error: FAILED cipher_test test_any_single_flipped_bit_is_caught_wherever_it_lands"); bad = bad + 1; }
-  if (cipher__the_two_key_halves_are_not_interchangeable().len() > 0) { core.warn("error: FAILED cipher_test test_the_two_key_halves_are_not_interchangeable"); bad = bad + 1; }
-  if (cipher__an_unauthenticated_length_is_bounded_before_it_is_believed().len() > 0) { core.warn("error: FAILED cipher_test test_an_unauthenticated_length_is_bounded_before_it_is_believed"); bad = bad + 1; }
-  if (cipher__the_cipher_is_pinned_to_a_fixed_answer().len() > 0) { core.warn("error: FAILED cipher_test test_the_cipher_is_pinned_to_a_fixed_answer"); bad = bad + 1; }
-  if (files__known_hosts_plain_entries_patterns_negation_markers_and_comments().len() > 0) { core.warn("error: FAILED files_test test_known_hosts_plain_entries_patterns_negation_markers_and_comments"); bad = bad + 1; }
-  if (files__authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored().len() > 0) { core.warn("error: FAILED files_test test_authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored"); bad = bad + 1; }
-  if (kex__key_derivation_extends_by_hashing_the_accumulated_output(core, cli).len() > 0) { core.warn("error: FAILED kex_test test_key_derivation_extends_by_hashing_the_accumulated_output"); bad = bad + 1; }
-  if (kex__a_host_key_blob_that_names_the_wrong_algorithm_is_refused().len() > 0) { core.warn("error: FAILED kex_test test_a_host_key_blob_that_names_the_wrong_algorithm_is_refused"); bad = bad + 1; }
-  if (kex__a_low_order_peer_point_is_rejected_rather_than_shared().len() > 0) { core.warn("error: FAILED kex_test test_a_low_order_peer_point_is_rejected_rather_than_shared"); bad = bad + 1; }
-  if (privatekey__an_openssh_private_key_reads_encrypted_or_not(core, cli).len() > 0) { core.warn("error: FAILED privatekey_test test_an_openssh_private_key_reads_encrypted_or_not"); bad = bad + 1; }
-  if (privatekey__a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread().len() > 0) { core.warn("error: FAILED privatekey_test test_a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread"); bad = bad + 1; }
-  if (privatekey__a_key_whose_two_public_halves_disagree_is_refused(core, cli).len() > 0) { core.warn("error: FAILED privatekey_test test_a_key_whose_two_public_halves_disagree_is_refused"); bad = bad + 1; }
-  if (server__the_signed_data_length_prefixes_the_session_id().len() > 0) { core.warn("error: FAILED server_test test_the_signed_data_length_prefixes_the_session_id"); bad = bad + 1; }
-  if (server__the_servers_messages_carry_the_fields_a_client_reads().len() > 0) { core.warn("error: FAILED server_test test_the_servers_messages_carry_the_fields_a_client_reads"); bad = bad + 1; }
-  if (server__a_userauth_request_is_verified_against_bytes_we_rebuild().len() > 0) { core.warn("error: FAILED server_test test_a_userauth_request_is_verified_against_bytes_we_rebuild"); bad = bad + 1; }
-  if (server__every_message_number_is_the_one_the_rfc_assigns().len() > 0) { core.warn("error: FAILED server_test test_every_message_number_is_the_one_the_rfc_assigns"); bad = bad + 1; }
-  if (server__the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte().len() > 0) { core.warn("error: FAILED server_test test_the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte"); bad = bad + 1; }
-  if (server__a_channel_open_is_read_for_its_number_whatever_the_number_is().len() > 0) { core.warn("error: FAILED server_test test_a_channel_open_is_read_for_its_number_whatever_the_number_is"); bad = bad + 1; }
-  if (transport__mpint_is_minimal_and_signed().len() > 0) { core.warn("error: FAILED transport_test test_mpint_is_minimal_and_signed"); bad = bad + 1; }
-  if (transport__a_string_carries_arbitrary_binary_including_nuls().len() > 0) { core.warn("error: FAILED transport_test test_a_string_carries_arbitrary_binary_including_nuls"); bad = bad + 1; }
-  if (transport__a_truncated_or_oversized_string_is_refused_not_guessed_at().len() > 0) { core.warn("error: FAILED transport_test test_a_truncated_or_oversized_string_is_refused_not_guessed_at"); bad = bad + 1; }
-  if (transport__padding_keeps_the_whole_packet_aligned_including_the_length_field().len() > 0) { core.warn("error: FAILED transport_test test_padding_keeps_the_whole_packet_aligned_including_the_length_field"); bad = bad + 1; }
-  if (transport__a_framed_packet_unframes_to_what_went_in().len() > 0) { core.warn("error: FAILED transport_test test_a_framed_packet_unframes_to_what_went_in"); bad = bad + 1; }
-  if (transport__a_packet_that_cannot_be_one_is_malformed_rather_than_trusted().len() > 0) { core.warn("error: FAILED transport_test test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted"); bad = bad + 1; }
-  if (transport__the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out().len() > 0) { core.warn("error: FAILED transport_test test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out"); bad = bad + 1; }
-  if (transport__negotiation_takes_the_clients_preference_not_the_servers().len() > 0) { core.warn("error: FAILED transport_test test_negotiation_takes_the_clients_preference_not_the_servers"); bad = bad + 1; }
-  if (transport__no_overlap_is_an_empty_answer_rather_than_a_default().len() > 0) { core.warn("error: FAILED transport_test test_no_overlap_is_an_empty_answer_rather_than_a_default"); bad = bad + 1; }
+  if (channel__the_window_returns_credit_before_it_runs_out_not_after().len() > 0) { err.line("error: FAILED channel_test test_the_window_returns_credit_before_it_runs_out_not_after"); bad = bad + 1; }
+  if (channel__channel_messages_parse_to_their_fields().len() > 0) { err.line("error: FAILED channel_test test_channel_messages_parse_to_their_fields"); bad = bad + 1; }
+  if (channel__channel_messages_address_the_recipients_channel_number().len() > 0) { err.line("error: FAILED channel_test test_channel_messages_address_the_recipients_channel_number"); bad = bad + 1; }
+  if (cipher__sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one().len() > 0) { err.line("error: FAILED cipher_test test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one"); bad = bad + 1; }
+  if (cipher__a_packet_does_not_open_under_the_wrong_sequence_number().len() > 0) { err.line("error: FAILED cipher_test test_a_packet_does_not_open_under_the_wrong_sequence_number"); bad = bad + 1; }
+  if (cipher__any_single_flipped_bit_is_caught_wherever_it_lands().len() > 0) { err.line("error: FAILED cipher_test test_any_single_flipped_bit_is_caught_wherever_it_lands"); bad = bad + 1; }
+  if (cipher__the_two_key_halves_are_not_interchangeable().len() > 0) { err.line("error: FAILED cipher_test test_the_two_key_halves_are_not_interchangeable"); bad = bad + 1; }
+  if (cipher__an_unauthenticated_length_is_bounded_before_it_is_believed().len() > 0) { err.line("error: FAILED cipher_test test_an_unauthenticated_length_is_bounded_before_it_is_believed"); bad = bad + 1; }
+  if (cipher__the_cipher_is_pinned_to_a_fixed_answer().len() > 0) { err.line("error: FAILED cipher_test test_the_cipher_is_pinned_to_a_fixed_answer"); bad = bad + 1; }
+  if (files__known_hosts_plain_entries_patterns_negation_markers_and_comments().len() > 0) { err.line("error: FAILED files_test test_known_hosts_plain_entries_patterns_negation_markers_and_comments"); bad = bad + 1; }
+  if (files__authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored().len() > 0) { err.line("error: FAILED files_test test_authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored"); bad = bad + 1; }
+  if (kex__key_derivation_extends_by_hashing_the_accumulated_output(sys).len() > 0) { err.line("error: FAILED kex_test test_key_derivation_extends_by_hashing_the_accumulated_output"); bad = bad + 1; }
+  if (kex__a_host_key_blob_that_names_the_wrong_algorithm_is_refused().len() > 0) { err.line("error: FAILED kex_test test_a_host_key_blob_that_names_the_wrong_algorithm_is_refused"); bad = bad + 1; }
+  if (kex__a_low_order_peer_point_is_rejected_rather_than_shared().len() > 0) { err.line("error: FAILED kex_test test_a_low_order_peer_point_is_rejected_rather_than_shared"); bad = bad + 1; }
+  if (privatekey__an_openssh_private_key_reads_encrypted_or_not(sys).len() > 0) { err.line("error: FAILED privatekey_test test_an_openssh_private_key_reads_encrypted_or_not"); bad = bad + 1; }
+  if (privatekey__a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread().len() > 0) { err.line("error: FAILED privatekey_test test_a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread"); bad = bad + 1; }
+  if (privatekey__a_key_whose_two_public_halves_disagree_is_refused(sys).len() > 0) { err.line("error: FAILED privatekey_test test_a_key_whose_two_public_halves_disagree_is_refused"); bad = bad + 1; }
+  if (server__the_signed_data_length_prefixes_the_session_id().len() > 0) { err.line("error: FAILED server_test test_the_signed_data_length_prefixes_the_session_id"); bad = bad + 1; }
+  if (server__the_servers_messages_carry_the_fields_a_client_reads().len() > 0) { err.line("error: FAILED server_test test_the_servers_messages_carry_the_fields_a_client_reads"); bad = bad + 1; }
+  if (server__a_userauth_request_is_verified_against_bytes_we_rebuild().len() > 0) { err.line("error: FAILED server_test test_a_userauth_request_is_verified_against_bytes_we_rebuild"); bad = bad + 1; }
+  if (server__every_message_number_is_the_one_the_rfc_assigns().len() > 0) { err.line("error: FAILED server_test test_every_message_number_is_the_one_the_rfc_assigns"); bad = bad + 1; }
+  if (server__the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte().len() > 0) { err.line("error: FAILED server_test test_the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte"); bad = bad + 1; }
+  if (server__a_channel_open_is_read_for_its_number_whatever_the_number_is().len() > 0) { err.line("error: FAILED server_test test_a_channel_open_is_read_for_its_number_whatever_the_number_is"); bad = bad + 1; }
+  if (transport__mpint_is_minimal_and_signed().len() > 0) { err.line("error: FAILED transport_test test_mpint_is_minimal_and_signed"); bad = bad + 1; }
+  if (transport__a_string_carries_arbitrary_binary_including_nuls().len() > 0) { err.line("error: FAILED transport_test test_a_string_carries_arbitrary_binary_including_nuls"); bad = bad + 1; }
+  if (transport__a_truncated_or_oversized_string_is_refused_not_guessed_at().len() > 0) { err.line("error: FAILED transport_test test_a_truncated_or_oversized_string_is_refused_not_guessed_at"); bad = bad + 1; }
+  if (transport__padding_keeps_the_whole_packet_aligned_including_the_length_field().len() > 0) { err.line("error: FAILED transport_test test_padding_keeps_the_whole_packet_aligned_including_the_length_field"); bad = bad + 1; }
+  if (transport__a_framed_packet_unframes_to_what_went_in().len() > 0) { err.line("error: FAILED transport_test test_a_framed_packet_unframes_to_what_went_in"); bad = bad + 1; }
+  if (transport__a_packet_that_cannot_be_one_is_malformed_rather_than_trusted().len() > 0) { err.line("error: FAILED transport_test test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted"); bad = bad + 1; }
+  if (transport__the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out().len() > 0) { err.line("error: FAILED transport_test test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out"); bad = bad + 1; }
+  if (transport__negotiation_takes_the_clients_preference_not_the_servers().len() > 0) { err.line("error: FAILED transport_test test_negotiation_takes_the_clients_preference_not_the_servers"); bad = bad + 1; }
+  if (transport__no_overlap_is_an_empty_answer_rather_than_a_default().len() > 0) { err.line("error: FAILED transport_test test_no_overlap_is_an_empty_answer_rather_than_a_default"); bad = bad + 1; }
   if (bad > 0) {
-    core.warn("error: \{bad} test(s) failed, so this measured a broken package");
+    err.line("error: \{bad} test(s) failed, so this measured a broken package");
     return 1;
   }
   return 0;

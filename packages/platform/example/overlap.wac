@@ -3,23 +3,26 @@
 // `readFile` returns before the read has happened. Both are running while this program is
 // between the two lines, and `wait()` collects whichever it asks for.
 
-import { Cli, Core, FileResult, Pending, Sys } from "std";
+import { Sys, Files, Output } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: overlap <file> <file>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Files fs = sys.files();
+  if (argv.len() < 2) {
+    err.line("usage: overlap <file> <file>");
     return 2;
   }
 
-  Pending<FileResult> a = cli.readFile(string.fromBytes(cli.arg(0).wait()));
-  Pending<FileResult> b = cli.readFile(string.fromBytes(cli.arg(1).wait()));
+  auto a = fs.readFile(argv[0]);
+  auto b = fs.readFile(argv[1]);
 
   // Nothing has been waited for yet. Both reads are in the host's hands.
   //
-  // **This line has two legal answers and which one you get is a race.** `isDone` is documented as
-  // "whether `wait` would return immediately", and no host promises *when* a read completes.
+  // **This line has two legal answers and which one you get is a race.** A ticket is `settled` once
+  // its answer has arrived, and no host promises *when* a read completes.
   //
   // Measured, and the measurement is the point: on an idle machine Deno says "one finished already"
   // every time and the native runtime says "both still running" every time, which looks exactly like
@@ -29,15 +32,13 @@ export i32 main(Sys sys) {
   //
   // Which makes it the clearest thing in this repo to point at for design/0001's D12: in a
   // deterministic mode this answer would be the scheduler's rather than the machine's load.
-  core.log(a.isDone() || b.isDone() ? "one finished already" : "both still running");
+  out.line(a.settled() || b.settled() ? "one finished already" : "both still running");
 
-  FileResult ra = a.wait();
-  FileResult rb = b.wait();
-  if (!ra.ok || !rb.ok) {
-    core.warn("overlap: \{(ra.ok ? rb.error : ra.error)}");
-    return 1;
-  }
-  core.log("\{ra.bytes.len()} + \{rb.bytes.len()} bytes");
+  auto ra = flatten(a.wait());
+  auto rb = flatten(b.wait());
+  if (ra.isErr()) { err.line("overlap: \{ra.err()!}"); return 1; }
+  if (rb.isErr()) { err.line("overlap: \{rb.err()!}"); return 1; }
+  out.line("\{ra.unwrap().len()} + \{rb.unwrap().len()} bytes");
   return 0;
 }
 

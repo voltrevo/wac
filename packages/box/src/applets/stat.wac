@@ -4,33 +4,34 @@
 // and `find` use it internally and never show it. The mtime goes through `datetime`, the
 // same pairing `date` uses.
 
-import { Cli, Core, Stat } from "std";
+import { Stat, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { format } from "../../../datetime/src/rfc3339.wac";
 import { missingOperand } from "../lib/operands.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
-export async i32 stat(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+export async i32 stat(Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(err, a.name, ""); }
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
-    Stat st = await fs.stat(a.rest[i]);
-    if (!st.exists) {
+    auto looked = await fs.stat(a.rest[i]);
+    Stat? st = looked.ok();
+    if (st is null) {
       // `not found` was the only thing this could say, and it was a guess whenever the answer was not an
       // answer: no read capability, or a name the host cannot express, both arrived as `exists = false`.
       //
       // GNU's frame and GNU's default, which this had neither of: `stat: cannot statx 'f/g': Not a
       // directory`. The fallback was the invented phrase `not found`, so a plain missing file printed
       // something no real tool prints — and `f/g` printed it for an absence GNU words differently.
-      core.warn(a.name + ": cannot statx '" + a.rest[i] + "': " + st.words("No such file or directory"));
+      err.line(a.name + ": cannot statx '" + a.rest[i] + "': " + reason(looked.err()!));
       code = 1;
       continue;
     }
-    string kind = st.isDir ? "directory" : (st.isFile ? "file" : "other");
-    core.log(a.rest[i] + " " + kind + " \{st.size} "
-           + string.fromBytes(format(st.modifiedMillis)));
+    string kind = ((st is not null) && st!.isDir) ? "directory" : (((st is not null) && st!.isFile) ? "file" : "other");
+    out.line(a.rest[i] + " " + kind + " \{st!.size} "
+           + string.fromBytes(format(st!.modifiedMillis)));
   }
   return code;
 }

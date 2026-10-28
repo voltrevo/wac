@@ -22,8 +22,9 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { dumpTypeErrors } from "../../src/api.wac";
+import { flatten } from "core";
 
 /** The statement that must be found, wherever it is buried. */
 static string BAD = "i32 bad = \"s\";";
@@ -244,10 +245,10 @@ string kindOf(string label) {
  * the AST tomorrow does not move that number, so the grid silently stops covering the language. Read
  * from the source, a new variant fails this file by name on the first run.
  */
-string[] variantsOf(Cli cli, string enumName) {
-  FileResult f = cli.readFile("packages/wacc/src/ast.wac").wait();
-  if (!f.ok) { return string[].filled(0, ""); }
-  string src = string.fromBytes(f.bytes);
+string[] variantsOf(Files fs, string enumName) {
+  u8[]? f = flatten(fs.readFile("packages/wacc/src/ast.wac").wait()).ok();
+  if ((f is null)) { return string[].filled(0, ""); }
+  string src = string.fromBytes(f!);
   i32 start = src.indexOf("export enum " + enumName + " {");
   if (start < 0) { return string[].filled(0, ""); }
   string rest = src.slice(start, src.len());
@@ -317,13 +318,14 @@ export string test_reach_every_expression_kind_is_walked() {
   return t.report();
 }
 
-export string test_reach_the_grids_cover_every_kind_the_ast_has(Core core, Cli cli) {
+export string test_reach_the_grids_cover_every_kind_the_ast_has(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   string[] enums = ["ExprKind", "StmtKind"];
   for (i32 e = 0; e < enums.len(); e++) {
     string[] labels = e == 0 ? expressionLabels() : statementLabels();
-    string[] variants = variantsOf(cli, enums[e]);
-    string[] other = variantsOf(cli, e == 0 ? "StmtKind" : "ExprKind");
+    string[] variants = variantsOf(fs, enums[e]);
+    string[] other = variantsOf(fs, e == 0 ? "StmtKind" : "ExprKind");
     t.isTrue(variants.len() > 0, "no enum " + enums[e] + " in ast.wac");
     string[] uncovered = string[].filled(variants.len(), "");
     i32 n = 0;

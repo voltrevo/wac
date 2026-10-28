@@ -12,43 +12,48 @@
 // connected, rate-limit by source, or refuse a connection that did not come from this machine, which
 // is the check that makes binding every interface survivable. wac-mono issue 0025.
 
-import { Cli, Core, HostSocket, Sys } from "std";
+import { Socket, Sys, Net, Output, Listener } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 2) {
-    core.warn("usage: greet <address> <port>");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
+  if (argv.len() < 2) {
+    err.line("usage: greet <address> <port>");
     return 2;
   }
-  string address = string.fromBytes(cli.arg(0).wait());
-  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
+  string address = argv[0];
+  i32 port = atoi(argv[1]);
 
-  HostSocket listener = cli.listen(address, port).wait();
-  if (listener.handle < 0) {
-    core.warn("greet: cannot listen: \{listener.error}");
+  auto listenerBind = flatten(net.listen(address, port).wait());
+  Listener? listener = listenerBind.ok();
+  if (listener is null) {
+    err.line("greet: cannot listen: \{listenerBind.isErr() ? "\{listenerBind.err()!}" : ""}");
     return 1;
   }
   // The line the test waits for: a server that has not finished binding is a server a client cannot
   // reach, and racing that is how a test becomes flaky rather than failing. The *port* is in it because
   // `greet <address> 0` is now a legal thing to ask — the kernel picks a free one and `Socket.port` is
   // how the program learns which, so the client reads it here instead of a number somebody guessed.
-  core.log("greet: listening on \{listener.port}");
+  out.line("greet: listening on \{listener!.port}");
 
-  HostSocket peer = cli.accept(listener.handle).wait();
-  if (peer.handle < 0) {
-    core.warn("greet: cannot accept: \{peer.error}");
-    cli.closeSocket(listener.handle);
+  auto accepted = flatten(listener!.accept().wait());
+  if (accepted.isErr()) {
+    err.line("greet: cannot accept: \{accepted.err()!}");
+    listener!.close();
     return 1;
   }
+  Socket peer = accepted.unwrap();
 
   // Both the wire and the log, because they are two different claims: that the peer's address crossed
   // the boundary, and that a program can act on it.
-  cli.send(peer.handle, "hello \{peer.peer}\n".toBytes()).wait();
-  core.log("greet: peer " + peer.peer + (peer.fromLoopback() ? " (loopback)" : " (elsewhere)"));
+  peer.send("hello \{peer.peer}\n".toBytes()).wait();
+  out.line("greet: peer " + peer.peer + (peer.fromLoopback() ? " (loopback)" : " (elsewhere)"));
 
-  cli.closeSocket(peer.handle);
-  cli.closeSocket(listener.handle);
+  peer.close();
+  listener!.close();
   return 0;
 }
 

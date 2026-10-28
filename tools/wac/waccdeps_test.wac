@@ -42,11 +42,12 @@
 // and so do the copies it forces.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Files, Sys } from "std";
 import { importSpecs } from "../../packages/wacc/src/files.wac";
 import { resolveFrom } from "../../packages/wacc/src/path.wac";
 import { isBuiltinSpec } from "../../packages/wacc/src/coretext.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /** Whether `s` starts with `p`. */
 bool startsWith(string s, string p) {
@@ -63,18 +64,18 @@ bool startsWith(string s, string p) {
  * same spec to a file on disk and parses it. So a builtin spec is a dependency like any other here,
  * recorded as the spec itself rather than as a path, because nothing needs to read it.
  */
-string[] graphOf(T t, Cli cli, string entry, i32 cap) {
+string[] graphOf(T t, Files fs, string entry, i32 cap) {
   string[] paths = string[].filled(cap, "");
   i32 n = 1;
   paths[0] = entry;
   for (i32 i = 0; i < n; i++) {
     if (isBuiltinSpec(paths[i])) { continue; }
-    FileResult f = cli.readFile(paths[i]).wait();
-    if (!f.ok) {
+    u8[]? f = flatten(fs.readFile(paths[i]).wait()).ok();
+    if ((f is null)) {
       t.isTrue(false, "cannot read " + paths[i] + ", reached from the compiler's own graph");
       continue;
     }
-    string[] specs = importSpecs(f.bytes);
+    string[] specs = importSpecs(f!);
     for (i32 s = 0; s < specs.len(); s++) {
       string r = isBuiltinSpec(specs[s]) ? specs[s] : resolveFrom(paths[i], specs[s]);
       bool seen = false;
@@ -93,9 +94,10 @@ string[] graphOf(T t, Cli cli, string entry, i32 cap) {
   return out;
 }
 
-export string test_the_compilers_graph_is_inside_its_own_package(Core core, Cli cli) {
+export string test_the_compilers_graph_is_inside_its_own_package(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] g = graphOf(t, cli, "packages/wacc/src/api.wac", 256);
+  string[] g = graphOf(t, fs, "packages/wacc/src/api.wac", 256);
   // **Nothing is sanctioned now.** `print.wac` imported packages/bytes/src/buf.wac until `Buf` moved
   // into core (spec ch42); it has a builder of its own, since this package reads no `core`.
   string[] allowed = string[]();
@@ -122,9 +124,10 @@ export string test_the_compilers_graph_is_inside_its_own_package(Core core, Cli 
  * `""` for every specifier, or an entry that had stopped importing anything, would report zero
  * files outside the package and be read as the rule holding.
  */
-export string test_the_walk_reaches_the_compilers_files(Core core, Cli cli) {
+export string test_the_walk_reaches_the_compilers_files(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] g = graphOf(t, cli, "packages/wacc/src/api.wac", 256);
+  string[] g = graphOf(t, fs, "packages/wacc/src/api.wac", 256);
   t.isTrue(g.len() >= 15, "the walk found " + itoa(g.len()) + " files, which is too few to be the "
                         + "compiler — it has more than fifteen");
   bool sawEmit = false;

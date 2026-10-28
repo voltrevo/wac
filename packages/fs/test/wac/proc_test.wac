@@ -14,8 +14,8 @@
 //
 // ## What the move changed
 //
-// The oracle is now read with `Cli.readFile`, which is the same file by a different door, and `Procs`
-// and `Fs` are ordinary structs rather than bindgen handles — so `find(pid)` returns a `Proc` and its
+// The oracle is read with `Files.readFile`, which is the same file by a different door, and `ProcTable`
+// is an ordinary struct rather than bindgen handles — so `find(pid)` returns a `Proc` and its
 // state is a field rather than a number pulled out of an object literal.
 //
 // `Vec<string>` is constructed here directly. The host-side version had to reach it as
@@ -25,10 +25,10 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult, Pending } from "std";
-import { Vec } from "core";
-import { Proc, Procs } from "../../src/proc.wac";
-import { Fs } from "../../src/fs.wac";
+import { Files, Mount, Sys } from "std";
+import { Vec, flatten } from "core";
+import { Proc, ProcTable } from "../../src/proc.wac";
+import { procFiles } from "../../src/trees.wac";
 import { has } from "../../../wactest/src/strings.wac";
 
 Vec<string> words(string[] xs) {
@@ -39,7 +39,7 @@ Vec<string> words(string[] xs) {
 
 export string test_a_pid_is_never_reused() {
   T t = T.create();
-  Procs procs = Procs.create();
+  ProcTable procs = ProcTable.create();
   i32 first = procs.start(0, words(["sh"]), 0);
   t.eqI32(first, 1, "the first pid");
   procs.exited(first, 0);
@@ -53,7 +53,7 @@ export string test_a_pid_is_never_reused() {
 
 export string test_a_row_outlives_the_process_until_reaped() {
   T t = T.create();
-  Procs procs = Procs.create();
+  ProcTable procs = ProcTable.create();
   i32 pid = procs.start(1, words(["false"]), 0);
   t.isTrue(procs.exited(pid, 3), "the exit is recorded");
   // Still there — this is the zombie, and it is the only reason `$?` can be asked for later.
@@ -69,7 +69,7 @@ export string test_a_row_outlives_the_process_until_reaped() {
 
 export string test_a_signal_to_something_that_has_exited_is_refused() {
   T t = T.create();
-  Procs procs = Procs.create();
+  ProcTable procs = ProcTable.create();
   i32 pid = procs.start(1, words(["yes"]), 0);
   t.isTrue(procs.signal(pid, 2), "a signal to a running process is accepted");
   t.eqI32(procs.takeSignal(pid), 2, "and collected");
@@ -85,9 +85,9 @@ export string test_a_signal_to_something_that_has_exited_is_refused() {
 // ── The format, against this machine's own /proc ──────────────────────────────
 
 /** The host's answer, or "" on a system without a Linux `/proc` — in which case there is no oracle. */
-string host(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string host(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 /** The keys of a `Key:\tvalue` file, in order. */
@@ -109,51 +109,23 @@ string[] keysOf(string status) {
   return exact;
 }
 
-// `/proc` never asks for randomness — `/dev/urandom` does — but `mountSynth` takes a plain
-// `fn<Pending<u8[]>(i32)>`, not a nullable one, so there is no way to say "none" and this supplies
-// one that is never called. `test/wac/cov_probe.wac` has had the same three helpers for the same
-// reason; they are duplicated rather than shared because a test file that imports another test
-// file's internals is worse than eight lines.
-u8[] fakeRandom(i32 n) {
-  u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = ((i * 7 + 11) & 255) as@ u8; }
-  return out;
+/** `/proc` over a table with one process in it, the shell that asked — and the table, to change. */
+struct Mounted {
+  ProcTable table;
+  Files fs;
 }
 
-bool alwaysSettled(i32 id) { return true; }
-void noDrop(i32 id) {}
-
-Pending<u8[]> pendingRandom(i32 n) {
-  return Pending.of(n, fakeRandom, alwaysSettled, noDrop);
+Mounted mounted() {
+  ProcTable table = ProcTable.create();
+  table.current = table.start(0, words(["sh", "-c", "ps"]), 0);
+  return Mounted(table, Files.mounted([Mount("/proc", procFiles(table))]));
 }
 
-/**
- * A filesystem with `/proc` mounted and one process in it.
- *
- * `mountSystem` would want a `randomBytes`; `/proc` alone needs none of it, and mounting it directly
- * is what keeps this test about `/proc` rather than about how a session is built.
- *
- * **This passed `null` and that made master red for everyone.** `mountSynth`'s parameter is
- * `fn<Pending<u8[]>(i32)>`, which is not nullable, so **neither** compiler accepts the call:
- * `wac build` says "argument does not match the parameter's type" and `wac test` reported the file
- * as "did not run". `corpusCheck`'s rung 3 caught it when it stopped excusing files only wacc
- * compiles — the label on that list is the corpus category, not a claim that wacc compiled this.
- *
- * Worth saying because the first reading is the interesting one and it is wrong: this is not a
- * checker hole. `apply(null, 21)` for a plain `fn<i32(i32)>`, for a method, and for one returning a
- * generic are all rejected by wacc as well. The file was committed in a state no compiler here
- * accepts, which is only possible because nothing ran it between writing and pushing.
- */
-Fs mounted() {
-  Fs f = Fs.inMemory(0);
-  f.mountSynth("/proc", pendingRandom);
-  f.enter(words(["sh", "-c", "ps"]));
-  return f;
-}
-
-async string readIn(Fs f, string path) {
-  FileResult r = await f.readFile(path);
-  return r.ok ? string.fromBytes(r.bytes) : "";
+async string readIn(Mounted m, string path) {
+  match (await m.fs.readFile(path)) {
+    Ok(b): { return string.fromBytes(b); }
+    Err(e): { return ""; }
+  }
 }
 
 bool endsWith(string s, string p) {
@@ -176,15 +148,16 @@ string[] splitNul(string s) {
   return exact;
 }
 
-export async string test_proc_cmdline_is_nul_separated_and_terminated(Core core, Cli cli) {
+export async string test_proc_cmdline_is_nul_separated_and_terminated(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string theirs = host(cli, "/proc/self/cmdline");
+  string theirs = host(fs, "/proc/self/cmdline");
   if (theirs == "") { return t.report(); }   // no Linux /proc, so no oracle
   // The canary: if the host's file were empty, every claim below would hold vacuously.
   t.isTrue(theirs.len() > 0, "the host's own cmdline is empty — nothing is being compared");
   t.isTrue(endsWith(theirs, oneByte(0)), "the host terminates rather than separates");
 
-  Fs f = mounted();
+  Mounted f = mounted();
   string ours = await readIn(f, "/proc/1/cmdline");
   t.isTrue(endsWith(ours, oneByte(0)), "and so do we");
   string[] argv = splitNul(ours);
@@ -204,21 +177,23 @@ string oneByte(i32 c) {
   return string.fromBytes(one);
 }
 
-export async string test_proc_comm_is_one_line_with_a_newline(Core core, Cli cli) {
+export async string test_proc_comm_is_one_line_with_a_newline(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string theirs = host(cli, "/proc/self/comm");
+  string theirs = host(fs, "/proc/self/comm");
   if (theirs == "") { return t.report(); }
   t.isTrue(endsWith(theirs, "\n"), "the host's comm ends in a newline");
   t.isTrue(theirs.slice(0, theirs.len() - 1).indexOf("\n") < 0, "and is one line");
 
-  Fs f = mounted();
+  Mounted f = mounted();
   t.eqStr(await readIn(f, "/proc/1/comm"), "sh\n", "ours is the same shape");
   return t.report();
 }
 
-export async string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core, Cli cli) {
+export async string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string theirs = host(cli, "/proc/self/status");
+  string theirs = host(fs, "/proc/self/status");
   if (theirs == "") { return t.report(); }
   string[] theirKeys = keysOf(theirs);
   t.isTrue(theirKeys.len() > 10,
@@ -227,7 +202,7 @@ export async string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Cor
   // Tab-separated is the shape, taken from theirs rather than assumed.
   t.isTrue(firstLine(theirs).indexOf(":\t") >= 0, "the host writes Key:<tab>value");
 
-  Fs f = mounted();
+  Mounted f = mounted();
   string ours = await readIn(f, "/proc/1/status");
   string[] ourKeys = keysOf(ours);
   t.eqI32(ourKeys.len(), 4, "we print four keys");
@@ -269,9 +244,9 @@ string lineStartingWith(string s, string prefix) {
 
 export async string test_proc_lists_a_pid_per_process_and_self() {
   T t = T.create();
-  Fs f = mounted();
-  i32 pid = f.procs.start(1, words(["wc", "-l"]), 0);
-  string[]? listing = await f.readDir("/proc");
+  Mounted f = mounted();
+  i32 pid = f.table.start(1, words(["wc", "-l"]), 0);
+  string[]? listing = (await f.fs.readDir("/proc")).ok();
   t.isTrue(!(listing is null), "/proc lists");
   if (listing is null) { return t.report(); }
   t.eqI32(listing!.len(), 3, "one entry per process, plus self");
@@ -280,23 +255,40 @@ export async string test_proc_lists_a_pid_per_process_and_self() {
     t.eqStr(listing![1], "\{pid}", "the one just started");
     t.eqStr(listing![2], "self", "and self");
   }
-  string[]? files = await f.readDir("/proc/\{pid}");
+  string[]? files = (await f.fs.readDir("/proc/\{pid}")).ok();
   t.isTrue(!(files is null) && files!.len() == 3, "three files per pid");
 
   // Linux reports 0 for these and this deliberately does not — a size of zero on a file `cat` then
   // reads bytes from is the sort of detail that makes a reader distrust the rest.
-  FileResult body = await f.readFile("/proc/\{pid}/cmdline");
-  t.isTrue(body.ok, "the cmdline reads");
-  t.eqI64((await f.stat("/proc/\{pid}/cmdline")).size, body.bytes.len() as i64,
+  u8[] body = (await f.fs.readFile("/proc/\{pid}/cmdline")).orElse(u8[]());
+  t.isTrue(body.len() > 0, "the cmdline reads");
+  t.eqI64((await f.fs.stat("/proc/\{pid}/cmdline")).unwrap().size, body.len() as i64,
           "and its size is the length of what it answers");
-  t.eqStr(string.fromBytes(body.bytes), "wc\{oneByte(0)}-l\{oneByte(0)}", "the argv");
+  t.eqStr(string.fromBytes(body), "wc\{oneByte(0)}-l\{oneByte(0)}", "the argv");
 
   // A pid that has gone is a missing file rather than an empty one.
-  f.procs.exited(pid, 0);
-  f.procs.reap(pid);
-  t.isFalse((await f.readFile("/proc/\{pid}/status")).ok, "a reaped pid has no status");
-  t.isFalse((await f.stat("/proc/\{pid}")).exists, "and no directory");
-  string[]? after = await f.readDir("/proc");
+  f.table.exited(pid, 0);
+  f.table.reap(pid);
+  t.isTrue((await f.fs.readFile("/proc/\{pid}/status")).isErr(), "a reaped pid has no status");
+  t.isTrue((await f.fs.stat("/proc/\{pid}")).isErr(), "and no directory");
+  string[]? after = (await f.fs.readDir("/proc")).ok();
   t.isTrue(!(after is null) && after!.len() == 2, "and is gone from the listing");
+  return t.report();
+}
+
+// The edges the shell does not reach: a pid that is not in the table, a process with no words, and the count.
+export string test_a_pid_that_is_not_there_is_refused_and_a_wordless_process_has_no_name() {
+  T t = T.create();
+  ProcTable procs = ProcTable.create();
+  t.eqI32(procs.len(), 0, "an empty table");
+  t.isFalse(procs.signal(42, 15), "signalling nobody is refused");
+  t.isFalse(procs.exited(42, 0), "and so is ending them");
+  t.eqI32(procs.reap(42), 0 - 1, "reaping nobody answers -1");
+  t.eqI32(procs.takeSignal(42), 0, "and nobody has a signal waiting");
+  i32 pid = procs.start(0, Vec.create(), 0 as i64);
+  Proc? p = procs.find(pid);
+  t.isTrue((p is not null) && p!.isRunning(), "a started process is running");
+  t.eqStr((p is not null) ? p!.comm() : "?", "", "a process with no words has no name");
+  t.eqI32(procs.len(), 1, "and is counted");
   return t.report();
 }

@@ -32,9 +32,10 @@
 // the claim exact: *this* run wrote *this* entry.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Procs, Sys, Launch } from "std";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 /**
  * A directory that **does** reach `core/`, which is the whole point of the subject choice.
@@ -46,8 +47,8 @@ import { freshDir } from "../../../wactest/src/host.wac";
  */
 static string SUBJECT = "packages/json/test/wac";
 
-i32 entriesIn(Cli cli, string dir) {
-  string[]? names = cli.readDir(dir).wait();
+i32 entriesIn(Files fs, string dir) {
+  string[]? names = flatten(fs.readDir(dir).wait()).ok();
   if (names is null) { return 0; }
   i32 n = 0;
   for (i32 i = 0; i < names!.len(); i++) {
@@ -63,39 +64,40 @@ i32 entriesIn(Cli cli, string dir) {
  * no separate variable for the directory itself. `false` for `clearEnv`, so the child keeps `PATH`
  * and whatever else it needs and gains this one.
  */
-i32 runWith(Cli cli, string dir) {
-  Exec r = cli.execWith(wacBinary(cli),
-      [
+i32 runWith(Env env, Procs procs, string dir) {
+  Exec r = flatten(procs.exec(wacBinary(env), [
                "test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
                SUBJECT
-      ],
-      u8[](), ["WAC_HOME=\{dir}"], false, false).wait();
+      ], u8[](), ChildEnv(false, ["WAC_HOME=\{dir}"]), Launch("", false, false, false)).wait()).unwrap();
   return r.ran() ? r.status : 0 - 1;
 }
 
-export string test_a_directory_that_imports_core_is_cached(Core core, Cli cli) {
+export string test_a_directory_that_imports_core_is_cached(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/testmod-probe";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/testmod-probe";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
   // First run: an empty cache, so this compiles and remembers.
-  i32 first = runWith(cli, dir);
+  i32 first = runWith(env, procs, dir);
   t.eqI32(first, 0, "the subject directory did not pass, so the cache claim is about a broken run");
-  i32 cold = entriesIn(cli, "\{dir}/cache/build");
+  i32 cold = entriesIn(fs, "\{dir}/cache/build");
   t.isTrue(cold > 0,
       "no entry was written, so `wac test` compiled \{SUBJECT} and remembered nothing — either "
       + "`buildCachePath` is refusing this command line or `rememberBuild` is not reached on the "
       + "test path");
 
   // Second run: the same sources, so the same key, so no *additional* entry.
-  i32 second = runWith(cli, dir);
+  i32 second = runWith(env, procs, dir);
   t.eqI32(second, 0, "the subject directory did not pass on the second run");
-  t.eqI32(entriesIn(cli, "\{dir}/cache/build"), cold,
+  t.eqI32(entriesIn(fs, "\{dir}/cache/build"), cold,
       "a second run of unchanged sources wrote another entry, so the key is not stable — the most "
       + "likely thing to have got into it is the generated aggregate's own path, which carries the "
       + "clock so that two runs never collide, and so makes every key a miss");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

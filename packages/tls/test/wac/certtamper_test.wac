@@ -8,26 +8,28 @@
 // is 456 bytes. Nothing here traps, so unlike `packages/gzip`'s corruption sweep it is all in one
 // process — the cost is arithmetic rather than process starts.
 
-import { Core, Cli, FileResult } from "std";
+import { Files, Output, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Tampered, sweepTampering } from "./certtamper.wac";
+import { flatten } from "core";
 
 /** The same two fixtures `fuzz_test.wac` uses: a real leaf and its issuer. */
-Store fixtures(Core core, Cli cli) {
+Store fixtures(Output err, Files fs) {
   u8[] all = u8[]();
   string[] names = ["ec_leaf", "ec_ca"];
   for (i32 i = 0; i < names.len(); i++) {
     string path = "packages/tls/test/data/\{names[i]}.pem";
-    FileResult r = cli.readFile(path).wait();
-    if (!r.ok) {
-      core.warn("cert tamper: cannot read \{path} — \{r.error}");
+    auto rRead = flatten(fs.readFile(path).wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) {
+      err.line("cert tamper: cannot read \{path} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
       trap;
     }
-    u8[] joined = u8[].filled(all.len() + r.bytes.len(), 0);
+    u8[] joined = u8[].filled(all.len() + r!.len(), 0);
     joined.copyFrom(all, 0, 0, all.len());
-    joined.copyFrom(r.bytes, 0, all.len(), r.bytes.len());
+    joined.copyFrom(r!, 0, all.len(), r!.len());
     all = joined;
   }
   Store store = pemBundle(all);
@@ -35,9 +37,11 @@ Store fixtures(Core core, Cli cli) {
   return store;
 }
 
-export string test_every_single_byte_tampering_is_refused(Core core, Cli cli) {
+export string test_every_single_byte_tampering_is_refused(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
   T t = T.create();
-  Store certs = fixtures(core, cli);
+  Store certs = fixtures(err, fs);
   u8[] leaf = slice(certs.der, certs.offsets[0], certs.offsets[1]);
   u8[] ca = slice(certs.der, certs.offsets[2], certs.offsets[3]);
 

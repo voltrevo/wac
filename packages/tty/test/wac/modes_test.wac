@@ -49,7 +49,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { ttycatBytes } from "../../example/ttycat.wac";
 import { DEL, KILL, REPRINT, SHARED, j3, j4, k, modeCases, modeCaseNames, modes, sameBytes, show,
          t } from "./cases.wac";
@@ -65,9 +65,12 @@ import { Loaded, Vector, discipline, find, load, pty, vectorsPath } from "./repl
  * The count is the canary: a capture that stopped recording both would leave this comparing nothing and
  * passing, which is the shape of a green instrument reading zero.
  */
-export string test_the_pty_harness_reproduces_the_oracle_line_test_trusts(Core core, Cli cli) {
+export string test_the_pty_harness_reproduces_the_oracle_line_test_trusts(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -98,14 +101,15 @@ export string test_the_pty_harness_reproduces_the_oracle_line_test_trusts(Core c
   // And one asked live, so this is not only a claim about the day of the capture: `discipline.py` in
   // canonical mode is still what `script -qec cat` answers.
   u8[] erase = j3(t("ab"), k(DEL), t("c\n"));
-  t.eqStr(show(discipline(core, cli, "canonical", erase)), show(pty(core, cli, "cat", erase)),
+  t.eqStr(show(discipline(err, procs, "canonical", erase)), show(pty(err, procs, "cat", erase)),
           "discipline.py is no longer a drop-in for script");
   return t.report();
 }
 
-export string test_the_three_modes_differ_in_the_ways_that_were_measured(Core core, Cli cli) {
+export string test_the_three_modes_differ_in_the_ways_that_were_measured(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -150,9 +154,10 @@ export string test_the_three_modes_differ_in_the_ways_that_were_measured(Core co
  * discipline in the same three settings. A mode that needed its own loop would be a second
  * implementation of the rules rather than a switch on one, and this is what says it is not.
  */
-export string test_line_answers_what_the_kernel_answers_in_every_mode(Core core, Cli cli) {
+export string test_line_answers_what_the_kernel_answers_in_every_mode(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -186,9 +191,12 @@ export string test_line_answers_what_the_kernel_answers_in_every_mode(Core core,
  * stand-in for it: `^U` is a kill in two modes and a byte in the third, so one input in three modes is
  * the case that catches a pty whose settings have moved.
  */
-export string test_the_live_pty_still_answers_what_was_recorded_in_each_mode(Core core, Cli cli) {
+export string test_the_live_pty_still_answers_what_was_recorded_in_each_mode(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -199,7 +207,7 @@ export string test_the_live_pty_still_answers_what_was_recorded_in_each_mode(Cor
     Vector? want = find(v, ms[m], kill);
     if (want is null) { continue; }
     asked = asked + 1;
-    t.eqStr(show(discipline(core, cli, ms[m], kill)), show(want!.out),
+    t.eqStr(show(discipline(err, procs, ms[m], kill)), show(want!.out),
             "the live pty in \{ms[m]} no longer answers what \{v.oracle} answered — re-run " +
             "`wac run --allow-read --allow-write --allow-run tools/wac/ttyvectors.wac`");
   }

@@ -21,7 +21,7 @@
 // actually reads, which is a different question from what it was meant to read, and the difference is
 // what 0105 is about.
 
-import { Core } from "std";
+import { Core, Output } from "std";
 import { needsValue } from "./operands.wac";
 import { Args } from "./args.wac";
 
@@ -32,7 +32,7 @@ import { Args } from "./args.wac";
  * different facts and an empty string cannot tell them apart, so the two are asked separately. Refusing
  * everything for an applet nobody listed would be a worse failure than the one this fixes.
  */
-export bool refuseFlags(Core core, Args a) {
+export bool refuseFlags(Output err, Args a) {
   // A flag that takes a value and was given none — `head -n`, `fold -w`. The parser records it because
   // it has no `Core` to complain through; this is the first place that does.
   //
@@ -40,7 +40,7 @@ export bool refuseFlags(Core core, Args a) {
   // there were two of them and only this one ran — `wac task dead` found the other by noticing that
   // nothing called it, which is what an unused name usually means when a duplicate is nearby.
   if (a.missingValue != "") {
-    needsValue(core, a.name, a.missingValue);
+    needsValue(err, a.name, a.missingValue);
     return true;
   }
   // **No applet here implements a single long option**, so there is no table for them and no need of
@@ -58,7 +58,7 @@ export bool refuseFlags(Core core, Args a) {
     // Separating them needs a table of what the real tool documents, the long-option twin of `gnuFlags`
     // beside `implementedFlags` — `issues/system/0303c`. Until then this names the applet's gap and
     // claims nothing about anyone else's.
-    core.warn("\{a.name}: long option not implemented: \{a.longOpt}");
+    err.line("\{a.name}: long option not implemented: \{a.longOpt}");
     return true;
   }
   if (!flagsChecked(a.name)) { return false; }
@@ -70,10 +70,10 @@ export bool refuseFlags(Core core, Args a) {
     string letter = string.fromBytes(u8[].filled(1, flag));
     if (contains(gnuFlags(a.name), flag as i32)) {
       // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
-      core.warn("\{a.name}: -\{letter} is not implemented");
+      err.line("\{a.name}: -\{letter} is not implemented");
     } else {
-      core.warn("\{a.name}: invalid option -- '\{letter}'");
-      core.warn("Try '\{a.name} --help' for more information.");
+      err.line("\{a.name}: invalid option -- '\{letter}'");
+      err.line("Try '\{a.name} --help' for more information.");
     }
     return true;
   }
@@ -224,18 +224,18 @@ bool contains(string letters, i32 c) {
  * Standard output and status 0, as GNU does: `--help` is an answer, not a refusal, and a caller that
  * pipes it should get it.
  */
-export i32 appletHelp(Core core, string name) {
+export i32 appletHelp(Output out, string name) {
   string mine = implementedFlags(name);
   string free = acceptedFlags(name);
-  core.log("usage: " + name + (mine == "" ? "" : " [-\{mine}]") + " [operand...]");
-  if (mine != "") { core.log("flags: \{spaced(mine)}"); }
+  out.line("usage: " + name + (mine == "" ? "" : " [-\{mine}]") + " [operand...]");
+  if (mine != "") { out.line("flags: \{spaced(mine)}"); }
   // Named separately because "accepted" is not "implemented": GNU's own `--help` says of `id -a`
   // *"ignore, for compatibility with other versions"*, and that is exactly what these do.
-  if (free != "") { core.log("accepted and ignored, as the real tool does: \{spaced(free)}"); }
+  if (free != "") { out.line("accepted and ignored, as the real tool does: \{spaced(free)}"); }
   if (!flagsChecked(name)) {
-    core.log("this applet's flags are not enumerated here; see \{name}(1)");
+    out.line("this applet's flags are not enumerated here; see \{name}(1)");
   }
-  core.log("box implements a subset of \{name}(1). `box` lists every applet.");
+  out.line("box implements a subset of \{name}(1). `box` lists every applet.");
   return 0;
 }
 

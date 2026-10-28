@@ -204,15 +204,15 @@ Deno.test("a file still needs the grant, and says so", async () => {
   // `packages/box/test/wac/applets_test.wac` against expectations captured once. Reading standard input
   // is not a capability, so none of it needed a built program.
   //
-  // **This half stays, and the reason it gives is no longer the reason.** It said an in-process frame
-  // inherits the suite's capabilities so the test would assert nothing. That was true until
-  // `childCliGranted` — `packages/box/test/wac/grants_test.wac` now makes this exact assertion in a
-  // frame, `cat` against a withheld read.
+  // **This half stays, and the reason it gives is no longer the reason.** It said an in-process run
+  // inherits the suite's capabilities so the test would assert nothing. That stopped being true when an
+  // applet was handed a `Files` — `packages/box/test/wac/grants_test.wac` now makes this exact assertion
+  // in process, `cat` against a narrowed `Files`.
   //
   // What that leaves is better than what it replaced. The in-process version compares the applet
-  // against a sentence the *helper* hard-codes; this one compares it against the sentence a real host
-  // actually produces. Delete it and `childCliGranted` becomes an oracle agreeing with itself: the
-  // helper could drift from every host and all six in-process grant assertions would stay green.
+  // against a sentence `packages/fs`'s `reason` hard-codes; this one compares it against the sentence a
+  // real host actually produces. Delete it and `reason` becomes an oracle agreeing with itself: it
+  // could drift from every host and all the in-process grant assertions would stay green.
   //
   // So it is not a duplicate — it is the anchor the duplicate hangs from, and it is the *only* test
   // that reads the phrase from a host rather than from our own source.

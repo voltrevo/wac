@@ -39,21 +39,20 @@
 // system one as covered because the code names it is exactly the reasoning that makes a green suite mean
 // less than it appears to.
 
-import { Cli, FileResult } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { Cli, Env, Files } from "std";
 import { Setting, parseConfig } from "./config.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 
 /** `$HOME`, or `""` when it is unset — which is not an error, only a search that finds less. */
-string homeOf(Cli cli) {
-  u8[]? home = cli.env("HOME").wait();
+string homeOf(Env env) {
+  u8[]? home = flatten(env.get("HOME").wait()).orElse(null);
   return home is null ? "" : string.fromBytes(home!);
 }
 
 /** Append `path`'s settings if it can be read, and say nothing if it cannot. */
-async void addFile(Fs fs, Vec<Setting> into, string path) {
-  FileResult f = await fs.readFile(path);
-  if (f.ok) { into.extend(parseConfig(f.bytes)); }
+async void addFile(Files fs, Vec<Setting> into, string path) {
+  u8[]? f = (await fs.readFile(path)).ok();
+  if (f is not null) { into.extend(parseConfig(f!)); }
 }
 
 /**
@@ -65,11 +64,11 @@ async void addFile(Fs fs, Vec<Setting> into, string path) {
  * `gitDir` may be `""` for a search with no repository, which is what a program does before it has opened
  * one — the three other levels are still worth reading.
  */
-export async Vec<Setting> configChain(Cli cli, Fs fs, string gitDir) {
+export async Vec<Setting> configChain(Env env, Files fs, string gitDir) {
   Vec<Setting> all = Vec.create();
   await addFile(fs, all, "/etc/gitconfig");
-  string home = homeOf(cli);
-  u8[]? xdg = cli.env("XDG_CONFIG_HOME").wait();
+  string home = homeOf(env);
+  u8[]? xdg = flatten(env.get("XDG_CONFIG_HOME").wait()).orElse(null);
   if (!(xdg is null)) {
     await addFile(fs, all, "\{string.fromBytes(xdg!)}/git/config");
   } else if (home != "") {
@@ -88,8 +87,8 @@ export async Vec<Setting> configChain(Cli cli, Fs fs, string gitDir) {
  * current directory and so does whatever opens this. An unset `HOME` leaves the `~` in place rather than
  * producing a path rooted at `/`, since a wrong absolute path is worse than one that visibly failed.
  */
-export string expandTilde(Cli cli, string path) {
+export string expandTilde(Env env, string path) {
   if (path.len() < 2 || path.slice(0, 2) != "~/") { return path; }
-  string home = homeOf(cli);
+  string home = homeOf(env);
   return home == "" ? path : home + path.slice(1, path.len());
 }

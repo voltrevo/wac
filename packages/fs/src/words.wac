@@ -1,0 +1,33 @@
+// What a failed file operation is called in a message — `strerror`'s words, which is what GNU prints after the path.
+//
+// A fault carries the host's own sentence, and that sentence differs by host and often names the path again, so a
+// program imitating GNU prints the *category's* words instead: `cat: x: No such file or directory` on every host.
+// The two that are not `strerror` are the ones GNU never needed — a name this host cannot spell, and a grant this
+// program was not given — and a fault with no category of its own keeps its own sentence.
+
+import { NotFound, Denied, Exists, NotEmpty, IsDir, NotADir, ReadOnly, NameTooLong, Loop, NoSpace, NotRepresentable,
+         NotGranted, Unsupported, OutputClosed, Other } from "std";
+
+/** Every fault a `Files` operation answers. */
+export type FilesFault = union<NotFound, Denied, Exists, NotEmpty, IsDir, NotADir, ReadOnly, NameTooLong, Loop, NoSpace,
+                               NotRepresentable, NotGranted, Unsupported, OutputClosed, Other>;
+
+/** `e` as GNU would say it. */
+export string reason(FilesFault e) {
+  if (e is NotFound) { return "No such file or directory"; }
+  if (e is Denied) { return "Permission denied"; }
+  if (e is Exists) { return "File exists"; }
+  if (e is NotEmpty) { return "Directory not empty"; }
+  if (e is IsDir) { return "Is a directory"; }
+  if (e is NotADir) { return "Not a directory"; }
+  if (e is ReadOnly) { return "Read-only file system"; }
+  if (e is NameTooLong) { return "File name too long"; }
+  if (e is Loop) { return "Too many levels of symbolic links"; }
+  if (e is NoSpace) { return "No space left on device"; }
+  if (e is NotRepresentable) { return "cannot be named on this host"; }
+  if (e is NotGranted) { return "Not granted to this application"; }
+  return "\{e}";
+}
+
+/** Whether `e` says nothing is there — not found, or a path through a file — which is what `rm -f` forgives. */
+export bool absent(FilesFault e) { return e is NotFound || e is NotADir; }

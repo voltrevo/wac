@@ -14,10 +14,11 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Cli, FileResult } from "std";
+import { Files } from "std";
 import { importSpecs } from "../../src/files.wac";
 import { resolveFrom } from "../../src/path.wac";
 import { isBuiltinSpec } from "../../src/coretext.wac";
+import { flatten } from "core";
 
 /** An entry and everything it reaches, in the order they were found. */
 export struct Graph {
@@ -27,17 +28,17 @@ export struct Graph {
   string error;
 }
 
-export Graph graphOf(Cli cli, string entry) {
+export Graph graphOf(Files fs, string entry) {
   string[] paths = string[].filled(32, "");
   string[] sources = string[].filled(32, "");
   i32 n = 0;
   paths[0] = entry;
   n = 1;
   for (i32 i = 0; i < n; i++) {
-    FileResult f = cli.readFile(paths[i]).wait();
-    if (!f.ok) { return Graph(paths, sources, false, "cannot read " + paths[i]); }
-    sources[i] = string.fromBytes(f.bytes);
-    string[] specs = importSpecs(f.bytes);
+    u8[]? f = flatten(fs.readFile(paths[i]).wait()).ok();
+    if ((f is null)) { return Graph(paths, sources, false, "cannot read " + paths[i]); }
+    sources[i] = string.fromBytes(f!);
+    string[] specs = importSpecs(f!);
     for (i32 s = 0; s < specs.len(); s++) {
       // **A built-in is not a file, so there is nothing here to read.** `core` and `std` are carried
       // by the compiler; `resolveFrom` hands a built-in specifier back unchanged, and reading it

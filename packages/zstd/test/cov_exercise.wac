@@ -40,7 +40,7 @@
 // `evict` below call the same two batch builders `main` does rather than asking for the one frame they
 // want: a different question is a different key and a different spawn, once per export.
 
-import { Core, Cli, FileResult, Sys } from "std";
+import { Cli, Sys, Files, Output, Procs } from "std";
 import { T } from "../../wactest/src/assert.wac";
 import { Lines, Answers, askCached, hex, word } from "../../wactest/src/oracle.wac";
 import { decoded } from "../../codec/src/hex.wac";
@@ -68,10 +68,9 @@ import { streamed as hashStreamed, whole as hashWhole, ragged as hashRagged }
 static string ORACLE = "packages/zstd/test/oracle.ts";
 
 /** The reference, under Node — Deno's `node:zlib` shim ignores zstd's `dictionary` option. */
-Answers askZ(Cli cli, Lines lines, string what) {
+Answers askZ(Files fs, Procs procs, Lines lines, string what) {
   T t = T.create();
-  return askCached(t, cli, "node", ["--experimental-strip-types", ORACLE], lines, what,
-                   "zstdcov", ["packages/zstd/test"]);
+  return askCached(t, fs, procs, "node", ["--experimental-strip-types", ORACLE], lines, what, "zstdcov", ["packages/zstd/test"]);
 }
 
 // ── Building bytes ────────────────────────────────────────────────────────────
@@ -323,7 +322,7 @@ u8[][] corpus() {
  * Every export that needs a reference frame calls this rather than asking for its own, because
  * `askCached` keys on the whole payload: a narrower question is a different key and another spawn.
  */
-Answers reference(Cli cli) {
+Answers reference(Files fs, Procs procs) {
   Lines lines = Lines.create();
   // Frames to damage, chosen for different codings — treeless literals, repeat-mode tables, RLE,
   // long matches, and one with a checksum so the trailer is part of what gets damaged.
@@ -362,7 +361,7 @@ Answers reference(Cli cli) {
   // of unused symbols long enough to need the repeat field more than once, tables built almost
   // entirely of "less than one" symbols, and both ends of the accuracy log.
   for (i32 i = 0; i < descSpecs().len(); i++) { lines.add(descSpecs()[i]); }
-  return askZ(cli, lines, "the reference encoder");
+  return askZ(fs, procs, lines, "the reference encoder");
 }
 
 /** Where the reference batch's `compress` answers stop and its `writedesc` answers start. */
@@ -407,11 +406,12 @@ u8[] refFrame(Answers a, i32 i) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  Answers a = reference(cli);
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Answers a = reference(fs, procs);
   if (!a.ok) {
-    core.warn("error: the reference encoder did not answer — is node 22.15+ on PATH?");
+    err.line("error: the reference encoder did not answer — is node 22.15+ on PATH?");
     return 1;
   }
   // ## The whole-buffer decoder over the reference's frames

@@ -19,9 +19,10 @@
 
 import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles,
          emitFilesSelfDescribing, wireHasErrors } from "../../src/api.wac";
-import { Cli, Exec, Change } from "std";
+import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 /** What a host is handed: the module, and the glue that calls into it. */
 export struct Artifacts {
@@ -94,7 +95,7 @@ export struct Ran {
 Ran notRun(string why) { return Ran(false, why, -1, false, "", ""); }
 
 /** `wac`, found beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Env env) { return flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac"; }
 
 /**
  * Somewhere to put a module before running it.
@@ -102,9 +103,9 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  * `.cache/` is gitignored, so what is written there is not something to clean up by hand — and the
  * names callers pass are per-test, so two files running at once do not write over each other.
  */
-export string scratchDir(Cli cli) {
-  string dir = cli.cwd().wait() + "/.cache";
-  cli.mkdir(dir, true).wait();   // recursive, so already being there is not a failure
+export string scratchDir(Env env, Files fs) {
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache";
+  fs.mkdir(dir, true).wait();   // recursive, so already being there is not a failure
   return dir;
 }
 
@@ -127,8 +128,7 @@ export string scratchDir(Cli cli) {
  *
  * `grants` is the bitmask `platform.wac` uses: 1 read, 2 write, 4 net, 8 env.
  */
-export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
-                      string dir, string name, i32 grants, string[] args) {
+export Ran runEmitted(Env env, Files fs, Procs procs, string[] paths, string[] sources, string entry, string dir, string name, i32 grants, string[] args) {
   // **Errors, not diagnostics.** `diagnoseGraph` answers warnings too, and a warning is an ordinary
   // thing for a test program to provoke — the first one this met was "these types share no
   // ancestor, so this cast always traps", which is the whole point of the program that raised it.
@@ -145,7 +145,7 @@ export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
   if (wireHasErrors(diagnostics)) { return notRun(entry + " did not compile: " + diagnostics); }
 
   u8[] wasm = emitFilesSelfDescribing(paths, sources, entry, name, grants);
-  return runModule(cli, wasm, dir, name, args);
+  return runModule(env, fs, procs, wasm, dir, name, args);
 }
 
 /**
@@ -156,21 +156,22 @@ export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
  * hundred files, and asking `diagnoseGraph` each time would be checking the same graph fifteen
  * times to answer a question about the *emitter*.
  */
-export Ran runModule(Cli cli, u8[] wasm, string dir, string name, string[] args) {
+export Ran runModule(Env env, Files fs, Procs procs, u8[] wasm, string dir, string name, string[] args) {
   if (wasm.len() == 0) { return notRun(name + ": emitted nothing"); }
 
   string path = dir + "/" + name;
-  Change wrote = cli.writeFile(path, wasm).wait();
-  if (wrote.fault != 0) { return notRun("could not write " + path); }
+  auto wrote = flatten(fs.writeFile(path, wasm).wait());
+  if (wrote.isErr()) { return notRun("could not write " + path); }
 
   string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = path;
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
 
-  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
-  if (!r.ran()) { return notRun("the wac binary did not run " + path + " — " + r.error); }
-  string err = string.fromBytes(r.stderr);
-  return Ran(true, "", r.status, err.indexOf(" trapped") >= 0, string.fromBytes(r.stdout), err);
+  auto rRan = flatten(procs.exec(binary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return notRun("the wac binary did not run " + path + " — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  string err = string.fromBytes(r!.stderr);
+  return Ran(true, "", r!.status, err.indexOf(" trapped") >= 0, string.fromBytes(r!.stdout), err);
 }
 
 /** What `wac validate` said about a batch of modules. */
@@ -193,19 +194,20 @@ export struct Validated {
  * many modules it looked at, and a run that stopped halfway would otherwise report no rejections and
  * be indistinguishable from a clean one.
  */
-export Validated validateAll(Cli cli, string[] paths) {
+export Validated validateAll(Env env, Procs procs, string[] paths) {
   if (paths.len() == 0) { return Validated(true, "", string[].filled(0, "")); }
   string[] argv = string[].filled(paths.len() + 1, "");
   argv[0] = "validate";
   for (i32 i = 0; i < paths.len(); i++) { argv[i + 1] = paths[i]; }
 
-  Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
-  if (!r.ran()) {
-    return Validated(false, "wac validate did not run — " + r.error, string[].filled(0, ""));
+  auto rRan = flatten(procs.exec(binary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) {
+    return Validated(false, "wac validate did not run — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}", string[].filled(0, ""));
   }
-  string[] lines = splitLines(string.fromBytes(r.stdout));
+  string[] lines = splitLines(string.fromBytes(r!.stdout));
   if (lines.len() == 0) {
-    return Validated(false, "wac validate said nothing — " + string.fromBytes(r.stderr),
+    return Validated(false, "wac validate said nothing — " + string.fromBytes(r!.stderr),
                      string[].filled(0, ""));
   }
 
@@ -236,7 +238,6 @@ export Validated validateAll(Cli cli, string[] paths) {
 export bool wasRejected(Ran r) { return r.stderr.indexOf("rejected by the engine") >= 0; }
 
 /** The single-file case. */
-export Ran runEmittedOne(Cli cli, string path, string source, string dir, string name) {
-  return runEmitted(cli, [path], [source], path, dir, name, 0,
-                    string[].filled(0, ""));
+export Ran runEmittedOne(Env env, Files fs, Procs procs, string path, string source, string dir, string name) {
+  return runEmitted(env, fs, procs, [path], [source], path, dir, name, 0, string[].filled(0, ""));
 }

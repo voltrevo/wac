@@ -35,11 +35,12 @@
 // the expensive bug.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /**
  * The roots `tools/runTests.wac`'s `tsRoots()` names, read out of it rather than copied.
@@ -50,11 +51,12 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
  *
  *     string[] tsRoots() { return ["packages", "tools", "harness", "core", "bootstrap"]; }
  */
-string[] rootsFromRunner(T t, Cli cli) {
-  FileResult f = cli.readFile("tools/runTests.wac").wait();
-  t.isTrue(f.ok, "cannot read tools/runTests.wac — " + f.error);
-  if (!f.ok) { return string[].filled(0, ""); }
-  string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+string[] rootsFromRunner(T t, Files fs) {
+  auto fRead = flatten(fs.readFile("tools/runTests.wac").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "cannot read tools/runTests.wac — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return string[].filled(0, ""); }
+  string[] lines = nonEmptyLines(string.fromBytes(f!));
   for (i32 i = 0; i < lines.len(); i++) {
     if (!startsWith(lines[i], "string[] tsRoots()")) { continue; }
     return quotedIn(lines[i]);
@@ -86,17 +88,20 @@ string treeOf(string p) {
   return slash < 0 ? p : p.slice(0, slash);
 }
 
-export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core core, Cli cli) {
+export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
 
-  string[] roots = rootsFromRunner(t, cli);
+  string[] roots = rootsFromRunner(t, fs);
   t.isTrue(roots.len() >= 3,
            "only " + itoa(roots.len()) + " root(s) read from tsRoots() — did the line parse?");
   if (roots.len() < 3) { return t.report(); }
 
   // `site` is excluded from the Deno pass outright rather than by a marker — `--ignore=site` in the
   // runner — so a marker there would be read by nobody and is not this test's business either.
-  string[] files = sourceFiles(core, cli, [".ts"], ["site", "node_modules"]);
+  string[] files = sourceFiles(err, procs, [".ts"], ["site", "node_modules"]);
   t.isTrue(files.len() > 50,
            "only " + itoa(files.len()) + " .ts file(s) found — did the walk resolve?");
 
@@ -106,9 +111,10 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
   for (i32 i = 0; i < files.len(); i++) {
     string p = files[i];
     if (p.len() < 8 || p.slice(p.len() - 8, p.len()) != ".test.ts") { continue; }
-    FileResult f = cli.readFile(p).wait();
-    if (!f.ok) { t.fail("cannot read " + p + " — " + f.error); continue; }
-    string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+    auto fRead = flatten(fs.readFile(p).wait());
+    u8[]? f = fRead.ok();
+    if ((f is null)) { t.fail("cannot read " + p + " — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}"); continue; }
+    string[] lines = nonEmptyLines(string.fromBytes(f!));
     bool declares = false;
     for (i32 k = 0; k < lines.len(); k++) {
       if (startsWith(lines[k], "// test-lane:")) { declares = true; }
@@ -135,11 +141,11 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
   // `packages/wacc/test/wac/programscompile_test.wac` and the count fell from 3 to 2, with nothing about the scan
   // having changed. A floor that a successful port breaks is measuring the wrong thing.
   i32 inWac = 0;
-  string[] wacFiles = sourceFiles(core, cli, [".wac"], ["site", "node_modules"]);
+  string[] wacFiles = sourceFiles(err, procs, [".wac"], ["site", "node_modules"]);
   for (i32 i = 0; i < wacFiles.len(); i++) {
-    FileResult f = cli.readFile(wacFiles[i]).wait();
-    if (!f.ok) { continue; }
-    string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+    u8[]? f = flatten(fs.readFile(wacFiles[i]).wait()).ok();
+    if ((f is null)) { continue; }
+    string[] lines = nonEmptyLines(string.fromBytes(f!));
     for (i32 k = 0; k < lines.len(); k++) {
       if (startsWith(lines[k], "// test-lane:")) { inWac = inWac + 1; break; }
     }
@@ -154,17 +160,20 @@ export string test_every_declared_lane_marker_is_in_a_tree_the_runner_walks(Core
   return t.report();
 }
 
-export string test_every_tree_the_runner_walks_for_markers_still_exists(Core core, Cli cli) {
+export string test_every_tree_the_runner_walks_for_markers_still_exists(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
 
-  string[] roots = rootsFromRunner(t, cli);
+  string[] roots = rootsFromRunner(t, fs);
   t.isTrue(roots.len() >= 3, "only " + itoa(roots.len()) + " root(s) read from tsRoots()");
   if (roots.len() < 3) { return t.report(); }
 
   // Against the tracked files rather than `stat`: a root that exists but holds no TypeScript is as
   // useless to the walk as one that is not there, and `compiler` — which sat in this list for a day
   // after being deleted — would have been caught by either. Tracked files answer both at once.
-  string[] files = sourceFiles(core, cli, [".ts"], ["node_modules"]);
+  string[] files = sourceFiles(err, procs, [".ts"], ["node_modules"]);
   t.isTrue(files.len() > 50, "only " + itoa(files.len()) + " .ts file(s) found — did the walk resolve?");
 
   string empty = "";
@@ -200,22 +209,26 @@ export string test_every_tree_the_runner_walks_for_markers_still_exists(Core cor
  * heavy, and the marker is how a reader learns it was demoted rather than never considered. A guard
  * that refused it would push that sentence into a plain comment where nothing can check it at all.
  */
-export string test_every_lane_marker_names_a_lane_the_runner_knows(Core core, Cli cli) {
+export string test_every_lane_marker_names_a_lane_the_runner_knows(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] known = ["heavy", "exclusive", "normal"];
 
   // Both halves of the suite declare lanes, so both are read: `.test.ts` for the Deno pass and
   // `.wac` for the wac one.
-  string[] files = sourceFiles(core, cli, [".ts", ".wac"], ["site", "node_modules"]);
+  string[] files = sourceFiles(err, procs, [".ts", ".wac"], ["site", "node_modules"]);
   t.isTrue(files.len() > 100, "only " + itoa(files.len()) + " file(s) found — did the walk resolve?");
 
   i32 markers = 0;
   i32 bad = 0;
   string first = "";
   for (i32 i = 0; i < files.len(); i++) {
-    FileResult f = cli.readFile(files[i]).wait();
-    if (!f.ok) { t.fail("cannot read " + files[i] + " — " + f.error); continue; }
-    string[] lines = nonEmptyLines(string.fromBytes(f.bytes));
+    auto fRead = flatten(fs.readFile(files[i]).wait());
+    u8[]? f = fRead.ok();
+    if ((f is null)) { t.fail("cannot read " + files[i] + " — " + "\{fRead.isErr() ? "\{fRead.err()!}" : ""}"); continue; }
+    string[] lines = nonEmptyLines(string.fromBytes(f!));
     for (i32 k = 0; k < lines.len(); k++) {
       string head = "// test-lane: ";
       if (!startsWith(lines[k], head)) { continue; }

@@ -18,22 +18,21 @@
 // drops it, because there is no name to print. The comment described `wc -l < f` and the code was written
 // to match the comment.
 
-import { Cli, Core, Stat } from "std";
+import { Stat, Env, Input, Output, Files } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Chunk, Input, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
+import { Opened, Chunk, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
 import { isWordSeparator, isWordSeparatorC } from "../lib/words.wac";
 import { utf8Locale } from "../lib/locale.wac";
 import { Scalar, decode, TRUNCATED } from "../../../unicode/src/utf8.wac";
 import { isPrintable } from "../../../unicode/src/printable.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
 /** One file's counts. */
 struct Counts { i32 lines; i32 words; i32 bytes; }
 
-export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 wc(Input stdin, Output err, Output out, Env env, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   i32 files = operandCount(a, 0);
   // No operands means standard input, which is one unnamed pass.
   i32 count = files == 0 ? 1 : files;
@@ -59,13 +58,13 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
   for (i32 f = 0; f < files; f++) {
     string path = operandAt(a, f);
     if (path == "") { fromStdin = true; continue; }
-    Stat st = await fs.stat(path);
+    Stat? st = (await fs.stat(path)).ok();
     // **Something with no size to take** — a directory, a device — puts the whole run on the fallback
     // width, exactly as standard input does: `wc -l f somedir` pads to seven where `wc -l f g` pads to
     // the digits of their total. Measured, not reasoned about; a missing operand is *not* one of these,
     // because there is nothing there to be unsizeable.
-    if (st.exists && !st.isFile) { fromStdin = true; }
-    if (st.exists && st.isFile) { totalSize = totalSize + st.size; }
+    if ((st is not null) && !((st is not null) && st!.isFile)) { fromStdin = true; }
+    if ((st is not null) && ((st is not null) && st!.isFile)) { totalSize = totalSize + st!.size; }
   }
   // Measured one flag combination at a time rather than reasoned about:
   //
@@ -81,7 +80,7 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
   // this it stopped the run, so `wc -l a missing b` printed nothing at all, not even `a`'s count.
   i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = await openStream(core, cli, fs, a, f, -1);
+    Opened in = await openStream(stdin, err, fs, a, f);
     if (!in.ok) { status = 1; continue; }
     Feed fed = in.fed;
     Counts one = Counts(0, 0, 0);
@@ -107,7 +106,7 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // environment, which is the UTF-8 answer; under `LC_ALL=C` the real `wc` counts bytes, so
     // `a\xc2\xa0b` was two words here and one there. `utf8` is read once per run rather than per
     // character: a locale cannot change while a program is counting.
-    bool utf8 = utf8Locale(cli);
+    bool utf8 = utf8Locale(env);
     bool printable = false;
     // A sequence that runs off the end of a chunk, held until the next one arrives. The whole difficulty
     // of the streaming form, twice over: `inWord` already had to survive a boundary, and now a *character*
@@ -119,7 +118,7 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // it was there and was named, while a missing file gets no row at all. Both leave the status at 1.
     bool unread = false;
     while (true) {
-      Chunk got = await nextChunk(core, cli, fed, a, in.label);
+      Chunk got = await nextChunk(err, fed, a, in.label);
       if (!got.ok) { unread = true; break; }
       if (!got.more) { break; }
       u8[] data = got.bytes;
@@ -179,11 +178,11 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // Printed here rather than collected: the width is already known, and a complaint about the next
     // operand must not arrive before this line.
     if (unread) {
-      core.log(row(a, Counts(0, 0, 0), in.label, width));
+      out.line(row(a, Counts(0, 0, 0), in.label, width));
       status = 1;
       continue;
     }
-    core.log(row(a, one, in.label, width));
+    out.line(row(a, one, in.label, width));
     total.lines = total.lines + one.lines;
     total.words = total.words + one.words;
     total.bytes = total.bytes + one.bytes;
@@ -191,7 +190,7 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
 
   // A total only when there was more than one file to total, which is the real one's rule. It counts the
   // files that were read, since the ones that were not have no counts to add.
-  if (files > 1) { core.log(row(a, total, "total", width)); }
+  if (files > 1) { out.line(row(a, total, "total", width)); }
   return status;
 }
 

@@ -5,13 +5,13 @@
 // slow or large on purpose: the bug it exists for is a race between two queues, and a race is
 // clearest when there is nothing else happening.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Output } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  cli.write("one\n".toBytes());
-  core.warn("mid");
-  cli.write("two\n".toBytes());
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  out.write("one\n".toBytes());
+  err.line("mid");
+  out.write("two\n".toBytes());
   return 0;
 }

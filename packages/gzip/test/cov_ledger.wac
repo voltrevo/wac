@@ -25,7 +25,7 @@
 // be an export — and it is **data here rather than a command line**, so a name that stops being an
 // export is a compile error in this file instead of a warning nobody reads.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Env, Files, Modules, Output, Procs } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/gzip/test/cov_exercise.wac";
@@ -120,19 +120,24 @@ string[] refusals() {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  LedgerFlags flags = LedgerFlags.read(cli);
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Modules mods = sys.modules();
+  LedgerFlags flags = LedgerFlags.read(argv);
 
   // No grants: the exercise reads no files and spawns nothing, so it is compiled with nothing. A
   // driver given capabilities it does not need is a driver whose exercises could quietly start using
   // them.
-  Measured m = measure(core, cli, EXERCISE, string[].filled(0, ""), refusals());
+  Measured m = measure(err, env, fs, procs, EXERCISE, string[].filled(0, ""), refusals());
   if (m.nPoints == 0) { return 1; }
 
   // `--points` dumps the per-point table instead of the report, unfiltered, so a caller can
   // union this driver's reach with another's — `issues/system/0241b`.
-  if (flags.points) { reportPoints(core, m.points, m.nPoints, m.counts); return 0; }
-  report(core, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
+  if (flags.points) { reportPoints(out, m.points, m.nPoints, m.counts); return 0; }
+  report(out, m.points, m.nPoints, m.counts, PREFIX, flags.verbose);
+  return ratchet(err, out, fs, procs, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
 }

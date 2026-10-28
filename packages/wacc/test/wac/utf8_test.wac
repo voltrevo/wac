@@ -25,10 +25,9 @@
 // ones `fromBytes` already declined to help. Each rejection below is paired with the value one step
 // inside the boundary, so what is checked is a range and not a blanket.
 
-import { Core, Cli } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 
-export string test_isutf8_accepts_well_formed_bytes_and_rejects_the_rest_k4mq7vn(Core core, Cli cli) {
+export string test_isutf8_accepts_well_formed_bytes_and_rejects_the_rest_k4mq7vn() {
   T t = T.create();
   t.eqBool(string.isUtf8(u8[]()), true, "empty");
   t.eqBool(string.isUtf8([0x68, 0x69] as u8[]), true, "ascii");
@@ -74,7 +73,7 @@ export string test_isutf8_accepts_well_formed_bytes_and_rejects_the_rest_k4mq7vn
  * sequence no decoder would accept — and the instance form is how you ask. It reads the string's own
  * `i8[]` rather than going through `toBytes`, which is specified as a copy.
  */
-export string test_isutf8_asks_a_string_about_its_own_bytes_r2nk8fq(Core core, Cli cli) {
+export string test_isutf8_asks_a_string_about_its_own_bytes_r2nk8fq() {
   T t = T.create();
   t.eqBool("é".isUtf8(), true, "a literal is well-formed by construction");
   t.eqBool("hello".isUtf8(), true, "ascii");
@@ -92,8 +91,7 @@ export string test_isutf8_asks_a_string_about_its_own_bytes_r2nk8fq(Core core, C
  * why every line here has its pair: the overlong is rejected and the shortest form accepted, the
  * surrogate rejected and U+D7FF accepted, U+110000 rejected and U+10FFFF accepted.
  */
-export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p9wj3xd(
-    Core core, Cli cli) {
+export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p9wj3xd() {
   T t = T.create();
   t.eqBool(string.isUtf8([0xc0, 0x80] as u8[]), false, "overlong two-byte NUL");
   t.eqBool(string.isUtf8([0xc1, 0xbf] as u8[]), false, "the other overlong lead");
@@ -130,7 +128,7 @@ export string test_isutf8_is_strict_about_overlongs_surrogates_and_the_maximum_p
  * walk that emits this was checked against that over every byte string of length 1, 2 and 3 and
  * 160,000 four-byte combinations over the boundary values before it existed in wasm.
  */
-export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq(Core core, Cli cli) {
+export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq() {
   T t = T.create();
   t.eqBytes(string.toUtf8(u8[]()).toBytes(), u8[](), "empty");
   t.eqBytes(string.toUtf8([0x68, 0x69] as u8[]).toBytes(), [0x68, 0x69] as u8[], "ascii");
@@ -178,7 +176,7 @@ export string test_toutf8_replaces_what_it_cannot_decode_w7kd2mq(Core core, Cli 
  * *byte* would give two replacements and pass a test that only counted the `A`, which is why the
  * length is asserted beside it.
  */
-export string test_toutf8_replaces_a_subpart_once_and_keeps_what_follows_n3qv8jf(Core core, Cli cli) {
+export string test_toutf8_replaces_a_subpart_once_and_keeps_what_follows_n3qv8jf() {
   T t = T.create();
   t.eqBytes(string.toUtf8([0xe1, 0x80, 0x41] as u8[]).toBytes(),
             [0xef, 0xbf, 0xbd, 0x41] as u8[], "E1 80 is one subpart, then A");
@@ -195,7 +193,7 @@ export string test_toutf8_replaces_a_subpart_once_and_keeps_what_follows_n3qv8jf
  * The instance form, and the fact that makes it worth having: a string can already be ill-formed —
  * `[§wac-str-toutf8-value-t6bz4hx]`.
  */
-export string test_toutf8_repairs_a_string_built_from_unchecked_bytes_t6bz4hx(Core core, Cli cli) {
+export string test_toutf8_repairs_a_string_built_from_unchecked_bytes_t6bz4hx() {
   T t = T.create();
   t.eqStr("é".toUtf8(), "é", "a well-formed string is unchanged");
   t.eqStr("".toUtf8(), "", "empty");

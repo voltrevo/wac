@@ -11,17 +11,19 @@
 // how it came to be dispatched and unlisted — `box help` worked and the only way to find out was to read
 // the dispatcher.
 
-import { Cli, Core, FileResult } from "std";
+import { Files, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { joinWith, sortedOf, splitOn } from "./replay.wac";
+import { flatten } from "core";
 
 string dispatchPath() { return "packages/box/src/box.wac"; }
 string readmePath() { return "packages/box/README.md"; }
 
-export string test_the_readme_states_the_applet_count_the_dispatcher_has(Core core, Cli cli) {
+export string test_the_readme_states_the_applet_count_the_dispatcher_has(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string dispatch = readText(cli, dispatchPath());
-  string readme = readText(cli, readmePath());
+  string dispatch = readText(fs, dispatchPath());
+  string readme = readText(fs, readmePath());
   t.isTrue(dispatch.len() > 0, "cannot read \{dispatchPath()}");
   t.isTrue(readme.len() > 0, "cannot read \{readmePath()}");
   if (dispatch.len() == 0 || readme.len() == 0) { return t.report(); }
@@ -50,10 +52,11 @@ export string test_the_readme_states_the_applet_count_the_dispatcher_has(Core co
  * and missing here, which is what a checked number beside an unchecked list produces. The first line says
  * the fence is the *tools*, so `help` is the one name that belongs only in the count.
  */
-export string test_the_readmes_list_is_the_list_the_dispatcher_has(Core core, Cli cli) {
+export string test_the_readmes_list_is_the_list_the_dispatcher_has(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string dispatch = readText(cli, dispatchPath());
-  string readme = readText(cli, readmePath());
+  string dispatch = readText(fs, dispatchPath());
+  string readme = readText(fs, readmePath());
   if (dispatch.len() == 0 || readme.len() == 0) {
     t.isTrue(false, "cannot read the sources");
     return t.report();
@@ -80,9 +83,10 @@ export string test_the_readmes_list_is_the_list_the_dispatcher_has(Core core, Cl
  * word nobody had written since. The README says why a digit is the right shape here; enforcing *that*
  * stops the check needing maintenance at all.
  */
-export string test_the_count_is_written_as_a_digit(Core core, Cli cli) {
+export string test_the_count_is_written_as_a_digit(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string readme = readText(cli, readmePath());
+  string readme = readText(fs, readmePath());
   if (readme.len() == 0) {
     t.isTrue(false, "cannot read \{readmePath()}");
     return t.report();
@@ -117,9 +121,9 @@ export string test_the_count_is_written_as_a_digit(Core core, Cli cli) {
   return t.report();
 }
 
-string readText(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string readText(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 /** Every string literal that follows `marker`, in order. */

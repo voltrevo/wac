@@ -54,11 +54,12 @@ split is why it is a second struct rather than more fields.
 | | `askInterrupt` | — (only a host that owns a keyboard answers yes) |
 | | `exit` | — (ends the program with a status; `Sys.exit`) |
 | `Cli` | `argCount`, `arg`, `env` | — |
-| | `readStdin`, `write`, `writeErr` | — |
+| | `readStdin`, `write`, `writeErr`, `closeOutput` | — |
 | | `openInput`, `readChunk`, `outputError` | `--allow-read` for a file |
 | | `readFile`, `stat`, `linkStat`, `readDir` | `--allow-read` |
 | | `writeFile`, `mkdir`, `remove`, `rename`, `setExecutable`, `chmod` | `--allow-write` |
 | | `openOutput` (to a file) | `--allow-write` |
+| | `openFile`, `closeFile` — any number of files, each a stream of its own | `--allow-read` to read, `--allow-write` to write |
 | | `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket`, `closeSend` | `--allow-net` |
 | | `bindDatagram`, `receiveFrom`, `sendTo` | `--allow-net` — UDP, and the same one grant |
 | | `spawn`, `spawnSelf`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |

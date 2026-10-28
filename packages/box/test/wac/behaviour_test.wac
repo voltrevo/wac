@@ -12,24 +12,27 @@
 // Ten cases stay live at the bottom. A frozen expectation cannot see coreutils move under it, and the
 // answer to that is a canary rather than 104 of them.
 
-import { Cli, Core, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { cases, fixtures } from "./cases.wac";
 import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
+import { flatten } from "core";
 
 string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-behaviour"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-behaviour"; }
 
-export async string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Core core, Cli cli) {
+export async string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
   string[] list = cases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 ran = 0;
   i32 wrong = 0;
   i32 unknown = 0;
@@ -39,11 +42,11 @@ export async string test_every_implemented_flag_still_answers_what_the_real_tool
     // adds or reorders one would otherwise compare every later case against its neighbour's expectation
     // and report a hundred applet bugs.
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
-    if (!layFixtures(cli, dir, fixtures())) {
+    if (!layFixtures(fs, dir, fixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran r = await runCase(core, cli, dir, list[i]);
+    Ran r = await runCase(sys, dir, list[i]);
     ran = ran + 1;
     if (r.out != v.items[i].out || r.status != v.items[i].status) {
       wrong = wrong + 1;
@@ -55,7 +58,7 @@ export async string test_every_implemented_flag_still_answers_what_the_real_tool
       }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
   // **Every case, and it was not always.** `split` was skipped by name until `issues/system/0166` was
   // fixed — a frame kept the bytes an applet redirected to a file, so `split` wrote its pieces to standard
@@ -77,42 +80,44 @@ export async string test_every_implemented_flag_still_answers_what_the_real_tool
  * Frozen expectations cannot see the environment move. These can, and they are the cases themselves
  * rather than a hand-written stand-in, so what is checked is the thing the vectors are about.
  */
-export async string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
+export async string test_the_live_tools_still_agree_on_a_handful(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] list = cases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 checked = 0;
   // Spread across the list rather than the first ten, which are all `sort`.
   for (i32 k = 0; k < 10; k++) {
     i32 i = (k * list.len()) / 10;
-    if (!layFixtures(cli, dir, fixtures())) {
+    if (!layFixtures(fs, dir, fixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Exec want = cli.exec("env",
-                         [
+    auto wantRan = flatten(procs.exec("env", [
                                   "-i",
                                   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                                   "LC_ALL=C", "HOME=\{dir}",
                                   "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                                   "bash", dir, list[i]
-                         ],
-                         u8[]()).wait();
-    if (!want.ran()) {
+                         ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? want = wantRan.ok();
+    if ((want is null)) {
       // No bash here is not a failure of the applets: say so and stop, rather than passing quietly.
-      t.isTrue(checked > 0, "bash would not start: \{want.error}");
+      t.isTrue(checked > 0, "bash would not start: \{wantRan.isErr() ? "\{wantRan.err()!}" : ""}");
       return t.report();
     }
-    if (!layFixtures(cli, dir, fixtures())) {
+    if (!layFixtures(fs, dir, fixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran ours = await runCase(core, cli, dir, list[i]);
+    Ran ours = await runCase(sys, dir, list[i]);
     checked = checked + 1;
-    t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tools disagree: $ \{list[i]}");
-    t.eqI32(ours.status, want.status, "the live tools' status disagrees: $ \{list[i]}");
+    t.eqStr(ours.out, string.fromBytes(want!.stdout), "the live tools disagree: $ \{list[i]}");
+    t.eqI32(ours.status, want!.status, "the live tools' status disagrees: $ \{list[i]}");
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   t.isTrue(checked >= 9, "not every canary ran: \{checked}");
   return t.report();
 }

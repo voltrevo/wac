@@ -1,0 +1,55 @@
+// A composed `Files` handed to a child — spec ch44 `§wac-std-files-served-t5h2mzr`. Run by `memstore_test.wac` on each
+// host. The parent builds a `MemoryStore` and spawns itself as `child`, handing it the store as `ada`; the child reads,
+// writes, streams and is refused through `sys.files()`, and spawns a `grandchild` with the same files, which the child
+// serves in turn. The parent prints what landed in the store.
+
+import { Sys, Files, MemoryStore, Authority, Launch, Child, Output, Denied } from "std";
+import { Result } from "core";
+
+async string said(Files fs, string p) {
+  match (await fs.readFile(p)) {
+    Ok(b): { return string.fromBytes(b); }
+    Err(e): { return "<\{e}>"; }
+  }
+}
+
+async i32 child(Sys sys) {
+  Files fs = sys.files();
+  string in = await said(fs, "/home/ada/in");
+  await fs.writeFile("/home/ada/report", ("read " + in + "\n").toBytes());
+  Output out = (await fs.openAppend("/home/ada/report")).unwrap();
+  await out.line("acting as " + fs.user);
+  await out.line("owner " + (await fs.stat("/home/ada/in")).unwrap().owner);
+  string refused = (await fs.writeFile("/motd", "x".toBytes())).isErr() ? "refused" : "written";
+  await out.line("root's directory " + refused);
+  string names = "";
+  for (string n in (await fs.readDir("/home/ada")).unwrap()) { names = names + " " + n; }
+  await out.line("listed" + names);
+  Child g = (await sys.procs().spawnSelf(["grandchild"], Authority(fs, null, null, null), Launch("", false, true, false)))
+              .unwrap();
+  await out.line("grandchild exit \{(await g.exit()).unwrap()}");
+  await out.close();
+  return 0;
+}
+
+export async i32 main(Sys sys) {
+  string[] args = sys.args();
+  if (args.len() > 0 && args[0] == "child") { return await child(sys); }
+  if (args.len() > 0 && args[0] == "grandchild") {
+    await sys.files().writeFile("/home/ada/deep", ("deep, as " + sys.files().user).toBytes());
+    return 0;
+  }
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.mkdir("/home/ada", true);
+  await root.chown("/home/ada", "ada");
+  await root.writeFile("/home/ada/in", "hello".toBytes());
+  Child c = (await sys.procs().spawnSelf(["child"], Authority(store.asUser("ada"), null, null, sys.procs()),
+                                         Launch("", false, true, false))).unwrap();
+  i32 code = (await c.exit()).unwrap();
+  await sys.stdout().write((await said(root, "/home/ada/report")).toBytes());
+  await sys.stdout().line("deep " + await said(root, "/home/ada/deep") + " owned by "
+                          + (await root.stat("/home/ada/deep")).unwrap().owner);
+  await sys.stdout().line("child exit \{code}");
+  return 0;
+}

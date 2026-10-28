@@ -1,0 +1,20 @@
+// expect: f() = 3
+// spec:  §wacc-method-type-args
+// why: a lambda assigned to a field inside a method instance takes the field's type — even when the field's owner is
+//      an instance that method is the first to name, whose fields are not registered yet when its lambdas are typed
+// from: spec/2-types/19-generics.md
+import { Ticket } from "core";
+
+struct Maker {
+  i32 k;
+  Ticket<A> make<A>(this, A v) {
+    Ticket<A> out;
+    out.drive = () => {
+      if (!out.done) { out.resolve(v); }
+      return true;
+    };
+    return out;
+  }
+}
+
+export i32 f() { return Maker(1).make<i32>(3).wait()!; }

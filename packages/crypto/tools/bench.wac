@@ -37,13 +37,14 @@
 // cost more than everything else combined and would put a private key in a tool that prints its
 // inputs.
 
-import { Core, Cli, Sys } from "std";
+import { Core, Sys, Clock, Output } from "std";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../src/ed25519.wac";
 import { x25519Base } from "../src/x25519.wac";
 import { p256PublicKey, p256Sign, p256Verify, p256Ecdh } from "../src/p256.wac";
 import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1 } from "../src/rsa.wac";
 import { bcryptPbkdf } from "../src/bcryptpbkdf.wac";
 import { mlkemKeyGen, mlkemEncaps, mlkemDecaps, ekSize, dkSize, ctSize } from "../src/mlkem.wac";
+import { flatten } from "core";
 
 /** A fixed 32-byte secret. Structured rather than random, so two runs are comparable. */
 u8[] key32() {
@@ -76,44 +77,44 @@ string per(i64 from, i64 to, i32 iters) {
   return "\{us / 1000}.\{(us % 1000) / 100}ms";
 }
 
-void row(Core core, string name, i64 from, i64 to, i32 iters) {
-  core.log("| `\{name}` | \{per(from, to, iters)} |");
+void row(Output out, string name, i64 from, i64 to, i32 iters) {
+  out.line("| `\{name}` | \{per(from, to, iters)} |");
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
   u8[] k = key32();
   u8[] msg = u8[].filled(32, 7);
   u8[] nonce = u8[].filled(32, 9);
 
-  core.log("| operation | per call |");
-  core.log("|---|---:|");
+  out.line("| operation | per call |");
+  out.line("|---|---:|");
 
   i32 n = 40;
   u8[] epub = ed25519PublicKey(k);
   u8[] esig = ed25519Sign(k, msg);
-  i64 a = core.nowMillis().wait();
+  i64 a = flatten(clock.nowMillis().wait()).unwrap();
   for (i32 i = 0; i < n; i++) { ed25519PublicKey(k); }
-  i64 b = core.nowMillis().wait();  row(core, "ed25519PublicKey", a, b, n);
+  i64 b = flatten(clock.nowMillis().wait()).unwrap();  row(out, "ed25519PublicKey", a, b, n);
   for (i32 i = 0; i < n; i++) { ed25519Sign(k, msg); }
-  i64 c = core.nowMillis().wait();  row(core, "ed25519Sign", b, c, n);
+  i64 c = flatten(clock.nowMillis().wait()).unwrap();  row(out, "ed25519Sign", b, c, n);
   for (i32 i = 0; i < n; i++) { ed25519Verify(epub, msg, esig); }
-  i64 d = core.nowMillis().wait();  row(core, "ed25519Verify", c, d, n);
+  i64 d = flatten(clock.nowMillis().wait()).unwrap();  row(out, "ed25519Verify", c, d, n);
   for (i32 i = 0; i < n; i++) { x25519Base(k); }
-  i64 e = core.nowMillis().wait();  row(core, "x25519Base", d, e, n);
+  i64 e = flatten(clock.nowMillis().wait()).unwrap();  row(out, "x25519Base", d, e, n);
 
   u8[] pub = p256PublicKey(k);
   u8[] sig = p256Sign(k, msg, nonce);
-  i64 f = core.nowMillis().wait();
+  i64 f = flatten(clock.nowMillis().wait()).unwrap();
   for (i32 i = 0; i < n; i++) { p256PublicKey(k); }
-  i64 g = core.nowMillis().wait();  row(core, "p256PublicKey", f, g, n);
+  i64 g = flatten(clock.nowMillis().wait()).unwrap();  row(out, "p256PublicKey", f, g, n);
   for (i32 i = 0; i < n; i++) { p256Ecdh(k, pub); }
-  i64 h = core.nowMillis().wait();  row(core, "p256Ecdh", g, h, n);
+  i64 h = flatten(clock.nowMillis().wait()).unwrap();  row(out, "p256Ecdh", g, h, n);
   for (i32 i = 0; i < n; i++) { p256Sign(k, msg, nonce); }
-  i64 j = core.nowMillis().wait();  row(core, "p256Sign", h, j, n);
+  i64 j = flatten(clock.nowMillis().wait()).unwrap();  row(out, "p256Sign", h, j, n);
   for (i32 i = 0; i < n; i++) { p256Verify(pub, msg, sig); }
-  i64 l = core.nowMillis().wait();  row(core, "p256Verify", j, l, n);
+  i64 l = flatten(clock.nowMillis().wait()).unwrap();  row(out, "p256Verify", j, l, n);
 
   // ML-KEM, one keypair reused so the row is the operation rather than the setup.
   u8[] kp = mlkemKeyGen(u8[].filled(64, 7));
@@ -124,13 +125,13 @@ export i32 main(Sys sys) {
   u8[] ce = mlkemEncaps(ek, u8[].filled(32, 3));
   u8[] ct = u8[].filled(ctSize(), 0);
   for (i32 i = 0; i < ctSize(); i++) { ct[i] = ce[32 + i]; }
-  i64 m = core.nowMillis().wait();
+  i64 m = flatten(clock.nowMillis().wait()).unwrap();
   for (i32 i = 0; i < n; i++) { mlkemKeyGen(u8[].filled(64, 7)); }
-  i64 o = core.nowMillis().wait();  row(core, "mlkemKeyGen", m, o, n);
+  i64 o = flatten(clock.nowMillis().wait()).unwrap();  row(out, "mlkemKeyGen", m, o, n);
   for (i32 i = 0; i < n; i++) { mlkemEncaps(ek, u8[].filled(32, 3)); }
-  i64 p = core.nowMillis().wait();  row(core, "mlkemEncaps", o, p, n);
+  i64 p = flatten(clock.nowMillis().wait()).unwrap();  row(out, "mlkemEncaps", o, p, n);
   for (i32 i = 0; i < n; i++) { mlkemDecaps(dk, ct); }
-  i64 q = core.nowMillis().wait();  row(core, "mlkemDecaps", p, q, n);
+  i64 q = flatten(clock.nowMillis().wait()).unwrap();  row(out, "mlkemDecaps", p, q, n);
 
   // RSA. Fewer iterations, because signing is the most expensive thing here by an order of
   // magnitude — and the modulus is not a key, so the answers mean nothing and the times do not.
@@ -139,21 +140,21 @@ export i32 main(Sys sys) {
   u8[] rsig = u8[].filled(256, 0);
   for (i32 i = 0; i < 256; i++) { rsig[i] = ((i * 17 + 3) & 255) as@ u8; }
   i32 rv = 20;
-  i64 r0 = core.nowMillis().wait();
+  i64 r0 = flatten(clock.nowMillis().wait()).unwrap();
   for (i32 i = 0; i < rv; i++) { rsaVerifyPkcs1(rn, re, msg, rsig, 32); }
-  i64 r1 = core.nowMillis().wait();  row(core, "rsaVerifyPkcs1, 2048-bit, e=65537", r0, r1, rv);
+  i64 r1 = flatten(clock.nowMillis().wait()).unwrap();  row(out, "rsaVerifyPkcs1, 2048-bit, e=65537", r0, r1, rv);
   for (i32 i = 0; i < rv; i++) { rsaVerifyPss(rn, re, msg, rsig, 32, 32); }
-  i64 r2 = core.nowMillis().wait();  row(core, "rsaVerifyPss, 2048-bit, e=65537", r1, r2, rv);
+  i64 r2 = flatten(clock.nowMillis().wait()).unwrap();  row(out, "rsaVerifyPss, 2048-bit, e=65537", r1, r2, rv);
   // Signing exponentiates by a full-width exponent, which is what makes it the expensive one.
   i32 rs = 3;
-  i64 r3 = core.nowMillis().wait();
+  i64 r3 = flatten(clock.nowMillis().wait()).unwrap();
   for (i32 i = 0; i < rs; i++) { rsaSignPkcs1(rn, rsig, msg, 32); }
-  i64 r4 = core.nowMillis().wait();  row(core, "rsaSignPkcs1, 2048-bit", r3, r4, rs);
+  i64 r4 = flatten(clock.nowMillis().wait()).unwrap();  row(out, "rsaSignPkcs1, 2048-bit", r3, r4, rs);
 
   // bcrypt at OpenSSH's default cost, which is what `packages/ssh` meets in the wild.
   i32 bc = 4;
-  i64 b0 = core.nowMillis().wait();
+  i64 b0 = flatten(clock.nowMillis().wait()).unwrap();
   for (i32 i = 0; i < bc; i++) { bcryptPbkdf(u8[].filled(16, 7), u8[].filled(16, 3), 32, 16); }
-  i64 b1 = core.nowMillis().wait();  row(core, "bcryptPbkdf, 16 rounds", b0, b1, bc);
+  i64 b1 = flatten(clock.nowMillis().wait()).unwrap();  row(out, "bcryptPbkdf, 16 rounds", b0, b1, bc);
   return 0;
 }

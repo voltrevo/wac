@@ -8,8 +8,10 @@
 // once with `Unknown heap type -34`. Here it is exported for wac to import and `sh.wac` exports
 // only `main`, which binds cleanly. wac issue 0062, filed by agent-b the day before this hit it.
 
-import { Cli, Core, FileResult, readReason } from "std";
+import { Output } from "std";
 import { Shell, runScript } from "./exec.wac";
+import { flatten } from "core";
+import { reason } from "../../fs/src/words.wac";
 
 /**
  * The whole of `main`, over a shell somebody else built.
@@ -19,7 +21,8 @@ import { Shell, runScript } from "./exec.wac";
  * into `Shell.external` — `box`'s applets, say — gets argument handling, the file-or-`-c`-or-stdin
  * choice and the standard-error flush rather than reimplementing them and drifting.
  */
-export async i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
+export async i32 shellMain(string[] argv, Shell sh, i32 first) {
+  Output err = sh.stderr;
   // **A shell is a process too**, and it was the one this system did not know about: `mountSystem`
   // enters the *program*, which for `sealedsh` is this same thing and for `wacsh` — which builds no
   // system on purpose — is nothing at all. So `$$` had no number to answer with and a signal had
@@ -27,32 +30,33 @@ export async i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
   sh.enterSelf("sh");
   string src = "";
 
-  i32 n = cli.argCount().wait() - first;
-  if (n >= 1 && string.fromBytes(cli.arg(first).wait()) == "-c") {
+  i32 n = argv.len() - first;
+  if (n >= 1 && argv[first] == "-c") {
     if (n < 2) {
-      core.warn("sh: -c needs a script");
+      err.line("sh: -c needs a script");
       return 2;
     }
     // Everything after `-c` joined with spaces, as `sh -c` does: the shell re-splits it anyway.
-    src = string.fromBytes(cli.arg(first + 1).wait());
-    for (i32 i = first + 2; i < first + n; i++) { src = src + " \{string.fromBytes(cli.arg(i).wait())}"; }
+    src = argv[first + 1];
+    for (i32 i = first + 2; i < first + n; i++) { src = src + " \{argv[i]}"; }
   } else if (n >= 1) {
     // **The shell's own filesystem, not the host's.** This read through `cli`, so a shell mounted on an
     // image — `sshd -i`, `sealedsh` — went to the real disk for its script while every command inside
     // that script went to the image. Two filesystems in one session is the thing design/0001 D1 exists
     // to prevent, and once `Fs` grew users (step 4) it was a permission check skipped as well.
-    string name = string.fromBytes(cli.arg(first).wait());
-    FileResult f = await sh.fs.readFile(sh.resolve(name));
-    if (!f.ok) {
-      core.warn("sh: \{name}: \{readReason(f)}");
-      return 127;
+    string name = argv[first];
+    match (await sh.fs.readFile(sh.resolve(name))) {
+      Ok(bytes): { src = string.fromBytes(bytes); }
+      Err(e): {
+        err.line("sh: \{name}: \{reason(e)}");
+        return 127;
+      }
     }
-    src = string.fromBytes(f.bytes);
   } else {
     // No script argument: the script *is* standard input, and reading it consumes it. So a command
     // inside it has nothing left to read, exactly as in bash — `echo cat | sh` runs `cat` with no
     // input rather than feeding it the rest of the script.
-    src = string.fromBytes(cli.readStdin().wait());
+    src = string.fromBytes(flatten(sh.stdin.readAll().wait()).orElse(u8[]()));
     sh.triedStdin = true;
   }
 
@@ -68,6 +72,6 @@ export async i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
   // `Shell.err` does that now, where the whole buffer used to be flushed here through `Core.warn`
   // with its trailing newline shaved off by hand. What remains is a *capturing* shell's buffer,
   // which only reaches a terminal if this is where it ends up. Issue 0014.
-  if (sh.errOut.len > 0) { cli.writeErr(sh.errOut.bytes()); }
+  if (sh.errOut.len > 0) { flatten(err.write(sh.errOut.bytes()).wait()).isOk(); }
   return status;
 }

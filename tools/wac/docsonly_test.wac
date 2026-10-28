@@ -33,13 +33,14 @@
 // whose whole job is to not miss a file should not be built on one that can.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, joined } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { Verdict, fenceOpen, fencesAreRun, verdict, wacFenceBodies, wacFences } from "../docsOnly.wac";
+import { flatten } from "core";
 
-export string test_a_fence_is_found_and_the_prose_around_it_is_not(Core core, Cli cli) {
+export string test_a_fence_is_found_and_the_prose_around_it_is_not() {
   T t = T.create();
   string text = "words\n\n" + fenceOpen() + "\nexport i32 f() { return 1; }\n```\n\nmore words\n";
   string[] found = wacFenceBodies(text);
@@ -52,7 +53,7 @@ export string test_a_fence_is_found_and_the_prose_around_it_is_not(Core core, Cl
   return t.report();
 }
 
-export string test_a_non_wac_fence_is_not_a_program(Core core, Cli cli) {
+export string test_a_non_wac_fence_is_not_a_program() {
   T t = T.create();
   // Issues and design notes are full of these — measurements, terminal output, tables. Treating them
   // as code would make almost every prose edit non-documentary, which is the failure that would make
@@ -62,7 +63,7 @@ export string test_a_non_wac_fence_is_not_a_program(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_two_fences_differing_anywhere_compare_unequal(Core core, Cli cli) {
+export string test_two_fences_differing_anywhere_compare_unequal() {
   T t = T.create();
   string a = fenceOpen() + "\nexport i32 f() { return 1; }\n```\n";
   string b = fenceOpen() + "\nexport i32 f() { return 2; }\n```\n";
@@ -77,7 +78,7 @@ export string test_two_fences_differing_anywhere_compare_unequal(Core core, Cli 
   return t.report();
 }
 
-export string test_fences_are_executed_in_spec_and_package_readmes_and_nowhere_else(Core core, Cli cli) {
+export string test_fences_are_executed_in_spec_and_package_readmes_and_nowhere_else() {
   T t = T.create();
   t.isTrue(fencesAreRun("spec/2-types/08-primitives.md"), "spec");
   t.isTrue(fencesAreRun("spec/README.md"), "elsewhere under spec/");
@@ -94,7 +95,8 @@ export string test_fences_are_executed_in_spec_and_package_readmes_and_nowhere_e
   return t.report();
 }
 
-export string test_the_verdict_over_two_ranges_that_are_in_this_repository(Core core, Cli cli) {
+export string test_the_verdict_over_two_ranges_that_are_in_this_repository(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // **Real commits, because every assertion above is about a string literal.** The extraction can be
   // right on a fixture and the wiring — which paths are asked, which revisions are read — still wrong,
@@ -107,26 +109,29 @@ export string test_the_verdict_over_two_ranges_that_are_in_this_repository(Core 
   // 2026-08-27 before being written down here.
   //
   // `c11f5ef5` is the contrast, and a large one: 219 non-markdown files.
-  Verdict docs = verdict(core, cli, "e572aee2~1", "e572aee2");
+  Verdict docs = verdict(procs, "e572aee2~1", "e572aee2");
   t.isTrue(docs.docsOnly, "e572aee2 is markdown with no fence changed, but got: " + docs.why);
   t.eqStr(docs.why, "4 markdown file(s), no " + fenceOpen() + " fence changed", "and says so");
 
-  Verdict code = verdict(core, cli, "c11f5ef5~1", "c11f5ef5");
+  Verdict code = verdict(procs, "c11f5ef5~1", "c11f5ef5");
   t.isTrue(!code.docsOnly, "c11f5ef5 changed 219 non-markdown files");
   t.isTrue(contains(code.why, "219 non-markdown"), "and counts them: " + code.why);
 
   // The two answers that are refusals rather than findings. Both must be `false`: a caller that
   // cannot be told is a caller that must do the work.
-  Verdict empty = verdict(core, cli, "HEAD", "HEAD");
+  Verdict empty = verdict(procs, "HEAD", "HEAD");
   t.isTrue(!empty.docsOnly, "an empty range is not documentation");
   t.isTrue(contains(empty.why, "nothing changed"), "and says which: " + empty.why);
-  Verdict bad = verdict(core, cli, "no/such/rev", "HEAD");
+  Verdict bad = verdict(procs, "no/such/rev", "HEAD");
   t.isTrue(!bad.docsOnly, "a base git cannot resolve is not documentation");
   t.isTrue(contains(bad.why, "cannot diff"), "and says which: " + bad.why);
   return t.report();
 }
 
-export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, Cli cli) {
+export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   // **Derived, because the list in `fencesAreRun` is the whole risk.** If someone teaches a fourth
   // test to compile fences — from `docs/`, say — that helper would quietly answer false for it and the
@@ -157,7 +162,7 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
   ];
   t.eqI32(known.len(), why.len(), "every known file needs its reason");
 
-  string[] files = sourceFiles(core, cli, [".ts", ".wac"], string[]());
+  string[] files = sourceFiles(err, procs, [".ts", ".wac"], string[]());
   t.isTrue(files.len() > 500,
            "only " + itoa(files.len()) + " sources found — the corpus has moved, not the answer");
 
@@ -165,9 +170,9 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
   i32 found = 0;
   string strangers = "";
   for (i32 i = 0; i < files.len(); i++) {
-    FileResult f = cli.readFile(files[i]).wait();
-    if (!f.ok) { continue; }
-    if (!contains(string.fromBytes(f.bytes), needle)) { continue; }
+    u8[]? f = flatten(fs.readFile(files[i]).wait()).ok();
+    if ((f is null)) { continue; }
+    if (!contains(string.fromBytes(f!), needle)) { continue; }
     found = found + 1;
     bool listed = false;
     for (i32 k = 0; k < known.len(); k++) { if (known[k] == files[i]) { listed = true; } }

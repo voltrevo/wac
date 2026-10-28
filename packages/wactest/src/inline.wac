@@ -21,7 +21,7 @@
 
 import { T } from "./assert.wac";
 import { Lines } from "./oracle.wac";
-import { Procs, Launch } from "std";
+import { ChildEnv, Procs, Launch } from "std";
 import { Buf } from "core";
 
 /** `js` as a `data:` URL `deno run` will load: `%`, `#` and newlines encoded, nothing else touched. */
@@ -67,7 +67,7 @@ export async string[] askNodeScript(T t, Procs procs, string js, Lines lines, st
 
 async string[] answersOf(T t, Procs procs, string runtime, string[] args, Lines lines, string what) {
   string out = "";
-  match (await procs.exec(runtime, args, lines.buf.take(), string[](), Launch.plain())) {
+  match (await procs.exec(runtime, args, lines.buf.take(), ChildEnv.inherited(), Launch.plain())) {
     Ok(r): {
       if (r.status != 0) {
         t.fail("\{what}: the oracle exited \{r.status} — \{string.fromBytes(r.stderr)}");

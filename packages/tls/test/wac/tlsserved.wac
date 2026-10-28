@@ -18,8 +18,8 @@
 // Built by `client_test.wac`; kept beside it rather than in `src/` because the reply is a fixture's
 // reply — a fixed body the test matches on, not something a server should answer.
 
-import { Core, Cli, HostSocket, Sys } from "std";
-import { Read } from "core";
+import { Sys, Files, Listener, Net, Output, Random, Socket } from "std";
+import { Read, flatten } from "core";
 import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServerClose,
          tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
 import { clientStep, ClientStep } from "../../src/client.wac";
@@ -60,19 +60,23 @@ struct Identity {
   bool rsa;
 }
 
-void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
+void serve(Output err, Output out, Random rnd, Socket conn, Identity id, string body) {
   u8[] state = id.rsa
     ? tlsServerInitRsa(id.cert, id.n, [0x01, 0x00, 0x01] as u8[], id.d,
-                       core.randomBytes(32).wait(), core.randomBytes(32).wait())
-    : tlsServerInit(id.cert, id.seed, core.randomBytes(32).wait(),
-                    core.randomBytes(32).wait());
+                       flatten(rnd.bytes(32).wait()).unwrap(), flatten(rnd.bytes(32).wait()).unwrap())
+    : tlsServerInit(id.cert, id.seed, flatten(rnd.bytes(32).wait()).unwrap(),
+                    flatten(rnd.bytes(32).wait()).unwrap());
   Buf raw = Buf.create();
   for (i32 guard = 0; guard < 100000; guard++) {
     bool more = false;
-    match (cli.recv(handle).wait()) {
-      Data(bytes): { raw.pushAll(bytes); more = true; }
-      End: { }
-      Failed(why): { core.warn("tlsserved: recv: \{why}"); }
+    match (flatten(conn.recv().wait())) {
+      Ok(r): {
+        match (r) {
+          Data(bytes): { raw.pushAll(bytes); more = true; }
+          default: { }
+        }
+      }
+      Err(e): { err.line("tlsserved: recv: \{e}"); }
     }
     if (!more) { break; }
 
@@ -85,27 +89,27 @@ void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
 
     ClientStep st = clientStep(tlsServerFeed(state, whole));
     state = st.state;
-    if (st.toSend.len() > 0) { cli.send(handle, st.toSend).wait(); }
+    if (st.toSend.len() > 0) { conn.send(st.toSend).wait(); }
     if (st.appData.len() > 0) {
       // What the peer asked for, on the log, because one case checks that the request *arrived* —
       // "the client got a reply" and "the server read the request" are different claims and a server
       // answering a fixed page satisfies the first without the second.
-      core.log("tlsserved: received \{firstLine(string.fromBytes(st.appData))}");
-      ClientStep out = clientStep(tlsServerSend(state, reply(body).toBytes()));
-      state = out.state;
-      cli.send(handle, out.toSend).wait();
+      out.line("tlsserved: received \{firstLine(string.fromBytes(st.appData))}");
+      ClientStep answer = clientStep(tlsServerSend(state, reply(body).toBytes()));
+      state = answer.state;
+      conn.send(answer.toSend).wait();
       // **close_notify, not a bare TCP close.** A TLS peer cannot tell an orderly shutdown from an
       // attacker cutting the connection unless it sees one, so a client that cares reports a
       // truncation instead of end of stream — and one case asserts exactly that difference.
       ClientStep bye = clientStep(tlsServerClose(state));
       state = bye.state;
-      if (bye.toSend.len() > 0) { cli.send(handle, bye.toSend).wait(); }
+      if (bye.toSend.len() > 0) { conn.send(bye.toSend).wait(); }
       break;
     }
     // A handshake that failed says so in the phase, and there is nothing further to read.
     if (tlsPhase(state) == 3) { break; }
   }
-  cli.closeSocket(handle);
+  conn.close();
 }
 
 /** Up to the first CR or LF, so a log line stays one line. */
@@ -118,21 +122,25 @@ string firstLine(string text) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Random rnd = sys.random();
+  Files fs = sys.files();
+  Net net = sys.net();
   i32 port = 0;
   string body = DEFAULT_BODY;
   string rsaDir = "";
-  i32 n = cli.argCount().wait();
+  i32 n = argv.len();
   for (i32 i = 1; i < n; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--body" && i + 1 < n) {
-      body = string.fromBytes(cli.arg(i + 1).wait());
+      body = argv[i + 1];
       i = i + 1;
       continue;
     }
     if (a == "--rsa" && i + 1 < n) {
-      rsaDir = string.fromBytes(cli.arg(i + 1).wait());
+      rsaDir = argv[i + 1];
       i = i + 1;
       continue;
     }
@@ -145,37 +153,38 @@ export i32 main(Sys sys) {
 
   Identity id = Identity(u8[](), u8[](), u8[](), u8[](), false);
   if (rsaDir == "") {
-    id.cert = cli.readFile("packages/tls/test/data/server.der").wait().bytes;
-    id.seed = cli.readFile("packages/tls/test/data/server.seed").wait().bytes;
+    id.cert = flatten(fs.readFile("packages/tls/test/data/server.der").wait()).orElse(u8[]());
+    id.seed = flatten(fs.readFile("packages/tls/test/data/server.seed").wait()).orElse(u8[]());
     if (id.cert.len() == 0 || id.seed.len() == 0) {
-      core.warn("tlsserved: no certificate — run from the repository root");
+      err.line("tlsserved: no certificate — run from the repository root");
       return 1;
     }
   } else {
     id.rsa = true;
-    id.cert = cli.readFile("\{rsaDir}/cert.der").wait().bytes;
-    id.n = cli.readFile("\{rsaDir}/n.bin").wait().bytes;
-    id.d = cli.readFile("\{rsaDir}/d.bin").wait().bytes;
+    id.cert = flatten(fs.readFile("\{rsaDir}/cert.der").wait()).orElse(u8[]());
+    id.n = flatten(fs.readFile("\{rsaDir}/n.bin").wait()).orElse(u8[]());
+    id.d = flatten(fs.readFile("\{rsaDir}/d.bin").wait()).orElse(u8[]());
     if (id.cert.len() == 0 || id.n.len() == 0 || id.d.len() == 0) {
-      core.warn("tlsserved: \{rsaDir} does not hold cert.der, n.bin and d.bin");
+      err.line("tlsserved: \{rsaDir} does not hold cert.der, n.bin and d.bin");
       return 1;
     }
   }
 
-  HostSocket listener = cli.listen("127.0.0.1", port).wait();
-  if (listener.handle < 0) {
-    core.warn("tlsserved: listen: \{listener.error}");
+  auto bound = flatten(net.listen("127.0.0.1", port).wait());
+  if (bound.isErr()) {
+    err.line("tlsserved: listen: \{bound.err()!}");
     return 1;
   }
+  Listener listener = bound.unwrap();
   // The port goes to standard output because the caller asked for zero and cannot otherwise learn
   // which one it got — the same reason `dird` prints its own.
-  core.log("tlsserved: listening on 127.0.0.1:\{listener.port}");
+  out.line("tlsserved: listening on 127.0.0.1:\{listener.port}");
 
   for (i32 served = 0; served < 1000; served++) {
-    HostSocket conn = cli.accept(listener.handle).wait();
-    if (conn.handle < 0) { core.warn("tlsserved: accept: \{conn.error}"); break; }
-    serve(core, cli, conn.handle, id, body);
+    auto accepted = flatten(listener.accept().wait());
+    if (accepted.isErr()) { err.line("tlsserved: accept: \{accepted.err()!}"); break; }
+    serve(err, out, rnd, accepted.unwrap(), id, body);
   }
-  cli.closeSocket(listener.handle);
+  listener.close();
   return 0;
 }

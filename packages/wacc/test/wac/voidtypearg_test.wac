@@ -2,7 +2,7 @@
 //
 // `[§wac-void-typearg-2mkx9db]`.
 //
-// **A ticket that answers nothing is the thing that wants this.** `Pending<T>` is what every
+// **A ticket that answers nothing is the thing that wants this.** A `Ticket` is what every
 // capability hands back, and an `async void` function has to hand its caller *something* —
 // `design/lang/0014` D5. There is no unit type in `core` and `Pending<void>` was a **parse** error
 // until 2026-08-30: `void` is its own token kind rather than an identifier, so it failed the
@@ -22,34 +22,30 @@
 // were dropped and the parameter kept.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Pending } from "std";
+import { Result, Stuck, Ticket } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { diagnoseGraph } from "../../src/api.wac";
 
 static string ENTRY = "main.wac";
 
-export string test_a_void_ticket_is_made_waited_on_and_continued(Core core, Cli cli) {
+export string test_a_void_ticket_is_made_waited_on_and_continued() {
   T t = T.create();
 
-  // Made from a real host ticket, so `drain` has something to wait on: `map` keeps the same id.
-  Pending<void> done = core.delay(1).map<void>((i64 at) => { });
-
-  // The continuation takes **no** argument, which is the erasure this file is about.
+  // `settleWith(fn<T()> f)` at `T = void` takes a function answering nothing, which is the erasure this file is about.
+  Ticket<void> done;
   i32[] ran = i32[].filled(1, 0);
-  done.then(() => { ran[0] = ran[0] + 1; });
-  t.eqI32(ran[0], 0, "`then` returns before its continuation runs");
+  done.whenSettled(() => { ran[0] = ran[0] + 1; });
+  t.eqI32(ran[0], 0, "a continuation does not run before the ticket settles");
+  done.settleWith(() => { });
+  t.eqI32(ran[0], 1, "and runs once it has");
 
-  t.eqI32(core.drain(), 1, "the drain ran exactly the one continuation");
-  t.eqI32(ran[0], 1, "and it was this one");
-
-  // And a void ticket can be waited on, which is `wait` at `T = void` — a call whose value is
-  // nothing, in statement position.
-  Pending<void> other = core.delay(1).map<void>((i64 at) => { });
-  other.wait();
+  // And a void ticket can be waited on, which is `wait` at `T = void` — a result whose value is nothing.
+  Result<void, Stuck> waited = done.wait();
+  t.isTrue(waited.isOk(), "a settled void ticket waits without being stuck");
   return t.report();
 }
 
-export string test_a_void_argument_erases_the_parameter_it_stood_in_for(Core core, Cli cli) {
+export string test_a_void_argument_erases_the_parameter_it_stood_in_for() {
   T t = T.create();
   // A one-argument lambda against a `Pending<void>`'s `then`. Before the rule this was the *right*
   // shape and `() => {}` was refused; the wording is what says which way round it is now.

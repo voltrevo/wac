@@ -27,9 +27,10 @@
 // accept. That is the harmless direction and naming it here is cheaper than a second scan.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, FAULT_NONE, FileResult } from "std";
+import { Core, Exec, FAULT_NONE, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string SOURCE = "packages/wac/src/wac.wac";
 
@@ -59,15 +60,16 @@ string[] acceptedCommands(string src) {
   return out;
 }
 
-export string test_the_derivation_found_the_commands_it_must_find(Core core, Cli cli) {
+export string test_the_derivation_found_the_commands_it_must_find(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // **The floor, and it is a set rather than a count.** If the pattern stops matching — the arms are
   // rewritten as a `switch`, or the spacing changes — this fails here, saying so, instead of the
   // test below passing vacuously over an empty list.
-  FileResult raw = cli.readFile(SOURCE).wait();
-  t.eqI32(raw.fault, FAULT_NONE(), "could not read \{SOURCE}");
-  if (raw.fault != FAULT_NONE()) { return t.report(); }
-  string[] cmds = acceptedCommands(string.fromBytes(raw.bytes));
+  u8[]? raw = flatten(fs.readFile(SOURCE).wait()).ok();
+  t.isTrue(raw is not null, "could not read \{SOURCE}");
+  if (raw is null) { return t.report(); }
+  string[] cmds = acceptedCommands(string.fromBytes(raw!));
   t.isTrue(cmds.len() >= 12, "only \{cmds.len()} commands derived from \{SOURCE}");
   string[] must = ["check", "build", "run", "test", "update", "app", "validate", "sh"];
   for (i32 i = 0; i < must.len(); i++) {
@@ -78,17 +80,21 @@ export string test_the_derivation_found_the_commands_it_must_find(Core core, Cli
   return t.report();
 }
 
-export string test_every_accepted_command_is_named_in_the_usage_block(Core core, Cli cli) {
+export string test_every_accepted_command_is_named_in_the_usage_block(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  FileResult raw = cli.readFile(SOURCE).wait();
-  t.eqI32(raw.fault, FAULT_NONE(), "could not read \{SOURCE}");
-  if (raw.fault != FAULT_NONE()) { return t.report(); }
-  string[] cmds = acceptedCommands(string.fromBytes(raw.bytes));
+  u8[]? raw = flatten(fs.readFile(SOURCE).wait()).ok();
+  t.isTrue(raw is not null, "could not read \{SOURCE}");
+  if (raw is null) { return t.report(); }
+  string[] cmds = acceptedCommands(string.fromBytes(raw!));
 
-  Exec r = cli.exec(binaryPath(cli), ["--help"], u8[]()).wait();
-  t.isTrue(r.ran(), "wac --help did not run — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  string help = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  auto rRan = flatten(procs.exec(binaryPath(env), ["--help"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "wac --help did not run — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  string help = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
   t.isTrue(help.len() > 200, "the help output is too short to be the usage block");
 
   string missing = "";
@@ -117,34 +123,40 @@ export string test_every_accepted_command_is_named_in_the_usage_block(Core core,
  * consulted any of them. `flagsFor(cmd)` is one table now, which is what makes a per-command answer
  * possible to assert.
  */
-export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli) {
+export string test_a_flag_a_command_does_not_take_is_refused(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string prog = "/tmp/wac-flagshape.wac";
-  FileResult had = cli.readFile(prog).wait();
-  if (!had.ok) {
-    cli.writeFile(prog, ("import { Core, Sys } from \"std\";\n"
-                       + "export i32 main(Sys sys) { Core core = sys.core; return 0; }\n").toBytes()).wait();
+  u8[]? had = flatten(fs.readFile(prog).wait()).ok();
+  if ((had is null)) {
+    fs.writeFile(prog, ("import { Sys } from \"std\";\n"
+                       + "export i32 main(Sys sys) { return 0; }\n").toBytes()).wait();
   }
 
   // A word that is no grant of ours, on a command that does take grants.
-  Exec a = cli.exec(binaryPath(cli), ["build", "--allow-everything", prog, "-o", "/tmp/wac-flagshape-out"], u8[]()).wait();
-  t.eqI32(a.status, 2, "an invented grant should exit 2: \{string.fromBytes(a.stderr)}");
-  t.isTrue(contains(string.fromBytes(a.stderr), "is not a grant"),
-           "an invented grant should say so: \{string.fromBytes(a.stderr)}");
+  auto aRan = flatten(procs.exec(binaryPath(env), ["build", "--allow-everything", prog, "-o", "/tmp/wac-flagshape-out"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? a = aRan.ok();
+  t.eqI32(a!.status, 2, "an invented grant should exit 2: \{string.fromBytes(a!.stderr)}");
+  t.isTrue(contains(string.fromBytes(a!.stderr), "is not a grant"),
+           "an invented grant should say so: \{string.fromBytes(a!.stderr)}");
 
   // A real grant, on a command that has none. Not the same mistake, and not the same sentence.
-  Exec b = cli.exec(binaryPath(cli), ["check", "--allow-read", prog], u8[]()).wait();
-  t.eqI32(b.status, 2, "a grant `check` does not take should exit 2: \{string.fromBytes(b.stderr)}");
-  t.isTrue(contains(string.fromBytes(b.stderr), "unknown flag"),
-           "a real grant on the wrong command is an unknown flag: \{string.fromBytes(b.stderr)}");
-  t.isTrue(!contains(string.fromBytes(b.stderr), "is not a grant"),
-           "...and must not be called an invented one: \{string.fromBytes(b.stderr)}");
+  auto bRan = flatten(procs.exec(binaryPath(env), ["check", "--allow-read", prog], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? b = bRan.ok();
+  t.eqI32(b!.status, 2, "a grant `check` does not take should exit 2: \{string.fromBytes(b!.stderr)}");
+  t.isTrue(contains(string.fromBytes(b!.stderr), "unknown flag"),
+           "a real grant on the wrong command is an unknown flag: \{string.fromBytes(b!.stderr)}");
+  t.isTrue(!contains(string.fromBytes(b!.stderr), "is not a grant"),
+           "...and must not be called an invented one: \{string.fromBytes(b!.stderr)}");
 
   // Neither. The refusal names what the command *does* take, which the old fixed string could not.
-  Exec c = cli.exec(binaryPath(cli), ["audit", "--nonsense", prog], u8[]()).wait();
-  t.eqI32(c.status, 2, "an unknown flag should exit 2: \{string.fromBytes(c.stderr)}");
-  t.isTrue(contains(string.fromBytes(c.stderr), "--verbose"),
-           "the refusal should say what `audit` takes: \{string.fromBytes(c.stderr)}");
+  auto cRan = flatten(procs.exec(binaryPath(env), ["audit", "--nonsense", prog], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? c = cRan.ok();
+  t.eqI32(c!.status, 2, "an unknown flag should exit 2: \{string.fromBytes(c!.stderr)}");
+  t.isTrue(contains(string.fromBytes(c!.stderr), "--verbose"),
+           "the refusal should say what `audit` takes: \{string.fromBytes(c!.stderr)}");
 
   // **A tail is not this command's to judge.** `wac task map --check` is the spelling `CLAUDE.md`
   // documents and the doc lane runs: `--check` belongs to the task, not to `wac task`. Making the
@@ -153,23 +165,26 @@ export string test_a_flag_a_command_does_not_take_is_refused(Core core, Cli cli)
   //
   // Asserted against a task that does not exist, so this stays a question about argument boundaries
   // rather than about whatever the tree's tasks happen to do.
-  Exec tail = cli.exec(binaryPath(cli), ["task", "no-such-task", "--check"], u8[]()).wait();
-  t.isTrue(!contains(string.fromBytes(tail.stderr), "unknown flag"),
-           "`--check` after a task name is the task's: \{string.fromBytes(tail.stderr)}");
-  t.isTrue(contains(string.fromBytes(tail.stderr), "no-such-task"),
-           "and the refusal is about the task: \{string.fromBytes(tail.stderr)}");
+  auto tailRan = flatten(procs.exec(binaryPath(env), ["task", "no-such-task", "--check"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? tail = tailRan.ok();
+  t.isTrue(!contains(string.fromBytes(tail!.stderr), "unknown flag"),
+           "`--check` after a task name is the task's: \{string.fromBytes(tail!.stderr)}");
+  t.isTrue(contains(string.fromBytes(tail!.stderr), "no-such-task"),
+           "and the refusal is about the task: \{string.fromBytes(tail!.stderr)}");
 
   // ...while a flag *before* the name is still this command's, and it has none.
-  Exec before = cli.exec(binaryPath(cli), ["task", "--nonsense"], u8[]()).wait();
-  t.isTrue(contains(string.fromBytes(before.stderr), "unknown flag"),
-           "a flag before the task name is `wac task`'s: \{string.fromBytes(before.stderr)}");
+  auto beforeRan = flatten(procs.exec(binaryPath(env), ["task", "--nonsense"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? before = beforeRan.ok();
+  t.isTrue(contains(string.fromBytes(before!.stderr), "unknown flag"),
+           "a flag before the task name is `wac task`'s: \{string.fromBytes(before!.stderr)}");
 
   // **The canary.** `check` took no flag check at all until this table existed, and exited 0 on
   // anything — so a test that only asserted refusals would have passed on the broken build by
   // never reaching a command that answered. This is the same command with nothing wrong.
-  Exec ok = cli.exec(binaryPath(cli), ["check", prog], u8[]()).wait();
-  t.eqI32(ok.status, 0, "the same command without a flag should succeed: \{string.fromBytes(ok.stderr)}");
+  auto okRan = flatten(procs.exec(binaryPath(env), ["check", prog], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? ok = okRan.ok();
+  t.eqI32(ok!.status, 0, "the same command without a flag should succeed: \{string.fromBytes(ok!.stderr)}");
 
-  cli.remove(prog, false).wait();
+  fs.remove(prog, false).wait();
   return t.report();
 }

@@ -18,13 +18,14 @@
 // `Shell` route `example/boxsh.wac` wires up; only the oracle is spawned. The version this replaces
 // built a 900 KB application first and spawned it fourteen times as well.
 
-import { Cli, Core, Exec } from "std";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
 import { Ran, layFixtures, runCase } from "./replay.wac";
+import { flatten } from "core";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-diff"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-diff"; }
 
 /** `1\n2\n…\nn\n`, the spine every case below is a variation of. */
 string seq(i32 n) {
@@ -85,53 +86,57 @@ string body(string all) {
 }
 
 /** One shape, both ways. */
-async bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string b) {
-  cli.writeFile("\{dir}/a", a.toBytes()).wait();
-  cli.writeFile("\{dir}/b", b.toBytes()).wait();
+async bool oneCase(Sys sys, T t, Files fs, Procs procs, string dir, string what, string a, string b) {
+  fs.writeFile("\{dir}/a", a.toBytes()).wait();
+  fs.writeFile("\{dir}/b", b.toBytes()).wait();
 
-  Ran mine = await runCase(core, cli, dir, "diff a b");
-  Exec real = cli.exec("diff", ["-u", "\{dir}/a", "\{dir}/b"], u8[]()).wait();
-  if (!real.ran()) {
-    t.isTrue(false, "the real diff would not start: \{real.error}");
+  Ran mine = await runCase(sys, dir, "diff a b");
+  auto realRan = flatten(procs.exec("diff", ["-u", "\{dir}/a", "\{dir}/b"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? real = realRan.ok();
+  if ((real is null)) {
+    t.isTrue(false, "the real diff would not start: \{realRan.isErr() ? "\{realRan.err()!}" : ""}");
     return false;
   }
   string ours = body(mine.out);
-  t.eqStr(ours, body(string.fromBytes(real.stdout)), what);
+  t.eqStr(ours, body(string.fromBytes(real!.stdout)), what);
   // 0 the same, 1 different, 2 trouble — as the real one does.
-  t.eqI32(mine.status, real.status, "\{what}: exit status");
+  t.eqI32(mine.status, real!.status, "\{what}: exit status");
   return true;
 }
 
-export async string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli cli) {
+export async string test_diff_agrees_with_the_real_one_shape_by_shape(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
   // **A floor first.** Every comparison below is `eqStr` against the real tool, and two empty strings
   // are equal — so a `diff` that printed nothing at all, or a `body` that filtered everything, would
   // pass fourteen times. This asks that the simplest case actually produced a hunk.
-  await oneCase(t, core, cli, dir, "one change", seq(8), seqEdit(8, 3, "X"));
-  Ran floor = await runCase(core, cli, dir, "diff a b");
+  await oneCase(sys, t, fs, procs, dir, "one change", seq(8), seqEdit(8, 3, "X"));
+  Ran floor = await runCase(sys, dir, "diff a b");
   t.isTrue(body(floor.out).indexOf("@@") >= 0,
            "the comparison has something in it — got: \{floor.out}");
-  await oneCase(t, core, cli, dir, "two distant hunks", seq(30), twoDistant());
+  await oneCase(sys, t, fs, procs, dir, "two distant hunks", seq(30), twoDistant());
   // Closer than twice the context, so they must merge into one hunk rather than two.
-  await oneCase(t, core, cli, dir, "two close changes merge", seq(30), twoClose());
-  await oneCase(t, core, cli, dir, "a deletion", seq(30), seqEdit(30, 13, ""));
-  await oneCase(t, core, cli, dir, "an insertion", seq(30), seqInsert(30, 13, "inserted"));
-  await oneCase(t, core, cli, dir, "change on the first line", seq(30), seqEdit(30, 1, "one"));
-  await oneCase(t, core, cli, dir, "change on the last line", seq(30), seqEdit(30, 30, "thirty"));
-  await oneCase(t, core, cli, dir, "truncated", seq(30), seq(5));
-  await oneCase(t, core, cli, dir, "appended", seq(30), seq(40));
-  await oneCase(t, core, cli, dir, "fully reversed", seq(20), seqReversed(20));
+  await oneCase(sys, t, fs, procs, dir, "two close changes merge", seq(30), twoClose());
+  await oneCase(sys, t, fs, procs, dir, "a deletion", seq(30), seqEdit(30, 13, ""));
+  await oneCase(sys, t, fs, procs, dir, "an insertion", seq(30), seqInsert(30, 13, "inserted"));
+  await oneCase(sys, t, fs, procs, dir, "change on the first line", seq(30), seqEdit(30, 1, "one"));
+  await oneCase(sys, t, fs, procs, dir, "change on the last line", seq(30), seqEdit(30, 30, "thirty"));
+  await oneCase(sys, t, fs, procs, dir, "truncated", seq(30), seq(5));
+  await oneCase(sys, t, fs, procs, dir, "appended", seq(30), seq(40));
+  await oneCase(sys, t, fs, procs, dir, "fully reversed", seq(20), seqReversed(20));
   // The three empty cases: the hunk header's line numbers are the whole point, because a zero-length
   // side starts at line 0 rather than 1.
-  await oneCase(t, core, cli, dir, "new file is empty", seq(30), "");
-  await oneCase(t, core, cli, dir, "old file is empty", "", seq(30));
-  await oneCase(t, core, cli, dir, "both empty", "", "");
-  await oneCase(t, core, cli, dir, "identical", seq(30), seq(30));
+  await oneCase(sys, t, fs, procs, dir, "new file is empty", seq(30), "");
+  await oneCase(sys, t, fs, procs, dir, "old file is empty", "", seq(30));
+  await oneCase(sys, t, fs, procs, dir, "both empty", "", "");
+  await oneCase(sys, t, fs, procs, dir, "identical", seq(30), seq(30));
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -143,26 +148,30 @@ export async string test_diff_agrees_with_the_real_one_shape_by_shape(Core core,
  * trust it. Asked here rather than in the sweep above because the marker GNU prints for it,
  * `\ No newline at end of file`, is our own sentence to match rather than a hunk to compare.
  */
-export async string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
+export async string test_a_missing_final_newline_is_a_difference(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  string dir = caseDir(env);
+  t.isTrue(layFixtures(fs, dir, Fixture[]()), "cannot make \{dir}");
 
-  cli.writeFile("\{dir}/withnl", "x\ny\n".toBytes()).wait();
-  cli.writeFile("\{dir}/nonl", "x\ny".toBytes()).wait();
+  fs.writeFile("\{dir}/withnl", "x\ny\n".toBytes()).wait();
+  fs.writeFile("\{dir}/nonl", "x\ny".toBytes()).wait();
 
-  Ran near = await runCase(core, cli, dir, "diff withnl nonl");
+  Ran near = await runCase(sys, dir, "diff withnl nonl");
   t.eqI32(near.status, 1, "files differing only in a final newline are different");
   t.isTrue(near.out.indexOf("No newline at end of file") >= 0, near.out);
 
   // GNU agrees about the status, which is the part a script reads.
-  Exec real = cli.exec("diff", ["\{dir}/withnl", "\{dir}/nonl"], u8[]()).wait();
-  t.isTrue(real.ran(), "the real diff ran");
-  t.eqI32(real.status, 1, "and so does GNU diff");
+  auto realRan = flatten(procs.exec("diff", ["\{dir}/withnl", "\{dir}/nonl"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? real = realRan.ok();
+  t.isTrue((real is not null), "the real diff ran");
+  t.eqI32(real!.status, 1, "and so does GNU diff");
 
-  t.eqI32((await runCase(core, cli, dir, "diff withnl withnl")).status, 0, "identical files are still identical");
+  t.eqI32((await runCase(sys, dir, "diff withnl withnl")).status, 0, "identical files are still identical");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 

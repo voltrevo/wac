@@ -31,9 +31,10 @@
 // `hsdir_interval` entirely when `TestingTorNetwork` is set, so a client computing 1440 minutes
 // against chutney asks for a period nobody is in and gets a 404 with nothing to say why.
 
-import { Core, Cli, FileResult, Sys } from "std";
+import { FileResult, Sys, Clock, Files, Net, Output, Random } from "std";
+import { flatten } from "core";
 import { Network, Session, bootstrap, buildCircuitTo } from "./bootstrap.wac";
-import { fetchOverCircuit } from "./link.wac";
+import { fetchOverCircuit, closeLink } from "./link.wac";
 import { Relay, attachMicrodescriptors } from "./directory.wac";
 import { onionPubkey } from "./onionaddr.wac";
 import { blindedPublicKey, subcredential } from "./hsblind.wac";
@@ -48,36 +49,41 @@ import {
 import { IntroPoint, parseIntroPoints, linkSpecifier, LS_IPV4, LS_ED25519_ID } from "./hsintro.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 3) {
-    core.warn("usage: hsfetch <seed-file> <authorities-file> <onion-address> [--testnet]");
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Files fs = sys.files();
+  Net net = sys.net();
+  if (argv.len() < 3) {
+    err.line("usage: hsfetch <seed-file> <authorities-file> <onion-address> [--testnet]");
     return 1;
   }
-  FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!seedFile.ok) { core.warn("tor: \{seedFile.error}"); return 1; }
-  FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
-  if (!authFile.ok) { core.warn("tor: \{authFile.error}"); return 1; }
-  u8[] address = cli.arg(2).wait();
+  auto seedFileRead = flatten(fs.readFile(argv[0]).wait());
+  if (seedFileRead.isErr()) { err.line("tor: \{seedFileRead.isErr() ? "\{seedFileRead.err()!}" : ""}"); return 1; }
+  auto authFileRead = flatten(fs.readFile(argv[1]).wait());
+  if (authFileRead.isErr()) { err.line("tor: \{authFileRead.isErr() ? "\{authFileRead.err()!}" : ""}"); return 1; }
+  u8[] address = argv[2].toBytes();
 
   bool testnet = false;
-  i32 n = cli.argCount().wait();
+  i32 n = argv.len();
   for (i32 i = 3; i < n; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--testnet") { testnet = true; }
+    if (argv[i] == "--testnet") { testnet = true; }
   }
 
   u8[] identity = onionPubkey(address);
   if (identity.len() != 32) {
-    core.warn("tor: that is not a v3 onion address — 56 characters, and the checksum has to hold");
+    err.line("tor: that is not a v3 onion address — 56 characters, and the checksum has to hold");
     return 1;
   }
 
-  Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, testnet);
-  if (!net.ok) { return 1; }
+  Network network = bootstrap(err, clock, rnd, net, seedFileRead.unwrap(), authFileRead.unwrap(), testnet);
+  if (!network.ok) { return 1; }
 
-  u8[] second = fetchDescriptor(core, cli, net, identity, testnet);
+  u8[] second = fetchDescriptor(err, out, clock, rnd, net, network, identity, testnet);
   if (second.len() == 0) { return 1; }
-  return report(core, cli, second);
+  return report(out, second);
 }
 
 /**
@@ -90,44 +96,44 @@ export i32 main(Sys sys) {
  *
  * Empty on any failure, having said which one.
  */
-export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool testnet) {
+export u8[] fetchDescriptor(Output err, Output out, Clock clock, Random rnd, Net net, Network network, u8[] identity, bool testnet) {
   // The ring's inputs, all from the consensus that was just verified rather than from a second one.
-  i64[] period = consensusTimePeriod(net.consensus, testnet, 0);
+  i64[] period = consensusTimePeriod(network.consensus, testnet, 0);
   if (period[0] < 0) {
-    core.warn("tor: the consensus has no usable valid-after and fresh-until");
+    err.line("tor: the consensus has no usable valid-after and fresh-until");
     return u8[]();
   }
   i64 periodNum = period[0];
   i64 periodLength = period[1];
-  core.log("time period \{periodNum}, \{periodLength}" +
+  out.line("time period \{periodNum}, \{periodLength}" +
            " minutes long");
 
   // The current period pairs with the *previous* shared random value — see `consensusSharedRandom`.
-  u8[] srv = consensusSharedRandom(net.consensus, false);
+  u8[] srv = consensusSharedRandom(network.consensus, false);
   if (srv.len() != 32) {
-    srv = consensusSharedRandom(net.consensus, true);
+    srv = consensusSharedRandom(network.consensus, true);
     if (srv.len() == 32) {
-      core.log("no previous shared random value; using the current one");
+      out.line("no previous shared random value; using the current one");
     } else {
       srv = disasterSrv(periodLength, periodNum);
-      core.log("the consensus carries no shared random value; using the disaster SRV");
+      out.line("the consensus carries no shared random value; using the disaster SRV");
     }
   }
 
   u8[] blinded = blindedPublicKey(identity, periodNum, periodLength);
   if (blinded.len() != 32) {
-    core.warn("tor: the address does not decode to a curve point");
+    err.line("tor: the address does not decode to a curve point");
     return u8[]();
   }
   u8[] subcred = subcredential(identity, blinded);
 
-  i32[] dirs = hsdirsForDescriptor(net.relays, blinded, srv, periodNum, periodLength,
+  i32[] dirs = hsdirsForDescriptor(network.relays, blinded, srv, periodNum, periodLength,
                                    HSDIR_N_REPLICAS_DEFAULT, HSDIR_SPREAD_FETCH_DEFAULT);
   if (dirs.len() == 0) {
-    core.warn("tor: no directory could be placed on the ring — are microdescriptors attached?");
+    err.line("tor: no directory could be placed on the ring — are microdescriptors attached?");
     return u8[]();
   }
-  core.log("\{dirs.len()} responsible directories");
+  out.line("\{dirs.len()} responsible directories");
 
   // Try them in turn. A descriptor is stored on more directories than a client looks at, precisely so
   // that one being down is not the end of it, and treating the first 404 as final would throw that
@@ -135,63 +141,63 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   string path = descriptorPath(blinded);
   u8[] body = u8[]();
   for (i32 i = 0; i < dirs.len() && body.len() == 0; i++) {
-    Relay d = net.relays[dirs[i]];
-    core.log("asking \{d.nickname} at \{d.address}:\{d.orPort}");
-    Session s = buildCircuitTo(core, cli, net, dirs[i], 0x80000010 + i);
+    Relay d = network.relays[dirs[i]];
+    out.line("asking \{d.nickname} at \{d.address}:\{d.orPort}");
+    Session s = buildCircuitTo(err, clock, rnd, net, network, dirs[i], 0x80000010 + i);
     if (!s.ok) { continue; }
-    core.log("  path: \{s.description}");
+    out.line("  path: \{s.description}");
     body = fetchOverCircuit(s.link, s.circ, path);
-    cli.closeSocket(s.link.sock);
-    if (body.len() == 0) { core.log("  no descriptor there"); }
+    closeLink(s.link);
+    if (body.len() == 0) { out.line("  no descriptor there"); }
   }
   if (body.len() == 0) {
-    core.warn("tor: no responsible directory had a descriptor for this address");
+    err.line("tor: no responsible directory had a descriptor for this address");
     return u8[]();
   }
-  core.log("descriptor: \{body.len()} bytes");
+  out.line("descriptor: \{body.len()} bytes");
 
 
-  return decryptDescriptor(core, body, blinded, subcred);
+  return decryptDescriptor(err, body, blinded, subcred);
 }
 
 /** Check the descriptor is the one we asked for, and decrypt both layers. */
-u8[] decryptDescriptor(Core core, u8[] body, u8[] blinded, u8[] subcred) {
+u8[] decryptDescriptor(Output err, u8[] body, u8[] blinded, u8[] subcred) {
   // The descriptor names its own blinded key in the signing certificate. Checking it against the one
   // we derived is not redundant with the fetch succeeding: an HSDir serves whatever is filed under a
   // key, and this is what says the file it served is the one we asked for.
   u8[] cert = pemBlock(body, "descriptor-signing-key-cert".toBytes(), "ED25519 CERT".toBytes());
   if (certType(cert) != 8) {
-    core.warn("tor: the descriptor has no type-8 signing certificate");
+    err.line("tor: the descriptor has no type-8 signing certificate");
     return u8[]();
   }
   u8[] claimed = certSignedWithKey(cert);
   if (claimed.len() != 32) {
-    core.warn("tor: the certificate names no blinded key");
+    err.line("tor: the certificate names no blinded key");
     return u8[]();
   }
   for (i32 i = 0; i < 32; i++) {
     if (claimed[i] != blinded[i]) {
-      core.warn("tor: the descriptor is signed under a different blinded key than we asked for");
+      err.line("tor: the descriptor is signed under a different blinded key than we asked for");
       return u8[]();
     }
   }
 
   i64 revision = keywordInt(body, "revision-counter".toBytes());
   if (revision < 0) {
-    core.warn("tor: the descriptor has no revision counter");
+    err.line("tor: the descriptor has no revision counter");
     return u8[]();
   }
   u8[] outer = pemBlock(body, "superencrypted".toBytes(), "MESSAGE".toBytes());
   u8[] first = decryptLayer(outer, blinded, subcred, revision, superencryptedConstant());
   if (first.len() == 0) {
-    core.warn("tor: the first layer did not decrypt — wrong subcredential, or the descriptor is "
+    err.line("tor: the first layer did not decrypt — wrong subcredential, or the descriptor is "
               + "for a service with client authorisation, which is not implemented");
     return u8[]();
   }
   u8[] inner = pemBlock(first, "encrypted".toBytes(), "MESSAGE".toBytes());
   u8[] second = decryptLayer(inner, blinded, subcred, revision, encryptedConstant());
   if (second.len() == 0) {
-    core.warn("tor: the second layer did not decrypt");
+    err.line("tor: the second layer did not decrypt");
     return u8[]();
   }
   return second;
@@ -199,9 +205,9 @@ u8[] decryptDescriptor(Core core, u8[] body, u8[] blinded, u8[] subcred) {
 
 
 /** Print what the decrypted descriptor names. */
-i32 report(Core core, Cli cli, u8[] second) {
+i32 report(Output out, u8[] second) {
   IntroPoint[] points = parseIntroPoints(second);
-  core.log("\{points.len()} introduction points");
+  out.line("\{points.len()} introduction points");
   for (i32 i = 0; i < points.len(); i++) {
     u8[] v4 = linkSpecifier(points[i].linkSpecifiers, LS_IPV4);
     string where = "?";
@@ -209,7 +215,7 @@ i32 report(Core core, Cli cli, u8[] second) {
       where = "\{v4[0] as i32}.\{v4[1] as i32}.\{v4[2] as i32}.\{v4[3] as i32}" +
               ":\{(v4[4] as i32 * 256) + v4[5] as i32}";
     }
-    cli.write(("introduction-point \{i} at \{where}" +
+    out.write(("introduction-point \{i} at \{where}" +
                "\n  auth-key   \{hex(points[i].authKey)}" +
                "\n  enc-key    \{hex(points[i].encKey)}" +
                "\n  onion-key  \{hex(points[i].onionKey)}\n").toBytes());

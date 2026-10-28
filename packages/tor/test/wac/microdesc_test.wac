@@ -5,7 +5,7 @@ import {
   microdescriptor, microdescDigest, microdescDigests, microdescLine, splitMicrodescriptors,
 } from "../../src/microdesc.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import {
   caseCount, descriptor, digest, digestBase64, expected, mutationCount, mutationDigestBase64,
   mutationName, policySummary,
@@ -23,39 +23,41 @@ import {
  * a corrupted document the same digest as the good one, every assertion built on it would hold for
  * a digest function that ignored its input.
  */
-export string test_the_vectors_can_discriminate(Core core, Cli cli) {
+export string test_the_vectors_can_discriminate(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   t.isTrue(n >= 2, "expected several microdescriptor cases, found \{n}");
 
   bool sawExit = false;
   bool sawDefault = false;
   for (i32 i = 0; i < n; i++) {
-    if (policySummary(cli, i) == "accept 1-65535") { sawExit = true; }
-    if (policySummary(cli, i) == "reject 1-65535") { sawDefault = true; }
+    if (policySummary(fs, i) == "accept 1-65535") { sawExit = true; }
+    if (policySummary(fs, i) == "reject 1-65535") { sawDefault = true; }
   }
   t.isTrue(sawExit, "the vectors must include an exit policy, or the p line is never written");
   t.isTrue(sawDefault, "the vectors must include the default policy, or the omitted p line is untested");
 
-  i32 muts = mutationCount(cli);
+  i32 muts = mutationCount(fs);
   t.isTrue(muts >= 1, "no mutations, so the digest check proves nothing");
   for (i32 i = 0; i < muts; i++) {
-    t.isFalse(mutationDigestBase64(cli, i) == digestBase64(cli, 0),
-              "mutation \"\{mutationName(cli, i)}\" kept the original digest, so the digest " +
+    t.isFalse(mutationDigestBase64(fs, i) == digestBase64(fs, 0),
+              "mutation \"\{mutationName(fs, i)}\" kept the original digest, so the digest " +
               "is not a check");
   }
   return t.report();
 }
 
-export string test_the_bytes_tor_accepted(Core core, Cli cli) {
+export string test_the_bytes_tor_accepted(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
 
   for (i32 i = 0; i < n; i++) {
-    u8[] descriptor = descriptor(cli, i);
-    string policy = policySummary(cli, i);
+    u8[] descriptor = descriptor(fs, i);
+    string policy = policySummary(fs, i);
     u8[] made = microdescriptor(descriptor, policy);
-    t.eqBytes(made, expected(cli, i),
+    t.eqBytes(made, expected(fs, i),
               "case \{i}: the microdescriptor is the document tor accepted");
   }
   return t.report();
@@ -68,20 +70,21 @@ export string test_the_bytes_tor_accepted(Core core, Cli cli) {
  * do is give it the same digest. A consensus `m` line names a microdescriptor by this number, so a
  * generator that produces almost-right bytes produces a document no client will ever match up.
  */
-export string test_the_digest_is_the_one_the_m_line_names(Core core, Cli cli) {
+export string test_the_digest_is_the_one_the_m_line_names(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
 
   for (i32 i = 0; i < n; i++) {
-    u8[] made = microdescriptor(descriptor(cli, i),
-                               policySummary(cli, i));
-    t.eqBytes(microdescDigest(made), digest(cli, i),
+    u8[] made = microdescriptor(descriptor(fs, i),
+                               policySummary(fs, i));
+    t.eqBytes(microdescDigest(made), digest(fs, i),
               "case \{i}: SHA-256 over the same span tor hashed");
     t.eqStr(b64Unpadded(microdescDigest(made)),
-            digestBase64(cli, i),
+            digestBase64(fs, i),
             "case \{i}: and it renders as tor's unpadded base64");
     t.eqStr(microdescLine(made),
-            "m \{digestBase64(cli, i)}",
+            "m \{digestBase64(fs, i)}",
             "case \{i}: the consensus line names it");
   }
   return t.report();
@@ -94,16 +97,17 @@ export string test_the_digest_is_the_one_the_m_line_names(Core core, Cli cli) {
  * mutation is a document tor **accepted** and gave a different digest — so these are not assertions
  * about validity, they are the evidence that the digest is doing the work.
  */
-export string test_a_corrupted_microdescriptor_gets_a_different_digest(Core core, Cli cli) {
+export string test_a_corrupted_microdescriptor_gets_a_different_digest(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] good = microdescriptor(descriptor(cli, 0),
-                             policySummary(cli, 0));
+  u8[] good = microdescriptor(descriptor(fs, 0),
+                             policySummary(fs, 0));
   string ours = b64Unpadded(microdescDigest(good));
-  i32 m = mutationCount(cli);
+  i32 m = mutationCount(fs);
   t.isTrue(m > 0, "there are mutations to compare against");
 
   for (i32 i = 0; i < m; i++) {
-    string other = mutationDigestBase64(cli, i);
+    string other = mutationDigestBase64(fs, i);
     t.isTrue(ours != other,
              "mutation \{i} has a digest of its own, so the digest is a check");
   }
@@ -117,15 +121,16 @@ export string test_a_corrupted_microdescriptor_gets_a_different_digest(Core core
  * the line would produce a document that still parses — and hashes differently, which is the whole
  * failure mode this file exists to stop.
  */
-export string test_the_default_policy_writes_no_p_line(Core core, Cli cli) {
+export string test_the_default_policy_writes_no_p_line(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   bool sawAccept = false;
   bool sawReject = false;
 
   for (i32 i = 0; i < n; i++) {
-    string policy = policySummary(cli, i);
-    u8[] made = microdescriptor(descriptor(cli, i), policy);
+    string policy = policySummary(fs, i);
+    u8[] made = microdescriptor(descriptor(fs, i), policy);
     if (policy == "reject 1-65535") {
       sawReject = true;
       t.isTrue(!contains(made, "\np "), "the default policy writes no p line");
@@ -139,7 +144,8 @@ export string test_the_default_policy_writes_no_p_line(Core core, Cli cli) {
 }
 
 /** A descriptor missing what a microdescriptor is made of yields nothing, rather than a stub. */
-export string test_an_unusable_descriptor_makes_no_microdescriptor(Core core, Cli cli) {
+export string test_an_unusable_descriptor_makes_no_microdescriptor(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   t.eqI32(microdescriptor(u8[](), "accept 1-65535").len(), 0,
           "an empty descriptor makes nothing");
@@ -148,7 +154,7 @@ export string test_an_unusable_descriptor_makes_no_microdescriptor(Core core, Cl
 
   // Truncated inside the onion-key block: the keyword is there and the PEM end is not, which is the
   // case a search that assumed the block was complete would run off the end of.
-  u8[] full = descriptor(cli, 0);
+  u8[] full = descriptor(fs, 0);
   u8[] cut = u8[].filled(full.len() / 2, 0);
   for (i32 i = 0; i < cut.len(); i++) { cut[i] = full[i]; }
   t.eqI32(microdescriptor(cut, "accept 1-65535").len(), 0,
@@ -163,30 +169,31 @@ export string test_an_unusable_descriptor_makes_no_microdescriptor(Core core, Cl
  * digest. A split that got the boundary wrong would produce documents that parse and hash to nothing
  * the consensus names — the same silent failure the digest tests above are about, one level up.
  */
-export string test_a_run_of_microdescriptors_splits_back_apart(Core core, Cli cli) {
+export string test_a_run_of_microdescriptors_splits_back_apart(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
 
   // Build a response the way a directory answer carries them: end to end, nothing between.
   u8[] joined = u8[]();
   for (i32 i = 0; i < n; i++) {
-    u8[] one = microdescriptor(descriptor(cli, i),
-                              policySummary(cli, i));
+    u8[] one = microdescriptor(descriptor(fs, i),
+                              policySummary(fs, i));
     joined = join(joined, one);
   }
 
   u8[][] parts = splitMicrodescriptors(joined);
   t.eqI32(parts.len(), n, "every document is found");
   for (i32 i = 0; i < n; i++) {
-    u8[] want = microdescriptor(descriptor(cli, i),
-                               policySummary(cli, i));
+    u8[] want = microdescriptor(descriptor(fs, i),
+                               policySummary(fs, i));
     t.eqBytes(parts[i], want, "document \{i} comes back whole and in order");
   }
 
   u8[][] digests = microdescDigests(joined);
   t.eqI32(digests.len(), n, "one digest per document");
   for (i32 i = 0; i < n; i++) {
-    t.eqBytes(digests[i], digest(cli, i),
+    t.eqBytes(digests[i], digest(fs, i),
               "digest \{i} is still tor's after a round trip through the blob");
   }
 

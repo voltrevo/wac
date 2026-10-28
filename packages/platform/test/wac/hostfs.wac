@@ -16,11 +16,11 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Core, Cli, Exec, Stat, Pending } from "std";
+import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, SpawnFault } from "std";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { newestInClosure } from "../../../wactest/src/built.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
-import { Buf } from "core";
+import { Buf, Result, Ticket, flatten } from "core";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";
@@ -44,9 +44,9 @@ export struct Ran {
  * `LANG` left over from the shell that started the suite would undo it. `PATH` and `HOME` are the two
  * the real tools actually need.
  */
-string envLine(Cli cli, string home) {
+string envLine(Env env, string home) {
   string path = "/usr/bin:/bin";
-  u8[]? p = cli.env("PATH").wait();
+  u8[]? p = flatten(env.get("PATH").wait()).orElse(null);
   if (p is not null) { path = string.fromBytes(p!); }
   return "env -i LC_ALL=C " + quoted("PATH=\{path}") + " " + quoted("HOME=\{home}");
 }
@@ -60,23 +60,22 @@ string envLine(Cli cli, string home) {
  * matters here because the three answers a case compares — GNU's, one host's, the other's — are
  * independent runs over three separate trees, so they are three-way concurrent for free.
  */
-export Pending<Exec> submit(Cli cli, i32 seconds, string cwd, string home, string prog,
-                            string[] args, u8[] stdin) {
+export Ticket<Result<Exec, SpawnFault>> submit(Env env, Procs procs, i32 seconds, string cwd, string home, string prog, string[] args, u8[] stdin) {
   string line = "cd \{quoted(cwd)} && exec timeout \{seconds} " +
-                "\{envLine(cli, home)} \{quoted(prog)}";
+                "\{envLine(env, home)} \{quoted(prog)}";
   for (i32 i = 0; i < args.len(); i++) { line = line + " \{quoted(args[i])}"; }
-  return cli.exec("/bin/sh", ["-c", line], stdin);
+  return procs.exec("/bin/sh", ["-c", line], stdin, ChildEnv.inherited(), Launch.plain());
 }
 
-export Ran collect(Pending<Exec> p) {
-  Exec r = p.wait();
-  if (!r.ran()) { return Ran(-1, "", "the shell did not run — \{r.error}", false); }
+export Ran collect(Ticket<Result<Exec, SpawnFault>> p) {
+  auto ran = flatten(p.wait());
+  if (ran.isErr()) { return Ran(-1, "", "the shell did not run — \{ran.err()!}", false); }
+  Exec r = ran.unwrap();
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
 }
 
-Ran once(Core core, Cli cli, i32 seconds, string cwd, string home, string prog, string[] args,
-         u8[] stdin) {
-  return collect(submit(cli, seconds, cwd, home, prog, args, stdin));
+Ran once(Env env, Procs procs, i32 seconds, string cwd, string home, string prog, string[] args, u8[] stdin) {
+  return collect(submit(env, procs, seconds, cwd, home, prog, args, stdin));
 }
 
 /**
@@ -86,12 +85,11 @@ Ran once(Core core, Cli cli, i32 seconds, string cwd, string home, string prog, 
  * attempt may have written to — a retry against a directory the first run half-edited is not the same
  * experiment.
  */
-export Ran boundedAgain(Core core, Cli cli, string cwd, string home, string prog, string[] args,
-                        u8[] stdin, fn<void()> refresh) {
-  Ran first = once(core, cli, DEFAULT_SECONDS, cwd, home, prog, args, stdin);
+export Ran boundedAgain(Env env, Procs procs, string cwd, string home, string prog, string[] args, u8[] stdin, fn<void()> refresh) {
+  Ran first = once(env, procs, DEFAULT_SECONDS, cwd, home, prog, args, stdin);
   if (!first.hung) { return first; }
   refresh();
-  return once(core, cli, DEFAULT_SECONDS * 3, cwd, home, prog, args, stdin);
+  return once(env, procs, DEFAULT_SECONDS * 3, cwd, home, prog, args, stdin);
 }
 
 /** Whichever of these hung, named — or empty when none did. */
@@ -126,10 +124,10 @@ export string hangReport(string what, string[] names, Ran[] runs) {
  * rebuilt when the host is. That was true of the `find` too, so it is left as it was rather than
  * changed in passing — `wactest/src/built.wac` does check it, and the difference is worth knowing.
  */
-export bool stale(Cli cli, string artifact, i64 newest) {
-  Stat s = cli.stat(artifact).wait();
-  if (!s.isFile) { return true; }
-  return newest > s.modifiedMillis;
+export bool stale(Files fs, string artifact, i64 newest) {
+  Stat? s = flatten(fs.stat(artifact).wait()).ok();
+  if (!(s is not null && s!.isFile)) { return true; }
+  return newest > s!.modifiedMillis;
 }
 
 /**
@@ -140,7 +138,7 @@ export bool stale(Cli cli, string artifact, i64 newest) {
  * that file had been spending 0.3s. The walk is per *program*, so the callers below take it once and
  * hand the answer to each check.
  */
-export i64 newestFor(Cli cli, string entry) { return newestInClosure(cli, entry); }
+export i64 newestFor(Env env, Files fs, string entry) { return newestInClosure(env, fs, entry); }
 
 /**
  * Every script through the **Deno host in one process**, rather than one process each.
@@ -160,22 +158,22 @@ export i64 newestFor(Cli cli, string entry) { return newestInClosure(cli, entry)
  * into the caller's existing retry, one process apiece, exactly as before this existed. That is the
  * rule `issues/system/0128` asks for: a bound that fired is a report rather than an answer.
  */
-export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, string home,
-                       string[] cwds, string[][] argvs, u8[][] stdins) {
-  u8[] env = joinedNul(envStrings(cli, home));
+export Ran[] denoBatch(Env env, Procs procs, i32 seconds, string entry, string[] grants, string home, string[] cwds, string[][] argvs, u8[][] stdins) {
+  u8[] given = joinedNul(envStrings(env, home));
   string body = "";
   for (i32 i = 0; i < cwds.len(); i++) {
     body = body + "run \{hex(joinedNul(argvs[i]))} \{hex(cwds[i].toBytes())} " +
-           "\{hex(stdins[i])} \{hex(env)}\n";
+           "\{hex(stdins[i])} \{hex(given)}\n";
   }
 
   string line = "exec timeout \{seconds} deno run -A harness/appRunMany.ts " +
                 quoted(entry);
   for (i32 i = 0; i < grants.len(); i++) { line = line + " \{quoted(grants[i])}"; }
-  Exec r = cli.exec("/bin/sh", ["-c", line], body.toBytes()).wait();
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", line], body.toBytes(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
 
   Ran[] out = Ran[].filled(cwds.len(), Ran(0, "", "", false));
-  string[] lines = r.ran() ? splitLines(string.fromBytes(r.stdout)) : string[].filled(0, "");
+  string[] lines = (r is not null) ? splitLines(string.fromBytes(r!.stdout)) : string[].filled(0, "");
   i32 at = 0;
   for (i32 i = 0; i < lines.len() && at < out.len(); i++) {
     if (lines[i].len() < 4 || lines[i].slice(0, 4) != "ran ") { continue; }
@@ -193,7 +191,7 @@ export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, stri
   // Short of a full set of answers is the batch having failed, however it failed: every case goes
   // back to the caller marked hung, and the caller's retry runs it one process at a time.
   if (at != out.len()) {
-    string why = r.ran() ? string.fromBytes(r.stderr) : r.error;
+    string why = (r is not null) ? string.fromBytes(r!.stderr) : "\{rRan.isErr() ? "\{rRan.err()!}" : ""}";
     for (i32 i = 0; i < out.len(); i++) {
       out[i] = Ran(124, "", "the batch answered \{at} of \{out.len()} — \{why}",
                    true);
@@ -203,9 +201,9 @@ export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, stri
 }
 
 /** The same fixed world `envLine` builds, as `K=V` strings for `appRunMany`. */
-string[] envStrings(Cli cli, string home) {
+string[] envStrings(Env env, string home) {
   string path = "/usr/bin:/bin";
-  u8[]? p = cli.env("PATH").wait();
+  u8[]? p = flatten(env.get("PATH").wait()).orElse(null);
   if (p is not null) { path = string.fromBytes(p!); }
   return ["LC_ALL=C", "PATH=\{path}", "HOME=\{home}"];
 }
@@ -249,9 +247,9 @@ export static string OPEN = "packages/box/src/bin/sh.wac";
 /** How many corpus scripts the gate runs. The rest is `wac task corpus:hosts`, which runs all 800-odd. */
 export static string BUILT = ".cache/hostshell";
 
-export string root(Cli cli) { return cli.cwd().wait(); }
+export string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
-export string buildOne(Cli cli, bool native, string entry, string out, string[] grants) {
+export string buildOne(Env env, Procs procs, bool native, string entry, string out, string[] grants) {
   if (native) {
     string[] args = string[].filled(4 + grants.len(), "");
     args[0] = "build";
@@ -259,9 +257,10 @@ export string buildOne(Cli cli, bool native, string entry, string out, string[] 
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac", args, u8[]()).wait();
-    if (!r.ran() || r.status != 0) {
-      return "wac build \{out}: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
+    auto rRan = flatten(procs.exec("\{root(env)}/native/v8/target/release/wac", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+    Exec? r = rRan.ok();
+    if ((r is null) || r!.status != 0) {
+      return "wac build \{out}: \{string.fromBytes(r!.stderr)}\{string.fromBytes(r!.stdout)}";
     }
     return "";
   }
@@ -271,8 +270,9 @@ export string buildOne(Cli cli, bool native, string entry, string out, string[] 
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts \{out}: \{string.fromBytes(r.stderr)}"; }
+  auto rRan = flatten(procs.exec("deno", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return "build.ts \{out}: \{string.fromBytes(r!.stderr)}"; }
   return "";
 }
 
@@ -294,9 +294,9 @@ export struct Built {
   string openManifest;
 }
 
-export Built builds(Cli cli) {
-  string dir = "\{root(cli)}/\{BUILT}";
-  cli.mkdir(dir, true).wait();
+export Built builds(Env env, Files fs, Procs procs) {
+  string dir = "\{root(env)}/\{BUILT}";
+  fs.mkdir(dir, true).wait();
   Built b = Built(true, "",
                   // The native half is the module itself: `wac build` writes one artefact and both
                   // hosts read the manifest out of its `wac.manifest` section. It was a `.json`
@@ -307,14 +307,14 @@ export Built builds(Cli cli) {
   string[] none = string[].filled(0, "");
   string[] rwe = ["--allow-read", "--allow-write", "--allow-env"];
   string why = "";
-  i64 sealedNewest = newestFor(cli, SEALED);
-  i64 openNewest = newestFor(cli, OPEN);
-  if (stale(cli, b.sealedDeno, sealedNewest)) { why = why + buildOne(cli, false, SEALED, b.sealedDeno, none); }
-  if (stale(cli, b.sealedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, "\{dir}/sealed", none); }
-  if (stale(cli, b.grantedDeno, sealedNewest)) { why = why + buildOne(cli, false, SEALED, b.grantedDeno, rwe); }
-  if (stale(cli, b.grantedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, "\{dir}/granted", rwe); }
-  if (stale(cli, b.openDeno, openNewest)) { why = why + buildOne(cli, false, OPEN, b.openDeno, rwe); }
-  if (stale(cli, b.openManifest, openNewest)) { why = why + buildOne(cli, true, OPEN, "\{dir}/open", rwe); }
+  i64 sealedNewest = newestFor(env, fs, SEALED);
+  i64 openNewest = newestFor(env, fs, OPEN);
+  if (stale(fs, b.sealedDeno, sealedNewest)) { why = why + buildOne(env, procs, false, SEALED, b.sealedDeno, none); }
+  if (stale(fs, b.sealedManifest, sealedNewest)) { why = why + buildOne(env, procs, true, SEALED, "\{dir}/sealed", none); }
+  if (stale(fs, b.grantedDeno, sealedNewest)) { why = why + buildOne(env, procs, false, SEALED, b.grantedDeno, rwe); }
+  if (stale(fs, b.grantedManifest, sealedNewest)) { why = why + buildOne(env, procs, true, SEALED, "\{dir}/granted", rwe); }
+  if (stale(fs, b.openDeno, openNewest)) { why = why + buildOne(env, procs, false, OPEN, b.openDeno, rwe); }
+  if (stale(fs, b.openManifest, openNewest)) { why = why + buildOne(env, procs, true, OPEN, "\{dir}/open", rwe); }
   if (why != "") { b.ok = false; b.error = why; }
   return b;
 }
@@ -329,20 +329,20 @@ export Built builds(Cli cli) {
  * so every run may share one directory — the reason `native_hostfs_test.wac` builds a tree per script
  * and this does not.
  */
-export Ran[] denoAll(Cli cli, string tmp, string[] grants, string[] scripts) {
+export Ran[] denoAll(Env env, Procs procs, string tmp, string[] grants, string[] scripts) {
   string[] cwds = string[].filled(scripts.len(), tmp);
   string[][] argv = string[][].filled(scripts.len(), string[].filled(0, ""));
   u8[][] stdins = u8[][].filled(scripts.len(), u8[]());
   for (i32 i = 0; i < scripts.len(); i++) { argv[i] = ["-c", scripts[i]]; }
-  return denoBatch(cli, DEFAULT_SECONDS * 2, SEALED, grants, tmp, cwds, argv, stdins);
+  return denoBatch(env, procs, DEFAULT_SECONDS * 2, SEALED, grants, tmp, cwds, argv, stdins);
 }
 
-export Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
+export Ran shell(Env env, Procs procs, string tmp, string cmd, string[] pre, string script) {
   string[] args = string[].filled(pre.len() + 2, "");
   for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
   args[pre.len()] = "-c";
   args[pre.len() + 1] = script;
-  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[](), () => { });
+  return boundedAgain(env, procs, tmp, tmp, cmd, args, u8[](), () => { });
 }
 
 /** How the two answers differ, or empty when they do not. */

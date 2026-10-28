@@ -30,8 +30,9 @@
 // **A caller must check `waitForPort`'s answer.** A server that never came up leaves every later
 // assertion measuring a refused connection, which is a different failure wearing the same clothes.
 
-import { Cli, Core, Exec, HostSocket } from "std";
+import { Cli, Exec, ChildEnv, Clock, Files, Launch, Listener, Net, Procs, Socket } from "std";
 import { quoted } from "./childenv.wac";
+import { flatten } from "core";
 
 /** A child that is still running. `pid` is negative when it did not start. */
 export struct Daemon {
@@ -64,18 +65,19 @@ export struct Port {
  * run and env, and not this. A capability that is missing and a kernel that is full are not the
  * same fact and must not be the same answer.
  */
-export Port freePortOr(Cli cli) {
-  HostSocket s = cli.listen("127.0.0.1", 0).wait();
-  if (s.handle < 0) {
-    return Port(-1, s.error == "" ? "listen failed and said nothing" : s.error);
+export Port freePortOr(Net net) {
+  match (flatten(net.listen("127.0.0.1", 0).wait())) {
+    Ok(l): {
+      i32 port = l.port;
+      l.close();
+      return Port(port, "");
+    }
+    Err(e): { return Port(-1, "\{e}"); }
   }
-  i32 port = s.port;
-  cli.closeSocket(s.handle);
-  return Port(port, "");
 }
 
 /** The port alone, for a caller that has nowhere to put the reason. */
-export i32 freePort(Cli cli) { return freePortOr(cli).port; }
+export i32 freePort(Net net) { return freePortOr(net).port; }
 
 /**
  * A port that is still *held* — bound by us until `release`, so nothing else can take it.
@@ -92,19 +94,20 @@ export i32 freePort(Cli cli) { return freePortOr(cli).port; }
  */
 export struct Held {
   i32 port;
-  i32 handle;
+  Listener? held;
 
-  Held take(Cli cli) {
-    HostSocket s = cli.listen("127.0.0.1", 0).wait();
-    if (s.handle < 0) { return Held(-1, -1); }
-    return Held(s.port, s.handle);
+  Held take(Net net) {
+    match (flatten(net.listen("127.0.0.1", 0).wait())) {
+      Ok(l): { return Held(l.port, l); }
+      Err(e): { return Held(-1, null); }
+    }
   }
 
   /** Give the port up. Idempotent, so a caller may release on the failure path as well. */
-  void release(this, Cli cli) {
-    if (this.handle < 0) { return; }
-    cli.closeSocket(this.handle);
-    this.handle = -1;
+  void release(this) {
+    if (this.held is null) { return; }
+    this.held!.close();
+    this.held = null;
   }
 }
 
@@ -114,20 +117,21 @@ export struct Held {
  * `line` is a shell line, not an argument vector — the whole point here is the backgrounding, which
  * only a shell can express. Build it with `quoted` around anything that came from outside.
  */
-export Daemon start(Cli cli, string line, string logPath) {
+export Daemon start(Procs procs, string line, string logPath) {
   // **`exec` inside the braces, and it is not a tidiness.** Without it the shell forks a subshell,
   // backgrounds *that*, and `$!` names the subshell rather than the program — so `stop` kills a shell
   // and leaves the server running, which showed up as "still answering after stop". `exec` replaces
   // the subshell with the program, so the pid is the one that matters.
   string script = "{ exec \{line}; } >\{quoted(logPath)} 2>&1 & echo $!";
-  Exec r = cli.exec("/bin/sh", ["-c", script], u8[]()).wait();
-  if (!r.ran()) { return Daemon(-1, "the shell did not run — \{r.error}", logPath); }
-  if (r.status != 0) {
-    return Daemon(-1, "the shell exited \{r.status} — " +
-                      string.fromBytes(r.stderr), logPath);
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", script], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Daemon(-1, "the shell did not run — \{rRan.isErr() ? "\{rRan.err()!}" : ""}", logPath); }
+  if (r!.status != 0) {
+    return Daemon(-1, "the shell exited \{r!.status} — " +
+                      string.fromBytes(r!.stderr), logPath);
   }
-  string said = string.fromBytes(r.stdout);
-  u8[] bytes = r.stdout;
+  string said = string.fromBytes(r!.stdout);
+  u8[] bytes = r!.stdout;
   i32 pid = 0;
   i32 digits = 0;
   for (i32 i = 0; i < bytes.len(); i++) {
@@ -156,11 +160,11 @@ export Daemon start(Cli cli, string line, string logPath) {
  * exactly one client each. Use `waitForLogWithin` for those and have the fixture say when it is
  * listening.
  */
-export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
+export bool waitForPort(Net net, string host, i32 port, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
-    HostSocket s = cli.connect(host, port).wait();
-    if (s.handle >= 0) {
-      cli.closeSocket(s.handle);
+    Socket? s = flatten(net.connect(host, port).wait()).ok();
+    if (s is not null) {
+      s!.close();
       return true;
     }
   }
@@ -179,16 +183,16 @@ export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
  * So the bound is a deadline, and between attempts this *sleeps* rather than spinning — which also
  * stops a readiness check from being the thing loading the machine.
  */
-export bool waitForPortWithin(Core core, Cli cli, string host, i32 port, i32 millis) {
-  i64 deadline = core.nowMillis().wait() + (millis as i64);
+export bool waitForPortWithin(Clock clock, Net net, string host, i32 port, i32 millis) {
+  i64 deadline = flatten(clock.nowMillis().wait()).unwrap() + (millis as i64);
   for (i32 guard = 0; guard < 100000; guard++) {
-    HostSocket s = cli.connect(host, port).wait();
-    if (s.handle >= 0) {
-      cli.closeSocket(s.handle);
+    Socket? s = flatten(net.connect(host, port).wait()).ok();
+    if (s is not null) {
+      s!.close();
       return true;
     }
-    if (core.nowMillis().wait() >= deadline) { return false; }
-    core.sleepMillis(5).wait();
+    if (flatten(clock.nowMillis().wait()).unwrap() >= deadline) { return false; }
+    clock.sleepMillis(5).wait();
   }
   return false;
 }
@@ -207,19 +211,19 @@ export bool waitForPortWithin(Core core, Cli cli, string host, i32 port, i32 mil
  * There was an attempt-bounded `waitForLog` beside this; it is gone, because reading a log is a syscall
  * and so its bound was a duration nobody chose and nobody could read off the call.
  */
-export bool waitForLogWithin(Core core, Cli cli, Daemon d, string text, i32 millis) {
-  i64 deadline = core.nowMillis().wait() + (millis as i64);
+export bool waitForLogWithin(Clock clock, Files fs, Daemon d, string text, i32 millis) {
+  i64 deadline = flatten(clock.nowMillis().wait()).unwrap() + (millis as i64);
   for (i32 guard = 0; guard < 100000; guard++) {
-    if (logOf(cli, d).indexOf(text) >= 0) { return true; }
-    if (core.nowMillis().wait() >= deadline) { return false; }
-    core.sleepMillis(5).wait();
+    if (logOf(fs, d).indexOf(text) >= 0) { return true; }
+    if (flatten(clock.nowMillis().wait()).unwrap() >= deadline) { return false; }
+    clock.sleepMillis(5).wait();
   }
   return false;
 }
 
 /** Whatever the daemon wrote, for a message about why it did not come up. */
-export string logOf(Cli cli, const Daemon d) {
-  return string.fromBytes(cli.readFile(d.log).wait().bytes);
+export string logOf(Files fs, const Daemon d) {
+  return string.fromBytes(flatten(fs.readFile(d.log).wait()).orElse(u8[]()));
 }
 
 
@@ -229,10 +233,10 @@ export string logOf(Cli cli, const Daemon d) {
  * `kill` rather than a graceful word: these are test fixtures, they hold nothing worth flushing, and a
  * server that ignores TERM would otherwise wedge the suite.
  */
-export void stop(Cli cli, Daemon d) {
+export void stop(Procs procs, Daemon d) {
   if (d.pid <= 0) { return; }
-  cli.exec("/bin/sh", [
+  procs.exec("/bin/sh", [
                                "-c", "kill \{d.pid} 2>/dev/null; wait \{d.pid}" +
                                " 2>/dev/null; true"
-  ], u8[]()).wait();
+  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
 }

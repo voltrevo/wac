@@ -15,21 +15,22 @@
 // The first line matters as much as the sleeping. A test that only killed the launcher could not tell
 // "the child was reaped" from "the child never started", and both look like a passing test.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Clock, Output } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  core.log("waiter: running");
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  out.line("waiter: running");
 
   // Sixty seconds at a time, for as long as anyone lets it. A single enormous sleep would be the same
   // thing until the test is slow, and then it would be a test that hangs rather than one that fails.
   for (i32 i = 0; i < 60; i++) {
-    core.sleepMillis(60000).wait();
+    clock.sleepMillis(60000).wait();
   }
 
   // An hour without being stopped is a failure of whatever was supposed to stop it, and saying so is
   // cheaper than a silent success.
-  core.warn("waiter: nobody stopped me");
+  err.line("waiter: nobody stopped me");
   return 1;
 }

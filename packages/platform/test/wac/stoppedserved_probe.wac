@@ -1,0 +1,25 @@
+// A served child stopped before it ends — run by `memstore_test.wac` on each host. The parent hands a child a
+// `MemoryStore`, waits for the child's first output, stops it, and returns. Nothing it started may still be
+// waiting: the JavaScript hosts refuse a program that finishes with work outstanding, and a child's file
+// serving outlived a `stop` — `sealedsh -c 'yes | /bin/head -2'` finished with three reads still registered.
+
+import { Sys, Files, MemoryStore, Authority, Launch, Child } from "std";
+
+export async i32 main(Sys sys) {
+  string[] args = sys.args();
+  if (args.len() > 0 && args[0] == "child") {
+    // A producer that never stops on its own, and touches its served files first so the serving is live.
+    await sys.files().writeFile("/started", "yes".toBytes());
+    while (true) {
+      if ((await sys.stdout().write("y\n".toBytes())).isErr()) { return 0; }
+    }
+    return 0;
+  }
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Child c = (await sys.procs().spawnSelf(["child"], Authority(store.asUser("root"), null, null, null), Launch.plain()))
+              .unwrap();
+  await c.output().chunk();
+  c.stop();
+  await sys.stdout().line("stopped");
+  return 0;
+}

@@ -44,15 +44,15 @@ import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /** `wac build <file> -o <stem>` inside the fixture. */
-Exec build(Cli cli, string dir, string name) {
-  return cli.exec("/bin/sh",
-                  [
-                                 "-c", "cd " + dir + " && exec " + binaryPath(cli) +
+Exec build(Env env, Procs procs, string dir, string name) {
+  return flatten(procs.exec("/bin/sh", [
+                                 "-c", "cd " + dir + " && exec " + binaryPath(env) +
                                  " build " + name + " -o out"
-                  ], u8[]()).wait();
+                  ], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /**
@@ -67,22 +67,24 @@ Exec build(Cli cli, string dir, string name) {
  * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
  * not for these. `issues/system/0229`.
  */
-bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
+bool put(Files fs, string path, string text) { return putFile(fs, path, text) == ""; }
 
 /** The body wacc has no rule for: `s[0]` is a one-character string, so this is `string - i32`. */
 string illTyped() { return "  return s[0] - 1;\n"; }
 
-export string test_an_export_that_cannot_be_emitted_fails_the_build(Core core, Cli cli) {
+export string test_an_export_that_cannot_be_emitted_fails_the_build(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "declined-plain");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "declined-plain");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
-  t.isTrue(put(cli, dir + "/m.wac",
-               "export i32 f(string s) {\n" + illTyped() + "}\n"), "wrote the entry");
-  Exec r = build(cli, dir, "m.wac");
+  t.isTrue(put(fs, dir + "/m.wac", "export i32 f(string s) {\n" + illTyped() + "}\n"), "wrote the entry");
+  Exec r = build(env, procs, dir, "m.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
@@ -92,56 +94,60 @@ export string test_an_export_that_cannot_be_emitted_fails_the_build(Core core, C
     // English sentence supplies by accident. `issues/lang/0262c`.
     t.isTrue(contains(said, "m.wac:2"), "the failure did not point at the line — " + said);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_method_declared_first_does_not_hide_it(Core core, Cli cli) {
+export string test_a_method_declared_first_does_not_hide_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "declined-method");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "declined-method");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   // **A struct with two methods, before the function.** Each takes a slot in the per-function arrays;
   // an index that counts only top-level functions is two out by the time it reaches `f`, and reads a
   // method's slot instead. That is why this case exists and why it has *two* methods rather than one:
   // off-by-two is not off-by-one, and a fix that happened to align for one would fail here.
-  t.isTrue(put(cli, dir + "/m.wac",
-               "struct P {\n  i32 v;\n" +
+  t.isTrue(put(fs, dir + "/m.wac", "struct P {\n  i32 v;\n" +
                "  i32 get(this) { return this.v; }\n" +
                "  i32 twice(this) { return this.v * 2; }\n}\n" +
                "export i32 f(string s) {\n" + illTyped() + "}\n"), "wrote the entry");
-  Exec r = build(cli, dir, "m.wac");
+  Exec r = build(env, procs, dir, "m.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
     t.isTrue(r.status != 0,
              "a method before the function hid the decline: exit " + itoa(r.status) + " — " + said);
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_program_with_nothing_wrong_still_builds(Core core, Cli cli) {
+export string test_a_program_with_nothing_wrong_still_builds(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "declined-ok");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
-  if (!made.ok()) { return t.report(); }
+  string dir = scratch(env, "declined-ok");
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "could not make " + dir + " — " + "\{made.isErr() ? "\{made.err()!}" : ""}");
+  if (made.isErr()) { return t.report(); }
 
   // The canary for the two above. A check that refuses everything satisfies them both.
-  t.isTrue(put(cli, dir + "/m.wac",
-               "struct P {\n  i32 v;\n  i32 get(this) { return this.v; }\n}\n" +
+  t.isTrue(put(fs, dir + "/m.wac", "struct P {\n  i32 v;\n  i32 get(this) { return this.v; }\n}\n" +
                "export i32 f(i32 a) { P p = P(a); return p.get() + 1; }\n"), "wrote the entry");
-  Exec r = build(cli, dir, "m.wac");
+  Exec r = build(env, procs, dir, "m.wac");
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     t.eqI32(r.status, 0, "a program with nothing wrong was refused: " +
                          string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

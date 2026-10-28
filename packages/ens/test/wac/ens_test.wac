@@ -12,7 +12,8 @@ import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
-import { Core, Cli, FileResult } from "std";
+import { Cli, Files, Sys } from "std";
+import { flatten } from "core";
 
 /**
  * The vendored corpus, read and parsed here rather than handed in.
@@ -25,10 +26,10 @@ import { Core, Cli, FileResult } from "std";
  * Trapping rather than reporting on a corpus that will not read or parse: every case below would
  * otherwise fail one at a time with nothing pointing at the file.
  */
-JsonObject corpusOf(Cli cli) {
-  FileResult r = cli.readFile("packages/ens/test/vendor/corpus.json").wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes).ok();
+JsonObject corpusOf(Files fs) {
+  u8[]? r = flatten(fs.readFile("packages/ens/test/vendor/corpus.json").wait()).ok();
+  if ((r is null)) { trap; }
+  JsonValue? v = parse(r!).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }
@@ -61,9 +62,10 @@ string strAt(JsonObject o, string key) {
   }
 }
 
-export string test_namehash_and_dns_encoding_match_ethers(Core core, Cli cli) {
+export string test_namehash_and_dns_encoding_match_ethers(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonObject corpus = corpusOf(cli);
+  JsonObject corpus = corpusOf(fs);
   JsonArray entries = arrayAt(corpus, "names");
   i32 n = entries.len();
   t.isTrue(n >= 10, "the corpus should have a dozen names, has \{n}");
@@ -84,9 +86,10 @@ export string test_namehash_and_dns_encoding_match_ethers(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_selectors_match_ethers(Core core, Cli cli) {
+export string test_selectors_match_ethers(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonArray entries = arrayAt(corpusOf(cli), "selectors");
+  JsonArray entries = arrayAt(corpusOf(fs), "selectors");
   i32 n = entries.len();
   t.isTrue(n >= 5, "the corpus should have several signatures, has \{n}");
   for (i32 i = 0; i < n; i++) {

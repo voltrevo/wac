@@ -35,13 +35,13 @@
 // a guard that the two agree, `KNOWN` moved outright to `packages/sh/test/wac/knownstderr.wac` with
 // its last two readers, and this file was left needing nothing from TypeScript at all.
 
-import { Core, Cli, Exec, Sys } from "std";
+import { Exec, Sys, ChildEnv, Clock, Env, Files, Output, Procs, Launch } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
 import { builtApp, wacBinary } from "../../packages/wactest/src/built.wac";
 import { announce, unannounce } from "./suitegate.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { corpus } from "../../packages/sh/test/wac/corpus.wac";
 import { Diff, known } from "../../packages/sh/test/wac/knownstderr.wac";
 import { sameName } from "../../packages/sh/test/wac/shname.wac";
@@ -66,8 +66,8 @@ struct Said {
  * This checkout's `wac` goes on the front of PATH, because a `wac app` artefact is a shell preamble
  * that runs `command -v wac` and would not start under `clearEnv` without one.
  */
-string[] childEnv(Cli cli, string dir, string binDir) {
-  u8[]? path = cli.env("PATH").wait();
+string[] childEnv(Env env, string dir, string binDir) {
+  u8[]? path = flatten(env.get("PATH").wait()).orElse(null);
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
   return ["LC_ALL=C.UTF-8", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
 }
@@ -78,9 +78,8 @@ string[] childEnv(Cli cli, string dir, string binDir) {
  * 124 is `timeout`'s, not a shell's — a bound that fired has no stderr to compare, so it is skipped
  * and counted rather than reported as a difference in wording.
  */
-Said run(Cli cli, string cmd, string script, string dir, string binDir) {
-  Exec r = cli.execWithIn("timeout", ["10", cmd, "-c", script], u8[](),
-                          childEnv(cli, dir, binDir), true, false, dir).wait();
+Said run(Env env, Procs procs, string cmd, string script, string dir, string binDir) {
+  Exec r = flatten(procs.exec("timeout", ["10", cmd, "-c", script], u8[](), ChildEnv(true, childEnv(env, dir, binDir)), Launch(dir, false, false, false)).wait()).unwrap();
   if (!r.ran()) { return Said("could not run timeout: " + r.error, false); }
   return Said(string.fromBytes(r.stderr), r.status == KILLED);
 }
@@ -92,42 +91,45 @@ i32 pinnedAt(Diff[] rows, string script) {
 }
 
 /** `--name N`, or `fallback` when it is absent or has nothing after it. */
-i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
+i32 flagOf(string[] argv, i32 argc, string name, i32 fallback) {
   for (i32 i = 0; i < argc; i++) {
-    string a = string.fromBytes(cli.arg(i).wait());
+    string a = argv[i];
     if (a == "--" + name && i + 1 < argc) {
-      return atoi(string.fromBytes(cli.arg(i + 1).wait()));
+      return atoi(argv[i + 1]);
     }
   }
   return fallback;
 }
 
-string binDirOf(Cli cli) {
-  string p = wacBinary(cli);
+string binDirOf(Env env) {
+  string p = wacBinary(env);
   i32 cut = 0;
   for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
   return p.slice(0, cut);
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string[] scripts = corpus();
-  i32 argc = cli.argCount().wait();
-  i32 from = flagOf(cli, argc, "from", 0);
-  i32 count = flagOf(cli, argc, "count", scripts.len());
+  i32 argc = argv.len();
+  i32 from = flagOf(argv, argc, "from", 0);
+  i32 count = flagOf(argv, argc, "count", scripts.len());
   i32 last = from + count < scripts.len() ? from + count : scripts.len();
 
   // Announced so `tools/wac/suitegate.wac` can see this from another agent's suite: it builds a
   // program and runs it twice per script. `issues/system/0142`. Removed by hand at each exit, since
   // wac has no `unload` listener; a note stranded by a trap is swept by the next reader.
-  string note = announce(core, cli, "corpus:stderr");
+  string note = announce(clock, env, fs, "corpus:stderr");
 
-  string binDir = binDirOf(cli);
-  string shell = builtApp(cli, "packages/box/src/bin/sh.wac", "corpusstderr-wacsh",
-                          ["--allow-read", "--allow-write", "--allow-env"]);
-  string base = scratch(cli, "corpus-stderr");
-  cli.mkdir(base, true).wait();
+  string binDir = binDirOf(env);
+  string shell = builtApp(env, fs, procs, "packages/box/src/bin/sh.wac", "corpusstderr-wacsh", ["--allow-read", "--allow-write", "--allow-env"]);
+  string base = scratch(env, "corpus-stderr");
+  fs.mkdir(base, true).wait();
 
   Diff[] rows = known();
   i32 agree = 0;
@@ -139,14 +141,14 @@ export i32 main(Sys sys) {
     string script = scripts[i];
     string a = base + "/a" + itoa(i);
     string b = base + "/b" + itoa(i);
-    cli.mkdir(a, true).wait();
-    cli.mkdir(b, true).wait();
-    Said bashRan = run(cli, "bash", script, a, binDir);
-    Said oursRan = run(cli, shell, script, b, binDir);
+    fs.mkdir(a, true).wait();
+    fs.mkdir(b, true).wait();
+    Said bashRan = run(env, procs, "bash", script, a, binDir);
+    Said oursRan = run(env, procs, shell, script, b, binDir);
     string theirs = trimmed(sameName(bashRan.err));
     string ours = trimmed(oursRan.err);
-    cli.remove(a, true).wait();
-    cli.remove(b, true).wait();
+    fs.remove(a, true).wait();
+    fs.remove(b, true).wait();
 
     // A bound that fired has no sentence to compare. Counted on its own so a loaded machine reads as
     // a loaded machine rather than as forty new wording differences.
@@ -171,16 +173,16 @@ export i32 main(Sys sys) {
     }
   }
 
-  cli.remove(base, true).wait();
-  unannounce(cli, note);
+  fs.remove(base, true).wait();
+  unannounce(fs, note);
 
-  core.log(itoa(agree) + " of " + itoa(last - from - hung.len())
+  out.line(itoa(agree) + " of " + itoa(last - from - hung.len())
            + " scripts print the same on standard error as bash");
   if (hung.len() > 0) {
-    core.log("  " + itoa(hung.len()) + " did not finish inside the bound and were not compared:");
-    for (i32 i = 0; i < hung.len(); i++) { core.log("      \"" + hung.get(i) + "\""); }
+    out.line("  " + itoa(hung.len()) + " did not finish inside the bound and were not compared:");
+    for (i32 i = 0; i < hung.len(); i++) { out.line("      \"" + hung.get(i) + "\""); }
   }
-  for (i32 i = 0; i < fresh.len(); i++) { core.log("new difference:\n" + fresh.get(i)); }
-  for (i32 i = 0; i < stale.len(); i++) { core.log("stale pin:\n" + stale.get(i)); }
+  for (i32 i = 0; i < fresh.len(); i++) { out.line("new difference:\n" + fresh.get(i)); }
+  for (i32 i = 0; i < stale.len(); i++) { out.line("stale pin:\n" + stale.get(i)); }
   return fresh.len() > 0 || stale.len() > 0 ? 1 : 0;
 }

@@ -46,7 +46,7 @@
 // its shared build until this fix, and builds it now.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
 import { blockedFiles, emitDeclineFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 
@@ -86,7 +86,7 @@ string[] pnSources(bool strangerExported, bool entryImportsStranger) {
 }
 
 /** Build it, run it, and say whether the answer came back. */
-string pnBuildAndRun(T t, Cli cli, string what, bool strangerExported, bool entryImportsStranger) {
+string pnBuildAndRun(T t, Env env, Files fs, Procs procs, string what, bool strangerExported, bool entryImportsStranger) {
   string[] p = pnPaths();
   string[] s = pnSources(strangerExported, entryImportsStranger);
   t.eqStr(blockedFiles(p, s, ENTRY), "", what + ": the link was declined");
@@ -95,7 +95,7 @@ string pnBuildAndRun(T t, Cli cli, string what, bool strangerExported, bool entr
   // as nothing at all. A module that emitted no code otherwise reports success — `issues/lang/0155`.
   t.eqStr(emitDeclineFiles(p, s, ENTRY), "", what + ": the emit declined");
   u8[] wasm = emitFilesSelfDescribing(p, s, ENTRY, "privatename.wasm", 0);
-  Ran r = runModule(cli, wasm, scratchDir(cli), "privatename.wasm", string[].filled(0, ""));
+  Ran r = runModule(env, fs, procs, wasm, scratchDir(env, fs), "privatename.wasm", string[].filled(0, ""));
   t.isTrue(r.ok, what + ": it built and ran — " + r.error);
   if (!r.ok) { return ""; }
   // The exit status carries the comparison the module made — an i32 answer does not fit in eight
@@ -110,10 +110,12 @@ string pnBuildAndRun(T t, Cli cli, string what, bool strangerExported, bool entr
  * This is the aggregate's case exactly: nothing imports `stranger.wac`, it imports nothing, and its
  * `Held` is its own. It is in the link only because the link is a directory of files.
  */
-export string test_a_private_struct_in_an_unrelated_file_does_not_make_a_name_ambiguous(
-    Core core, Cli cli) {
+export string test_a_private_struct_in_an_unrelated_file_does_not_make_a_name_ambiguous(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  pnBuildAndRun(t, cli, "unimported stranger", false, false);
+  pnBuildAndRun(t, env, fs, procs, "unimported stranger", false, false);
   return t.report();
 }
 
@@ -124,9 +126,11 @@ export string test_a_private_struct_in_an_unrelated_file_does_not_make_a_name_am
  * it used to be enough to make the entry's `Held` mean the stranger's. Both resolutions are checked
  * here: 7 from the transitively-reached `Held` and 3 from the stranger's own.
  */
-export string test_importing_a_function_does_not_import_that_files_private_types(
-    Core core, Cli cli) {
+export string test_importing_a_function_does_not_import_that_files_private_types(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  pnBuildAndRun(t, cli, "imported stranger", false, true);
+  pnBuildAndRun(t, env, fs, procs, "imported stranger", false, true);
   return t.report();
 }

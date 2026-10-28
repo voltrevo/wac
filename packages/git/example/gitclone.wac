@@ -31,8 +31,7 @@
 // history was cut deliberately. This is the one file that is easy to forget and produces a failure that
 // looks like a bad pack rather than a missing line.
 
-import { Cli, Core, FAULT_NONE, Change, Sys } from "std";
-import { Fs } from "../../fs/src/fs.wac";
+import { FAULT_NONE, Sys, Clock, Env, Files, Net, Output, Random } from "std";
 import { encode } from "../../codec/src/hex.wac";
 import { Vec } from "core";
 import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement, shallowsIn,
@@ -48,25 +47,31 @@ import { Answer, Remote, parseRemote, request, systemStore } from "../src/transp
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Clock clock = sys.clock();
+  Random rnd = sys.random();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  i32 n = argv.len();
   if (n < 2) {
-    core.warn("usage: gitclone <https-url> <dir> [depth]");
+    err.line("usage: gitclone <https-url> <dir> [depth]");
     return 2;
   }
-  string url = string.fromBytes(cli.arg(0).wait());
-  string dir = string.fromBytes(cli.arg(1).wait());
+  string url = argv[0];
+  string dir = argv[1];
   // **One by default, which is a shallow clone.** A full history is what a clone usually means and is
   // also megabytes; the depth is the argument so a caller chooses, and `0` asks for everything.
   i32 depth = 1;
   if (n >= 3) {
-    string d = string.fromBytes(cli.arg(2).wait());
+    string d = argv[2];
     depth = 0;
     u8[] digits = d.toBytes();
     for (u8 digit in digits) {
       if (digit < '0' || digit > '9') {
-        core.warn("gitclone: \{d} is not a depth");
+        err.line("gitclone: \{d} is not a depth");
         return 2;
       }
       depth = depth * 10 + (digit as i32 - '0');
@@ -75,37 +80,35 @@ export async i32 main(Sys sys) {
 
   Remote r = parseRemote(url);
   if (!r.ok) {
-    core.warn("gitclone: \{url} is not an https URL with a path");
+    err.line("gitclone: \{url} is not an https URL with a path");
     return 2;
   }
-  Store store = systemStore(cli);
+  Store store = systemStore(fs);
   if (store.offsets.len() == 0) {
-    core.warn("gitclone: no trust store, so nothing can be verified");
+    err.line("gitclone: no trust store, so nothing can be verified");
     return 1;
   }
 
-  Fs fs = Fs.onHost(cli, 0);
   string gitDir = "\{dir}/.git";
-  Change made = await fs.mkdir("\{gitDir}/objects/pack", true);
-  if (!made.ok()) {
-    core.warn("gitclone: cannot make \{gitDir}/objects/pack: \{made.message}");
+  auto made = await fs.mkdir("\{gitDir}/objects/pack", true);
+  if (made.isErr()) {
+    err.line("gitclone: cannot make \{gitDir}/objects/pack: \{"\{made.isErr() ? "\{made.err()!}" : ""}"}");
     return 1;
   }
-  Change madeRefs = await fs.mkdir("\{gitDir}/refs/heads", true);
-  if (!madeRefs.ok()) {
-    core.warn("gitclone: cannot make \{gitDir}/refs/heads: \{madeRefs.message}");
+  auto madeRefs = await fs.mkdir("\{gitDir}/refs/heads", true);
+  if (madeRefs.isErr()) {
+    err.line("gitclone: cannot make \{gitDir}/refs/heads: \{"\{madeRefs.isErr() ? "\{madeRefs.err()!}" : ""}"}");
     return 1;
   }
 
   // What the server has.
-  Answer refs = request(core, cli, store, r.host,
-    "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
+  Answer refs = request(clock, rnd, env, net, store, r.host, "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
   if (!refs.ok) {
-    core.warn("gitclone: \{refs.error}");
+    err.line("gitclone: \{refs.error}");
     return 1;
   }
   if (refs.status != 200) {
-    core.warn("gitclone: \{r.host} answered \{refs.status} for the advertisement");
+    err.line("gitclone: \{r.host} answered \{refs.status} for the advertisement");
     return 1;
   }
   u8[] head = u8[]();
@@ -113,7 +116,7 @@ export async i32 main(Sys sys) {
   string caps = "";
   match (parseAdvertisement(refs.body)) {
     Garbled(why): {
-      core.warn("gitclone: the advertisement did not parse: \{why}");
+      err.line("gitclone: the advertisement did not parse: \{why}");
       return 1;
     }
     Said(ad): {
@@ -126,13 +129,13 @@ export async i32 main(Sys sys) {
     }
   }
   if (head.len() != 20) {
-    core.warn("gitclone: the advertisement names no HEAD");
+    err.line("gitclone: the advertisement names no HEAD");
     return 1;
   }
   if (branch == "") {
     // Said rather than invented: git guesses at `refs/heads/master` here, and a wrong guess produces a
     // repository whose `HEAD` points at a branch that does not exist.
-    core.warn("gitclone: the server did not say which branch HEAD is, and this does not guess");
+    err.line("gitclone: the server did not say which branch HEAD is, and this does not guess");
     return 1;
   }
 
@@ -140,20 +143,19 @@ export async i32 main(Sys sys) {
   Vec<u8[]> wants = Vec.create();
   wants.push(head);
   Vec<u8[]> haves = Vec.create();
-  Answer got = request(core, cli, store, r.host, "\{r.path}/git-upload-pack",
-    wantRequest(wants, haves, caps, depth), "application/x-git-upload-pack-request");
+  Answer got = request(clock, rnd, env, net, store, r.host, "\{r.path}/git-upload-pack", wantRequest(wants, haves, caps, depth), "application/x-git-upload-pack-request");
   if (!got.ok) {
-    core.warn("gitclone: \{got.error}");
+    err.line("gitclone: \{got.error}");
     return 1;
   }
   if (got.status != 200) {
-    core.warn("gitclone: \{r.host} answered \{got.status} for the pack");
+    err.line("gitclone: \{r.host} answered \{got.status} for the pack");
     return 1;
   }
   u8[] pack = u8[]();
   match (findPack(got.body)) {
     NoPack(why): {
-      core.warn("gitclone: \{why}");
+      err.line("gitclone: \{why}");
       return 1;
     }
     Packfile(bytes): { pack = bytes; }
@@ -166,7 +168,7 @@ export async i32 main(Sys sys) {
   string stem = "\{gitDir}/objects/pack/pack-\{hexOf(checksum)}";
   match (indexPack(pack)) {
     Unindexable(why): {
-      core.warn("gitclone: the pack could not be indexed: \{why}");
+      err.line("gitclone: the pack could not be indexed: \{why}");
       return 1;
     }
     // **Not reachable from here, and answered rather than left to fall through.** This asks with no
@@ -174,42 +176,42 @@ export async i32 main(Sys sys) {
     // it deltified against an object we never claimed. `completePack` is what repairs one, and the caller
     // that will need it is an incremental fetch, which is not this program.
     Thin(bases): {
-      core.warn("gitclone: the server sent a thin pack, wanting \{bases.len()}"
+      err.line("gitclone: the server sent a thin pack, wanting \{bases.len()}"
         + " object(s) we did not ask about");
       return 1;
     }
     Built(idx): {
-      Change wrotePack = await fs.writeFile("\{stem}.pack", pack);
-      if (!wrotePack.ok()) {
-        core.warn("gitclone: cannot write the pack: \{wrotePack.message}");
+      auto wrotePack = await fs.writeFile("\{stem}.pack", pack);
+      if (wrotePack.isErr()) {
+        err.line("gitclone: cannot write the pack: \{"\{wrotePack.isErr() ? "\{wrotePack.err()!}" : ""}"}");
         return 1;
       }
-      Change wroteIdx = await fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
-      if (!wroteIdx.ok()) {
-        core.warn("gitclone: cannot write the index: \{wroteIdx.message}");
+      auto wroteIdx = await fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
+      if (wroteIdx.isErr()) {
+        err.line("gitclone: cannot write the index: \{"\{wroteIdx.isErr() ? "\{wroteIdx.err()!}" : ""}"}");
         return 1;
       }
-      core.log("\{idx.count} objects in \{pack.len()} bytes");
+      out.line("\{idx.count} objects in \{pack.len()} bytes");
     }
   }
 
   // The refs. `HEAD` is symbolic, as it is in every repository git makes.
-  Change wroteRef = await fs.writeFile("\{gitDir}/\{branch}", "\{hexOf(head)}\n".toBytes());
-  if (!wroteRef.ok()) {
-    core.warn("gitclone: cannot write \{branch}: \{wroteRef.message}");
+  auto wroteRef = await fs.writeFile("\{gitDir}/\{branch}", "\{hexOf(head)}\n".toBytes());
+  if (wroteRef.isErr()) {
+    err.line("gitclone: cannot write \{branch}: \{"\{wroteRef.isErr() ? "\{wroteRef.err()!}" : ""}"}");
     return 1;
   }
-  Change wroteHead = await fs.writeFile("\{gitDir}/HEAD", "ref: \{branch}\n".toBytes());
-  if (!wroteHead.ok()) {
-    core.warn("gitclone: cannot write HEAD: \{wroteHead.message}");
+  auto wroteHead = await fs.writeFile("\{gitDir}/HEAD", "ref: \{branch}\n".toBytes());
+  if (wroteHead.isErr()) {
+    err.line("gitclone: cannot write HEAD: \{"\{wroteHead.isErr() ? "\{wroteHead.err()!}" : ""}"}");
     return 1;
   }
   if (cuts.len() > 0) {
     string lines = "";
     for (i32 i = 0; i < cuts.len(); i++) { lines = lines + "\{hexOf(cuts.get(i))}\n"; }
-    Change wroteShallow = await fs.writeFile("\{gitDir}/shallow", lines.toBytes());
-    if (!wroteShallow.ok()) {
-      core.warn("gitclone: cannot write shallow: \{wroteShallow.message}");
+    auto wroteShallow = await fs.writeFile("\{gitDir}/shallow", lines.toBytes());
+    if (wroteShallow.isErr()) {
+      err.line("gitclone: cannot write shallow: \{"\{wroteShallow.isErr() ? "\{wroteShallow.err()!}" : ""}"}");
       return 1;
     }
   }
@@ -217,29 +219,29 @@ export async i32 main(Sys sys) {
   // The working tree, which is step 4's code doing step 4's job on somebody else's repository.
   match ((await openRepo(fs, gitDir, dir))) {
     NoRepo(why): {
-      core.warn("gitclone: the repository we just wrote does not open: \{why}");
+      err.line("gitclone: the repository we just wrote does not open: \{why}");
       return 1;
     }
     Opened(repo): {
       u8[]? tree = await treeOfCommit(repo, head);
       if (tree is null) {
-        core.warn("gitclone: HEAD is not a commit, or names no tree");
+        err.line("gitclone: HEAD is not a commit, or names no tree");
         return 1;
       }
       match ((await checkout(repo, tree!, dir))) {
         Stopped(why): {
-          core.warn("gitclone: \{why}");
+          err.line("gitclone: \{why}");
           return 1;
         }
-        Files(count, modesUnset, linksAsFiles): {
-          core.log("\{count} files on \{branch}");
+        CheckedOut(count, modesUnset, linksAsFiles): {
+          out.line("\{count} files on \{branch}");
           if (linksAsFiles > 0) {
-            core.warn("gitclone: \{linksAsFiles}" +
+            err.line("gitclone: \{linksAsFiles}" +
               " symlink(s) were written as ordinary files holding their target" +
               " — this filesystem cannot create one, and git will report them as typechanged");
           }
           if (modesUnset > 0) {
-            core.warn("gitclone: \{modesUnset}" +
+            err.line("gitclone: \{modesUnset}" +
               " file(s) wanted the executable bit and this filesystem cannot set it" +
               " — git will report them as modified");
           }

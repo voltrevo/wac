@@ -832,8 +832,28 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
  * zero for any graph — that is the property `issues/lang/0398b` bought, and a count can say it exactly
  * where a timing on a shared machine could only say it usually.
  */
-export string diagnoseGraphTallied(string[] paths, string[] rawSources, const Res res, string entry,
+export string diagnoseGraphTallied(string[] givenPaths, string[] givenSources, const Res res, string entry,
                                    i32[] tally) {
+  // **`std` joins the graph even when the caller did not supply it** — it is carried, as `pruneFor` and
+  // `buildStaticView` already say. Without it std's types were names with nothing declared behind them,
+  // and the harness's in-process check refused `"\{e}"` on a `NotFound` that the command accepted.
+  string[] paths = givenPaths;
+  string[] rawSources = givenSources;
+  // Only where something may import it: parsing std costs more than checking a small graph, and a
+  // graph that never names it was paying that on every call (`lexcost_test.wac`). A mention of the
+  // specifier is enough to say *may*; joining it needlessly costs time and nothing else.
+  bool hasStd = false;
+  bool wantsStd = false;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "std") { hasStd = true; } }
+  for (i32 i = 0; i < givenSources.len(); i++) { if (givenSources[i].indexOf("\"std\"") >= 0) { wantsStd = true; } }
+  if (!hasStd && wantsStd) {
+    paths = string[].filled(givenPaths.len() + 1, "std");
+    rawSources = string[].filled(givenPaths.len() + 1, stdSource());
+    for (i32 i = 0; i < givenPaths.len(); i++) {
+      paths[i] = givenPaths[i];
+      rawSources[i] = i < givenSources.len() ? givenSources[i] : "";
+    }
+  }
   // Namespaces are lowered first, so checking a project reads what a build would (spec ch03).
   string[] sources = lowerSources(paths, rawSources, res);
   string out = "";
@@ -1391,6 +1411,11 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
         mine[mn] = tokenTextOf(src, lx, nameTok);
         mn = mn + 1;
       }
+      // An alias too: `Files.readFile` answers a `ReadFault`, and the union it names is reached through it.
+      TypeDecl(nameTok, typeParams, alias, body, exported): {
+        mine[mn] = tokenTextOf(src, lx, nameTok);
+        mn = mn + 1;
+      }
       default: { }
     }
   }
@@ -1448,6 +1473,12 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
         StaticDecl(nameTok, type, init, exported): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           tyNames(src, lx, type, found, seen);
+        }
+        // **An alias reaches what it names**: `SpawnFault` is `union<NotGranted, Unsupported, Other>`, and a file
+        // that imported the alias alone had none of the three, so the union converted to no text (case 0855).
+        TypeDecl(nameTok, typeParams, alias, body, exported): {
+          if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          if (alias is not null) { tyNames(src, lx, alias!, found, seen); }
         }
         default: { continue; }
       }
@@ -2097,6 +2128,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     // import the symbol itself is still core's conversion (case 0576); a method named by a fresh symbol
     // spelled the same is not (case 0397), and the method tables, keyed by spelling, cannot tell.
     string coreText = "";
+    // **A built-in's own types are core's conversion however a user file reaches them.** Core declares the
+    // symbol and std imports it plainly, so neither has an alias to find below; without this a file that
+    // imported `Stuck` by name, and not `toString`, could not interpolate one (case 0854).
+    if (paths[i] == corePath() || isBuiltinSpec(paths[i])) { coreText = "toString"; }
     for (i32 d = 0; d < iprog.decls.len(); d++) {
       match (iprog.decls[d].kind) {
         Import(tpathTok, tprefixTok, titems): {

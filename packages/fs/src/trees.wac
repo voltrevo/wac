@@ -1,0 +1,309 @@
+// Files that do not exist until they are read: `/dev`, `/proc` and `/bin`, each a `Files` to mount
+// (design/system/0013 step 5: "`/dev`, `/proc` and `/bin` as `Files` constructors").
+//
+// Nothing is stored. Each tree answers a path with a `TreeNode` — a directory and its names, a file and its
+// bytes, a sink that takes and keeps nothing, or a stream with no end — and `readOnlyTree` turns that one
+// question into every `Files` operation: reads from the node, and every change refused as `ReadOnly`, except
+// a write to a sink. An endless stream has no whole to read, so `readFile` refuses it and `openRead` reads a
+// piece at a time: `head -c 16 /dev/urandom` costs sixteen bytes and a chunk.
+
+import { Files, Input, Output, Random, Stat, Other, IsDir, NotADir, NotFound, ReadOnly, Unsupported, ReadFault,
+         WriteFault, LookFault, MkdirFault, MoveFault, ModeFault, HostFault, OutputFault, FAULT_NONE, Mount, Exists } from "std";
+import { Read, Result, Ticket } from "core";
+import { PROC_RUN, Proc, ProcTable } from "./proc.wac";
+
+export static i32 TREE_NONE = 0;
+export static i32 TREE_DIR = 1;
+export static i32 TREE_FILE = 2;
+/** Takes every write and reads as empty: `/dev/null`. */
+export static i32 TREE_SINK = 3;
+/** Reads forever, a piece at a time from `more`: `/dev/zero`, `/dev/urandom`. */
+export static i32 TREE_ENDLESS = 4;
+
+/** What a path is in a tree that is made up as it is asked. */
+export struct TreeNode {
+  i32 kind;
+  /** A directory's names, sorted. */
+  string[] names;
+  /** A file's bytes. */
+  u8[] data;
+  i32 mode;
+  /** An endless stream's next piece. */
+  fn<Ticket<Result<Read, HostFault>>()> more;
+
+  TreeNode none() { return TreeNode(TREE_NONE, string[](), u8[](), 0, noMore); }
+  TreeNode dir(string[] names) { return TreeNode(TREE_DIR, names, u8[](), 365, noMore); }        // 0555
+  TreeNode file(u8[] data, i32 mode) { return TreeNode(TREE_FILE, string[](), data, mode, noMore); }
+  TreeNode sink() { return TreeNode(TREE_SINK, string[](), u8[](), 438, noMore); }               // 0666
+  TreeNode endless(fn<Ticket<Result<Read, HostFault>>()> more) { return TreeNode(TREE_ENDLESS, string[](), u8[](), 292, more); }
+}
+
+async Result<Read, HostFault> noMore() { return Result.Ok(Read.End); }
+
+/** A `Files` over `look`, which says what each path is; owned by root and changed by nobody. */
+export Files readOnlyTree(fn<TreeNode(string)> look) {
+  return Files(
+    (string p) => treeRead(look, p),
+    (string p, u8[] b) => treeWrite(look, p),
+    (string p) => treeOpenRead(look, p),
+    (string p) => treeOpenWrite(look, p),
+    (string p) => treeOpenWrite(look, p),
+    (string p) => treeStat(look, p),
+    (string p) => treeStat(look, p),
+    (string p) => treeReadDir(look, p),
+    (string p, bool parents) => treeMkdir(look, p, parents),
+    (string p, bool r) => treeRefusedMove(p),
+    (string from, string to) => treeRefusedMove(from),
+    (string p, i32 mode) => treeRefusedMode(p),
+    (string p, bool on) => treeRefusedMode(p),
+    (string p, string owner) => treeRefusedMode(p),
+    0, "");
+}
+
+string readOnlyWords(string p) { return p + ": Read-only file system"; }
+
+async Result<u8[], ReadFault> treeRead(fn<TreeNode(string)> look, string p) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_NONE) { return Result.Err(NotFound(p + ": No such file or directory")); }
+  if (n.kind == TREE_DIR) { return Result.Err(IsDir(p + ": Is a directory")); }
+  if (n.kind == TREE_ENDLESS) { return Result.Err(Other(p + ": has no end; read it a piece at a time with openRead")); }
+  return Result.Ok(n.data);
+}
+
+/**
+ * A sink takes the write; anything else is refused — **as a directory first** when it is one, which is
+ * what GNU answers for `echo x > /proc`. Read-only is the reason only for what is not a directory.
+ */
+async Result<void, WriteFault> treeWrite(fn<TreeNode(string)> look, string p) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_SINK) { return Result.Ok(); }
+  if (n.kind == TREE_DIR) { return Result.Err(IsDir(p + ": Is a directory")); }
+  return Result.Err(ReadOnly(readOnlyWords(p)));
+}
+
+async Result<Input, ReadFault> treeOpenRead(fn<TreeNode(string)> look, string p) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_NONE) { return Result.Err(NotFound(p + ": No such file or directory")); }
+  if (n.kind == TREE_DIR) { return Result.Err(IsDir(p + ": Is a directory")); }
+  if (n.kind == TREE_ENDLESS) { return Result.Ok(Input(n.more, () => endlessAll(p), closedFine)); }
+  return Result.Ok(bytesInput(n.data));
+}
+
+async Result<u8[], HostFault> endlessAll(string p) { return Result.Err(Other(p + ": has no end to read up to")); }
+
+async Result<void, HostFault> closedFine() { return Result.Ok(); }
+
+/** `data` as an `Input`: all of it in one piece, then the end. */
+export Input bytesInput(u8[] data) {
+  bool[] gone = bool[].filled(1, false);
+  return Input(() => onePiece(data, gone), () => theRest(data, gone), closedFine);
+}
+
+async Result<Read, HostFault> onePiece(u8[] data, bool[] gone) {
+  if (gone[0] || data.len() == 0) { return Result.Ok(Read.End); }
+  gone[0] = true;
+  return Result.Ok(Read.Data(data));
+}
+
+async Result<u8[], HostFault> theRest(u8[] data, bool[] gone) {
+  bool was = gone[0];
+  gone[0] = true;
+  return Result.Ok(was ? u8[]() : data);
+}
+
+async Result<Output, WriteFault> treeOpenWrite(fn<TreeNode(string)> look, string p) {
+  if (look(p).kind != TREE_SINK) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+  return Result.Ok(Output((u8[] b) => keptNothing(), keptNothing));
+}
+
+async Result<void, OutputFault> keptNothing() { return Result.Ok(); }
+
+async Result<Stat, LookFault> treeStat(fn<TreeNode(string)> look, string p) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_NONE) { return Result.Err(NotFound(p + ": No such file or directory")); }
+  bool dir = n.kind == TREE_DIR;
+  return Result.Ok(Stat(true, !dir, dir, n.data.len() as i64, 0 as i64, false, (n.mode & 64) != 0, FAULT_NONE(), n.mode,
+                        "root"));
+}
+
+async Result<string[], LookFault> treeReadDir(fn<TreeNode(string)> look, string p) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_NONE) { return Result.Err(NotFound(p + ": No such file or directory")); }
+  if (n.kind != TREE_DIR) { return Result.Err(NotADir(p + ": Not a directory")); }
+  return Result.Ok(n.names);
+}
+
+/** A name that is there exists, and `-p` asks nothing more of it; only a new one meets the read-only tree. */
+async Result<void, MkdirFault> treeMkdir(fn<TreeNode(string)> look, string p, bool parents) {
+  TreeNode n = look(p);
+  if (n.kind == TREE_DIR && parents) { return Result.Ok(); }
+  if (n.kind != TREE_NONE) { return Result.Err(Exists(p + ": File exists")); }
+  return Result.Err(ReadOnly(readOnlyWords(p)));
+}
+async Result<void, MoveFault> treeRefusedMove(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, ModeFault> treeRefusedMode(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+
+// ── /dev ──
+
+/** `/dev`: `null`, `zero`, and `random` and `urandom` from `rnd`. */
+export Files devFiles(Random rnd) { return readOnlyTree((string p) => devNode(rnd, p)); }
+
+TreeNode devNode(Random rnd, string p) {
+  if (p == "/" || p == "") { return TreeNode.dir(["null", "random", "urandom", "zero"]); }
+  if (p == "/null") { return TreeNode.sink(); }
+  if (p == "/zero") { return TreeNode.endless(zeros); }
+  if (p == "/random" || p == "/urandom") { return TreeNode.endless(() => randomPiece(rnd)); }
+  return TreeNode.none();
+}
+
+static i32 PIECE = 4096;
+
+async Result<Read, HostFault> zeros() { return Result.Ok(Read.Data(u8[].filled(PIECE, 0))); }
+
+async Result<Read, HostFault> randomPiece(Random rnd) {
+  match (await rnd.bytes(PIECE)) {
+    Ok(b): { return Result.Ok(Read.Data(b)); }
+    Err(e): { return Result.Err(Unsupported("\{e}")); }
+  }
+}
+
+// ── /proc ──
+
+/** `/proc`: a directory per process in `table`, each with `cmdline`, `comm` and `status`, and `self` for `table.current`. */
+export Files procFiles(ProcTable table) { return readOnlyTree((string p) => procNode(table, table.current, p)); }
+
+/**
+ * `/proc/self` for one process: what a parent mounts at `/proc/self` over the files it serves a child, so the
+ * child's `self` is the child rather than whatever its parent is running when the question arrives.
+ */
+export Files procSelfFiles(ProcTable table, i32 pid) {
+  return readOnlyTree((string p) => procNode(table, pid, p == "/" || p == "" ? "/self" : "/self" + p));
+}
+
+TreeNode procNode(ProcTable table, i32 self, string p) {
+  string[] parts = treeParts(p);
+  if (parts.len() == 0) {
+    i32[] pids = table.pids();
+    string[] names = string[].filled(pids.len() + 1, "");
+    for (i32 i = 0; i < pids.len(); i++) { names[i] = "\{pids[i]}"; }
+    names[pids.len()] = "self";
+    sortNames(names);
+    return TreeNode.dir(names);
+  }
+  i32 pid = parts[0] == "self" ? self : pidOf(parts[0]);
+  Proc? found = table.find(pid);
+  if (found is null || parts.len() > 2) { return TreeNode.none(); }
+  Proc row = found!;
+  if (parts.len() == 1) { return TreeNode.dir(["cmdline", "comm", "status"]); }
+  if (parts[1] == "cmdline") { return TreeNode.file(row.cmdline().toBytes(), 292); }
+  if (parts[1] == "comm") { return TreeNode.file((row.comm() + "\n").toBytes(), 292); }
+  if (parts[1] == "status") { return TreeNode.file(procStatus(row).toBytes(), 292); }
+  return TreeNode.none();
+}
+
+/** The four lines of Linux's `status` whose values this system has. */
+string procStatus(Proc p) {
+  string state = p.state == PROC_RUN() ? "R (running)" : "Z (zombie)";
+  return "Name:\t\{p.comm()}\nState:\t\{state}\nPid:\t\{p.pid}\nPPid:\t\{p.ppid}\n";
+}
+
+/** A name of digits as a pid, or -1. */
+i32 pidOf(string name) {
+  u8[] b = name.toBytes();
+  if (b.len() == 0 || b.len() > 9) { return -1; }
+  i32 pid = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    pid = pid * 10 + (b[i] as i32 - '0');
+  }
+  return pid;
+}
+
+// ── /bin ──
+
+/** `/bin`: one executable per program this build has, each a note saying it is built in. */
+export Files binFiles(string[] programs) { return readOnlyTree((string p) => binNode(programs, p)); }
+
+TreeNode binNode(string[] programs, string p) {
+  string[] parts = treeParts(p);
+  if (parts.len() == 0) {
+    string[] names = string[].filled(programs.len(), "");
+    for (i32 i = 0; i < programs.len(); i++) { names[i] = programs[i]; }
+    sortNames(names);
+    return TreeNode.dir(names);
+  }
+  if (parts.len() > 1) { return TreeNode.none(); }
+  for (i32 i = 0; i < programs.len(); i++) {
+    if (programs[i] == parts[0]) {
+      return TreeNode.file(("\{parts[0]} is built into this program; there is no file here to copy elsewhere.\n").toBytes(),
+                           493);   // 0755
+    }
+  }
+  return TreeNode.none();
+}
+
+// ── paths ──
+
+/** The non-empty components of a path. */
+string[] treeParts(string p) {
+  i32 count = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    if (i > from) { count++; }
+    from = i + 1;
+  }
+  string[] out = string[].filled(count, "");
+  i32 k = 0;
+  from = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    if (i > from) {
+      out[k] = p.slice(from, i);
+      k++;
+    }
+    from = i + 1;
+  }
+  return out;
+}
+
+/** Sorted by their bytes. */
+export void sortNames(string[] names) {
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && treeAfter(names[j], v)) {
+      names[j + 1] = names[j];
+      j--;
+    }
+    names[j + 1] = v;
+  }
+}
+
+bool treeAfter(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
+// ── a system ──
+
+/**
+ * `root` with `/dev`, `/proc` over `table` and `/bin` listing `programs` mounted on it — what a session on an
+ * image or in memory is given, so `ps`, `cat /dev/null` and `ls /bin` answer there. The user is `root`'s.
+ *
+ * **No programs, no `/bin`.** An empty one would claim more than an absent one: `ls /` would show a
+ * directory of programs with no programs in it, and `packages/ssh`'s server wires none.
+ */
+export Files systemFiles(Files root, Random rnd, ProcTable table, string[] programs) {
+  if (programs.len() == 0) {
+    return Files.mounted([Mount("/dev", devFiles(rnd)), Mount("/proc", procFiles(table)), Mount("/", root)]);
+  }
+  return Files.mounted([Mount("/dev", devFiles(rnd)), Mount("/proc", procFiles(table)), Mount("/bin", binFiles(programs)),
+                        Mount("/", root)]);
+}
+

@@ -1,15 +1,14 @@
 // Lines in reverse order — as distinct from `rev`, which reverses within a line.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, operandCount, readInput } from "../lib/input.wac";
+import { Opened, operandCount, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 tac(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 tac(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   // **Each file reversed, in the order they were named** — not the concatenation reversed. `tac a b`
   // prints `a` backwards and then `b` backwards, which is what the real one does and is not what
   // "reverse the input" would give you. Measured against it: reversing the join puts `b`'s lines first,
@@ -29,7 +28,7 @@ export async i32 tac(Core core, Cli cli, Fs fs, Args a) {
   u8[][] held = u8[][].filled(count, u8[]());
   bool[] got = bool[].filled(count, false);
   for (i32 f = 0; f < count; f++) {
-    Input in = await readInput(core, cli, fs, a, f);
+    Opened in = await readInput(stdin, err, fs, a, f);
     // Reported, skipped, and the status at the end — GNU's rule for every operand-taking filter here.
     if (!in.ok) { status = 1; continue; }
     held[f] = in.bytes;
@@ -41,16 +40,16 @@ export async i32 tac(Core core, Cli cli, Fs fs, Args a) {
     u8[] bytes = held[f];
     u8[][] lines = splitLines(bytes);
     i32 n = lines.len();
-    u8[][] out = u8[][].filled(n, u8[]());
-    for (i32 i = 0; i < n; i++) { out[i] = lines[n - 1 - i]; }
-    u8[] text = joinLines(out, n);
+    u8[][] reversed = u8[][].filled(n, u8[]());
+    for (i32 i = 0; i < n; i++) { reversed[i] = lines[n - 1 - i]; }
+    u8[] text = joinLines(reversed, n);
     // **A file with no final newline keeps none**, and that last line comes *first* here — so the
     // missing newline moves to the front of the output, where GNU also leaves it off the end. This
     // added one and nothing noticed, because every fixture ended in a newline.
     i32 keep = text.len();
     bool ended = bytes.len() > 0 && bytes[bytes.len() - 1] == 10;
     if (!ended && keep > 0 && text[keep - 1] == 10) { keep = keep - 1; }
-    cli.write(slice(text, 0, keep));
+    out.write(slice(text, 0, keep));
   }
   return status;
 }

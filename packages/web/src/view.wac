@@ -348,7 +348,7 @@ export struct View {
     this.rendered.push(u.name);
     this.ran.push(u);
     Vec<Node> out = Vec.create();
-    flatten(n, out);
+    flattenInto(n, out);
     return out.toArray();
   }
 
@@ -376,7 +376,7 @@ export struct View {
         this.setAttrs(m, attrs);
         this.setHandlers(m, on);
         Vec<Node> flat = Vec.create();
-        for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], flat); }
+        for (i32 i = 0; i < kids.len(); i++) { flattenInto(kids[i], flat); }
         for (i32 i = 0; i < flat.len(); i++) { m.kids.push(this.build(flat.get(i), el, null, owner, m)); }
         return m;
       }
@@ -474,7 +474,7 @@ export struct View {
         this.setAttrs(m, attrs);
         this.setHandlers(m, on);
         Vec<Node> flat = Vec.create();
-        for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], flat); }
+        for (i32 i = 0; i < kids.len(); i++) { flattenInto(kids[i], flat); }
         this.patch(m, flat.toArray(), m.el!, null, owner);
       }
       Fragment(kids): { }
@@ -551,7 +551,7 @@ export struct View {
         e.pending = pending[i];
       }
       Vec<Node> fresh = Vec.create();
-      flatten(n, fresh);
+      flattenInto(n, fresh);
       compareNodes(u.name, fresh.toArray(), m.kids, said);
     }
     for (i32 i = 0; i < m.kids.len(); i++) { this.checkIn(m.kids.get(i), said); }
@@ -605,9 +605,9 @@ export struct View {
 // ── The tree's pieces ────────────────────────────────────────────────────────
 
 /** `n` with its fragments opened, into `out`. */
-void flatten(Node n, Vec<Node> out) {
+void flattenInto(Node n, Vec<Node> out) {
   match (n) {
-    Fragment(kids): { for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], out); } }
+    Fragment(kids): { for (i32 i = 0; i < kids.len(); i++) { flattenInto(kids[i], out); } }
     Text(t): { out.push(n); }
     Element(tag, attrs, on, kids, ref): { out.push(n); }
     Component(name, key, draw, snaps, same): { out.push(n); }
@@ -695,7 +695,7 @@ void compareNodes(string who, Node[] want, Vec<Mounted> have, Vec<string> said) 
           }
         }
         Vec<Node> flat = Vec.create();
-        for (i32 j = 0; j < kids.len(); j++) { flatten(kids[j], flat); }
+        for (i32 j = 0; j < kids.len(); j++) { flattenInto(kids[j], flat); }
         compareNodes(who, flat.toArray(), h.kids, said);
       }
       Fragment(kids): { }

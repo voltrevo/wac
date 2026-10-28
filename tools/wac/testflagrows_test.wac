@@ -24,8 +24,8 @@
 // in six `test` rows. A flag is only covered by a row of *its own* subcommand.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Cli, Core, FileResult } from "std";
-import { Vec } from "core";
+import { Files, Sys } from "std";
+import { Vec, flatten } from "core";
 
 /**
  * Where the flag lists live — **both, concatenated**, because they are moving.
@@ -73,23 +73,23 @@ bool excused(string cmd, string flag) {
  * `issues/system/0257c` the guard went red saying it had found nothing — correct, and twice the work.
  * A directory keeps up with a split in progress.
  */
-string sourcesIn(Cli cli, string dir) {
-  string[]? entries = cli.readDir(dir).wait();
+string sourcesIn(Files fs, string dir) {
+  string[]? entries = flatten(fs.readDir(dir).wait()).ok();
   if (entries is null) { return ""; }
   string[] names = entries!;
   string out = "";
   for (i32 i = 0; i < names.len(); i++) {
     if (names[i].len() > 4 && names[i].slice(names[i].len() - 4, names[i].len()) == ".wac") {
-      out = out + textOf(cli, dir + "/" + names[i]) + "\n";
+      out = out + textOf(fs, dir + "/" + names[i]) + "\n";
     }
   }
   return out;
 }
 
 /** The text of `path`, or "" — a file this cannot read is reported by the caller, not guessed at. */
-string textOf(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
+string textOf(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  return (f is not null) ? string.fromBytes(f!) : "";
 }
 
 /** The body of the first declaration beginning `head`, up to the line that closes it at column 0. */
@@ -204,10 +204,11 @@ string uncovered(string cmd, string[] accepted, string[] rowed) {
   return missing;
 }
 
-export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, Cli cli) {
+export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string cliSrc = textOf(cli, CLI) + "\n" + sourcesIn(cli, CMD_DIR);
-  string paritySrc = textOf(cli, PARITY);
+  string cliSrc = textOf(fs, CLI) + "\n" + sourcesIn(fs, CMD_DIR);
+  string paritySrc = textOf(fs, PARITY);
   t.isTrue(cliSrc.len() > 0, "read " + CLI + " and " + CMD_DIR);
   t.isTrue(paritySrc.len() > 0, "read " + PARITY);
   if (cliSrc.len() == 0 || paritySrc.len() == 0) { return t.report(); }

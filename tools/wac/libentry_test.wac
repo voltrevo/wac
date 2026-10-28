@@ -20,23 +20,30 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath } from "../../packages/wactest/src/host.wac";
 import { contains, splitLines, trimmed } from "../../packages/wactest/src/strings.wac";
-import { Cli, Core, Exec, FileResult } from "std";
+import { ChildEnv, Env, Exec, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
 /** Every package's `src/lib.wac`, by asking the shell — the set grows as packages gain one. */
-string[] libEntries(Cli cli) {
-  Exec r = cli.exec("/bin/sh", ["-c", "ls packages/*/src/lib.wac"], u8[]()).wait();
+/** `prog args` to the end, both streams kept. */
+Exec run(Procs procs, string prog, string[] args) {
+  return flatten(procs.exec(prog, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
+}
+
+string[] libEntries(Procs procs) {
+  Exec r = run(procs, "/bin/sh", ["-c", "ls packages/*/src/lib.wac"]);
   return splitLines(string.fromBytes(r.stdout));
 }
 
-export string test_a_package_entry_exports_one_name_per_statement(Core core, Cli cli) {
+export string test_a_package_entry_exports_one_name_per_statement(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string[] entries = libEntries(cli);
+  string[] entries = libEntries(sys.procs());
   t.isTrue(entries.len() >= 5, "found the package entries: \{entries.len()}");
   for (string path in entries) {
-    FileResult f = cli.readFile(path).wait();
-    t.isTrue(f.ok, "read \{path}");
-    if (!f.ok) { continue; }
-    string text = string.fromBytes(f.bytes);
+    u8[]? f = flatten(fs.readFile(path).wait()).ok();
+    t.isTrue(f is not null, "read \{path}");
+    if (f is null) { continue; }
+    string text = string.fromBytes(f!);
     i32 at = 0;
     while (true) {
       i32 found = text.slice(at, text.len()).indexOf("export {");
@@ -51,9 +58,9 @@ export string test_a_package_entry_exports_one_name_per_statement(Core core, Cli
   return t.report();
 }
 
-export string test_every_name_the_root_entry_offers_exists(Core core, Cli cli) {
+export string test_every_name_the_root_entry_offers_exists(Sys sys) {
   T t = T.create();
-  Exec r = cli.exec(binaryPath(cli), ["check", "lib.wac"], u8[]()).wait();
+  Exec r = run(sys.procs(), binaryPath(sys.env()), ["check", "lib.wac"]);
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.eqI32(r.status, 0, "wac check lib.wac: \{said}");
   t.isTrue(contains(said, "no diagnostics"), "and it says so: \{said}");
@@ -73,13 +80,17 @@ static string PROBE =
   "  return decompress(u8[]()).len() == 0 ? 0 : 2;\n" +
   "}\n";
 
-export string test_a_program_reads_what_it_reaches_through_the_root_entry(Core core, Cli cli) {
+export string test_a_program_reads_what_it_reaches_through_the_root_entry(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Env env = sys.env();
   T t = T.create();
-  string probe = ".cache/libentry_probe-\{cli.cwd().wait().len()}.wac";
-  cli.mkdir(".cache", true).wait();
-  t.isTrue(cli.writeFile(probe, PROBE.toBytes()).wait().ok(), "wrote the probe at \{probe}");
-  string out = "/tmp/wac-libentry-\{cli.cwd().wait().len()}";
-  Exec built = cli.exec(binaryPath(cli), ["build", "--no-cache", probe, "-o", out], u8[]()).wait();
+  i32 cwdLen = flatten(env.cwd().wait()).orElse("").len();
+  string probe = ".cache/libentry_probe-\{cwdLen}.wac";
+  fs.mkdir(".cache", true).wait();
+  t.isTrue(flatten(fs.writeFile(probe, PROBE.toBytes()).wait()).isOk(), "wrote the probe at \{probe}");
+  string out = "/tmp/wac-libentry-\{cwdLen}";
+  Exec built = run(procs, binaryPath(env), ["build", "--no-cache", probe, "-o", out]);
   string said = string.fromBytes(built.stdout) + string.fromBytes(built.stderr);
   t.eqI32(built.status, 0, "the probe builds: \{said}");
   // The entry, the json and zstd files the two names need, and their own imports — twenty is a bound
@@ -91,9 +102,9 @@ export string test_a_program_reads_what_it_reaches_through_the_root_entry(Core c
     for (i32 i = 0; i < b.len() && b[i] >= 48 && b[i] <= 57; i++) { files = files * 10 + (b[i] as i32 - 48); }
   }
   t.isTrue(files > 0 && files <= 20, "files read to build two names through the root entry: \{said}");
-  Exec ran = cli.exec(binaryPath(cli), ["\{out}.wasm"], u8[]()).wait();
+  Exec ran = run(procs, binaryPath(env), ["\{out}.wasm"]);
   t.eqI32(ran.status, 0, "and it runs: \{string.fromBytes(ran.stderr)}");
-  cli.remove("\{out}.wasm", false).wait();
-  cli.remove(probe, false).wait();
+  fs.remove("\{out}.wasm", false).wait();
+  fs.remove(probe, false).wait();
   return t.report();
 }

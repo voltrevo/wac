@@ -3,9 +3,9 @@
 //   stop        ->  the child's line, then the status the parent got for it
 //   stop spin   ->  says one line and then computes for ever
 //
-// **What this is for.** `closeSocket` on a child's handle is the only thing in this capability layer
+// **What this is for.** `Child.stop` is the only thing in this capability layer
 // that stops a *running* program — `packages/sh`'s `kill %1` is this call, and an `init` that could
-// stop a service would be too. platform.wac says it stops the child. Whether that was true depended
+// stop a service would be too. std says it stops the child. Whether that was true depended
 // on the host: a JavaScript host terminates the worker, and the native runtime finished the child's
 // queues and left the thread running, which stops any child that *writes* and no child that only
 // computes (issue 0123). That is the difference this example exists to make visible, and the reason
@@ -14,45 +14,47 @@
 //
 // The loop is `x >= 0` rather than `true` so that nothing has to decide whether code after an
 // endless loop is reachable. It ends after 2^63 additions, which is not a duration.
-import { HostChild, Cli, Core, GRANT_NONE, Sys } from "std";
-import { Read } from "core";
-import { argvOf } from "../src/stream.wac";
+import { Authority, Child, Launch, Sys, Output, Procs, Unsupported } from "std";
+import { Read, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 n = cli.argCount().wait();
-  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "spin") {
-    cli.write("spinning\n".toBytes());
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Procs procs = sys.procs();
+  i32 n = argv.len();
+  if (n > 0 && argv[0] == "spin") {
+    out.write("spinning\n".toBytes());
     i64 x = 0;
     while (x >= 0) { x = x + 1; }
     return 0;
   }
 
-  HostChild kid = cli.spawnSelf(argvOf(["spin", "stop"]), GRANT_NONE, "", 0, false).wait();
-  if (kid.unavailable()) {
-    core.warn("stop: this world cannot spawn: \{kid.error}");
+  auto started = flatten(procs.spawnSelf(["spin", "stop"], Authority.none(), Launch.plain()).wait());
+  if (started.isErr()) {
+    auto why = started.err()!;
+    err.line((why is Unsupported ? "stop: this world cannot spawn: " : "stop: the child would not start: ") + "\{why}");
     return 2;
   }
-  if (kid.handle < 0) {
-    core.warn("stop: the child would not start: \{kid.error}");
-    return 2;
-  }
+  Child kid = started.unwrap();
 
   // Its first line, which is also the proof it reached the loop.
-  match (cli.recv(kid.handle).wait()) {
-    Data(bytes): { cli.write("child said: \{string.fromBytes(bytes)}".toBytes()); }
-    End: { core.warn("stop: the child said nothing at all"); return 2; }
-    Failed(why): { core.warn("stop: reading the child failed: \{why}"); return 2; }
+  auto first = flatten(kid.output().chunk().wait());
+  if (first.isErr()) { err.line("stop: reading the child failed: \{first.err()!}"); return 2; }
+  match (first.unwrap()) {
+    Data(bytes): { flatten(out.write("child said: \{string.fromBytes(bytes)}".toBytes()).wait()).isOk(); }
+    End: { err.line("stop: the child said nothing at all"); return 2; }
+    Failed(why): { err.line("stop: reading the child failed: \{why}"); return 2; }
   }
 
-  cli.closeSocket(kid.handle);
+  kid.stop();
 
   // **And then the question a supervisor asks.** A stopped child has a status; asking for it is what
   // says the stop landed rather than merely that the call returned. A host that only ended the
   // child's queues never answers this, because a child that does not write never finds out.
-  i32 code = cli.exitCode(kid.handle).wait();
-  cli.write("stopped: \{code}\n".toBytes());
+  auto code = flatten(kid.exit().wait());
+  if (code.isOk()) { out.line("stopped: \{code.unwrap()}"); }
+  else { out.line("stopped: \{code.err()!}"); }
   return 0;
 }
 

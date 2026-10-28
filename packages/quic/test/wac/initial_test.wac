@@ -13,15 +13,19 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Net, Procs, Sys, Clock } from "std";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { firstCryptoHandshakeType, hp, iv, key, open, secret } from "./initial_probe.wac";
 import { anInitial } from "./minted.wac";
 
-export string test_quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello(
-    Core core, Cli cli) {
+export string test_quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  u8[] packet = anInitial(t, core, cli, "initial-open");
+  u8[] packet = anInitial(t, clock, env, fs, net, procs, "initial-open");
   if (packet.len() == 0) { return t.report(); }
 
   u8[] plain = open(packet, false);

@@ -16,51 +16,52 @@
 // why. What is still true here, and is the interesting half, is that the session's filesystem is
 // `Fs.inMemory`: nothing it can name reaches the host, whatever this process may hold.
 
-import { Cli, Core, Exec } from "std";
+import { Core, Exec, ChildEnv, Launch, Procs, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runSealed, show } from "./replay.wac";
+import { flatten } from "core";
 
-export async string test_a_mount_is_visible_from_the_directory_it_is_mounted_in(Core core, Cli cli) {
+export async string test_a_mount_is_visible_from_the_directory_it_is_mounted_in(Sys sys) {
   T t = T.create();
   // Without this a mount is invisible from above: the root's own tree has no entry for `/dev`, and only
   // the mount table knows. A listing that omits a directory you can `cd` into is worse than a wrong one,
   // because nothing about it looks wrong.
-  t.eqStr((await runSealed(core, cli, "ls /")).out, "bin\ndev\nproc\ntmp\n", "ls /");
-  t.eqStr((await runSealed(core, cli, "mkdir /home; ls /")).out, "bin\ndev\nhome\nproc\ntmp\n",
+  t.eqStr((await runSealed(sys, "ls /")).out, "bin\ndev\nproc\ntmp\n", "ls /");
+  t.eqStr((await runSealed(sys, "mkdir /home; ls /")).out, "bin\ndev\nhome\nproc\ntmp\n",
           "a new directory sorts in with the mounts");
   // The pids are the process table — design/0001 step 3. `1` is the session, `2` is the `ls` doing the
   // looking, and `self` is a name for whichever is asking. What makes this assertable is that the pids
   // are allocated in order and never reused.
-  t.eqStr((await runSealed(core, cli, "ls /proc")).out, "1\n2\nself\n", "ls /proc");
-  t.eqStr((await runSealed(core, cli, "ls /proc/self")).out, "cmdline\ncomm\nstatus\n", "ls /proc/self");
-  t.eqStr((await runSealed(core, cli, "ls /dev")).out, "null\nrandom\nurandom\nzero\n", "ls /dev");
+  t.eqStr((await runSealed(sys, "ls /proc")).out, "1\n2\nself\n", "ls /proc");
+  t.eqStr((await runSealed(sys, "ls /proc/self")).out, "cmdline\ncomm\nstatus\n", "ls /proc/self");
+  t.eqStr((await runSealed(sys, "ls /dev")).out, "null\nrandom\nurandom\nzero\n", "ls /dev");
   return t.report();
 }
 
-export async string test_dev_null_takes_anything_and_keeps_none_of_it(Core core, Cli cli) {
+export async string test_dev_null_takes_anything_and_keeps_none_of_it(Sys sys) {
   T t = T.create();
-  t.eqStr((await runSealed(core, cli, "cat /dev/null; echo [$?]")).out, "[0]\n", "cat /dev/null");
-  Ran wrote = await runSealed(core, cli, "echo discarded > /dev/null; echo [$?]");
+  t.eqStr((await runSealed(sys, "cat /dev/null; echo [$?]")).out, "[0]\n", "cat /dev/null");
+  Ran wrote = await runSealed(sys, "echo discarded > /dev/null; echo [$?]");
   t.eqStr(wrote.out, "[0]\n", wrote.err);
   // And it is still empty afterwards, which is the whole of what it is for.
-  t.eqStr((await runSealed(core, cli, "echo discarded > /dev/null; cat /dev/null; echo [end]")).out, "[end]\n",
+  t.eqStr((await runSealed(sys, "echo discarded > /dev/null; cat /dev/null; echo [end]")).out, "[end]\n",
           "something was kept");
   return t.report();
 }
 
-export async string test_the_endless_devices_give_exactly_what_is_asked_of_them(Core core, Cli cli) {
+export async string test_the_endless_devices_give_exactly_what_is_asked_of_them(Sys sys) {
   T t = T.create();
-  Ran zeros = await runSealed(core, cli, "head -c 8 /dev/zero");
+  Ran zeros = await runSealed(sys, "head -c 8 /dev/zero");
   t.eqI32(zeros.outBytes.len(), 8, zeros.err);
   bool allZero = true;
   for (i32 i = 0; i < zeros.outBytes.len(); i++) { if (zeros.outBytes[i] != 0) { allZero = false; } }
   t.isTrue(allZero, "/dev/zero should be zeros");
 
-  Ran some = await runSealed(core, cli, "head -c 32 /dev/urandom");
+  Ran some = await runSealed(sys, "head -c 32 /dev/urandom");
   t.eqI32(some.outBytes.len(), 32, some.err);
   // **Two reads differ.** A `/dev/urandom` that repeated itself would pass every length check above and
   // be the most dangerous file in the tree, so this is the assertion that matters.
-  Ran again = await runSealed(core, cli, "head -c 32 /dev/urandom");
+  Ran again = await runSealed(sys, "head -c 32 /dev/urandom");
   bool identical = some.outBytes.len() == again.outBytes.len();
   for (i32 i = 0; i < some.outBytes.len() && identical; i++) {
     if (some.outBytes[i] != again.outBytes[i]) { identical = false; }
@@ -77,26 +78,32 @@ export async string test_the_endless_devices_give_exactly_what_is_asked_of_them(
   return t.report();
 }
 
-export async string test_a_file_with_no_end_says_so_rather_than_hanging_or_inventing_a_length(Core core,
-                                                                                        Cli cli) {
+/**
+ * An endless device streams, as GNU's does — and in this process the shell's hold is what stops it.
+ *
+ * This used to be refused: a file anywhere but the host was read whole, an endless one had no whole, and
+ * `cat /dev/zero` said so. Since every `Files` opens a stream, `cat` reads it a piece at a time and would
+ * run until something stopped it, which is GNU's answer. Run as a spawned program that is the reader
+ * going away; run in process it is `boxRun`'s cap on what it holds, which refuses the write that passes it
+ * and says to spawn instead. `wc -c /dev/zero` writes nothing until the end, so it runs for ever here
+ * exactly as GNU's does and is not asked.
+ */
+export async string test_an_endless_device_streams_until_the_shells_hold_stops_it(Sys sys) {
   T t = T.create();
-  // GNU's `cat /dev/zero` runs until something stops it, which one `u8[]` cannot express. Refusing is
-  // the honest third answer, and it names the read that does work.
-  Ran whole = await runSealed(core, cli, "cat /dev/zero");
-  t.eqI32(whole.status, 1, "reading an endless device whole should fail");
-  t.isTrue(whole.err.indexOf("no end") >= 0, whole.err);
-  t.eqStr(whole.out, "", "nothing should have been printed");
-  t.eqI32((await runSealed(core, cli, "cat /dev/urandom")).status, 1, "cat /dev/urandom");
-  // `wc` reads whole too, so it gets the same refusal rather than a plausible number.
-  t.eqI32((await runSealed(core, cli, "wc -c /dev/zero")).status, 1, "wc -c /dev/zero");
+  Ran whole = await runSealed(sys, "cat /dev/zero");
+  t.eqI32(whole.status, 1, "an endless cat in process is stopped");
+  t.isTrue(whole.err.indexOf("run it as a spawned program") >= 0, whole.err);
+  t.eqStr(whole.out, "", "and what it held is not passed on");
+  // The read that does work, through the same stream: a bounded one.
+  t.eqStr((await runSealed(sys, "head -c 100000 /dev/urandom | wc -c")).out, "100000\n", "a bounded read");
   return t.report();
 }
 
-export async string test_everything_but_dev_null_is_read_only_and_says_which(Core core, Cli cli) {
+export async string test_everything_but_dev_null_is_read_only_and_says_which(Sys sys) {
   T t = T.create();
   string[] paths = ["/dev/zero", "/dev/urandom", "/proc/self/cmdline"];
   for (i32 i = 0; i < paths.len(); i++) {
-    Ran r = await runSealed(core, cli, "echo x > \{paths[i]}");
+    Ran r = await runSealed(sys, "echo x > \{paths[i]}");
     t.isTrue(r.status != 0, "\{paths[i]} accepted a write");
     // `strerror(EROFS)`, capitalised as GNU and bash print it. This asserted a lower-case `read-only`
     // that `packages/fs` used to put in the *message*, because there was no category for `EROFS`. That
@@ -107,17 +114,16 @@ export async string test_everything_but_dev_null_is_read_only_and_says_which(Cor
   }
   string[] refused = ["mkdir /dev/d", "rm /dev/null", "rmdir /proc/self"];
   for (i32 i = 0; i < refused.len(); i++) {
-    t.isTrue((await runSealed(core, cli, refused[i])).status != 0, "\{refused[i]} was allowed");
+    t.isTrue((await runSealed(sys, refused[i])).status != 0, "\{refused[i]} was allowed");
   }
   // A name that is not there is absent, not read-only: the two are different answers.
-  Ran missing = await runSealed(core, cli, "cat /dev/sda");
+  Ran missing = await runSealed(sys, "cat /dev/sda");
   t.eqI32(missing.status, 1, "cat /dev/sda");
   t.isTrue(missing.err.indexOf("No such file") >= 0, missing.err);
   return t.report();
 }
 
-export async string test_a_mount_point_is_a_directory_and_every_question_had_a_different_wrong_answer(
-    Core core, Cli cli) {
+export async string test_a_mount_point_is_a_directory_and_every_question_had_a_different_wrong_answer(Sys sys) {
   T t = T.create();
   // `/dev` is a mount point, so its **parent lives in the mount above** and the lookup inside `writeFile`
   // and `mkdir` searched the mounted tree for it. It found nothing, and each backing invented its own
@@ -127,20 +133,20 @@ export async string test_a_mount_point_is_a_directory_and_every_question_had_a_d
   //     echo x > /dev     ->  Is a directory,  status 1
   //     mkdir /dev        ->  File exists,     status 1
   //     mkdir -p /dev     ->                   status 0
-  Ran wrote = await runSealed(core, cli, "echo x > /dev; echo status=$?");
+  Ran wrote = await runSealed(sys, "echo x > /dev; echo status=$?");
   t.eqStr(wrote.out, "status=1\n", "echo x > /dev");
   t.isTrue(wrote.err.indexOf("Is a directory") >= 0, wrote.err);
 
-  Ran made = await runSealed(core, cli, "mkdir /dev; echo status=$?");
+  Ran made = await runSealed(sys, "mkdir /dev; echo status=$?");
   t.eqStr(made.out, "status=1\n", "mkdir /dev");
   t.isTrue(made.err.indexOf("File exists") >= 0, made.err);
 
   // `-p` means "and say nothing if it is already there", which is the whole of that flag.
-  t.eqStr((await runSealed(core, cli, "mkdir -p /dev; echo status=$?")).out, "status=0\n", "mkdir -p /dev");
+  t.eqStr((await runSealed(sys, "mkdir -p /dev; echo status=$?")).out, "status=0\n", "mkdir -p /dev");
   // And an ordinary directory answers the same way, so this is about being a directory rather than
   // about being a mount.
-  t.eqStr((await runSealed(core, cli, "mkdir /d; mkdir /d; echo status=$?")).out, "status=1\n", "mkdir /d twice");
-  t.eqStr((await runSealed(core, cli, "mkdir /d; mkdir -p /d; echo status=$?")).out, "status=0\n", "mkdir -p /d");
+  t.eqStr((await runSealed(sys, "mkdir /d; mkdir /d; echo status=$?")).out, "status=1\n", "mkdir /d twice");
+  t.eqStr((await runSealed(sys, "mkdir /d; mkdir -p /d; echo status=$?")).out, "status=0\n", "mkdir -p /d");
   return t.report();
 }
 
@@ -153,9 +159,10 @@ export async string test_a_mount_point_is_a_directory_and_every_question_had_a_d
  * wrong, and bash says so — `bash -c 'cat /proc/self/cmdline'` prints `cat\0/proc/self/cmdline\0`. A test
  * written from what the code did rather than from what the system does will agree with the code forever.
  */
-export async string test_step_sixs_own_criterion(Core core, Cli cli) {
+export async string test_step_sixs_own_criterion(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Ran cmdline = await runSealed(core, cli, "cat /proc/self/cmdline");
+  Ran cmdline = await runSealed(sys, "cat /proc/self/cmdline");
   t.eqI32(cmdline.status, 0, cmdline.err);
   // NUL-separated, as Linux's is — a caller joining with spaces would produce something that reads the
   // same and parses differently.
@@ -163,16 +170,17 @@ export async string test_step_sixs_own_criterion(Core core, Cli cli) {
   for (i32 i = 0; i < cmdline.outBytes.len(); i++) { if (cmdline.outBytes[i] == 0) { hasNul = true; } }
   t.isTrue(hasNul, "not NUL-separated: \{show(cmdline.out)}");
 
-  Exec theirs = cli.exec("bash", ["-c", "cat /proc/self/cmdline"], u8[]()).wait();
-  if (theirs.ran()) {
-    t.eqStr(cmdline.out, string.fromBytes(theirs.stdout), "bash disagrees about /proc/self/cmdline");
+  auto theirsRan = flatten(procs.exec("bash", ["-c", "cat /proc/self/cmdline"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? theirs = theirsRan.ok();
+  if (theirs is not null) {
+    t.eqStr(cmdline.out, string.fromBytes(theirs!.stdout), "bash disagrees about /proc/self/cmdline");
   } else {
-    t.isTrue(false, "bash would not start: \{theirs.error}");
+    t.isTrue(false, "bash would not start: \{theirsRan.isErr() ? "\{theirsRan.err()!}" : ""}");
   }
 
   // …and `head -c 16 /dev/urandom` works. The design writes `| hex`, which is a `packages/box` applet
   // and not one of this shell's twelve programs; `wc -c` asks the same question of the same bytes.
-  Ran sixteen = await runSealed(core, cli, "head -c 16 /dev/urandom | wc -c");
+  Ran sixteen = await runSealed(sys, "head -c 16 /dev/urandom | wc -c");
   t.eqStr(sixteen.out, "16\n", sixteen.err);
   return t.report();
 }

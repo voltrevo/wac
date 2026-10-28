@@ -122,9 +122,56 @@ Each step is its own commit through the gate, with its breaking-change entry.
 5. **Callers, package by package** — each package's functions take the handles they use instead of `Core` and
    `Cli`, in one edit per function. `async` where a function reasonably can be, `flatten(….wait())` where not
    (operator, 2026-10-24). Frames go here: tests that ran a program in-process over `frame.wac` fake its
-   handles with closures instead, and the shell always spawns.
+   handles with closures instead, and the shell always spawns. Also here: dead-code elimination over the built
+   module (`issues/lang/0398a`), because `Sys` retained whole carries every handle into every program — a
+   hello-world went from 392 KB to 727 KB. Reachability stays as chapter 5 has it; what a build checks and what it
+   emits are separate (operator, 2026-10-24).
 6. **Delete** `Core`, `Cli`, `Pending`, `Grant`, the old answer structs and the exported `FAULT_*`; the hosts build
    the handles' imports directly and lose `pushChild`, `popChild`, `capture`, `log` and `warn`.
 
 **Spawning needs the `procs` grant, yourself included** (operator, 2026-10-24) — so a sealed session, `sshd` and
 the browser terminal are granted it to run applets, and without it an applet is `NotGranted`.
+
+### Settled before step 5 (operator, 2026-10-24)
+
+- **Host tickets can be waited on together.** A host ticket carries its host id and the host's wait-for-any
+  function, both set by std when it makes the ticket. When every part a `wait()` or `Ticket.any` must drive carries
+  the same function, core calls it once over all their ids — so a deadline is a timer ticket in a race,
+  `Ticket.anyWithIndex(sock.recv(), clock.sleepMillis(ms)).wait()`, and works the same synchronously and under
+  `await`. No `__wac` hook: the function arrives as a value. This replaces `core.waitAny`.
+- **A deadline belongs to `Clock`:** `clock.within(t, ms)` answers `Ticket<Result<A, union<E, TimedOut>>>` for a
+  `Ticket<Result<A, E>>`, racing `t` against its own timer and cancelling the loser — so no caller can leak a slot.
+  `core.waitAny`'s header records why: a timer ticket in the list *"worked, and every caller had to remember to
+  cancel the loser or lose a slot for good"*. A negative `ms` sets no deadline.
+- **`cancel()` on any ticket.** On a host ticket it releases the host's slot and discards the answer; the ticket
+  never settles and a later `wait()` answers `Stuck`. On any other ticket it detaches interest and does not stop the
+  machine. This replaces `Pending.cancel` and `core.cancel`.
+- **`Sys.drainFor(i32 millis)`** answers how many continuations ran before the queue emptied or the budget ran out —
+  tor's servers use it to tell idle. `dropAll` is deleted; `outstanding` stays internal to the adapter's exit check.
+- **Writes to stderr may be discarded; writes to stdout are handled.** A convention, not a rule — a warning for a
+  discarded `Result` is a possible later feature. So the ticket a write answers must be settled before the call
+  returns: the host gives the reason for a failed write in the same call, rather than through `outputError`.
+
+### Settled during step 5 (operator, 2026-10-25)
+
+- **`Procs.exec` takes a `ChildEnv`**: `ChildEnv.inherited()` or `ChildEnv.empty()`, with `.set(name, value)` over it
+  (ch44 `§wac-std-child-env-k3w8tqa`). Removing one name stays a shell's `unset` (`packages/wactest`'s `withoutEnv`).
+- **`packages/fs` folds into `Files` now**, not after step 6. Box and sh take `Files`; each `Fs` backing is a `Files`
+  constructor. What `Fs` held that is not a filesystem goes to the shell session: the current directory (a view,
+  `files.relativeTo(cwd)`), the process table, the clock reading, and who is acting.
+- **Users are a view of a memory store**: `MemoryStore.create(clock)`, `store.asUser(user)` a `Files` that creates files
+  owned by `user` and checks against it, `"root"` exempt. `Files` gains `chown` (the host: `Unsupported`) and `Stat`
+  gains `owner` and `mode`. `whoami` and `id` read the session's user and refuse where there is none.
+- **Streams close**: `files.openWrite(path)` answers an `Output`, `files.openAppend(path)` an `Output`
+  that writes after what is there (so `>>` streams too), and `files.openRead(path)` an `Input`; all
+  gain `close`. `Child.endInput()` is `child.input().close()`; closing `stdout` ends the program's output (`Cli.closeOutput`, in every host, and a spawned child's
+  parent sees the end while the child runs on). The
+  host gives a stream per call, which retires `openInput`/`openOutput` switching the program's one stream and the
+  `isHostPath` split in box (every path streams).
+- **A composed `Files` handed to a child is served by std** over the parent channel while the parent drives its
+  scheduler; the child's `sys.files()` is that remote `Files`. The wire protocol and serving move into std. Done: the
+  child asks once, the first time it calls `sys.files()`, whether its parent serves it, and `Child.exit()` answers
+  after the serving has ended, so a parent's `main` does not return with its serving still waiting.
+- **`packages/fs` keeps what is ours rather than general**: the image format, over `store.entries()` and
+  `MemoryStore.restore(clock, entries)`; `passwd`; the process table, renamed `ProcTable`; and `/dev`, `/proc` and
+  `/bin` as `Files` constructors (`devFiles`, `procFiles`, `binFiles`).

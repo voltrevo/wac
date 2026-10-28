@@ -11,13 +11,14 @@
 // mismatch in whatever it was actually testing. That is the worst kind of red — a true failure
 // message about the wrong thing.
 
-import { Change, Core, Cli, Exec } from "std";
+import { Change, Core, Exec, Env, Files, NotFound, Output } from "std";
 import { nativeHost, nativeHostWhyNot, requireNativeHost } from "./built.wac";
 import { T } from "./assert.wac";
+import { flatten } from "core";
 
 /** Where `wac task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
-export string binaryPath(Cli cli) {
-  return "\{cli.cwd().wait()}/native/v8/target/release/wac";
+export string binaryPath(Env env) {
+  return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac";
 }
 
 /**
@@ -28,13 +29,13 @@ export string binaryPath(Cli cli) {
  * to compute it, agreeing on the ordinary case and giving three different answers at a filesystem
  * root; `packages/wacpkg/src/root.wac` owns the general one and is tested on those edges.
  */
-export string binaryDir(Cli cli) {
-  return "\{cli.cwd().wait()}/native/v8/target/release";
+export string binaryDir(Env env) {
+  return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release";
 }
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
-export string agentDir(Cli cli) {
-  string cwd = cli.cwd().wait();
+export string agentDir(Env env) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
   u8[] b = cwd.toBytes();
   for (i32 i = 0; i + 7 < b.len(); i++) {
     if (b[i] != '/') { continue; }
@@ -53,8 +54,8 @@ export string agentDir(Cli cli) {
  * checkout's from the one next door. Neither is created — the caller does that, because it is the
  * caller that has a `T` to report the failure to.
  */
-export string scratch(Cli cli, string name) {
-  string who = agentDir(cli);
+export string scratch(Env env, string name) {
+  string who = agentDir(env);
   return "/tmp/wac-" + name + (who == "" ? "" : "-\{who}");
 }
 
@@ -73,7 +74,7 @@ export string scratch(Cli cli, string name) {
  * drifted in exactly one respect: one warned when the build failed and the other returned `""` in
  * silence. The warning is the version that is kept. `issues/system/0161`.
  */
-export string nativeBinaryPath(Cli cli, T t) {
+export string nativeBinaryPath(Env env, Files fs, T t) {
   // **Asks; does not build.** The build is `wac task seed`'s, and `wac task seed:native` does this
   // crate alone — `issues/system/0208`, where five files each ran their own cargo with five skip
   // messages and two freshness checks.
@@ -85,7 +86,7 @@ export string nativeBinaryPath(Cli cli, T t) {
   // implicit one — so **a changed `.rs` file printed nothing and no rebuild was triggered.** Only
   // `Cargo.toml` was ever watched, in the helper that ten test files share.
   // **Required, not skipped**: `requireNativeHost` fails `t` when the binary is absent or stale.
-  return requireNativeHost(cli, t);
+  return requireNativeHost(env, fs, t);
 }
 
 /**
@@ -118,21 +119,21 @@ export string nativeBinaryPath(Cli cli, T t) {
  *
  * `cut > 0` rather than `>= 0`: a leading `/` means the parent is the root, which exists.
  */
-export string putFile(Cli cli, string path, string text) {
+export string putFile(Files fs, string path, string text) {
   i32 cut = -1;
   for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
   if (cut > 0) {
-    string why = madeDir(cli, path.slice(0, cut));
+    string why = madeDir(fs, path.slice(0, cut));
     if (why != "") { return why; }
   }
-  Change wrote = cli.writeFile(path, text.toBytes()).wait();
-  if (!wrote.ok()) { return "could not write \{path} — \{wrote.message}"; }
+  auto wrote = flatten(fs.writeFile(path, text.toBytes()).wait());
+  if (wrote.isErr()) { return "could not write \{path} — \{wrote.isErr() ? "\{wrote.err()!}" : ""}"; }
   return "";
 }
 
-export string madeDir(Cli cli, string dir) {
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return "could not create \{dir} — \{made.message}"; }
+export string madeDir(Files fs, string dir) {
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) { return "could not create \{dir} — \{made.isErr() ? "\{made.err()!}" : ""}"; }
   return "";
 }
 
@@ -149,12 +150,12 @@ export string madeDir(Cli cli, string dir) {
  * the ordinary first run, and `Change.absent` is the question `rm -f` asks. Anything else means the
  * directory is about to be reused with something in it, which is the case worth a message.
  */
-export string freshDir(Cli cli, string dir) {
-  Change gone = cli.remove(dir, true).wait();
-  if (!gone.ok() && !gone.absent()) {
-    return "could not empty \{dir} — \{gone.message}";
+export string freshDir(Files fs, string dir) {
+  auto gone = flatten(fs.remove(dir, true).wait());
+  if (gone.isErr() && !(gone.err()! is NotFound)) {
+    return "could not empty \{dir} — \{gone.isErr() ? "\{gone.err()!}" : ""}";
   }
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return "could not create \{dir} — \{made.message}"; }
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  if (made.isErr()) { return "could not create \{dir} — \{made.isErr() ? "\{made.err()!}" : ""}"; }
   return "";
 }

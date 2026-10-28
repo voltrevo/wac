@@ -6,21 +6,20 @@
 // approximates, and it is also the only set that escapes `%`, so the hand-rolled pre-pass that used
 // to do that here is gone with it.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, readAll } from "../lib/input.wac";
+import { Opened, readAll } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
 
 import { encode, SET_COMPONENT } from "../../../url/src/percent.wac";
 import { slice } from "../../../bytes/src/slice.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 urlencode(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await readAll(core, cli, fs, a, 0);
+export async i32 urlencode(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await readAll(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
-  cli.write(withNewline(encode(trimNewline(in.bytes), SET_COMPONENT())));
+  out.write(withNewline(encode(trimNewline(in.bytes), SET_COMPONENT())));
   return 0;
 }
 

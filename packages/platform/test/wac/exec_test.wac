@@ -24,19 +24,22 @@
 // constantly. `error` is non-empty only for the second.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending, execReason } from "std";
+import { Exec, execReason, ChildEnv, Clock, Env, Files, Launch, Procs, SpawnFault, Sys } from "std";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
+import { Result, Ticket, flatten } from "core";
 
 string text(u8[] b) { return string.fromBytes(b); }
 
 /** The simplest thing that can be true: a program runs and says what it was told to say. */
-export string test_a_program_runs_and_its_output_comes_back(Core core, Cli cli) {
+export string test_a_program_runs_and_its_output_comes_back(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec("/bin/echo", ["hello from the host"], u8[]()).wait();
-  t.eqI32(r.status, 0, "echo exited zero");
-  t.eqI32(r.error.len(), 0, "and started, so there is no error to report: \{r.error}");
-  t.isTrue(text(r.stdout).indexOf("hello from the host") >= 0,
-           "its stdout came back, not \{text(r.stdout)}");
+  auto rRan = flatten(procs.exec("/bin/echo", ["hello from the host"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqI32(r!.status, 0, "echo exited zero");
+  t.eqI32("\{rRan.isErr() ? "\{rRan.err()!}" : ""}".len(), 0, "and started, so there is no error to report: \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  t.isTrue(text(r!.stdout).indexOf("hello from the host") >= 0,
+           "its stdout came back, not \{text(r!.stdout)}");
   return t.report();
 }
 
@@ -46,12 +49,14 @@ export string test_a_program_runs_and_its_output_comes_back(Core core, Cli cli) 
  * Every buffered oracle here needs it — `python3 -c` reading a payload from stdin is how
  * `packages/gzip` gets a second deflate implementation.
  */
-export string test_stdin_reaches_the_program(Core core, Cli cli) {
+export string test_stdin_reaches_the_program(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec("/bin/cat", string[](), "the bytes we fed it".toBytes()).wait();
-  t.eqI32(r.status, 0, "cat exited zero");
-  t.eqI32(r.error.len(), 0, "it started");
-  t.isTrue(text(r.stdout) == "the bytes we fed it", "cat echoed stdin back, not \{text(r.stdout)}");
+  auto rRan = flatten(procs.exec("/bin/cat", string[](), "the bytes we fed it".toBytes(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqI32(r!.status, 0, "cat exited zero");
+  t.eqI32("\{rRan.isErr() ? "\{rRan.err()!}" : ""}".len(), 0, "it started");
+  t.isTrue(text(r!.stdout) == "the bytes we fed it", "cat echoed stdin back, not \{text(r!.stdout)}");
   return t.report();
 }
 
@@ -62,56 +67,64 @@ export string test_stdin_reaches_the_program(Core core, Cli cli) {
  * be unable to test the case every one of these oracles cares about most — the input the reference
  * implementation *rejects*.
  */
-export string test_a_failing_program_is_still_a_program_that_ran(Core core, Cli cli) {
+export string test_a_failing_program_is_still_a_program_that_ran(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec("/bin/sh", ["-c", "echo out; echo err 1>&2; exit 3"], u8[]()).wait();
-  t.eqI32(r.status, 3, "the exit code is the exit code");
-  t.eqI32(r.error.len(), 0, "and it ran, so nothing is reported as a failure to start");
-  t.isTrue(text(r.stdout).indexOf("out") >= 0, "stdout came back");
-  t.isTrue(text(r.stderr).indexOf("err") >= 0, "and stderr separately, not merged into stdout");
-  t.isTrue(text(r.stdout).indexOf("err") < 0, "the two streams are not the same stream");
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "echo out; echo err 1>&2; exit 3"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqI32(r!.status, 3, "the exit code is the exit code");
+  t.eqI32("\{rRan.isErr() ? "\{rRan.err()!}" : ""}".len(), 0, "and it ran, so nothing is reported as a failure to start");
+  t.isTrue(text(r!.stdout).indexOf("out") >= 0, "stdout came back");
+  t.isTrue(text(r!.stderr).indexOf("err") >= 0, "and stderr separately, not merged into stdout");
+  t.isTrue(text(r!.stdout).indexOf("err") < 0, "the two streams are not the same stream");
   return t.report();
 }
 
 /** A program that is not there says so, and says it in `error` rather than as an exit code. */
-export string test_a_program_that_is_not_there_says_so(Core core, Cli cli) {
+export string test_a_program_that_is_not_there_says_so(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec("/nonexistent/definitely-not-a-program", string[](), u8[]()).wait();
-  t.isTrue(r.error.len() > 0, "a program that cannot be started reports why");
+  auto rRan = flatten(procs.exec("/nonexistent/definitely-not-a-program", string[](), u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue("\{rRan.isErr() ? "\{rRan.err()!}" : ""}".len() > 0, "a program that cannot be started reports why");
   // **And it says which program**, which is what tells this apart from the refusal above it. Without
   // this the test passes on a build with no `--allow-run` at all — "Not granted to this application"
   // is also a non-empty error, and a run that never reached the host would look like a run that
   // reached it and found nothing.
-  t.isTrue(r.error.indexOf("/nonexistent/definitely-not-a-program") >= 0,
-           "the error names the program that could not be started: \{r.error}");
-  t.eqI32(r.stdout.len(), 0, "and produced no output");
-  // Not asserted: what `status` is. There is no exit code for a program that never ran, and a
-  // caller has `error` to tell the two apart, which is the whole point of keeping them separate.
+  t.isTrue("\{rRan.isErr() ? "\{rRan.err()!}" : ""}".indexOf("/nonexistent/definitely-not-a-program") >= 0,
+           "the error names the program that could not be started: \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  // And no `Exec` at all: there is no output and no exit code for a program that never ran, so the
+  // answer is the fault alone — which is the whole point of keeping the two apart.
+  t.isTrue(r is null, "a program that never ran answered as though it had");
   return t.report();
 }
 
 /** Arguments arrive as arguments, and are not re-split or interpreted by a shell. */
-export string test_arguments_are_not_a_shell_string(Core core, Cli cli) {
+export string test_arguments_are_not_a_shell_string(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // One argument containing a space, a quote and a semicolon. A `exec` that pasted its arguments
   // into a shell line would run `echo a` and then try to run `rm`, and the space would become two
   // arguments — so this is the injection case as much as it is the quoting one.
-  Exec r = cli.exec("/bin/echo", ["a b; rm -rf /\" '"], u8[]()).wait();
-  t.eqI32(r.status, 0, "it ran");
-  t.isTrue(text(r.stdout) == "a b; rm -rf /\" '\n",
-           "the argument arrived whole, not split or interpreted: \{text(r.stdout)}");
+  auto rRan = flatten(procs.exec("/bin/echo", ["a b; rm -rf /\" '"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqI32(r!.status, 0, "it ran");
+  t.isTrue(text(r!.stdout) == "a b; rm -rf /\" '\n",
+           "the argument arrived whole, not split or interpreted: \{text(r!.stdout)}");
   return t.report();
 }
 
 /** Bytes, not text: stdout is `u8[]` and survives what is not valid UTF-8. */
-export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
+export string test_output_is_bytes_and_not_text(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec("/bin/sh", ["-c", "printf '\\001\\377\\000\\376'"], u8[]()).wait();
-  t.eqI32(r.status, 0, "it ran");
-  t.eqI32(r.stdout.len(), 4, "four bytes came back, not a replacement character each: " +
-                             "\{r.stdout.len()}");
-  t.eqI32(r.stdout[1] as i32, 255, "0xFF survived");
-  t.eqI32(r.stdout[2] as i32, 0, "and so did the zero byte, which is not a terminator here");
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "printf '\\001\\377\\000\\376'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqI32(r!.status, 0, "it ran");
+  t.eqI32(r!.stdout.len(), 4, "four bytes came back, not a replacement character each: " +
+                             "\{r!.stdout.len()}");
+  t.eqI32(r!.stdout[1] as i32, 255, "0xFF survived");
+  t.eqI32(r!.stdout[2] as i32, 0, "and so did the zero byte, which is not a terminator here");
   return t.report();
 }
 
@@ -132,20 +145,22 @@ export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
  * still much better than the silence it replaces. `issues/system/0175` wants a per-test deadline;
  * with one, this is where it would be spent.
  */
-export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, Cli cli) {
+export string test_a_child_that_answers_while_it_is_still_being_fed(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] big = u8[].filled(2000000, 0);
   for (i32 i = 0; i < big.len(); i++) { big[i] = i % 64 == 63 ? '\n' : 'a'; }
-  Exec r = cli.exec("/bin/cat", string[](), big).wait();
-  t.isTrue(r.ran(), "cat ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "cat exited zero");
-  t.eqI32(r.stdout.len(), big.len(), "every byte came back");
+  auto rRan = flatten(procs.exec("/bin/cat", string[](), big, ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "cat ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  t.eqI32(r!.status, 0, "cat exited zero");
+  t.eqI32(r!.stdout.len(), big.len(), "every byte came back");
   // Not only the length: a drain that raced the write could return the right number of the wrong
   // bytes, and the newlines are where an interleaving would show.
   i32 differed = -1;
-  for (i32 i = 0; i < big.len() && i < r.stdout.len(); i++) {
-    if (r.stdout[i] != big[i]) { differed = i; break; }
+  for (i32 i = 0; i < big.len() && i < r!.stdout.len(); i++) {
+    if (r!.stdout[i] != big[i]) { differed = i; break; }
   }
   t.eqI32(differed, -1, "and in order");
   return t.report();
@@ -154,8 +169,8 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
 /**
  * Three children at once, because a ticket is a thing that has been *asked for*.
  *
- * Every capability that hands back a `Pending<T>` means "asked for, not yet answered" — that is what
- * makes `waitAny` a thing a program can write, and it is why `core.delay` can be waited on beside a
+ * Every capability that hands back a ticket means "asked for, not yet answered" — that is what
+ * makes `waitAny` a thing a program can write, and it is why a `Clock` sleep can be waited on beside a
  * socket. `exec` is one of them, so taking three tickets before waiting on any of them must overlap
  * the three children.
  *
@@ -173,22 +188,24 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
  * number that separates "concurrent" from "serial" is the one with three seconds on the other side of
  * it, not the one that is tight against a perfect run.
  */
-export string test_three_children_run_at_once(Core core, Cli cli) {
+export string test_three_children_run_at_once(Sys sys) {
+  Clock clock = sys.clock();
+  Procs procs = sys.procs();
   T t = T.create();
-  i64 t0 = core.monotonicNanos().wait();
-  Pending<Exec>[] ps = Pending<Exec>[].defaulted(3);
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
+  Ticket<Result<Exec, SpawnFault>>?[] ps = Ticket<Result<Exec, SpawnFault>>?[].defaulted(3);
   for (i32 i = 0; i < ps.len(); i++) {
-    ps[i] = cli.exec("/bin/sleep", ["1"], u8[]());
+    ps[i] = procs.exec("/bin/sleep", ["1"], u8[](), ChildEnv.inherited(), Launch.plain());
   }
   // The submit phase on its own, which is what names *where* the blocking was rather than only that
   // it happened: this read 3006ms before the fix and reads 0ms after it.
-  i64 submitMs = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
+  i64 submitMs = (flatten(clock.monotonicNanos().wait()).unwrap() - t0) / (1000000 as i64);
   i32 ran = 0;
   for (i32 i = 0; i < ps.len(); i++) {
-    Exec r = ps[i].wait();
-    if (r.ran() && r.status == 0) { ran = ran + 1; }
+    auto r = flatten(ps[i]!.wait());
+    if (r.isOk() && r.unwrap().status == 0) { ran = ran + 1; }
   }
-  i64 ms = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
+  i64 ms = (flatten(clock.monotonicNanos().wait()).unwrap() - t0) / (1000000 as i64);
   // The canary: three sleeps that never ran would finish instantly and pass a timing assertion by
   // doing nothing at all.
   t.eqI32(ran, 3, "all three slept");
@@ -214,10 +231,10 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
  * assertion is the one that pins the semantics, and the fourth is that a name handed over wins over
  * an inherited value of the same name.
  */
-export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
+export string test_the_child_is_handed_an_environment(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.execWith("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](),
-                        ["WAC_EXEC_PROBE=handed over"], false, false).wait();
+  Exec r = flatten(procs.exec("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](), ChildEnv(false, ["WAC_EXEC_PROBE=handed over"]), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(r.ran(), "sh ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "it exited zero");
@@ -227,15 +244,12 @@ export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
   // The other direction, and the one a replacing implementation would fail: a name nobody mentioned
   // is still there. `PATH` rather than a variable of our own, because it is the one whose absence
   // makes a plain `sh -c "grep …"` stop working while an absolute path still runs.
-  Exec keep = cli.execWith("/bin/sh", ["-c", "printf %s \"$PATH\""], u8[](),
-                           ["WAC_EXEC_PROBE=irrelevant"], false, false).wait();
+  Exec keep = flatten(procs.exec("/bin/sh", ["-c", "printf %s \"$PATH\""], u8[](), ChildEnv(false, ["WAC_EXEC_PROBE=irrelevant"]), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(keep.ran() && keep.stdout.len() > 0,
            "and the environment it would have had anyway survived: PATH is " +
            "\{keep.stdout.len()} bytes");
 
-  Exec over = cli.execWith("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](),
-                           ["WAC_EXEC_PROBE=first", "WAC_EXEC_PROBE=second"], false,
-                           false).wait();
+  Exec over = flatten(procs.exec("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](), ChildEnv(false, ["WAC_EXEC_PROBE=first", "WAC_EXEC_PROBE=second"]), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(text(over.stdout) == "second",
            "a name given twice takes the last value, not \"\{text(over.stdout)}\"");
   return t.report();
@@ -257,10 +271,10 @@ export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
  * could not see it, because the thing being measured was replaced by the instrument. `printenv` is
  * the whole environment as the child received it, with nothing in between.
  */
-export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli cli) {
+export string test_a_cleared_environment_is_only_what_was_passed(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.execWith("/usr/bin/printenv", string[](), u8[](),
-                        ["WAC_EXEC_PROBE=only this"], true, false).wait();
+  Exec r = flatten(procs.exec("/usr/bin/printenv", string[](), u8[](), ChildEnv(true, ["WAC_EXEC_PROBE=only this"]), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(r.ran(), "printenv ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
   t.isTrue(text(r.stdout) == "WAC_EXEC_PROBE=only this\n",
@@ -269,8 +283,7 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
   // The canary, and it is the one that makes the assertion above mean something: the same program,
   // not cleared, sees the environment this process has. Without it a host that started nothing —
   // or one that cleared unconditionally — would print one line or none and read as correct.
-  Exec had = cli.execWith("/usr/bin/printenv", string[](), u8[](),
-                          ["WAC_EXEC_PROBE=only this"], false, false).wait();
+  Exec had = flatten(procs.exec("/usr/bin/printenv", string[](), u8[](), ChildEnv(false, ["WAC_EXEC_PROBE=only this"]), Launch("", false, false, false)).wait()).unwrap();
   t.isTrue(had.stdout.len() > r.stdout.len() + 100,
            "and the uncleared run sees this process's own environment: \{had.stdout.len()}" +
            " bytes against \{r.stdout.len()}");
@@ -294,16 +307,19 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
  * also printed": a host that ignored the flag would still let the echoed line reach here, in the
  * answer rather than on the stream.
  */
-export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli) {
+export string test_an_inherited_stream_reaches_our_own_output(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string mod = builtProgram(cli, "packages/platform/test/wac/exec_probe.wac", "exec-probe",
-                            ["--allow-run"]);
-  Exec r = cli.exec(wacBinary(cli), [mod], u8[]()).wait();
-  t.isTrue(r.ran(), "the probe ran — \{r.error}");
-  if (!r.ran()) { return t.report(); }
-  string out = text(r.stdout);
-  string log = text(r.stderr);
-  t.eqI32(r.status, 0, "the probe exited zero: \{out}\{log}");
+  string mod = builtProgram(env, fs, procs, "packages/platform/test/wac/exec_probe.wac", "exec-probe", ["--allow-run"]);
+  auto rRan = flatten(procs.exec(wacBinary(env), [mod], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the probe ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  string out = text(r!.stdout);
+  string log = text(r!.stderr);
+  t.eqI32(r!.status, 0, "the probe exited zero: \{out}\{log}");
   t.isTrue(out.indexOf("from the grandchild") >= 0,
            "the grandchild's line arrived on the probe's own stdout: \"\{out}\"");
   t.isTrue(log.indexOf("inherit: ran=yes status=0 buffered=0/0") >= 0,
@@ -317,12 +333,13 @@ export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli
   // **And the reason names the kill.** A signalled child writes no stderr, so the phrase every caller
   // reaches for — `error` then `stderr` — renders it as nothing at all, which is a reason with no cause
   // in it. `execReason` is the one place that knows.
-  Exec killed = cli.exec("/bin/sh", ["-c", "kill -9 $$"], u8[]()).wait();
-  t.isTrue(killed.error.len() == 0 && killed.stderr.len() == 0,
+  auto killedRan = flatten(procs.exec("/bin/sh", ["-c", "kill -9 $$"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? killed = killedRan.ok();
+  t.isTrue("\{killedRan.isErr() ? "\{killedRan.err()!}" : ""}".len() == 0 && killed!.stderr.len() == 0,
            "the premise: a killed child says nothing through either of the usual channels");
-  t.isTrue(execReason(killed).indexOf("killed by a signal") >= 0,
+  t.isTrue((killed is null ? "\{killedRan.err()!}" : execReason(killed!)).indexOf("killed by a signal") >= 0,
            "execReason named the kill rather than answering with an empty string: \""
-           + "\{execReason(killed)}\"");
+           + "\{(killed is null ? "\{killedRan.err()!}" : execReason(killed!))}\"");
   t.isTrue(log.indexOf("exited: ran=yes status=255 signalled=no") >= 0,
            "and 255 is an exit code rather than the signal sentinel:\n\{log}");
   t.isTrue(log.indexOf("cleared: ran=yes only-what-was-passed=yes") >= 0,

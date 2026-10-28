@@ -127,6 +127,9 @@ enum Cap {
     Send,
     CloseSocket,
     CloseSend,
+    OpenFile,
+    CloseFile,
+    CloseOutput,
     BindDatagram,
     ReceiveFrom,
     SendTo,
@@ -235,6 +238,9 @@ enum Handle {
     Fs(ChildProc),
     /// A socket. `send` writes it, `recv` reads it, `accept` takes from a listening one.
     Net(Sock),
+    /// **A file opened as a stream** — `Cli.openFile`. `recv` reads it and `send` writes it, as a socket's;
+    /// `closeFile` ends it. `Arc` because `&File` reads and writes, so a reader thread needs no lock.
+    File(Arc<std::fs::File>),
 }
 
 /// Everything a handle can name, shared with the threads that make them.
@@ -392,6 +398,8 @@ struct Host {
     /// Where `write` goes when `openOutput` has named a file, and the reason it could not be opened.
     output: Option<std::fs::File>,
     output_error: String,
+    /// Standard output and standard error, once `closeOutput` has ended them: a write after it is refused.
+    out_closed: [bool; 2],
     /// Children this program spawned, and the handles that name their streams.
     handles: Arc<std::sync::Mutex<Handles>>,
     /// Which handle a read ticket is reading, so a *dropped* one knows where to put its answer.
@@ -461,6 +469,7 @@ impl Host {
             input: None,
             output: None,
             output_error: String::new(),
+            out_closed: [false, false],
             handles: Arc::new(std::sync::Mutex::new(Handles::default())),
             reading: Arc::new(std::sync::Mutex::new(HashMap::new())),
             parked_accepts: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -1491,6 +1500,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Core", "exit") => Cap::Exit,
         ("Cli", "closeSocket") => Cap::CloseSocket,
         ("Cli", "closeSend") => Cap::CloseSend,
+        ("Cli", "openFile") => Cap::OpenFile,
+        ("Cli", "closeFile") => Cap::CloseFile,
+        ("Cli", "closeOutput") => Cap::CloseOutput,
         ("Cli", "bindDatagram") => Cap::BindDatagram,
         ("Cli", "receiveFrom") => Cap::ReceiveFrom,
         ("Cli", "sendTo") => Cap::SendTo,
@@ -1877,16 +1889,18 @@ fn dispatch(
                 _ => 0,
             };
             let cwd = read_string(caller, &params[3])?;
-            // The `INHERIT_*` mask; only the input bit is the host's — `DETACHED` (4) is std's
-            // `Cli.of`'s business. `issues/system/0312b`.
-            let inherit = matches!(arg(4), Val::I32(n) if n & 1 != 0);
+            // The `INHERIT_*` mask: the input and output bits are the host's — `DETACHED` (4) is std's
+            // business. `issues/system/0312b`.
+            let inherit_bits = match arg(4) { Val::I32(n) => n, _ => 0 };
+            let inherit = inherit_bits & 1 != 0;
+            let inherit_out = inherit_bits & 2 != 0;
             // Whether this program promises to answer the child's filesystem questions — see
             // `spawnSelf` in platform.wac. Not a grant: it widens nothing.
             let serve_fs = matches!(arg(5), Val::I32(n) if n != 0);
             let Some(world) = caller.data().world.clone() else {
                 return no_spawn_here(caller, results);
             };
-            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, false, results);
+            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, inherit_out, results);
         }
         // **Synchronous, unlike almost everything here.** Nothing is submitted and no ticket comes
         // back: instantiating a module and calling one of its exports both finish before the host call
@@ -2282,6 +2296,23 @@ fn dispatch(
                 };
                 return Ok(());
             }
+            let file = match caller.data().handles.lock().unwrap().get(h) {
+                Some(Handle::File(f)) => Some(f.clone()),
+                _ => None,
+            };
+            if let Some(f) = file {
+                let back = caller.data().pushback.clone();
+                std::thread::spawn(move || {
+                    use std::io::Read;
+                    let mut buf = [0u8; 65536];
+                    let outcome = match (&*f).read(&mut buf) {
+                        Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
+                        Err(e) => Outcome::Str(e.to_string().into_bytes()),
+                    };
+                    park_unclaimed(&back, h, table.complete(id, outcome));
+                });
+                return pending_for(caller, Kind::Read, id, results);
+            }
             if let Some(Sock::Open(s)) = socket_at(caller, h) {
                 let back = caller.data().pushback.clone();
                 std::thread::spawn(move || {
@@ -2340,6 +2371,9 @@ fn dispatch(
             } else if let Some(Sock::Open(s)) = socket_at(caller, h) {
                 use std::io::Write;
                 (&*s).write_all(&bytes).is_ok()
+            } else if let Some(Handle::File(f)) = caller.data().handles.lock().unwrap().get(h).cloned() {
+                use std::io::Write;
+                (&*f).write_all(&bytes).is_ok()
             } else {
                 // False is "it did not land", which is what a caller checks.
                 false
@@ -2427,6 +2461,72 @@ fn dispatch(
         //
         // On threads, because a slow disk must not stop a program from doing what else it had in
         // flight — which is the entire reason these return a ticket rather than a value.
+        // **A file as a stream of its own** — `Cli.openFile`. `how` is 0 to read, 1 to create or truncate,
+        // 2 to create or append; the grant is the one `readFile` or `writeFile` would need. Opening is quick,
+        // so it is answered at once; the reads and writes that follow are where a slow disk shows.
+        Cap::OpenFile => {
+            let path = read_string(caller, &params[1])?;
+            let how = match arg(2) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let granted = if how == 0 { caller.data().grants.read } else { caller.data().grants.write };
+            if !granted {
+                let o = Outcome::Socket(-1, "Not granted to this application".into(), String::new(), 0, FAULT_NOT_GRANTED);
+                return settle_now(caller, Kind::Socket, o, results);
+            }
+            let here = resolve(caller, &path);
+            let mut o = std::fs::OpenOptions::new();
+            if how == 0 {
+                o.read(true);
+            } else {
+                o.write(true).create(true);
+                if how == 2 { o.append(true); } else { o.truncate(true); }
+            }
+            let outcome = match o.open(here) {
+                Ok(f) => {
+                    let slot = caller.data().handles.lock().unwrap().push(Handle::File(Arc::new(f)));
+                    Outcome::Socket(slot, String::new(), String::new(), 0, FAULT_NONE)
+                }
+                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
+            };
+            return settle_now(caller, Kind::Socket, outcome, results);
+        }
+        // The end of a file `openFile` opened. `File` does not buffer, so every `send` already reached the
+        // system and dropping it is the whole of closing.
+        Cap::CloseFile => {
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            caller.data().pushback.lock().unwrap().remove(&h);
+            let is_file = matches!(caller.data().handles.lock().unwrap().get(h), Some(Handle::File(_)));
+            if is_file {
+                caller.data().handles.lock().unwrap().close(h);
+            }
+            return settle_now(caller, Kind::Bool, Outcome::Bool(is_file), results);
+        }
+        // The end of this program's output or its diagnostic output — see the V8 host. Not under a frame.
+        Cap::CloseOutput => {
+            let to_err = matches!(arg(1), Val::I32(n) if n != 0);
+            let h = caller.data_mut();
+            let ok = if !h.frames.is_empty() {
+                false
+            } else if h.out_closed[to_err as usize] {
+                true
+            } else {
+                h.out_closed[to_err as usize] = true;
+                if !to_err && h.output.take().is_some() {
+                    true
+                } else if let Some(streams) = h.as_child.as_ref().filter(|c| !c.inherit_out) {
+                    if to_err { streams.stderr.finish() } else { streams.stdout.finish() }
+                    true
+                } else {
+                    close_std_stream(if to_err { 2 } else { 1 })
+                }
+            };
+            return settle_now(caller, Kind::Bool, Outcome::Bool(ok), results);
+        }
         Cap::ReadFile => {
             let path = read_string(caller, &params[1])?;
             if !caller.data().grants.read {
@@ -2470,7 +2570,7 @@ fn dispatch(
                 return settle_now(
                     caller,
                     Kind::Stat,
-                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED),
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED, 0),
                     results,
                 );
             }
@@ -2505,14 +2605,18 @@ fn dispatch(
                             m.permissions().mode() & 0o100 != 0
                         },
                         FAULT_NONE,
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            (m.permissions().mode() & 0o7777) as i32
+                        },
                     )
                 }
                 // **Absent is not a failure.** `exists: false` with no fault is what "there is nothing
                 // here" means; a fault would make every caller that merely asked treat it as an error.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NONE)
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NONE, 0)
                 }
-                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, false, stat_fault(&e)),
+                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, false, stat_fault(&e), 0),
             };
             return settle_now(caller, Kind::Stat, outcome, results);
         }
@@ -2791,8 +2895,8 @@ fn dispatch(
                 (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
                     make_file_result(caller, ok, &bytes, &err, fault)?
                 }
-                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, exec, fault)) => {
-                    make_stat(caller, e, f, d, size, m, link, exec, fault)?
+                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, exec, fault, mode)) => {
+                    make_stat(caller, e, f, d, size, m, link, exec, fault, mode)?
                 }
                 (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
                 (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
@@ -3017,6 +3121,10 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
         if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
         return true;
     }
+    if caller.data().out_closed[to_stderr as usize] {
+        caller.data_mut().output_error = String::new();
+        return false;
+    }
     // **A redirected output beats the parent's queue**, and only for standard output. `openOutput` is
     // the program saying *my output is a file now*, which is not standard output — so whether
     // something spawned this program is a fact about the stream it no longer writes to.
@@ -3028,8 +3136,9 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
     // empty, exiting 0. `issues/system/0277c`.
     //
     // **The rule was already settled**, one layer in. `issues/system/0166` is the same question for a
-    // `Frame`'s capture, and `packages/platform/src/frame.wac` states the answer: *"`openOutput`
-    // redirects, as it does on the host: a child that says its output is a file gets a file."*
+    // `Frame`'s capture, and `packages/platform`'s frame (gone since design/system/0013 step 5) stated
+    // the answer: *"`openOutput` redirects, as it does on the host: a child that says its output is a
+    // file gets a file."*
     if !to_stderr {
         // A redirected output is only standard output's: the error stream is where a program says
         // what went wrong, and sending that to the file being written would hide it.
@@ -3052,6 +3161,16 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
         return to.write(bytes);
     }
     write_raw(bytes, to_stderr)
+}
+
+/// Point descriptor `fd` (1 or 2) at `/dev/null`: whoever reads the pipe it was sees the end, and the number
+/// stays taken, so nothing opened later receives a stray write meant for the terminal.
+fn close_std_stream(fd: i32) -> bool {
+    use std::io::Write;
+    if fd == 1 { let _ = std::io::stdout().flush(); } else { let _ = std::io::stderr().flush(); }
+    let Ok(null) = std::fs::OpenOptions::new().write(true).open("/dev/null") else { return false };
+    use std::os::fd::AsRawFd;
+    unsafe { libc::dup2(null.as_raw_fd(), fd) == fd }
 }
 
 /// What a read answers when the program was built without the grant.
@@ -3104,6 +3223,7 @@ fn make_stat(
     is_symlink: bool,
     is_executable: bool,
     fault: i32,
+    mode: i32,
 ) -> Result<Val, wasmtime::Error> {
     let f = export_func(caller, "$bind$sm_Stat_of")?;
     let built = call_dyn(
@@ -3118,6 +3238,7 @@ fn make_stat(
             Val::I32(is_symlink as i32),
             Val::I32(is_executable as i32),
             Val::I32(fault),
+            Val::I32(mode),
         ],
     )?;
     built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Stat.of answered nothing"))
@@ -3287,7 +3408,7 @@ fn child_of(caller: &Caller<'_, Host>, handle: i32) -> Option<ChildProc> {
     let table = caller.data().handles.lock().unwrap();
     match table.get(handle)? {
         Handle::Main(c) | Handle::Err(c) | Handle::Fs(c) => Some(c.clone()),
-        Handle::Net(_) => None,
+        Handle::Net(_) | Handle::File(_) => None,
     }
 }
 
@@ -3298,7 +3419,7 @@ fn child_stream(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
         Handle::Main(c) => Some(c.stdout.clone()),
         Handle::Err(c) => Some(c.stderr.clone()),
         Handle::Fs(c) => Some(c.fsreq.clone()),
-        Handle::Net(_) => None,
+        Handle::Net(_) | Handle::File(_) => None,
     }
 }
 

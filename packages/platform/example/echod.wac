@@ -19,14 +19,17 @@
 // The `--allow-net` grant is the same one `connect` and `listen` need. The authority is "speak to
 // something that is not this process", and UDP does not make that a different question.
 
-import { Cli, Core, Datagram, HostSocket, Sys } from "std";
+import { Datagram, Sys, Net, Output, Datagrams } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
   i32 port = 0;
-  if (cli.argCount().wait() > 0) {
-    string given = string.fromBytes(cli.arg(0).wait());
+  if (argv.len() > 0) {
+    string given = argv[0];
     port = atoi(given);
   }
 
@@ -34,26 +37,28 @@ export i32 main(Sys sys) {
   // reachable from the network is a reflector somebody else can point at a third party. `listen`'s
   // comment in platform.wac is about exactly this, and a datagram one is worse — the source address
   // of a UDP packet is not verified, so an open echo amplifies for free.
-  HostSocket sock = cli.bindDatagram("127.0.0.1", port).wait();
-  if (sock.handle < 0) {
-    core.warn("echod: cannot bind: \{sock.error}");
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", port).wait());
+  if (sockBind.isErr()) {
+    err.line("echod: cannot bind: \{sockBind.err()!}");
     return 1;
   }
+  Datagrams sock = sockBind.unwrap();
   // The bound port, which for port 0 is the only way anyone learns it.
-  core.log("echod listening on 127.0.0.1:\{sock.port}");
+  out.line("echod listening on 127.0.0.1:\{sock.port}");
 
   while (true) {
-    Datagram d = cli.receiveFrom(sock.handle).wait();
-    if (d.error != "") {
-      core.warn("echod: \{d.error}");
-      cli.closeSocket(sock.handle);
+    auto got = flatten(sock.receive().wait());
+    if (got.isErr()) {
+      err.line("echod: \{got.err()!}");
+      sock.close();
       return 1;
     }
+    Datagram d = got.unwrap();
     // The reply goes to the address *and port* that arrived with these bytes. Not to a peer the
     // socket remembers, because it remembers none — that is what lets the next datagram come from
     // somewhere else entirely and still be answered correctly.
-    if (!cli.sendTo(sock.handle, d.peer, d.port, d.bytes).wait()) {
-      core.warn("echod: cannot reply to \{d.peer}:\{d.port}");
+    if (flatten(sock.sendTo(d.peer, d.port, d.bytes).wait()).isErr()) {
+      err.line("echod: cannot reply to \{d.peer}:\{d.port}");
     }
   }
   return 0;

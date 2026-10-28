@@ -24,7 +24,7 @@
 // applet per file means each could also be built alone, with only what it needs — `bin/`
 // does exactly that for four of them, and measures what it saves.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Clock, Env, Files, Input, Net, Output, Procs, Random } from "std";
 import { Args, parseArgs } from "./lib/args.wac";
 
 import { base32 } from "./applets/base32.wac";
@@ -90,22 +90,26 @@ import { wc } from "./applets/wc.wac";
 import { wget } from "./applets/wget.wac";
 import { yes } from "./applets/yes.wac";
 import { zstd } from "./applets/zstd.wac";
-import { Fs } from "../../fs/src/fs.wac";
 import { appletHelp } from "./lib/flags.wac";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  if (cli.argCount().wait() < 1) { return usage(core); }
-  string applet = string.fromBytes(cli.arg(0).wait());
+  return await boxMain(sys.args(), sys.stdin(), sys.stderr(), sys.stdout(), sys.clock(), sys.random(), sys.env(),
+                       sys.files(), sys.net(), sys.procs(), sys.interrupted);
+}
+
+/** `box` over exactly these handles: an applet by name, or the usage. */
+export async i32 boxMain(string[] argv, Input stdin, Output err, Output out, Clock clock, Random rnd, Env env,
+                         Files fs, Net net, Procs procs, fn<bool()> interrupted) {
+  if (argv.len() < 1) { return usage(err); }
+  string applet = argv[0];
   // **The filesystem an applet reads is a value now, not the host by assumption.** Standing alone, `box`
   // is a program on the real machine and hands its applets exactly that; a shell holding an image hands
   // them the image, and no applet knows the difference (wac-mono 0109).
-  i32 code = await dispatch(core, cli, Fs.onHost(cli, 0), parseArgs(cli), applet);
+  i32 code = await dispatch(argv, stdin, err, out, clock, rnd, env, fs, net, procs, interrupted, parseArgs(argv), applet);
   if (code != UNKNOWN) { return code; }
 
-  core.warn("box: unknown applet '\{applet}'");
-  return usage(core);
+  err.line("box: unknown applet '\{applet}'");
+  return usage(err);
 }
 
 /**
@@ -125,7 +129,7 @@ export static i32 UNKNOWN = -1;
  * two lists of sixty names drifting apart. `main` is now the argv-reading half and this is the
  * choosing half.
  */
-export async i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
+export async i32 dispatch(string[] argv, Input stdin, Output err, Output out, Clock clock, Random rnd, Env env, Files fs, Net net, Procs procs, fn<bool()> interrupted, Args a, string applet) {
   // **`--help` is answered here, once, for every applet.** It is the one long option they all share,
   // it needs no per-applet table, and box's own diagnostics promise it — every operand error ends
   // "Try 'x --help' for more information." Answered before dispatch so an applet cannot forget it,
@@ -134,77 +138,77 @@ export async i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
   if (a.longOpt == "--help") {
     string[] all = appletNames();
     for (i32 i = 0; i < all.len(); i++) {
-      if (all[i] == applet) { return appletHelp(core, applet); }
+      if (all[i] == applet) { return appletHelp(out, applet); }
     }
   }
-  if (applet == "base32")    { return await base32(core, cli, fs, a); }
-  if (applet == "base64")    { return await base64(core, cli, fs, a); }
-  if (applet == "basename")  { return basename(core, cli, fs, a); }
-  if (applet == "whoami")    { return whoami(core, cli, fs, a); }
-  if (applet == "id")        { return await id(core, cli, fs, a); }
-  if (applet == "cat")       { return await cat(core, cli, fs, a); }
-  if (applet == "chmod")     { return await chmod(core, cli, fs, a); }
-  if (applet == "cp")        { return await cp(core, cli, fs, a); }
-  if (applet == "crc32")     { return await crc32(core, cli, fs, a); }
-  if (applet == "fsdump")    { return await fsdump(core, cli, fs, a); }
-  if (applet == "cut")       { return await cut(core, cli, fs, a); }
-  if (applet == "date")      { return date(core, cli, fs, a); }
-  if (applet == "diff")      { return await diff(core, cli, fs, a); }
-  if (applet == "dirname")   { return dirname(core, cli, fs, a); }
-  if (applet == "du")        { return await du(core, cli, fs, a); }
-  if (applet == "echo")      { return echo(core, cli, fs, a); }
-  if (applet == "find")      { return await find(core, cli, fs, a); }
-  if (applet == "fold")      { return await fold(core, cli, fs, a); }
-  if (applet == "get")       { return get(core, cli, fs, a); }
-  if (applet == "gets")      { return await gets(core, cli, fs, a); }
-  if (applet == "grep")      { return await grep(core, cli, fs, a); }
-  if (applet == "gunzip")    { return await gunzip(core, cli, fs, a); }
-  if (applet == "gzip")      { return await gzip(core, cli, fs, a); }
-  if (applet == "head")      { return await head(core, cli, fs, a); }
+  if (applet == "base32")    { return await base32(stdin, err, out, fs, a); }
+  if (applet == "base64")    { return await base64(stdin, err, out, fs, a); }
+  if (applet == "basename")  { return basename(err, out, fs, a); }
+  if (applet == "whoami")    { return whoami(err, out, fs, a); }
+  if (applet == "id")        { return await id(err, out, fs, a); }
+  if (applet == "cat")       { return await cat(stdin, err, out, fs, a); }
+  if (applet == "chmod")     { return await chmod(err, fs, a); }
+  if (applet == "cp")        { return await cp(stdin, err, rnd, fs, a); }
+  if (applet == "crc32")     { return await crc32(stdin, err, out, fs, a); }
+  if (applet == "fsdump")    { return await fsdump(stdin, err, out, fs, a); }
+  if (applet == "cut")       { return await cut(stdin, err, out, fs, a); }
+  if (applet == "date")      { return date(err, out, clock, fs, a); }
+  if (applet == "diff")      { return await diff(stdin, err, out, fs, a); }
+  if (applet == "dirname")   { return dirname(err, out, fs, a); }
+  if (applet == "du")        { return await du(err, out, fs, a); }
+  if (applet == "echo")      { return echo(out, fs, a); }
+  if (applet == "find")      { return await find(err, out, fs, a); }
+  if (applet == "fold")      { return await fold(stdin, err, out, fs, a); }
+  if (applet == "get")       { return get(err, out, net, fs, a); }
+  if (applet == "gets")      { return await gets(err, out, clock, rnd, net, fs, a); }
+  if (applet == "grep")      { return await grep(stdin, err, out, fs, a); }
+  if (applet == "gunzip")    { return await gunzip(stdin, err, out, fs, a); }
+  if (applet == "gzip")      { return await gzip(stdin, err, out, fs, a); }
+  if (applet == "head")      { return await head(stdin, err, out, fs, a); }
   // **Asked for is not got wrong.** `usage` answers 2 because reaching it means the command line was
   // not understood; `box help`, `box --help` and `box -h` are a person asking, and a person who asked
   // gets 0. Every tool this package imitates does the same, and a script testing `box --help` for
   // success is a reasonable thing to write.
-  if (applet == "help" || applet == "--help" || applet == "-h") { usage(core); return 0; }
-  if (applet == "hex")       { return await hex(core, cli, fs, a); }
-  if (applet == "init")      { return await init(core, cli, fs, a); }
-  if (applet == "httpd")     { return await httpd(core, cli, fs, a); }
-  if (applet == "json")      { return await json(core, cli, fs, a); }
-  if (applet == "ls")        { return await ls(core, cli, fs, a); }
-  if (applet == "mkdir")     { return await mkdir(core, cli, fs, a); }
-  if (applet == "mv")        { return await mv(core, cli, fs, a); }
-  if (applet == "nc")        { return nc(core, cli, fs, a); }
-  if (applet == "nl")        { return await nl(core, cli, fs, a); }
-  if (applet == "paste")     { return await paste(core, cli, fs, a); }
-  if (applet == "ps")        { return await ps(core, cli, fs, a); }
-  if (applet == "rev")       { return await rev(core, cli, fs, a); }
-  if (applet == "rm")        { return await rm(core, cli, fs, a); }
-  if (applet == "rmdir")     { return await rmdir(core, cli, fs, a); }
-  if (applet == "seq")       { return seq(core, cli, fs, a); }
-  if (applet == "serve")     { return serve(core, cli, fs, a); }
-  if (applet == "sha256sum") { return await sha256sum(core, cli, fs, a); }
-  if (applet == "sha512sum") { return await sha512sum(core, cli, fs, a); }
-  if (applet == "shuf")      { return await shuf(core, cli, fs, a); }
-  if (applet == "sort")      { return await sort(core, cli, fs, a); }
-  if (applet == "split")     { return await split(core, cli, fs, a); }
-  if (applet == "sponge")    { return await sponge(core, cli, fs, a); }
-  if (applet == "stat")      { return await stat(core, cli, fs, a); }
-  if (applet == "strings")   { return await strings(core, cli, fs, a); }
-  if (applet == "tac")       { return await tac(core, cli, fs, a); }
-  if (applet == "tail")      { return await tail(core, cli, fs, a); }
-  if (applet == "tar")       { return await tar(core, cli, fs, a); }
-  if (applet == "tee")       { return await tee(core, cli, fs, a); }
-  if (applet == "touch")     { return await touch(core, cli, fs, a); }
-  if (applet == "tr")        { return await tr(core, cli, fs, a); }
-  if (applet == "uniq")      { return await uniq(core, cli, fs, a); }
-  if (applet == "unzstd")    { return await unzstd(core, cli, fs, a); }
-  if (applet == "urldecode") { return await urldecode(core, cli, fs, a); }
-  if (applet == "urlencode") { return await urlencode(core, cli, fs, a); }
-  if (applet == "uuid")      { return uuid(core, cli, fs, a); }
-  if (applet == "wc")        { return await wc(core, cli, fs, a); }
-  if (applet == "wget")      { return await wget(core, cli, fs, a); }
-  if (applet == "yes")       { return yes(core, cli, fs, a); }
-  if (applet == "zstd")      { return await zstd(core, cli, fs, a); }
+  if (applet == "help" || applet == "--help" || applet == "-h") { usage(err); return 0; }
+  if (applet == "hex")       { return await hex(stdin, err, out, fs, a); }
+  if (applet == "init")      { return await init(err, out, procs, fs, a); }
+  if (applet == "httpd")     { return await httpd(err, net, fs, a); }
+  if (applet == "json")      { return await json(stdin, err, out, fs, a); }
+  if (applet == "ls")        { return await ls(err, out, fs, a); }
+  if (applet == "mkdir")     { return await mkdir(err, fs, a); }
+  if (applet == "mv")        { return await mv(err, fs, a); }
+  if (applet == "nc")        { return await nc(stdin, err, out, net, a); }
+  if (applet == "nl")        { return await nl(stdin, err, out, fs, a); }
+  if (applet == "paste")     { return await paste(stdin, err, out, fs, a); }
+  if (applet == "ps")        { return await ps(err, out, fs, a); }
+  if (applet == "rev")       { return await rev(stdin, err, out, fs, a); }
+  if (applet == "rm")        { return await rm(err, fs, a); }
+  if (applet == "rmdir")     { return await rmdir(err, fs, a); }
+  if (applet == "seq")       { return seq(argv, err, out, a); }
+  if (applet == "serve")     { return serve(err, clock, net, a); }
+  if (applet == "sha256sum") { return await sha256sum(stdin, err, out, fs, a); }
+  if (applet == "sha512sum") { return await sha512sum(stdin, err, out, fs, a); }
+  if (applet == "shuf")      { return await shuf(stdin, err, out, rnd, fs, a); }
+  if (applet == "sort")      { return await sort(stdin, err, out, fs, a); }
+  if (applet == "split")     { return await split(stdin, err, fs, a); }
+  if (applet == "sponge")    { return await sponge(stdin, err, rnd, fs, a); }
+  if (applet == "stat")      { return await stat(err, out, fs, a); }
+  if (applet == "strings")   { return await strings(stdin, err, out, fs, a); }
+  if (applet == "tac")       { return await tac(stdin, err, out, fs, a); }
+  if (applet == "tail")      { return await tail(stdin, err, out, fs, a); }
+  if (applet == "tar")       { return await tar(err, out, fs, a); }
+  if (applet == "tee")       { return await tee(stdin, err, out, fs, a); }
+  if (applet == "touch")     { return await touch(err, fs, a); }
+  if (applet == "tr")        { return await tr(stdin, err, out, fs, a); }
+  if (applet == "uniq")      { return await uniq(stdin, err, out, fs, a); }
+  if (applet == "unzstd")    { return await unzstd(stdin, err, out, fs, a); }
+  if (applet == "urldecode") { return await urldecode(stdin, err, out, fs, a); }
+  if (applet == "urlencode") { return await urlencode(stdin, err, out, fs, a); }
+  if (applet == "uuid")      { return uuid(err, out, rnd, fs, a); }
+  if (applet == "wc")        { return await wc(stdin, err, out, env, fs, a); }
+  if (applet == "wget")      { return await wget(err, fs, net, a); }
+  if (applet == "yes")       { return yes(err, out, interrupted, a); }
+  if (applet == "zstd")      { return await zstd(stdin, err, out, fs, a); }
 
   // `true` and `false` have no body: the dispatcher returning a constant *is* the whole
   // applet, and a file containing one `return` would be ceremony rather than clarity.
@@ -234,13 +238,13 @@ export string[] appletNames() {
   ];
 }
 
-i32 usage(Core core) {
-  core.warn("usage: box <applet> [-flags] [args]");
-  core.warn(wrapped(appletNames(), "  ", 74));
-  core.warn("flags: grep -ivnc   sort -run   uniq -c   wc -lwc   mkdir -p   rm -rf   json -c");
-  core.warn("       a value attaches or not: head -n2 / -2, fold -w40 / -40, cut -f2 -d, / -f 2 -d ,");
-  core.warn("       signs and units: head -n -2, tail -n +2, head -c 3, tail -c +3");
-  core.warn("net:   get <host> [path] [-<port>] [-i]   wget <host> <path> <out>\n"
+i32 usage(Output err) {
+  err.line("usage: box <applet> [-flags] [args]");
+  err.line(wrapped(appletNames(), "  ", 74));
+  err.line("flags: grep -ivnc   sort -run   uniq -c   wc -lwc   mkdir -p   rm -rf   json -c");
+  err.line("       a value attaches or not: head -n2 / -2, fold -w40 / -40, cut -f2 -d, / -f 2 -d ,");
+  err.line("       signs and units: head -n -2, tail -n +2, head -c 3, tail -c +3");
+  err.line("net:   get <host> [path] [-<port>] [-i]   wget <host> <path> <out>\n"
             + "       serve [-<port>] [-o]   httpd [-<port>] [dir] [-o] [-x]\n"
             + "       gets <host> <path> <root.der> [-<port>]   (TLS 1.3)\n"
             + "       nc <host> <port>   nc -<port> -l");

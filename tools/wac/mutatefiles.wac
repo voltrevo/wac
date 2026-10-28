@@ -8,15 +8,16 @@
 //
 // `issues/system/0161` step 6.
 
-import { Cli } from "std";
+import { Files } from "std";
 import { isMutationTarget } from "./mutateoperators.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { flatten } from "core";
 
 /** Every `.wac` under `dir`, depth-first, skipping what is not source. */
-string[] wacFilesUnder(Cli cli, string dir, string[] into, i32 n) {
+string[] wacFilesUnder(Files fs, string dir, string[] into, i32 n) {
   string[] out = into;
   i32 at = n;
-  string[]? listed = cli.readDir(dir).wait();
+  string[]? listed = flatten(fs.readDir(dir).wait()).ok();
   if (listed is null) { out[out.len() - 1] = itoa(at); return out; }
   string[] names = listed!;
   for (i32 i = 0; i < names.len(); i++) {
@@ -29,7 +30,7 @@ string[] wacFilesUnder(Cli cli, string dir, string[] into, i32 n) {
     }
     // A directory, or a file of another kind — `readDir` on the latter answers nothing, which is the
     // same as an empty directory here and costs one call rather than a `stat` for every entry.
-    out = wacFilesUnder(cli, path, out, at);
+    out = wacFilesUnder(fs, path, out, at);
     at = intOf(out[out.len() - 1]);
   }
   out[out.len() - 1] = itoa(at);
@@ -47,11 +48,11 @@ i32 intOf(string s) {
 }
 
 /** The `.wac` files under `dir` that are code under test. */
-export string[] targetsUnder(Cli cli, string dir) {
+export string[] targetsUnder(Files fs, string dir) {
   // The last slot carries the count as the walk recurses, which is what lets it stay a plain
   // function rather than needing a growable array in the middle of a recursion.
   string[] buf = string[].filled(8192, "");
-  buf = wacFilesUnder(cli, dir, buf, 0);
+  buf = wacFilesUnder(fs, dir, buf, 0);
   i32 n = intOf(buf[buf.len() - 1]);
   i32 kept = 0;
   for (i32 i = 0; i < n; i++) {
@@ -72,9 +73,9 @@ export string[] targetsUnder(Cli cli, string dir) {
  * excludes, which is what a profile pass has to run. The two walks share `wacFilesUnder` so a
  * directory skipped by one is skipped by the other.
  */
-export string[] testsUnder(Cli cli, string dir) {
+export string[] testsUnder(Files fs, string dir) {
   string[] buf = string[].filled(8192, "");
-  buf = wacFilesUnder(cli, dir, buf, 0);
+  buf = wacFilesUnder(fs, dir, buf, 0);
   i32 n = intOf(buf[buf.len() - 1]);
   i32 kept = 0;
   for (i32 i = 0; i < n; i++) {

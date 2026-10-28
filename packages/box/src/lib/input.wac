@@ -3,28 +3,19 @@
 // That an applet works in a pipe at all is this file: without `readStdin` every one of
 // them would be a file-to-file tool.
 
-import { Change, Cli, Core, FileResult, readReason, reasonOf } from "std";
+import { Files, Input, Output } from "std";
 import { Args } from "./args.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
 /**
  * An opened input: the bytes when the caller wanted them all, and a `Feed` when it wanted a stream.
  *
- * The `Feed` is what makes an applet work on a filesystem that is not the host's. `openInput` on the
- * `Cli` *redirects this process's standard input* to a file — the state lives in the capability — and
- * there is no such thing for a memory image, so a reader that pulled `cli.readChunk()` read the host
- * whatever filesystem the shell was holding (wac-mono 0109). `Feed` already had both shapes:
- * `fromStdin` pulls through the capability, `of` serves bytes somebody has. So the choice is made once,
- * here, by mount — and every applet's loop is the same either way.
+ * Every file streams: `Files.openRead` gives an `Input` per file on every backing, so a memory image and the
+ * host's disk are read the same way and the feed is the applet's whole view of either. Standard input is the
+ * operand `""` (or `-`), fed from the program's own `stdin`.
  */
-export struct Input { bool ok; u8[] bytes; string label; Feed fed; }
-
-// `whyUnread` was here and is now `platform.wac`'s `readReason`, which is the same three lines beside the
-// phrase table they consult. It moved for the reason it existed: this was one of four copies of the list
-// and the copies had drifted — this one had no phrase for a name the host cannot express, so it printed
-// the host's English for the one category that exists to avoid exactly that. A wrapper is a fifth copy of
-// the *decision*, if not of the table, and `packages/box`'s applets can reach `platform.wac` directly.
+export struct Opened { bool ok; u8[] bytes; string label; Feed fed; }
 
 /**
  * How many files this invocation names, from operand `n` on.
@@ -105,55 +96,24 @@ string cannotOpen(string name, string path, string why) {
 }
 
 /**
- * The same choice, for the streaming pair.
+ * Operand `n`, opened to read a chunk at a time — so memory is bounded by the chunk rather than by the input,
+ * and an endless file such as `/dev/zero` is as readable as any other, up to what the applet pulls.
  *
- * `readInput` answers with the whole of the input, which is fine for a filename and wrong
- * for a pipe. This selects the source instead, and the applet pulls it with
- * `cli.readChunk` — so memory is bounded by the chunk rather than by the input.
- *
- * The returned `bytes` is always empty: there is nothing to hand over yet, and an applet
- * that wanted them would have called `readInput`.
- *
- * **`cap` is how many bytes the caller will actually use**, or negative for "all of it". It matters for
- * exactly one kind of file and matters absolutely there: a synthesised device is *endless*, so
- * `Fs.readFile` refuses `/dev/zero` and `/dev/urandom` by name rather than inventing a length — and a
- * `head -c 8 /dev/urandom` in a sealed session was refused along with it, because the reader had only a
- * whole-file route for a non-host mount. `Fs.readSome` is the bounded one and this is where it belongs:
- * the applet knows the bound, the filesystem knows the file, and neither of them alone can answer.
- *
- * A host path ignores it — that side streams through the capability already, and stops when the applet
- * stops pulling. So the parameter is not an optimisation anywhere; it is the difference between an
- * answer and a refusal on one mount, and nothing at all on the others.
+ * The returned `bytes` is always empty: there is nothing to hand over yet, and an applet that wanted them
+ * would have called `readInput`.
  */
-export async Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
+export async Opened openStream(Input stdin, Output err, Files fs, Args a, i32 n) {
   string path = operandAt(a, n);
   string label = a.rest.len() <= n ? "" : a.rest[n];
-  // **Standard input is standard input**, whatever the filesystem is: an operand of `-` or none at all
-  // is the process's own stream, which no `Fs` is involved in.
-  if (path == "") {
-    Change opened = await cli.openInput(path).ticket();
-    if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
-    core.warn(cannotOpen(a.name, path, reasonOf(opened)));
-    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
+  if (path == "") { return Opened(true, u8[](), label, Feed.from(stdin)); }
+  match (await fs.openRead(path)) {
+    Ok(in): { return Opened(true, u8[](), label, Feed.from(in)); }
+    Err(e): {
+      err.line(cannotOpen(a.name, path, reason(e)));
+      return Opened(false, u8[](), label, Feed.of(u8[]()));
+    }
   }
-  // A file on the host streams, because it can and because a large one should not be held whole. A file
-  // anywhere else is read whole and served from memory — which is where it already was.
-  if (await fs.isHostPath(path)) {
-    Change opened = await cli.openInput(path).ticket();
-    if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
-    // The same translation the whole-file path does, which is the point of the `Change`: `cat missing`
-    // now says what `cat` says instead of the host's sentence about `open '/tmp/x'`.
-    core.warn(cannotOpen(a.name, path, reasonOf(opened)));
-    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
-  }
-  FileResult f = cap < 0 ? await fs.readFile(path) : await fs.readSome(path, cap);
-  if (!f.ok) {
-    core.warn(cannotOpen(a.name, path, readReason(f)));
-    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
-  }
-  return Input(true, u8[](), label, Feed.of(cli, f.bytes));
 }
-
 
 /**
  * Every file from operand `n` on, concatenated — or standard input when there are none.
@@ -165,13 +125,13 @@ export async Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap)
  * A file that will not open stops it, with the reason already reported — same rule as `Reader`, and the
  * same difference from GNU, which carries on and exits 1 at the end.
  */
-export async Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
+export async Opened readAll(Input stdin, Output err, Files fs, Args a, i32 n) {
   i32 files = operandCount(a, n);
-  if (files <= 1) { return await readInput(core, cli, fs, a, n); }
+  if (files <= 1) { return await readInput(stdin, err, fs, a, n); }
   u8[][] parts = u8[][].filled(files, u8[]());
   i32 total = 0;
   for (i32 i = 0; i < files; i++) {
-    Input one = await readInput(core, cli, fs, a, n + i);
+    Opened one = await readInput(stdin, err, fs, a, n + i);
     if (!one.ok) { return one; }
     parts[i] = one.bytes;
     total = total + one.bytes.len();
@@ -182,24 +142,32 @@ export async Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
     all.copyFrom(parts[i], 0, at, parts[i].len());
     at = at + parts[i].len();
   }
-  return Input(true, all, operandAt(a, n), Feed.of(cli, all));
+  return Opened(true, all, operandAt(a, n), Feed.of(all));
 }
 
 /** Positional argument `n` names a file; without one, standard input. */
-export async Input readInput(Core core, Cli cli, Fs fs, Args a, i32 n) {
+export async Opened readInput(Input stdin, Output err, Files fs, Args a, i32 n) {
   string path = operandAt(a, n);
   // The label is what was written, so `-` stays `-` in the output; the path is what was resolved.
   string label = a.rest.len() <= n ? "" : a.rest[n];
-  if (path == "") { return Input(true, cli.readStdin().wait(), label, Feed.fromStdin(cli)); }
-  FileResult f = await fs.readFile(path);
-  if (!f.ok) {
-    // GNU's words where the category has them, and the host's sentence where it does not: "No such file
-    // or directory (os error 2): readfile '/tmp/x'" is one runtime's spelling of four words, and it
-    // differed by runtime. `FileResult.fault` is what makes the translation possible — wac-mono 0062.
-    core.warn(cannotOpen(a.name, path, readReason(f)));
-    return Input(false, u8[](), label, Feed.of(cli, u8[]()));
+  if (path == "") {
+    match (await stdin.readAll()) {
+      Ok(all): { return Opened(true, all, label, Feed.of(all)); }
+      Err(e): {
+        err.line(readFailed(a.name, label, "\{e}"));
+        return Opened(false, u8[](), label, Feed.of(u8[]()));
+      }
+    }
   }
-  return Input(true, f.bytes, label, Feed.of(cli, f.bytes));
+  match (await fs.readFile(path)) {
+    Ok(bytes): { return Opened(true, bytes, label, Feed.of(bytes)); }
+    Err(e): {
+      // GNU's words where the category has them, and the host's sentence where it does not — `reason` says
+      // which, and why the host's own spelling of the four words is not used.
+      err.line(cannotOpen(a.name, path, reason(e)));
+      return Opened(false, u8[](), label, Feed.of(u8[]()));
+    }
+  }
 }
 
 /**
@@ -222,13 +190,13 @@ export struct Chunk { bool ok; bool more; u8[] bytes; }
  * with nothing to say *which* file, which is the same fault as printing the host's errno and was hidden by
  * the same thing, since a read only fails on inputs nobody had tried.
  */
-export async Chunk nextChunk(Core core, Cli cli, Feed fed, Args a, string label) {
+export async Chunk nextChunk(Output err, Feed fed, Args a, string label) {
   u8[] bytes = await fed.next();
   if (bytes.len() > 0) { return Chunk(true, true, bytes); }
   // `Feed` answers an empty array for both "finished" and "failed" and keeps the reason, which is the
   // one place the three states collapse to two. Asking afterwards is how they come apart again.
   if (fed.why != "") {
-    core.warn(readFailed(a.name, label, fed.why));
+    err.line(readFailed(a.name, label, fed.why));
     return Chunk(false, false, u8[]());
   }
   return Chunk(true, false, u8[]());
@@ -289,7 +257,7 @@ export struct Span {
   bool failed;
 }
 
-export async Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Feed fed) {
+export async Span nextSpan(Input stdin, Output err, Files fs, Args a, i32 at, bool opened, Feed fed) {
   i32 files = operandCount(a, 0);
   Feed here = fed;
   bool failed = false;
@@ -298,26 +266,26 @@ export async Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opene
     // does, and the reason this is a loop rather than one attempt: `cat a bad worse b` complains twice
     // and still prints `b`.
     while (true) {
-      Input in = await openStream(core, cli, fs, a, at, -1);
+      Opened in = await openStream(stdin, err, fs, a, at);
       if (in.ok) { here = in.fed; break; }
       failed = true;
       if (files <= at + 1) { return Span(false, false, u8[](), at, fed, true); }
       at = at + 1;
     }
   }
-  Chunk got = await nextChunk(core, cli, here, a, labelAt(a, at));
+  Chunk got = await nextChunk(err, here, a, labelAt(a, at));
   // A read that fails is the same skip as an open that fails, once there is another operand: GNU's
   // `cat a somedir b` prints `a`, complains, and prints `b`. It used to end the run here, which lost `b`
   // for the same reason and with the same invisibility as the open case.
   if (!got.ok) {
     if (files <= at + 1) { return Span(false, false, u8[](), at, here, true); }
-    Span next = await nextSpan(core, cli, fs, a, at + 1, false, here);
+    Span next = await nextSpan(stdin, err, fs, a, at + 1, false, here);
     return Span(next.ok, next.more, next.bytes, next.at, next.fed, true);
   }
   if (got.more) { return Span(true, true, got.bytes, at, here, failed); }
   // This file is done. If another was named, roll on; the caller sees one stream.
   if (files > at + 1) {
-    Span next = await nextSpan(core, cli, fs, a, at + 1, false, here);
+    Span next = await nextSpan(stdin, err, fs, a, at + 1, false, here);
     return Span(next.ok, next.more, next.bytes, next.at, next.fed, next.failed || failed);
   }
   return Span(true, false, u8[](), at, here, failed);
@@ -378,13 +346,13 @@ export struct Reader {
    * on it and then read stdin answered with the piped input reversed, which is a wrong answer where
    * there had been a refusal. When every operand fails the reader is empty and `failed` is set.
    */
-  async Reader create(Core core, Cli cli, Fs fs, Args a, i32 first, Sink out) {
+  async Reader create(Input stdin, Output err, Files fs, Args a, i32 first, Sink out) {
     if (operandCount(a, 0) <= first) {
-      return Reader(true, false, false, first, Lines.create(), Feed.fromStdin(cli), out);
+      return Reader(true, false, false, first, Lines.create(), Feed.from(stdin), out);
     }
     bool failed = false;
     for (i32 at = first; at < operandCount(a, 0); at++) {
-      Input in = await openStream(core, cli, fs, a, at, -1);
+      Opened in = await openStream(stdin, err, fs, a, at);
       // The feed the opener chose, not the process's: on anything but a host mount it is serving bytes
       // this filesystem handed over.
       if (in.ok) { return Reader(true, false, failed, at, Lines.create(), in.fed, out); }
@@ -392,7 +360,7 @@ export struct Reader {
     }
     // Every one of them was refused, and each has already said so. An empty feed rather than standard
     // input: there is nothing left to read, and reading anything would be inventing an operand.
-    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(cli, u8[]()), out);
+    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(u8[]()), out);
   }
 
   /**
@@ -408,7 +376,7 @@ export struct Reader {
    * `broken` is a different thing and stays: a read that fails *part way through* a file it had already
    * opened ends the sequence, because carrying on would silently drop the rest of that file.
    */
-  async Line next(this, Core core, Cli cli, Fs fs, Args a) {
+  async Line next(this, Input stdin, Output err, Files fs, Args a) {
     Line l = await nextLine(this.s, this.fed);
     if (l.ok) { return l; }
     // A read that failed part way is not an end of input, and `Line.ok` cannot say which happened.
@@ -418,7 +386,7 @@ export struct Reader {
     // no sentence attached. Every real tool names the file and the reason.
     if (this.s.broken != "") {
       this.out.flush();
-      core.warn(readFailed(a.name, labelAt(a, this.at), this.s.broken));
+      err.line(readFailed(a.name, labelAt(a, this.at), this.s.broken));
       this.broken = true;
       // …and on to the next operand, which is what GNU does: `cut -c1 a somedir b` prints `a`,
       // complains, and prints `b`. Ending the whole sequence here lost `b` — the same mistake as
@@ -426,21 +394,21 @@ export struct Reader {
       // one because a read only fails on inputs nobody had tried.
       if (operandCount(a, 0) <= this.at + 1) { return l; }
       this.at = this.at + 1;
-      Input more = await openStream(core, cli, fs, a, this.at, -1);
-      if (!more.ok) { this.failed = true; return await this.next(core, cli, fs, a); }
+      Opened more = await openStream(stdin, err, fs, a, this.at);
+      if (!more.ok) { this.failed = true; return await this.next(stdin, err, fs, a); }
       this.s = Lines.create();
       this.fed = more.fed;
-      return await this.next(core, cli, fs, a);
+      return await this.next(stdin, err, fs, a);
     }
     if (operandCount(a, 0) <= this.at + 1) { return l; }
     this.at = this.at + 1;
     // Everything written from the file just finished, before anything is said about the next one.
     this.out.flush();
-    Input in = await openStream(core, cli, fs, a, this.at, -1);
+    Opened in = await openStream(stdin, err, fs, a, this.at);
     // Reported already, by `openStream`. Remember that it happened, and read the next operand.
-    if (!in.ok) { this.failed = true; return await this.next(core, cli, fs, a); }
+    if (!in.ok) { this.failed = true; return await this.next(stdin, err, fs, a); }
     this.s = Lines.create();
     this.fed = in.fed;
-    return await this.next(core, cli, fs, a);
+    return await this.next(stdin, err, fs, a);
   }
 }

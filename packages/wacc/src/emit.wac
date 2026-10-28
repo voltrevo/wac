@@ -935,12 +935,23 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
         for (i32 i = 0; i < bound.len(); i++) { if (bound[i] == "") { open = true; } }
         if (open) {
           string wkey = ";" + numText(env.curFile) + ":" + numText(tok) + "=";
+          // **The slot is kept as well as the answer**, because the walk can reach the call while the slot
+          // is known and an argument's type is not yet — `mk(Box<i32>(3), (i32 n) => …)` is met before
+          // `Box<i32>` is registered, which happens when its arguments are walked — and when a later visit
+          // knows the argument, the slot has gone. So the slot is noted under the call's token on sight.
+          string skey = ";slot " + numText(env.curFile) + ":" + numText(tok) + "=";
+          string slot = "";
           if (env.callWantTok == tok && env.callWant != "") {
-            if (!matchTypeParams(env, cs, cl, returnType, env.callWant, typeParams, bound)) { return ""; }
+            slot = env.callWant;
+            if (env.wantInsts.indexOf(skey) < 0) { env.wantInsts = env.wantInsts + skey + slot + ";"; }
           } else if (env.wantInsts.indexOf(wkey) >= 0) {
             string rest = env.wantInsts.slice(env.wantInsts.indexOf(wkey) + wkey.len(), env.wantInsts.len());
             return rest.slice(0, rest.indexOf(";"));
+          } else if (env.wantInsts.indexOf(skey) >= 0) {
+            string srest = env.wantInsts.slice(env.wantInsts.indexOf(skey) + skey.len(), env.wantInsts.len());
+            slot = srest.slice(0, srest.indexOf(";"));
           }
+          if (slot != "" && !matchTypeParams(env, cs, cl, returnType, slot, typeParams, bound)) { return ""; }
           // Then a number's own type, for a letter nothing else bound — `id(4)` is `id<i32>`. Not
           // recorded: the same arguments answer the same way every time this call is asked about.
           string[] fromNum = string[].defaulted(typeParams.len());
@@ -7931,6 +7942,48 @@ string emitterSpelling(Env env, string t) {
     for (i32 i = 0; i < ms.len(); i++) { ms[i] = emitterSpelling(env, ms[i]); }
     return tupleName(ms);
   }
+  // **A funcref is `fn(A, B) -> R` to the evaluator and `fn[R(A,B)]` here** — the evaluator spells it as the
+  // checker does, so a `type` naming one (`type Wait = fn<i32(i32[], i32)>;`) arrives in the checker's words.
+  if (t.len() > 3 && t.slice(0, 3) == "fn(") {
+    u8[] a = t.toBytes();
+    i32 depth = 0;
+    i32 close = -1;
+    for (i32 i = 2; i < a.len() && close < 0; i++) {
+      if (a[i] == 40) { depth = depth + 1; }
+      if (a[i] == 41) {
+        depth = depth - 1;
+        if (depth == 0) { close = i; }
+      }
+    }
+    if (close > 0 && t.len() > close + 5 && t.slice(close + 1, close + 5) == " -> ") {
+      string out = "fn[" + emitterSpelling(env, t.slice(close + 5, t.len())) + "(";
+      string inner = t.slice(3, close);
+      i32 from = 0;
+      i32 d = 0;
+      i32 wrote = 0;
+      u8[] b = inner.toBytes();
+      for (i32 i = 0; i <= b.len(); i++) {
+        bool cut = i == b.len();
+        if (!cut) {
+          if (b[i] == 40 || b[i] == 60 || b[i] == 91) { d = d + 1; }
+          // the `>` of an inner funcref's `->` closes nothing
+          if (b[i] == 41 || b[i] == 93 || (b[i] == 62 && !(i > 0 && b[i - 1] == 45))) { d = d - 1; }
+          cut = b[i] == 44 && d == 0;
+        }
+        if (cut) {
+          string p = inner.slice(from, i);
+          while (p.len() > 0 && p.slice(0, 1) == " ") { p = p.slice(1, p.len()); }
+          if (p != "") {
+            if (wrote > 0) { out = out + ","; }
+            out = out + emitterSpelling(env, p);
+            wrote = wrote + 1;
+          }
+          from = i + 1;
+        }
+      }
+      return out + ")]";
+    }
+  }
   if (t.len() > 1 && t.slice(t.len() - 1, t.len()) == "?"
       && !(t.len() > 2 && t.slice(t.len() - 2, t.len()) == "??")) {
     string base = t.slice(0, t.len() - 1);
@@ -14429,7 +14482,10 @@ string walkLvType(Env env, u8[] src, Lexed lexed, Lvalue lv) {
     LField(base, fieldTok): {
       string ot = walkLvType(env, src, lexed, base);
       if (ot.len() > 1 && ot.slice(ot.len() - 1, ot.len()) == "?") { ot = ot.slice(0, ot.len() - 1); }
-      return ot == "" ? "" : env.fieldType(ot, tokenTextOf(src, lexed, fieldTok));
+      if (ot == "") { return ""; }
+      string fname = tokenTextOf(src, lexed, fieldTok);
+      string ft = env.fieldType(ot, fname);
+      return ft != "" ? ft : pendingInstanceFieldType(env, src, lexed, ot, fname);
     }
     LIndex(base, index): {
       string at = walkLvType(env, src, lexed, base);
@@ -14440,6 +14496,45 @@ string walkLvType(Env env, u8[] src, Lexed lexed, Lvalue lv) {
       return ut.len() > 1 && ut.slice(ut.len() - 1, ut.len()) == "?" ? ut.slice(0, ut.len() - 1) : "";
     }
   }
+}
+
+/**
+ * A field's type on a generic instance discovered but **not registered yet** — read from its template under the
+ * instance's arguments, or `""`.
+ *
+ * Instances are registered in the order they were discovered, and a method instance's lambdas are typed when it
+ * is: so `out.drive = () => …` in `Ticket.first`, whose `Ticket<i32>` is first named by that very body, asked for
+ * a field of a struct that had none yet, and the lambda had no type (`issues/lang/0401a`). The answer does not
+ * depend on registration — it is the template's field with the letters bound — so it is computed here.
+ */
+string pendingInstanceFieldType(Env env, u8[] src, Lexed lexed, string inst, string field) {
+  string tmpl = templateNameOf(inst);
+  if (tmpl == "" || env.prog is null) { return ""; }
+  Decl[] ds = env.mergedDecls.len() > 0 ? env.mergedDecls : env.prog!.decls;
+  i32 savedFile = env.curFile;
+  string out = "";
+  for (i32 d = 0; d < ds.len() && out == ""; d++) {
+    match (ds[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        env.curFile = env.declFile(d);
+        u8[] ds2 = srcFor(env.fileSrcs, src, env.curFile);
+        Lexed dl = lexFor(env.fileLexeds, lexed, env.curFile);
+        if (tokenTextOf(ds2, dl, nameTok) != tmpl) { continue; }
+        i32 pushed = pushSubstitutionInner(env, ds2, dl, typeParams, inst);
+        for (i32 f = 0; f < fields.len(); f++) {
+          if (tokenTextOf(ds2, dl, fields[f].nameTok) == field) { out = typeOfTyName(env, ds2, dl, fields[f].type); }
+        }
+        popSubstitutionInner(env, pushed);
+        // A field the template inherits from a plain parent is that parent's, whatever the letters are.
+        if (out == "" && parentTok >= 0) { out = env.fieldType(nameKeyOf(env, ds2, dl, parentTok), field); }
+        if (out == "") { out = " "; }
+      }
+      default: { }
+    }
+  }
+  env.curFile = savedFile;
+  return out == " " ? "" : out;
 }
 
 void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
@@ -18964,12 +19059,17 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 i = 0; i < methods.len(); i++) {
+          // **A template's entry names no types**: it is declined below and only its instances are
+          // compiled, and naming `Ticket<Result<A, E>>` with `A` bound by nothing *makes* that instance —
+          // a struct whose fields are slots of a letter, which declined every module importing std once
+          // `Clock.within<A, E>` existed, though nothing called it. Placeholders hold the numbering.
+          bool template = methods[i].typeParams.len() > 0;
           string[] mpts = string[].defaulted(methods[i].params.len());
           for (i32 j = 0; j < methods[i].params.len(); j++) {
-            mpts[j] = typeOfTyName(env, src, lexed, methods[i].params[j].type);
+            mpts[j] = template ? "i32" : typeOfTyName(env, src, lexed, methods[i].params[j].type);
           }
           env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
-                      typeOfTyName(env, src, lexed, methods[i].returnType), mpts);
+                      template ? "void" : typeOfTyName(env, src, lexed, methods[i].returnType), mpts);
           env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? owner : "";
           if (methods[i].isVirtual || methods[i].isOverride) {
             env.noteVirtualMethod(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok));
@@ -19038,7 +19138,10 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (methods[m].typeParams.len() > 0) { continue; }
+          // A method's `return` has a slot as a function's does (`§wac-generic-infer-expected-endugbi`).
+          env.walkReturn = typeOfTyName(env, src, lexed, methods[m].returnType);
           collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? nameKeyOf(env, src, lexed, nameTok) : "", methods[m].params, methods[m].body);
+          env.walkReturn = "";
         }
       }
       // **An enum's methods are bodies too**, and this walk had only `Func` and `StructDecl` — so a
@@ -19054,7 +19157,10 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (methods[m].typeParams.len() > 0) { continue; }
+          // A method's `return` has a slot as a function's does (`§wac-generic-infer-expected-endugbi`).
+          env.walkReturn = typeOfTyName(env, src, lexed, methods[m].returnType);
           collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? nameKeyOf(env, src, lexed, nameTok) : "", methods[m].params, methods[m].body);
+          env.walkReturn = "";
         }
       }
       // **A static's initialiser is a body as well**: a generic it calls is an instance the module
@@ -21803,6 +21909,9 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
               if (methods[m].isPrivate) { continue; }
+              // A method with letters of its own has no binding — the host cannot say what they are — and naming
+              // its types with them unbound makes instances of a letter (`Clock.within<A, E>`'s `Result<A, …>`).
+              if (methods[m].typeParams.len() > 0) { continue; }
               n = noteBindStruct(env, out, n,
                                  baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
               for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
@@ -21815,6 +21924,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
             if (typeParams.len() > 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
+              if (methods[m].typeParams.len() > 0) { continue; }
               n = noteBindStruct(env, out, n,
                                  baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
               for (i32 pi = 0; pi < methods[m].params.len(); pi++) {

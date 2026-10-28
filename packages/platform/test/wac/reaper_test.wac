@@ -18,45 +18,49 @@
  * are about names in `/tmp` and cannot see a process.
  */
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std";
+import { Clock, Exec, ChildEnv, Launch, Env, Files, Output, Procs, Sys } from "std";
 import { reapMatching } from "../../../../tools/wac/suitehouse.wac";
+import { flatten } from "core";
 
 /** A process whose command line carries this workspace's `.cache`, which is what the rule matches. */
-void started(Cli cli, string script) {
-  cli.writeFile(script, "sleep 120\n".toBytes()).wait();
+void started(Files fs, Procs procs, string script) {
+  fs.writeFile(script, "sleep 120\n".toBytes()).wait();
   // `setsid` and detached, so it outlives the shell that starts it and this test can ask about it.
-  cli.execWith("/bin/sh", ["-c", "setsid /bin/sh \{script} >/dev/null 2>&1 &"],
-               u8[](), string[].filled(0, ""), false, false).wait();
+  flatten(procs.exec("/bin/sh", ["-c", "setsid /bin/sh \{script} >/dev/null 2>&1 &"], u8[](), ChildEnv(false, string[].filled(0, "")), Launch("", false, false, false)).wait()).unwrap();
 }
 
-bool alive(Cli cli, string script) {
-  Exec r = cli.execWith("/bin/ps", ["-eo", "args", "--no-headers"], u8[](),
-                        string[].filled(0, ""), false, false).wait();
+bool alive(Procs procs, string script) {
+  Exec r = flatten(procs.exec("/bin/ps", ["-eo", "args", "--no-headers"], u8[](), ChildEnv(false, string[].filled(0, "")), Launch("", false, false, false)).wait()).unwrap();
   return string.fromBytes(r.stdout).indexOf(script) >= 0;
 }
 
-export string test_the_reaper_spares_what_is_young_and_takes_what_is_not(Core core, Cli cli) {
+export string test_the_reaper_spares_what_is_young_and_takes_what_is_not(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Clock clock = sys.clock();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/reaperprobe";
-  cli.mkdir(dir, true).wait();
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/reaperprobe";
+  fs.mkdir(dir, true).wait();
   string script = "\{dir}/held.sh";
 
-  started(cli, script);
-  core.delay(400).wait();
-  t.isTrue(alive(cli, script), "the probe did not start, so neither half below means anything");
+  started(fs, procs, script);
+  clock.sleepMillis(400).wait();
+  t.isTrue(alive(procs, script), "the probe did not start, so neither half below means anything");
 
   // The real bound is two hours; a process seconds old is nowhere near it.
-  reapMatching(core, cli, script, 7200000 as i64);
-  core.delay(300).wait();
-  t.isTrue(alive(cli, script), "the reaper killed a process that had only just started");
+  reapMatching(out, procs, script, 7200000 as i64);
+  clock.sleepMillis(300).wait();
+  t.isTrue(alive(procs, script), "the reaper killed a process that had only just started");
 
   // And a bound of zero, which everything is past — **narrowed to this probe's own path**.
   // Passing the whole of `.cache` here would reap every other lane's daemons and builds, and it did:
   // a suite lane killed another's `greet.wac` build, which then failed with an empty reason.
-  reapMatching(core, cli, script, 0 as i64);
-  core.delay(500).wait();
-  t.isTrue(!alive(cli, script), "the reaper spared a process past its bound, so it never fires");
+  reapMatching(out, procs, script, 0 as i64);
+  clock.sleepMillis(500).wait();
+  t.isTrue(!alive(procs, script), "the reaper spared a process past its bound, so it never fires");
 
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

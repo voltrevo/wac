@@ -28,36 +28,39 @@
 // The host-mount half is the one comparable with GNU, so that half compares against the capture; the
 // image half compares against the host-mount half, which is the only oracle it can have.
 
-import { Cli, Core } from "std";
+import { Env, Files, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { notDirCases, notDirFixtures } from "./cases.wac";
 import { Loaded, Ran, layFixtures, load, runCase, runSealed, show, trimmed, unprefixed }
   from "./replay.wac";
+import { flatten } from "core";
 
 string vectorsPath() { return "packages/box/test/notdir-vectors.txt"; }
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-notdir"; }
+string caseDir(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/wac-notdir"; }
 
-export async string test_f_slash_g_where_f_is_a_file_says_what_the_real_tool_says(Core core, Cli cli) {
+export async string test_f_slash_g_where_f_is_a_file_says_what_the_real_tool_says(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
   string[] list = notDirCases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 ran = 0;
   i32 wrong = 0;
   i32 unknown = 0;
   string detail = "";
   for (i32 i = 0; i < list.len() && i < v.n; i++) {
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
-    if (!layFixtures(cli, dir, notDirFixtures())) {
+    if (!layFixtures(fs, dir, notDirFixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran r = await runCase(core, cli, dir, list[i]);
+    Ran r = await runCase(sys, dir, list[i]);
     ran = ran + 1;
     // **Whole lines, not just the reason after the last colon.** The point of the exercise was that ours
     // were *invented* — `rmdir: f/g:` where GNU says `rmdir: failed to remove 'f/g':`, and `ls: f/g:
@@ -81,7 +84,7 @@ export async string test_f_slash_g_where_f_is_a_file_says_what_the_real_tool_say
       if (wrong <= 5) { detail = detail + "\n  $ \{list[i]}\n    leaked a host path: \{show(r.err)}"; }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
   t.eqI32(ran, list.len(), "not every case replayed — \{list.len()} cases, \{v.n}" +
                            " vectors");
@@ -103,19 +106,21 @@ export async string test_f_slash_g_where_f_is_a_file_says_what_the_real_tool_say
  * The paths differ by a leading `/` (the image case works at the root), so what is compared is the
  * sentence with the operand stripped, which is where the category shows.
  */
-export async string test_an_image_answers_exactly_as_a_host_mount_does(Core core, Cli cli) {
+export async string test_an_image_answers_exactly_as_a_host_mount_does(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   string[] list = notDirCases();
-  string dir = caseDir(cli);
+  string dir = caseDir(env);
   i32 differ = 0;
   string detail = "";
   for (i32 i = 0; i < list.len(); i++) {
-    if (!layFixtures(cli, dir, notDirFixtures())) {
+    if (!layFixtures(fs, dir, notDirFixtures())) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran host = await runCase(core, cli, dir, list[i]);
-    Ran image = await runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; \{list[i]}");
+    Ran host = await runCase(sys, dir, list[i]);
+    Ran image = await runSealed(sys, "printf 'hi\\n' > /f; mkdir /d; cd /; \{list[i]}");
     if (reason(image.err) != reason(host.err) || image.status != host.status) {
       differ = differ + 1;
       if (differ <= 5) {
@@ -125,7 +130,7 @@ export async string test_an_image_answers_exactly_as_a_host_mount_does(Core core
       }
     }
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   t.eqI32(differ, 0, "\{differ} of \{list.len()}" +
                      " answer differently on an image than on a host mount\{detail}");
   return t.report();
@@ -161,12 +166,11 @@ string reason(string text) {
  * permission. It is the same mistake `FAULT_UNSUPPORTED` was added for — the nearest available category
  * blaming the file. No oracle needed: what is asserted is which sentence is *not* said.
  */
-export async string test_an_image_does_not_answer_permission_denied_for_a_path_nothing_refused(Core core,
-                                                                                         Cli cli) {
+export async string test_an_image_does_not_answer_permission_denied_for_a_path_nothing_refused(Sys sys) {
   T t = T.create();
   string[] scripts = ["mkdir /f/g", "echo y > /f/g", "mv /d /f/g"];
   for (i32 i = 0; i < scripts.len(); i++) {
-    Ran r = await runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; \{scripts[i]}");
+    Ran r = await runSealed(sys, "printf 'hi\\n' > /f; mkdir /d; cd /; \{scripts[i]}");
     t.isTrue(r.err.indexOf("Permission denied") < 0, "\{scripts[i]}: \{show(r.err)}");
     t.isTrue(r.err.indexOf("Not a directory") >= 0, "\{scripts[i]}: \{show(r.err)}");
   }
@@ -186,22 +190,24 @@ export async string test_an_image_does_not_answer_permission_denied_for_a_path_n
  * different prefix. So the *reason* is compared and the frame is not, which is why this case is not in
  * the swept list: a captured expectation it is meant to differ from is not an expectation.
  */
-export async string test_cp_and_mv_name_the_operand_at_fault(Core core, Cli cli) {
+export async string test_cp_and_mv_name_the_operand_at_fault(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  string dir = caseDir(cli);
-  if (!layFixtures(cli, dir, notDirFixtures())) {
+  string dir = caseDir(env);
+  if (!layFixtures(fs, dir, notDirFixtures())) {
     t.isTrue(false, "cannot lay the fixtures in \{dir}");
     return t.report();
   }
-  Ran moved = await runCase(core, cli, dir, "mv f f/g");
+  Ran moved = await runCase(sys, dir, "mv f f/g");
   t.isTrue(moved.err.indexOf("'f' to 'f/g'") >= 0, "mv names one end only: \{show(moved.err)}");
   t.isTrue(trimmed(moved.err).len() > 0 &&
            trimmed(moved.err).slice(trimmed(moved.err).len() - 15, trimmed(moved.err).len()) ==
              "Not a directory",
            "mv: \{show(moved.err)}");
 
-  Ran copied = await runCase(core, cli, dir, "cp f f/g");
+  Ran copied = await runCase(sys, dir, "cp f f/g");
   t.isTrue(copied.err.indexOf("cannot create regular file") >= 0, "cp: \{show(copied.err)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

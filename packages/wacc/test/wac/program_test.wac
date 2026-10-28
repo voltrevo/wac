@@ -24,7 +24,7 @@
 // generator that dropped a cast it needed would still read like JavaScript.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Stat } from "std";
+import { Exec, Change, Stat, ChildEnv, Env, Files, Launch, Output, Procs, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles, pruneForBuild } from "../../src/api.wac";
 import { Pruned } from "../../src/reach.wac";
@@ -32,13 +32,14 @@ import { Res } from "../../src/path.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
+import { flatten } from "core";
 
 static string SOURCE = "packages/wac/src/wac.wac";
 static string GLUERUN = "packages/wacc/test/gluerun.ts";
 
-string freshScratch(T t, Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/" + name;
-  string why = freshDir(cli, dir);
+string freshScratch(T t, Env env, Files fs, string name) {
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/" + name;
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   return dir;
 }
@@ -50,14 +51,14 @@ string freshScratch(T t, Cli cli, string name) {
  * it, which is the input a source walk cannot see: `wac` carries a prebuilt seed, so a rebuilt binary
  * can turn the same sources into a different module. `issues/system/0160` is what missing that costs.
  */
-i64 newestInput(Cli cli) {
+i64 newestInput(Env env, Files fs) {
   i64 newest = 0 as i64;
-  Stat bin = cli.stat(wacBinary(cli)).wait();
-  if (bin.exists) { newest = bin.modifiedMillis; }
-  Graph g = graphOf(cli, SOURCE);
+  Stat? bin = flatten(fs.stat(wacBinary(env)).wait()).ok();
+  if ((bin is not null)) { newest = bin!.modifiedMillis; }
+  Graph g = graphOf(fs, SOURCE);
   for (i32 i = 0; i < g.paths.len(); i++) {
-    Stat s = cli.stat(g.paths[i]).wait();
-    if (s.exists && s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+    Stat? s = flatten(fs.stat(g.paths[i]).wait()).ok();
+    if ((s is not null) && s!.modifiedMillis > newest) { newest = s!.modifiedMillis; }
   }
   return newest;
 }
@@ -76,114 +77,127 @@ i64 newestInput(Cli cli) {
  * `.cache` entry corrupted by something else writing there, which is why the build writes to a name
  * of its own rather than sharing one with any other test file.
  */
-string buildProgram(T t, Cli cli) {
+string buildProgram(T t, Env env, Files fs, Procs procs) {
   // **Not `scratch("waccprog")`, and the name is the whole reason.** The first test below asks for a
   // scratch directory by that name and `scratch` empties what it is given, so a cache that lived
   // there was deleted by the first test and rebuilt by it every run — which is what the first
   // version of this did, silently and at full price.
-  string dir = cli.cwd().wait() + "/.cache/waccprog-built";
-  string whyDir1 = madeDir(cli, dir);
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/waccprog-built";
+  string whyDir1 = madeDir(fs, dir);
   t.isTrue(whyDir1 == "", whyDir1);
   string stem = dir + "/wacc";
   string wasm = stem + ".wasm";
-  Stat have = cli.stat(wasm).wait();
-  if (have.exists && have.modifiedMillis > newestInput(cli)) { return wasm; }
-  Exec r = cli.exec(wacBinary(cli),
-                    [
+  Stat? have = flatten(fs.stat(wasm).wait()).ok();
+  if ((have is not null) && have!.modifiedMillis > newestInput(env, fs)) { return wasm; }
+  auto rRan = flatten(procs.exec(wacBinary(env), [
                              "build", SOURCE, "-o", stem, "--allow-read", "--allow-write",
                              "--quiet"
-                    ], u8[]()).wait();
-  t.isTrue(r.ran(), "the wac binary ran — " + r.error);
-  t.eqI32(r.status, 0, "building " + SOURCE + " — " + string.fromBytes(r.stderr));
-  return r.ran() && r.status == 0 ? wasm : "";
+                    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the wac binary ran — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  t.eqI32(r!.status, 0, "building " + SOURCE + " — " + string.fromBytes(r!.stderr));
+  return (r is not null) && r!.status == 0 ? wasm : "";
 }
 
 /** Run the built program with `args`. */
-Exec runProgram(Cli cli, string program, string[] args) {
+Exec runProgram(Env env, Procs procs, string program, string[] args) {
   string[] argv = string[].filled(args.len() + 1, "");
   argv[0] = program;
   for (i32 i = 0; i < args.len(); i++) { argv[1 + i] = args[i]; }
-  return cli.exec(wacBinary(cli), argv, u8[]()).wait();
+  return flatten(procs.exec(wacBinary(env), argv, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** The import graph of `entry`, walked the way the program walks it. */
 
-export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
-    Core core, Cli cli) {
+export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "waccprog");
-  string program = buildProgram(t, cli);
+  string dir = freshScratch(t, env, fs, "waccprog");
+  string program = buildProgram(t, env, fs, procs);
   if (program == "") { return t.report(); }
 
   string entry = "packages/json/src/json.wac";
-  string out = dir + "/out.wasm";
-  Exec r = runProgram(cli, program, ["compile", entry, out]);
+  string wasmOut = dir + "/out.wasm";
+  Exec r = runProgram(env, procs, program, ["compile", entry, wasmOut]);
   t.eqI32(r.status, 0, "compile failed: " + string.fromBytes(r.stderr) +
                        string.fromBytes(r.stdout));
   if (r.status != 0) { return t.report(); }
 
   // The same program through the library — the graph a build compiles, which is what reachability
   // retains of the import graph (spec ch05).
-  Graph g = graphOf(cli, entry);
+  Graph g = graphOf(fs, entry);
   t.isTrue(g.ok, "the import graph — " + g.error);
   if (!g.ok) { return t.report(); }
   Pruned pruned = pruneForBuild(g.paths, g.sources, Res.empty(), entry);
   u8[] want = emitFiles(pruned.paths, pruned.sources, entry);
-  FileResult got = cli.readFile(out).wait();
-  t.isTrue(got.ok, "the program wrote a module — " + got.error);
-  if (!got.ok) { return t.report(); }
+  auto gotRead = flatten(fs.readFile(wasmOut).wait());
+  u8[]? got = gotRead.ok();
+  t.isTrue((got is not null), "the program wrote a module — " + "\{gotRead.isErr() ? "\{gotRead.err()!}" : ""}");
+  if ((got is null)) { return t.report(); }
 
-  t.eqI32(got.bytes.len(), want.len(), "the program and the library wrote different sizes");
-  if (got.bytes.len() == want.len()) {
+  t.eqI32(got!.len(), want.len(), "the program and the library wrote different sizes");
+  if (got!.len() == want.len()) {
     i32 first = -1;
     for (i32 i = 0; i < want.len() && first < 0; i++) {
-      if (got.bytes[i] != want[i]) { first = i; }
+      if (got![i] != want[i]) { first = i; }
     }
     t.eqI32(first, -1, first < 0 ? "" :
-            "byte " + itoa(first) + " differs: " + itoa(got.bytes[first] as i32) + " vs " +
+            "byte " + itoa(first) + " differs: " + itoa(got![first] as i32) + " vs " +
             itoa(want[first] as i32));
   }
-  core.log("    program: " + itoa(got.bytes.len()) + " bytes for " + entry +
+  out.line("    program: " + itoa(got!.len()) + " bytes for " + entry +
            ", identical to the library's");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
+export string test_it_names_the_file_it_cannot_read(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // A missing import used to be discoverable only as whatever the checker said about the hole it
   // left, which points at the file that *imported* it. The walk stops and says which path.
   T t = T.create();
-  string dir = freshScratch(t, cli, "waccprog-missing");
-  string program = buildProgram(t, cli);
+  string dir = freshScratch(t, env, fs, "waccprog-missing");
+  string program = buildProgram(t, env, fs, procs);
   if (program == "") { return t.report(); }
 
-  cli.writeFile(dir + "/main.wac",
+  fs.writeFile(dir + "/main.wac",
                 ("import { x } from \"./gone.wac\";\nexport i32 f() { return x; }\n").toBytes())
      .wait();
-  Exec r = runProgram(cli, program, ["check", dir + "/main.wac"]);
+  Exec r = runProgram(env, procs, program, ["check", dir + "/main.wac"]);
   t.isTrue(r.status != 0, "a missing import compiled");
   t.isTrue(string.fromBytes(r.stderr).indexOf("gone.wac") >= 0,
            "did not name the file: " + string.fromBytes(r.stderr));
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Core core, Cli cli) {
+export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "waccprog-bad");
-  string program = buildProgram(t, cli);
+  string dir = freshScratch(t, env, fs, "waccprog-bad");
+  string program = buildProgram(t, env, fs, procs);
   if (program == "") { return t.report(); }
 
-  cli.writeFile(dir + "/bad.wac", "export i32 f() { return \"no\"; }\n".toBytes()).wait();
-  Exec r = runProgram(cli, program, ["check", dir + "/bad.wac"]);
+  fs.writeFile(dir + "/bad.wac", "export i32 f() { return \"no\"; }\n".toBytes()).wait();
+  Exec r = runProgram(env, procs, program, ["check", dir + "/bad.wac"]);
   t.isTrue(r.status != 0, "a type error passed the check");
   t.isTrue(string.fromBytes(r.stderr).indexOf("bad.wac") >= 0,
            "no file in the diagnostic: " + string.fromBytes(r.stderr));
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, Cli cli) {
+export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // **The last piece of the toolchain that only existed in TypeScript.** `waccx bindgen` wrote glue
   // and the `wac` binary could not, which is a tooling-parity gap rather than a missing language
   // feature — `src/bindgen.wac` closes it, and `test/wac/bindgenwac_test.wac` holds the two generators to
@@ -193,8 +207,8 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   // would still look like JavaScript. `.js` and imported as such, which is the browser's rule and the
   // reason the JavaScript mode exists at all.
   T t = T.create();
-  string dir = freshScratch(t, cli, "waccprog-glue");
-  string program = buildProgram(t, cli);
+  string dir = freshScratch(t, env, fs, "waccprog-glue");
+  string program = buildProgram(t, env, fs, procs);
   if (program == "") { return t.report(); }
 
   // **A callback with a parameter, because that branch was the one JavaScript mode got wrong.**
@@ -207,7 +221,7 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   // in a `join`:** one parameter, two, and none. The nilary case is the one that would pass either
   // way — `raw` is empty, so there is no annotation to get wrong — and it is here so that the next
   // person changing this loop finds out whether they broke the empty case as well.
-  cli.writeFile(dir + "/m.wac",
+  fs.writeFile(dir + "/m.wac",
     ("struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n" +
      "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
      "export string greet(string who) { return \"hi \" + who; }\n" +
@@ -215,22 +229,24 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
      "export i32 pair(fn<i32(i32, i32)> g, i32 a, i32 b) { return g(a, b); }\n" +
      "export i32 nilary(fn<i32()> h) { return h(); }\n").toBytes()).wait();
 
-  Exec js = runProgram(cli, program, ["bindgen", dir + "/m.wac", "--js"]);
+  Exec js = runProgram(env, procs, program, ["bindgen", dir + "/m.wac", "--js"]);
   t.eqI32(js.status, 0, "bindgen failed: " + string.fromBytes(js.stderr) +
                         string.fromBytes(js.stdout));
   if (js.status != 0) { return t.report(); }
 
-  Exec ran = cli.exec("deno", ["run", "-A", GLUERUN, dir + "/m.wac.js"], u8[]()).wait();
-  t.isTrue(ran.ran(), "deno ran — " + ran.error);
-  t.eqI32(ran.status, 0, "the glue did not answer: " + string.fromBytes(ran.stderr));
+  auto ranRan = flatten(procs.exec("deno", ["run", "-A", GLUERUN, dir + "/m.wac.js"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? ran = ranRan.ok();
+  t.isTrue((ran is not null), "deno ran — " + "\{ranRan.isErr() ? "\{ranRan.err()!}" : ""}");
+  t.eqI32(ran!.status, 0, "the glue did not answer: " + string.fromBytes(ran!.stderr));
 
   // TypeScript by default, which is the other half of the same generator.
-  Exec ts = runProgram(cli, program, ["bindgen", dir + "/m.wac"]);
+  Exec ts = runProgram(env, procs, program, ["bindgen", dir + "/m.wac"]);
   t.eqI32(ts.status, 0, "bindgen --ts failed: " + string.fromBytes(ts.stderr));
-  FileResult text = cli.readFile(dir + "/m.wac.ts").wait();
-  t.isTrue(text.ok, "the TypeScript glue was written — " + text.error);
-  if (text.ok) {
-    string tsGlue = string.fromBytes(text.bytes);
+  auto textRead = flatten(fs.readFile(dir + "/m.wac.ts").wait());
+  u8[]? text = textRead.ok();
+  t.isTrue((text is not null), "the TypeScript glue was written — " + "\{textRead.isErr() ? "\{textRead.err()!}" : ""}");
+  if ((text is not null)) {
+    string tsGlue = string.fromBytes(text!);
     t.isTrue(tsGlue.indexOf(": number") >= 0, "the TypeScript mode emitted no annotations");
     // And the dispatcher's own parameters are still annotated there, which is the half of the fix
     // that is easy to lose: making `--js` stop emitting a type must not stop `--ts` emitting one.
@@ -239,14 +255,15 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   }
   // The JavaScript glue must carry no type at all — asserted on the text as well as by running it,
   // because a runtime that tolerated the annotation would leave the file wrong for the others.
-  FileResult jsText = cli.readFile(dir + "/m.wac.js").wait();
-  t.isTrue(jsText.ok, "the JavaScript glue was written — " + jsText.error);
-  if (jsText.ok) {
-    t.isTrue(string.fromBytes(jsText.bytes).indexOf(": unknown") < 0,
+  auto jsTextRead = flatten(fs.readFile(dir + "/m.wac.js").wait());
+  u8[]? jsText = jsTextRead.ok();
+  t.isTrue((jsText is not null), "the JavaScript glue was written — " + "\{jsTextRead.isErr() ? "\{jsTextRead.err()!}" : ""}");
+  if ((jsText is not null)) {
+    t.isTrue(string.fromBytes(jsText!).indexOf(": unknown") < 0,
              "the JavaScript mode emitted a TypeScript annotation: " +
-             string.fromBytes(jsText.bytes).slice(0, 400));
+             string.fromBytes(jsText!).slice(0, 400));
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -259,9 +276,12 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
  * `spec/_status/MET` listed spec ch07's own `Result<i32>` example as met, by a probe route that runs
  * the adapter in-process. So this drives the command, and asserts the output as well as the status.
  */
-export string test_a_result_main_with_a_gathered_error_builds_and_says_what_failed(Core core, Cli cli) {
+export string test_a_result_main_with_a_gathered_error_builds_and_says_what_failed(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = freshScratch(t, cli, "resultmain");
+  string dir = freshScratch(t, env, fs, "resultmain");
   string src =
       "import { Sys } from \"std\";\nimport { Result } from \"core\";\n" +
       "struct Malformed { string why; }\n" +
@@ -270,13 +290,14 @@ export string test_a_result_main_with_a_gathered_error_builds_and_says_what_fail
       "  i32 n = try parse(sys.args().len() + 1);\n" +
       "  if (n > 5) { return Result.Err(\"too many\"); }\n" +
       "  return Result.Ok(n);\n}\n";
-  Change wrote = cli.writeFile(dir + "/main.wac", src.toBytes()).wait();
-  t.eqI32(wrote.fault, 0, "wrote the program");
-  Exec r = cli.exec(wacBinary(cli), ["run", dir + "/main.wac"], u8[]()).wait();
-  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.isTrue(r.ran(), "wac ran — " + r.error);
+  auto wrote = flatten(fs.writeFile(dir + "/main.wac", src.toBytes()).wait());
+  t.isTrue(wrote.isOk(), "wrote the program");
+  auto rRan = flatten(procs.exec(wacBinary(env), ["run", dir + "/main.wac"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  string said = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
+  t.isTrue((r is not null), "wac ran — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
   t.isTrue(said.indexOf("cannot emit") < 0, "it builds — " + said);
-  t.eqI32(r.status, 1, "an Err exits 1 — " + said);
+  t.eqI32(r!.status, 1, "an Err exits 1 — " + said);
   t.isTrue(said.indexOf("Malformed") >= 0, "and names what it failed with — " + said);
   return t.report();
 }

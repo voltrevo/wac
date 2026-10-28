@@ -17,24 +17,25 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
-import { Change, Cli, Core, Exec } from "std";
+import { ChildEnv, Exec, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 
 /** Write `text` to `dir/name`, failing `t` if it could not be. */
-bool put(Cli cli, T t, string dir, string name, string text) {
-  Change c = cli.writeFile("\{dir}/\{name}", text.toBytes()).wait();
-  t.isTrue(c.ok(), "wrote \{name} — \{c.message}");
-  return c.ok();
+bool put(Files fs, T t, string dir, string name, string text) {
+  auto c = flatten(fs.writeFile("\{dir}/\{name}", text.toBytes()).wait());
+  t.isTrue(c.isOk(), "wrote \{name} — \{c.isErr() ? "\{c.err()!}" : ""}");
+  return c.isOk();
 }
 
 /** A chain `prefix1.wac` → `prefix2.wac` → … → `prefix<n>.wac`, each adding one to the next. */
-bool chain(Cli cli, T t, string dir, string prefix, i32 n) {
+bool chain(Files fs, T t, string dir, string prefix, i32 n) {
   for (i32 i = 1; i <= n; i++) {
     string body = i == n
         ? "export i32 depth() { return 1; }\n"
         : "import { depth as deeper } from \"./\{prefix}\{i + 1}.wac\";\n" +
           "export i32 depth() { return deeper() + 1; }\n";
-    if (!put(cli, t, dir, "\{prefix}\{i}.wac", body)) { return false; }
+    if (!put(fs, t, dir, "\{prefix}\{i}.wac", body)) { return false; }
   }
   return true;
 }
@@ -43,9 +44,13 @@ bool chain(Cli cli, T t, string dir, string prefix, i32 n) {
  * `wac build` of `entry` in `dir`: what it said, and its status. **Without the cache**, because a hit
  * reports the files it found unchanged rather than the files a build read.
  */
-Exec build(Cli cli, string dir, string entry) {
-  return cli.exec("/bin/sh", ["-c", "cd '\{dir}' && '\{binaryPath(cli)}' build --no-cache \{entry} -o out 2>&1"],
-                  u8[]()).wait();
+Exec build(Sys sys, string dir, string entry) {
+  return sh(sys.procs(), "cd '\{dir}' && '\{binaryPath(sys.env())}' build --no-cache \{entry} -o out 2>&1");
+}
+
+/** `line` through `/bin/sh`, both streams together. */
+Exec sh(Procs procs, string line) {
+  return flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** The `K` of `… bytes from K file(s)`, or -1 when the build did not say it. */
@@ -66,43 +71,45 @@ i32 filesRead(string said) {
   return n;
 }
 
-export string test_an_import_only_a_dropped_declaration_uses_is_not_read(Core core, Cli cli) {
+export string test_an_import_only_a_dropped_declaration_uses_is_not_read(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string dir = scratch(cli, "lazyread-plain");
-  string why = freshDir(cli, dir);
+  string dir = scratch(sys.env(), "lazyread-plain");
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
-  put(cli, t, dir, "main.wac",
+  put(fs, t, dir, "main.wac",
       "import { helper } from \"./optional.wac\";\n" +
       "i32 unused() { return helper(); }\n" +
       "export i32 used() { return 0; }\n");
-  put(cli, t, dir, "optional.wac", "export i32 helper() { return 1; }\n");
+  put(fs, t, dir, "optional.wac", "export i32 helper() { return 1; }\n");
 
-  Exec r = build(cli, dir, "main.wac");
+  Exec r = build(sys, dir, "main.wac");
   string said = string.fromBytes(r.stdout);
   t.eqI32(r.status, 0, "the build: \{said}");
   t.eqI32(filesRead(said), 1, "only main.wac is read — optional.wac exists, and nothing retained needs it: \{said}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_an_unreached_namespace_is_not_read_however_much_is_behind_it(Core core, Cli cli) {
+export string test_an_unreached_namespace_is_not_read_however_much_is_behind_it(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  string dir = scratch(cli, "lazyread-namespace");
-  string why = freshDir(cli, dir);
+  string dir = scratch(sys.env(), "lazyread-namespace");
+  string why = freshDir(fs, dir);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
-  put(cli, t, dir, "library.wac",
+  put(fs, t, dir, "library.wac",
       "export * as used from \"./used1.wac\";\n" +
       "export * as unused from \"./unused1.wac\";\n");
-  put(cli, t, dir, "main.wac",
+  put(fs, t, dir, "main.wac",
       "import { used.depth } from \"./library.wac\";\n" +
       "export i32 main() { return depth() - 20; }\n");
   // Twenty reached, and six hundred behind the namespace nothing reaches: past the 512-file limit on
   // its own, so reading it at all refuses the build.
-  if (!chain(cli, t, dir, "used", 20) || !chain(cli, t, dir, "unused", 600)) { return t.report(); }
+  if (!chain(fs, t, dir, "used", 20) || !chain(fs, t, dir, "unused", 600)) { return t.report(); }
 
-  Exec r = build(cli, dir, "main.wac");
+  Exec r = build(sys, dir, "main.wac");
   string said = string.fromBytes(r.stdout);
   t.isTrue(!contains(said, "at most 512 files"), "the build read the unreached namespace: \{said}");
   t.eqI32(r.status, 0, "the build: \{said}");
@@ -110,8 +117,8 @@ export string test_an_unreached_namespace_is_not_read_however_much_is_behind_it(
   t.eqI32(filesRead(said), 22, "what the build read: \{said}");
 
   // The canary: the reached chain was read all the way down, or `depth()` would not be 20.
-  Exec ran = cli.exec("/bin/sh", ["-c", "cd '\{dir}' && '\{binaryPath(cli)}' out.wasm 2>&1"], u8[]()).wait();
+  Exec ran = sh(sys.procs(), "cd '\{dir}' && '\{binaryPath(sys.env())}' out.wasm 2>&1");
   t.eqI32(ran.status, 0, "the program answered depth() - 20: \{string.fromBytes(ran.stdout)}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

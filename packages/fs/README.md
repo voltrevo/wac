@@ -1,323 +1,92 @@
 # fs
 
-A filesystem that belongs to the system rather than to the host.
+What a system needs around a filesystem that is its own: the trees that exist only when read (`/dev`, `/proc`,
+`/bin`), an image to keep a session's files in, the process table, the user table, and the words a program
+prints for a failed file operation.
 
 ```wac
-Fs fs = Fs.inMemory(now);          // nothing but what you put in it
-await fs.mkdir("/home/user", true);
-await fs.writeFile("/home/user/notes", "hello\n".toBytes());
-
-Fs disk = Fs.onHost(cli, now);     // the real one, by asking
+Files root = MemoryStore.create(sys.clock()).asUser("root");   // std: nothing but what you put in it
+ProcTable table = ProcTable.create();
+Files system = systemFiles(root, sys.random(), table, ["cat", "ls"]);   // with /dev, /proc and /bin over it
 ```
 
-**Every call that reaches storage is awaited**, whatever the backing: a stage reaching its parent's
-filesystem asks over a channel, and in a page the storage is the browser's, and neither can answer
-while the caller waits ([design/system/0011](../../design/system/0011-programs-in-a-page-without-shared-memory.md)).
+A package of [wac](../../README.md) — see the root README for layout and how to run things. All commands run
+from the repo root.
 
-A package of [wac](../../README.md) — see the root README for layout and how to run things. All
-commands run from the repo root.
+## The filesystem itself is std's
 
-## [design/0001](../../design/system/0001-a-self-contained-system.md) step 1, filed as
-[0067](../../issues/system/closed/0067-no-filesystem-of-our-own-so-a-session-cannot-be-sealed-off-from-the-host.md).
-**The state it was filed against**, which this package exists to have ended: every filesystem capability a
-program had was the *host's*, so `packages/ssh`'s demo handed each session the real disk of whatever ran
-the daemon, and the browser terminal handed it the tab's Origin Private File System. There was nothing
-that belonged to the system: nothing to seal a session inside, nothing to persist as an image, and
-nothing hermetic for a test to run against — which is where the flakes came from, since every filesystem
-test needed a temp directory on a disk shared with everything else on the machine.
+This package used to *be* the filesystem: an `Fs` with a mount table and four backings — memory, the host,
+synthesised trees and a remote one a spawned stage reached through its parent. design/system/0013 moved all of
+that into std, where a program is handed it rather than building it:
 
-All three exist now, and the rest of this file is how. A session on `Fs.inMemory()` built with **no
-filesystem grants at all** is `sealed`; an image outlives the process that wrote it and is one file
-either host can open; and `packages/ssh`'s `sshd` serves that image on a runtime with no JavaScript in
-it, which is design/0001's arrival test. This paragraph read as a description of the present for months
-after that, which is the failure a *Why* section has: it is written the day the gap is real.
+| was here | is now |
+| --- | --- |
+| `Fs.inMemory`, users, `mode` and `owner` enforced | `MemoryStore.create(clock)`, `store.asUser(name)` |
+| `Fs.onHost` | `sys.files()`, narrowed by `readOnly()`, `writeOnly()`, `relativeTo(dir)` |
+| the mount table | `Files.mounted([Mount(...)])` — longest prefix wins, a mount point lists in its parent |
+| `Remote`, for a spawned stage | a composed `Files` in a child's `Authority` is served by its parent |
+| `openOut`/`writeOut`/`closeOut` | `files.openWrite(p)` and `openAppend(p)`, which answer an `Output` |
 
-## One type with a mount table, and why not an interface
+`Files` is a struct of functions, so a backing is a value rather than an arm of a `match` in every operation —
+the shape the old README said wac could not have, and the reason it could once lambdas captured.
 
-The obvious design is an abstract filesystem with a memory implementation and a host implementation. wac
-will not do it: `override` is a source-level check and **dispatch is static**, so a `Circle` held in a
-`Shape` variable answers `Shape.name()`. A base-typed `Fs` would always run the base's bodies. The
-language's own idiom for varying behaviour is a funcref plus explicit state — `Shell.external` is one.
+## `/dev`, `/proc` and `/bin` — `src/trees.wac`
 
-**The paragraph used to end "and a funcref cannot capture a filesystem, because there are no
-closures", and that expired on 2026-08-16.** A lambda captures by reference, so a mount built as a
-struct of funcrefs over its backing is writable; `issues/system/0327a` corrected the identical
-sentence in `src/fs.wac` and holds the open decision about whether the design follows. Static
-dispatch, the first half, is still true.
+Nothing is stored. Each tree answers a path with a node — a directory and its names, a file and its bytes, a
+sink, or a stream with no end — and `readOnlyTree` turns that one question into every `Files` operation.
 
-So there is one concrete `Fs` holding a mount table, and the branch is written by hand. The tour says to
-do exactly that, and it turned out to be the shape the design wanted anyway: a **host mount** is how
-"translate to real operations on the host" survives as something a caller asks for rather than as what
-happens when nobody says anything.
+    ls /dev                        ->  null random urandom zero
+    cat /proc/self/cmdline         ->  the current process's argv, NUL-separated as Linux's is
+    head -c 16 /dev/urandom        ->  sixteen bytes, from the program's `Random`
+    echo anything > /dev/null      ->  accepted, and kept nowhere
 
-Mounts resolve by longest prefix, so `/home` mounted under a host `/` does what a person expects and the
-order they were added in does not decide the answer. A mount *shadows* what it covers rather than merging
-with it, and a name that merely starts with the mount point — `/homework` against `/home` — is not under
-it.
+`/dev` takes a `Random` and nothing else — a capability that needs no grant, which is why a sealed session can
+have one. **An endless device has no whole**: `readFile` refuses `/dev/zero` and names the read that does work,
+`openRead`, which streams a piece at a time as GNU's does. Every change is refused as read-only — after a name
+that is there has answered as what it is: `echo x > /proc` is *Is a directory* and `mkdir /proc` is *File
+exists*, as on Linux.
 
-**There are four backings**, and every operation dispatches on which one a path lands in:
+`/bin` lists the programs it is given, so it cannot disagree with what the shell wired in; given none, there is
+no `/bin` at all rather than an empty one. `systemFiles` mounts all three over a root, so an entry point builds
+a whole world or none of it.
 
-| | what it is | where |
-| --- | --- | --- |
-| `Memory` | this program's own tree, and the default | below, and it is what a test wants |
-| `Host` | the real disk, through the capabilities of whoever built the filesystem | [The host is the oracle](#the-host-is-the-oracle) |
-| `Synth` | files that do not exist until read — `/dev`, `/proc` | [`/dev` and `/proc`](#dev-and-proc-which-cost-nothing-until-read) |
-| `Remote` | **another process's filesystem, reached by asking it** | below |
+## An image — `src/image.wac`
 
-`Remote` is the one a reader is most likely to be standing in without knowing: it is what a **spawned
-stage** gets. `seq 1 5 | cat > f` in a sealed session runs each stage as a separate instance, and a
-separate instance with a filesystem of its own would have a filesystem of the *host's* — which is
-[0116](../../issues/system/closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md), and
-was how a sealed session could read the machine it was running on. So a child stores nothing and
-duplicates nothing: every operation on that mount is a question its parent answers out of the one
-filesystem there is (`src/remote.wac`), and a child's permission checks are its parent's `user`'s.
+A session holds its files as a `MemoryStore`, and an image is that store's entries written down: `imageOf`,
+`entriesOf`, and `bootStore` / `saveStore` for the load-or-start-empty and write-back that `imaged` and `sshd`
+share. A path that is not there boots an empty store, so a first run needs no separate step; one that cannot be
+read stops the program, because starting empty would mean the next save writes over it. `box fsdump` prints an
+image so a person can look at one without a program that understands it.
 
-**Every dispatch on the backing needs an arm for `Remote`, and the compiler will not say so** — the
-matches end in `else`, which is the memory backing, so a forgotten arm is a remote mount quietly
-answering out of an empty local tree. `packages/box/test/sealing.test.ts` is what catches that, by
-running a sealed session whose stages read *and write* through the channel.
+The format is ours, so nothing outside the repo can disagree with us about it. `storeimage_test.wac` stands in
+for an oracle three ways: a round trip, rewriting what was read gives identical bytes, and a **fixture committed
+to the repo** (`test/fixtures/image-v2.wacimg`) loaded by whatever build is running now — the one check that can
+see a format that changed shape overnight. Version 1 images, from `Fs`, are no longer read.
+
+## The process and user tables
+
+`src/proc.wac` is `ProcTable`: pids, parents, states and exit statuses that belong to the system, which `ps`,
+`kill`, `jobs` and `/proc/<pid>` all read. `src/passwd.wac` reads `/etc/passwd` **out of the image**, because a
+host's idea of who is logged in cannot survive a file that is one blob owned by whoever ran the process;
+`packages/ssh`'s server picks the user from the key that authenticated.
+
+## Words — `src/words.wac`
+
+A fault carries the host's own sentence, which differs by host and often names the path again. A program
+imitating GNU prints the category's words instead — `reason(e)` — so `cat: x: No such file or directory` reads
+the same on every host. A grant the program was not given is *Not granted to this application* whatever the
+narrowing that refused it said.
 
 ## The host is the oracle
 
-`example/ops.wac` runs a script of operations against either backing:
+`example/ops.wac` runs a script of operations against a `MemoryStore` or against the host, and
+`test/wac/host_test.wac` compares the transcripts: whatever the real filesystem does to a sequence of writes,
+listings, renames and removals is what a filesystem *is*, and a store that disagrees is wrong even when its own
+tests pass. The shell corpus is run through memory, an image and the host by `packages/box`'s
+`backings_test.wac`, with bash's answer as the reference.
 
-```
-wac task app:build packages/fs/example/ops.wac --allow-read --allow-write -o ops
-printf 'mkdir /d\nwrite /d/f hello\nls /d\n' | ./ops mem
-printf 'mkdir /d\nwrite /d/f hello\nls /d\n' | ./ops host /tmp/somewhere
-```
+## Coverage
 
-`test/host.test.ts` runs the same scripts both ways and compares the transcripts. Whatever Deno's
-filesystem does to a sequence of writes, listings, renames and removals is what a filesystem *is*; a
-memory implementation that disagrees is wrong even when its own tests pass. The two runs share nothing but
-the script bytes.
-
-It earned that on the first run, three times:
-
-- **A directory's size.** The host says 4096 — its block size on this container's ext4, something else
-  elsewhere. That is not a semantic worth imitating, so the transcript prints `stat dir` without a size
-  rather than matching a number no program should read.
-- **Reading a directory** answers `FAULT_OTHER`, not `FAULT_DENIED`. The category set has no "is a
-  directory", so `host/faults.ts` classifies `EISDIR` as other and the message carries it. Matching the
-  hosts was the right call for now; whether the taxonomy should grow a category is noted in 0067, because
-  `cat` on a directory and `cat` on a missing file *are* different mistakes.
-- **Writing over a directory** answers the same way, for the same reason.
-
-**And a third differential lives outside this package**, which is worth knowing before writing a
-fourth: `wac task corpus:backings` runs the whole shell corpus through *three* filesystem backings —
-memory (`sealedsh`), an image (`imaged`) and the host (`sh`) — and compares them, with bash's answer
-next door as the reference. That is design/0001 D7's question, "the same scripts against a host mount
-and against an image, and any divergence is a VFS bug". It is a `wac task` rather than a suite test
-because it builds three programs and runs hundreds of scripts through each, so it is not in the gate
-and nothing runs it unless somebody does.
-
-`test/wac/fs_test.wac` covers what a differential cannot reach: the fault categories directly, the mount
-table's longest-prefix rule, and that a name is **bytes** — a file called `x\xff\xfey` keeps all four,
-which is a property no host can offer today
-([0065](../../issues/system/closed/0065-a-spawned-programs-arguments-are-not-byte-exact.md)).
-
-## An image, which is what makes a filesystem outlive its session
-
-`src/image.wac`, step 2 of design/0001. `write` gives you the bytes, `read` gives you the filesystem
-back, and `box fsdump` prints one so a person can look at it without running a program that understands
-it — which the design asks for by name, because a format of our own is a format nothing else can read.
-
-What an image holds is **every memory mount, walked from its root**. A host mount is not written: its
-bytes are somebody's disk under somebody's permissions, and copying them in would be copying a filesystem
-rather than saving one. `write` returns the mount points it skipped rather than quietly producing a
-smaller image than you asked for.
-
-Walking from the roots also compacts, which is the answer to the note above about `remove` not freeing
-nodes: a node nobody points at is a node the writer does not reach, so reloading an image is how a
-long-lived session gets that space back.
-
-There is no oracle for this — the format is ours, so nothing outside the repo can read an image and
-disagree with us about it. `test/image.test.ts` replaces one with three things, and the third is the one
-the other two cannot do: a round trip, a check that rewriting what was read gives identical bytes (so
-`read` cannot normalise away something `write` recorded, with both sides agreeing because both sides
-lost it), and **a fixture image committed to the repo**, written on 2026-08-07 and loaded by whatever
-build is running now. That last is the design's own criterion, and neither of the others can see a format
-that changed shape overnight, because both write and read with the same build.
-
-## `/dev` and `/proc`, which cost nothing until read
-
-`Backing.Synth`, step 6 of design/0001. Nothing is stored: `readDir` lists a fixed set of names and a
-read runs a generator, so `/dev/zero` costs what you ask of it rather than what it could give.
-
-    ls /dev                        ->  null random urandom zero
-    cat /proc/self/cmdline         ->  the argv it was built with, NUL-separated as Linux's is
-    head -c 16 /dev/urandom        ->  sixteen bytes, from the host's CSPRNG
-    echo anything > /dev/null      ->  accepted, and kept nowhere
-
-The mount carries **`randomBytes` and nothing else** — a mount handed a whole `Cli` could reach the
-disk. `Core.randomBytes` is a host function rather than a grant, which is why `sealed` can mount `/dev`
-and go on being a session with no filesystem permissions at all.
-
-**Two of them have no end, and that is the one thing this model cannot express.** GNU's `cat /dev/zero`
-runs until something stops it; one `u8[]` cannot. So `readFile` refuses `/dev/zero` and `/dev/urandom`
-and names the read that does work — `readSome(path, n)`, which is what `head -c` goes through anyway.
-Inventing a length would have been the plausible wrong answer and hanging would have been worse.
-
-Everything but `/dev/null` is read-only and says so; a write to `/dev/null` succeeds and keeps nothing,
-which is the whole of what it is for. An image does **not** list a synthesised mount as skipped: there
-is nothing there to save, and a `skipped` list that is never empty is one nobody reads.
-
-**A mount is visible from the directory it is mounted in.** `readDir` adds any mount point sitting
-directly in the path being listed, so `ls /` shows `dev` and `proc`. Before, only the mount table knew
-they existed, and a listing that omits a directory you can `cd` into is worse than a wrong one — nothing
-about it looks wrong.
-
-## Users, a working directory, and a streaming write
-
-Three things arrived after the sections above were written, and each changes what a caller can
-assume.
-
-**`mode` and `owner` are enforced.** `Fs.user` says who is acting and `may` decides; `chmod` belongs
-to the owner and `chown` to root, so widening a file and then reading it is not a way in.
-`src/passwd.wac` reads `/etc/passwd` **out of the image**, because a host's idea of who is logged in
-cannot survive a file that is one blob owned by whoever ran the process. `packages/ssh`'s server sets
-the user from the key that authenticated, and design/0001 step 4's own criterion — two keys land in
-two homes and neither can read the other's private file — is a test.
-
-**`chmod` and `setExecutable` are not the same promise, and a host mount answers them differently.**
-`chmod` on a host mount is refused — `FAULT_UNSUPPORTED`, "chmod on a host mount is not implemented"
-— because `Cli` carries no mode-wide capability and a `chmod` that applied a third of its argument
-and answered success would be the accepted-and-ignored answer this repository ranks worst
-([0117](../../issues/system/closed/0117-a-fault-vocabulary-with-no-word-for-not-implemented.md)).
-`setExecutable(path, on)` is the narrow one every backing *can* express, which is what a git checkout
-needs — `100755` against `100644` — and it is why that capability exists at all
-([0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)).
-A caller that wants the executable bit should ask for the executable bit.
-
-Every way of *changing what a directory holds* asks the directory: `writeFile` and `remove` had that
-from the start, which is exactly why `mkdir`, `mkdir -p` and `rename` were easy to miss. A rename is
-neither a read nor a write of the file — it is two directory changes — so checking neither end let a
-file be taken out of a private directory.
-
-**`Fs` has a `cwd`**, and resolves through it at every entry point, so a caller may pass a relative or
-an absolute path without knowing which. `Fs.onHost` starts at the host's own directory — `box cat f`
-run from `/tmp` is asking about `/tmp/f` — and `Fs.inMemory` at its own root. `resolvePath` moved here
-from `packages/sh`, which is the package that owns what a path is; a second copy of what `..` means is
-the kind of duplicate that agrees for a year and then does not.
-
-**`openOut`/`writeOut`/`closeOut`** are the streaming write. `writeFile` needs every byte at once and a
-redirection must not: `seq 1 2000000000 > out` builds twenty gigabytes and traps on one wasm array. It
-is mount-dispatched like everything else — append into the inode for a memory mount, delegate to the
-host capability for a host mount — which is what let `packages/sh` stop having **two implementations of
-`>`** that disagreed about which disk a redirection landed on.
-
-**`mountBin` and `mountSystem`.** `/bin` is synthesised from the applet list it is given, so it cannot
-disagree with what the shell wired in, and reading one gives a sentence saying the program is built
-into the binary rather than an executable-looking blob — which would be D6's "plausible rows" exactly.
-`mountSystem` is the three of them together, so an entry point builds a whole world or none of it.
-
-## Coverage, and the three things it found on its first run
-
-`wac task coverage:fs`, through `test/wac/cov_probe.wac`. It did not exist until the package had doubled
-in size — a synthesised backing and an image format, one of them a parser for bytes somebody else wrote —
-which is two ticks of new code with no branch measured in a repo that measures eighteen other packages.
-The first run found three defects, and none of them was a missing test so much as a wrong answer nothing
-had asked for:
-
-- **`rename` onto something that is already there.** `rename(2)` has four rules and this had none of them:
-  it replaced the entry whatever it was, so `mv f d` where `d` is a directory succeeded and orphaned
-  everything `d` held. In an image that is data loss. `test/host.test.ts` had had the oracle since the
-  package was written and nothing had asked it — the case is in it now.
-- **A mount point is a directory**, and its parent lives in the mount *above*, so the lookup inside
-  `writeFile` and `mkdir` searched the mounted tree and found nothing. Each backing then invented its own
-  reason: a memory mount said "no such file or directory" and a synthesised one said "read-only file
-  system". Three wrong answers to what `/dev` is.
-- **The image reader was bounded by the whole array rather than by the body**, so a malformed image could
-  read its own checksum as payload — four bytes that happened to complete a structure would have been
-  accepted as part of it. Found because getting past the checksum at all means computing the right CRC
-  over the wrong body, which nothing had ever done: every malformed image a test had shown the reader was
-  refused by the checksum, so the reader's own guards had never run.
-
-`synthEndless` was deleted in the same pass, being a function nothing called — and so were three guards
-in `writeFile` and `mkdir` that the new "is this a directory" check had made unreachable. Two guards for
-one fact is how the two come to disagree.
-
-It is a **ratchet, not a report**: every uncovered point is either driven or written down in `cov.ts`
-with its reason, and the task fails if a new one appears. A run that only printed a percentage is how
-the three defects above survived as long as they did.
-
-It reads, on **2026-08-12**:
-
-| file | points | covered | % |
-|---|---:|---:|---:|
-| `src/fs.wac` | 360 | 307 | 85.3 |
-| `src/image.wac` | 70 | 59 | 84.3 |
-| `src/path.wac` | 17 | 17 | 100.0 |
-| `src/proc.wac` | 49 | 49 | 100.0 |
-| `src/remote.wac` | 98 | 51 | 52.0 |
-| `src/wire.wac` | 20 | 20 | 100.0 |
-| **`src/`** | **614** | **503** | **81.9** |
-
-**It was red for three days and nothing said so**, which is the more useful half of the story. On
-2026-08-09 `remote.wac` arrived with the `Remote` backing
-([0116](../../issues/system/closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md)) —
-92 branch points the probe never called — and `fs.wac` grew the arms that dispatch to it. The number
-here read 92.7% for two more days, because a percentage in prose is a claim about a package that
-existed when somebody last edited the file. The run itself exited 1 the whole time and
-`wac task coverage:*` was deliberately not in the gate, so nobody met it. That is
-[0134](../../issues/system/closed/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md),
-and it is why the figures above carry the date of the run rather than standing on their own.
-
-**That silence is closed as of 2026-08-12**: `wac task coverage:all` runs in `tools/push.sh`, after
-the suite and before the push — nineteen packages in 38 seconds. It was held out on the rule that a
-red check in the gate blocks every other agent for something they did not do, and `crypto` was the
-last red one
-([0101](../../issues/system/closed/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md)).
-The dates on the figures above stay, because they are still what they say they are: a percentage
-measured on a day. What changed is that a *red* ratchet now stops a push, instead of waiting for
-somebody to run the task.
-
-**A remote mount is measured from one end only.** It needs a parent process on the other side of a
-channel, and the probe builds its filesystems itself — the same shape of problem as a host mount.
-Half of `remote.wac` is a codec, and a codec has no peer: every `encode*`/`decode*` pair is
-round-tripped here, including the three-way listing / *not a directory* / *empty* distinction and an
-answer cut at each place it can stop. The other half writes a question to a handle and waits, and no
-fake can be the thing that answers, because the answer comes from a filesystem the fake does not
-have. Those 42 points are recorded with `packages/box/test/sealing.test.ts` as what drives them —
-a sealed session whose stages read and write through the channel. That is a real test and it is
-still not a measurement, which is the distinction this section keeps making.
-
-**Host mounts are recorded rather than driven** — twenty points and a constructor, which `cov.ts`
-holds as one *category* rather than twenty near-identical pins: a pin names a line and proves the
-line still says what it said, which is right for a one-off and unreadable for a fact repeated
-twenty times. They take a `Cli` that only a built program has, and `test/host.test.ts` and
-`packages/box/test/wac/backingsprocess_test.wac` run every one of them against the real filesystem, which is a
-better oracle than a probe could be. Two paragraphs stood here saying that, and one of them said the
-opposite — that host mounts were *not* recorded as gaps either — which is the shape a section gets
-when a sentence is added beside its predecessor rather than into it.
-
-The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an
-image or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and
-the run went red with eight branches nobody had accounted for. They are recorded rather than driven,
-because driving them means fabricating a whole `Cli`, and `packages/box/test/wac/imaged_test.wac` and
-`packages/ssh/test/wac/wacsshdimage_test.wac` already drive them against real files on a real disk.
-
-## Not here yet
-
-- **No traversal check.** Permissions arrived with step 4 and are enforced — see below — but what is
-  enforced is the mode on the thing being touched, not on the path to it. A private file inside a
-  readable directory is protected by its own mode; one inside an *unreadable* directory is also
-  protected by its own mode, and not by the directory. That is less than POSIX, and design/0001 D6 is
-  why it is stated rather than approximated.
-- **No groups.** `may` compares owner bits or other bits, and there is no group table. Inventing one is
-  the faking D6 rules out.
-- **Incremental saves are not implemented.** `image.write` walks every reachable node and emits every
-  byte. Cheaper incremental saves were half the argument for a format of our own; the layout leaves room
-  for one and nothing does it yet.
-- **Removal does not free nodes.** A node nobody points at is unreachable, and an image writer walks from
-  the roots, so nothing is lost — but a program that deletes a great deal keeps paying for it. There is
-  no such program yet.
-- **`rename` across mounts is refused**, in those words. Doing it means a copy and a delete, and a
-  `Change` cannot report a partial one.
-- **No symbolic links can be made here.** There is no call that creates one, so in a memory, image or
-  synthesised mount a name is never a link and `isSymlink` is false — as a fact about those backings
-  rather than as a shortcut. On a **host** mount it is not a fact at all: the real disk is full of
-  links, so `linkStat` dispatches like everything else and asks the host. This bullet said "`linkStat`
-  is `stat` and says so" for as long as that was true of every backing, which stopped when `box`'s
-  `tar` was found asking `cli.linkStat` behind the filesystem's back — in a session on an image, that
-  asked *this machine* about a path inside the image.
+`wac task coverage:fs` runs the package's own tests and is a ratchet: every uncovered point is driven or
+written down in `test/cov_ledger.wac` with its reason, and a new one fails the run — which `tools/push.sh` runs
+before every push.

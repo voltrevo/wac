@@ -3,9 +3,9 @@
 // Each check reaches the host through a handle and asserts the fault's *type*, because the type is the
 // contract: a caller matches on it. The messages are the host's and are not checked.
 
-import { Sys, Files, Mount, Stat, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
-         Launch, Exec } from "std";
-import { Result, flatten } from "core";
+import { Sys, Files, Mount, Stat, Input, Output, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
+         Launch, ChildEnv, Exec, Clock, TimedOut, Unsupported, OutputClosed, Procs, SpawnFault } from "std";
+import { Result, Ticket, Read, flatten } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 
 string failed(T t, string what) {
@@ -38,6 +38,156 @@ export async string test_files_read_back_what_was_written(Sys sys) {
     Err(e): { t.fail("readDir failed"); }
   }
   await fs.remove(dir, true);
+  return t.report();
+}
+
+async string drained(Input in) {
+  string all = "";
+  while (true) {
+    match (await in.chunk()) {
+      Ok(c): {
+        match (c) {
+          Data(b): { all = all + string.fromBytes(b); }
+          default: { return all; }
+        }
+      }
+      Err(e): { return all + "<failed>"; }
+    }
+  }
+}
+
+export async string test_a_file_opened_as_a_stream_is_written_appended_and_read(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/streams";
+  await fs.remove(dir, true);
+  await fs.mkdir(dir, true);
+  string f = dir + "/s";
+  match (await fs.openWrite(f)) {
+    Ok(out): {
+      t.isTrue((await out.write("ab".toBytes())).isOk(), "the first write");
+      t.isTrue((await out.line("c")).isOk(), "the second write");
+      t.isTrue((await out.close()).isOk(), "close");
+    }
+    Err(e): { return failed(t, "openWrite of a new file failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(f)).unwrap()), "abc\n", "both writes are in the file once it is closed");
+  match (await fs.openAppend(f)) {
+    Ok(out): {
+      await out.write("d".toBytes());
+      t.isTrue((await out.close()).isOk(), "close after append");
+    }
+    Err(e): { return failed(t, "openAppend failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(f)).unwrap()), "abc\nd", "openAppend writes after what was there");
+  match (await fs.openRead(f)) {
+    Ok(in): {
+      t.eqStr(await drained(in), "abc\nd", "openRead reads it to the end");
+      t.isTrue((await in.close()).isOk(), "closing what was read");
+    }
+    Err(e): { return failed(t, "openRead failed"); }
+  }
+  match (await fs.openRead(f)) {
+    Ok(in): {
+      t.eqStr(string.fromBytes((await in.readAll()).unwrap()), "abc\nd", "readAll on an opened file");
+      await in.close();
+    }
+    Err(e): { return failed(t, "the second openRead failed"); }
+  }
+  match (await fs.openWrite(f)) {
+    Ok(out): {
+      await out.write("x".toBytes());
+      await out.close();
+    }
+    Err(e): { return failed(t, "openWrite of an existing file failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(f)).unwrap()), "x", "openWrite truncates");
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+export async string test_a_closed_file_refuses_a_write_and_closes_twice(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/closed";
+  await fs.mkdir(dir, true);
+  match (await fs.openWrite(dir + "/f")) {
+    Ok(out): {
+      await out.write("a".toBytes());
+      t.isTrue((await out.close()).isOk(), "close");
+      t.isTrue((await out.close()).isOk(), "closing twice is not an error");
+      match (await out.write("b".toBytes())) {
+        Ok(v): { t.fail("a write after close landed"); }
+        Err(e): { t.isTrue(e is OutputClosed, "a write after close answers OutputClosed"); }
+      }
+    }
+    Err(e): { return failed(t, "openWrite failed"); }
+  }
+  match (await fs.openRead(dir + "/f")) {
+    Ok(in): {
+      t.isTrue((await in.close()).isOk(), "closing what was read");
+      t.isTrue((await in.close()).isOk(), "closing it twice");
+    }
+    Err(e): { return failed(t, "openRead failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(dir + "/f")).unwrap()), "a", "only the write before close is there");
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+/** The probe's answer on one host: a file streamed, `a` on its output, and a write after close refused. */
+void probeSaid(T t, string host, Result<Exec, SpawnFault> ran) {
+  match (ran) {
+    Ok(r): {
+      t.eqI32(r.status, 0, host + ": the probe ran: " + string.fromBytes(r.stderr));
+      t.eqStr(string.fromBytes(r.stdout), "a", host + ": only what was written before close");
+      t.eqStr(string.fromBytes(r.stderr), "file xy\nmode 416\nrefused\nclosed\n",
+              host + ": the file written, appended to and read; a write after close is OutputClosed; closing twice is fine");
+    }
+    Err(e): { t.fail(host + ": did not run"); }
+  }
+}
+
+export async string test_files_stream_and_stdout_closes_on_every_host(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string probe = "packages/platform/test/wac/closeout_probe.wac";
+  string dir = base(sys) + "/closeout";
+  await sys.files().mkdir(dir, true);
+  probeSaid(t, "v8", await procs.exec("native/v8/target/release/wac", ["run", "--allow-read", "--allow-write", probe],
+                                      u8[](), ChildEnv.inherited(), Launch.plain()));
+  string denoOut = dir + "/probe-deno.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-read", "--allow-write",
+                            "--target", "deno", "-o", denoOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  probeSaid(t, "deno", await procs.exec("deno", ["run", "-A", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  string nodeOut = dir + "/probe-node.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-read", "--allow-write",
+                            "--target", "node", "-o", nodeOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  probeSaid(t, "node", await procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  return t.report();
+}
+
+export async string test_opening_a_missing_or_refused_file_is_its_fault(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string gone = base(sys) + "/no-such-dir/f";
+  match (await fs.openRead(gone)) {
+    Ok(in): { t.fail("a missing file was opened to read"); }
+    Err(e): { t.isTrue(e is NotFound, "openRead of a missing file answers NotFound"); }
+  }
+  match (await fs.openWrite(gone)) {
+    Ok(out): { t.fail("a file in a missing directory was opened to write"); }
+    Err(e): { t.isTrue(e is NotFound, "openWrite in a missing directory answers NotFound"); }
+  }
+  Files ro = fs.readOnly();
+  match (await ro.openWrite(base(sys) + "/ro")) {
+    Ok(out): { t.fail("openWrite through readOnly opened"); }
+    Err(e): { t.isTrue(e is NotGranted, "openWrite through readOnly answers NotGranted"); }
+  }
+  match (await ro.openAppend(base(sys) + "/ro")) {
+    Ok(out): { t.fail("openAppend through readOnly opened"); }
+    Err(e): { t.isTrue(e is NotGranted, "openAppend through readOnly answers NotGranted"); }
+  }
   return t.report();
 }
 
@@ -142,6 +292,39 @@ export async string test_the_clock_and_randomness_answer(Sys sys) {
   return t.report();
 }
 
+/** Milliseconds by the monotonic clock since `from`. */
+i64 millisSince(Clock c, i64 from) { return (flatten(c.monotonicNanos().wait()).unwrap() - from) / (1000000 as i64); }
+
+export string test_a_synchronous_wait_on_two_host_tickets_takes_the_first_to_answer(Sys sys) {
+  T t = T.create();
+  Clock c = sys.clock();
+  i64 from = flatten(c.monotonicNanos().wait()).unwrap();
+  // Driven in turn, the wait would sit on the slow one first and take two seconds.
+  Ticket<Result<void, union<Unsupported>>> slow = c.sleepMillis(2000);
+  Ticket<Result<void, union<Unsupported>>> quick = c.sleepMillis(1);
+  match (Ticket.first([slow, quick]).wait()) {
+    Ok(k): { t.eqI32(k, 1, "the quick one answers first"); }
+    Err(e): { t.fail("the wait refused: " + e.message); }
+  }
+  t.isTrue(millisSince(c, from) < 1000 as i64, "and the wait did not sit on the slow one");
+  slow.cancel();
+  return t.report();
+}
+
+export string test_within_answers_timed_out_and_passes_an_answer_through(Sys sys) {
+  T t = T.create();
+  Clock c = sys.clock();
+  i64 from = flatten(c.monotonicNanos().wait()).unwrap();
+  match (flatten(c.within(c.sleepMillis(2000), 20).wait())) {
+    Ok(v): { t.fail("a two-second sleep answered within 20ms"); }
+    Err(e): { t.isTrue(e is TimedOut, "a sleep past the deadline is TimedOut"); }
+  }
+  t.isTrue(millisSince(c, from) < 1000 as i64, "and the deadline did not wait for it");
+  t.isTrue(flatten(c.within(c.nowMillis(), 5000).wait()).unwrap() > 1700000000000 as i64, "an answer in time passes through");
+  t.isTrue(flatten(c.within(c.nowMillis(), -1).wait()).isOk(), "a negative deadline sets none");
+  return t.report();
+}
+
 export async string test_a_socket_carries_bytes_over_loopback(Sys sys) {
   T t = T.create();
   Net net = sys.net();
@@ -194,18 +377,94 @@ export async string test_connecting_to_nothing_is_refused(Sys sys) {
   return t.report();
 }
 
+// The child's environment is a base — this program's own, or none — with variables set over it; setting a name
+// twice keeps the last. `env` prints what it got: over the inherited base there is more than the one line set here
+// (this program has some environment wherever it runs), and over the empty base there is exactly that line.
+export async string test_exec_sets_variables_over_an_inherited_or_an_empty_environment(Sys sys) {
+  T t = T.create();
+  match (await sys.procs().exec("env", string[](), u8[](), ChildEnv.inherited().set("WAC_CHILD_ENV", "1").set("WAC_CHILD_ENV", "2"), Launch.plain())) {
+    Ok(r): {
+      string got = string.fromBytes(r.stdout);
+      t.isTrue(got.indexOf("WAC_CHILD_ENV=2\n") >= 0 && got.indexOf("WAC_CHILD_ENV=1") < 0, "set over the inherited environment, last one kept: \{got}");
+      t.isTrue(got.len() > "WAC_CHILD_ENV=2\n".len(), "and the inherited variables are there too");
+    }
+    Err(e): { t.fail("exec over the inherited environment failed: \{e}"); }
+  }
+  match (await sys.procs().exec("/usr/bin/env", string[](), u8[](), ChildEnv.empty().set("WAC_CHILD_ENV", "1"), Launch.plain())) {
+    Ok(r): { t.eqStr(string.fromBytes(r.stdout), "WAC_CHILD_ENV=1\n", "set over an empty environment, nothing inherited"); }
+    Err(e): { t.fail("exec over an empty environment failed: \{e}"); }
+  }
+  return t.report();
+}
+
 export async string test_exec_runs_a_host_program(Sys sys) {
   T t = T.create();
-  match (await sys.procs().exec("echo", ["hi"], u8[](), string[](), Launch.plain())) {
+  match (await sys.procs().exec("echo", ["hi"], u8[](), ChildEnv.inherited(), Launch.plain())) {
     Ok(r): {
       t.eqI32(r.status, 0, "echo exits 0");
       t.eqStr(string.fromBytes(r.stdout), "hi\n", "and its output comes back");
     }
     Err(e): { t.fail("exec of echo failed"); }
   }
-  match (await sys.procs().exec("/no/such/program", string[](), u8[](), string[](), Launch.plain())) {
+  match (await sys.procs().exec("/no/such/program", string[](), u8[](), ChildEnv.inherited(), Launch.plain())) {
     Ok(r): { t.isTrue(r.status != 0, "a missing program does not exit 0"); }
     Err(e): { t.isTrue(e is Other || e is NotGranted, "or is refused before it runs"); }
   }
+  return t.report();
+}
+
+export string test_no_host_here_owns_a_keyboard_so_nothing_is_interrupted(Sys sys) {
+  T t = T.create();
+  t.isFalse(sys.interrupted(), "Deno, Node and the native hosts own no keyboard and always say no");
+  t.isFalse(sys.interrupted(), "and asking again changes nothing");
+  return t.report();
+}
+
+/** The inheritself probe's answer on one host: the child's line on the parent's own output, and the child's status. */
+void inheritedSaid(T t, string host, Result<Exec, SpawnFault> ran) {
+  match (ran) {
+    Ok(r): {
+      t.eqI32(r.status, 5, host + ": the child's status is the parent's: " + string.fromBytes(r.stderr));
+      t.eqStr(string.fromBytes(r.stdout), "from the child\n", host + ": a spawnSelf child handed the output writes it");
+    }
+    Err(e): { t.fail(host + ": did not run"); }
+  }
+}
+
+export async string test_a_spawn_self_child_writes_the_output_it_inherits_on_every_host(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string probe = "packages/platform/test/wac/inheritself_probe.wac";
+  string dir = base(sys) + "/inheritself";
+  await sys.files().mkdir(dir, true);
+  inheritedSaid(t, "v8", await procs.exec("native/v8/target/release/wac", ["run", "--allow-run", probe],
+                                          u8[](), ChildEnv.inherited(), Launch.plain()));
+  string denoOut = dir + "/probe-deno.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
+                            "--target", "deno", "-o", denoOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  inheritedSaid(t, "deno", await procs.exec("deno", ["run", "-A", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  string nodeOut = dir + "/probe-node.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
+                            "--target", "node", "-o", nodeOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  inheritedSaid(t, "node", await procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  return t.report();
+}
+
+/** An `async` call that waits on the host once. */
+async bool statted(Files fs) { return (await fs.stat(".")).isOk(); }
+
+/**
+ * A `.wait()` that drove an `async` call to its end leaves nothing outstanding.
+ *
+ * The call parks its continuation on the program's queue, and the `wait` then runs the machine itself — so
+ * the queued one is an earlier suspension, and calling it does nothing. Counting it anyway made the
+ * JavaScript hosts end a finished program with *"1 continuation(s) still waiting"*: `roundtrip.wac` did,
+ * on Deno, as soon as it listed a directory through `Files`.
+ */
+export string test_a_wait_that_finished_an_async_call_leaves_nothing_outstanding(Sys sys) {
+  T t = T.create();
+  i32 before = sys.core.outstanding();
+  t.isTrue(statted(sys.files()).wait().unwrap(), "the stat answered");
+  t.eqI32(sys.core.outstanding() - before, 0, "what the wait finished is still counted as outstanding");
   return t.report();
 }

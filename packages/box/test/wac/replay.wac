@@ -20,16 +20,18 @@
 // The header is not decoration: an expectation is only as portable as the environment it was taken in,
 // and when a replay disagrees the first question is whether *we* changed or the tools did.
 
-import { Cli, Core, Exec, FileResult } from "std";
-import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Exec, ChildEnv, Files, Launch, MemoryStore, Procs, Sys } from "std";
+import { Kept } from "../../../platform/src/stream.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
-import { boxNames, boxRun } from "../../src/shrun.wac";
+import { boxNames, wireBox } from "../../src/shrun.wac";
 import { UNKNOWN, dispatch } from "../../src/box.wac";
 import { parseList } from "../../src/lib/args.wac";
-import { Fs, mountSystem } from "../../../fs/src/fs.wac";
-import { Booted, boot, save } from "../../../fs/src/image.wac";
-import { Vec } from "core";
+import { bytesInput } from "../../../fs/src/trees.wac";
+import { ProcTable } from "../../../fs/src/proc.wac";
+import { sealedShell } from "./memory.wac";
+import { bootStore, saveStore } from "../../../fs/src/image.wac";
+import { Vec, flatten } from "core";
 import { Fixture } from "./cases.wac";
 
 /** What one shell said. */
@@ -66,18 +68,23 @@ export struct Loaded {
 /**
  * One case through a shell that has box's applets, inside this process.
  *
- * `shellMain`'s `first` is an index into the arguments and a frame's `argv` starts with the child's own
- * name, so the shell's own arguments start at 1 — passing 0 makes it read `sh` as a script to open.
+ * The machine's files, standing in `dir`, with both streams kept. `shellMain`'s `first` is an index into
+ * the arguments and they start with the shell's own name, so its own arguments start at 1 — passing 0
+ * makes it read `sh` as a script to open.
  */
-export async Ran runCase(Core core, Cli cli, string dir, string script) {
-  Frame f = Frame.of(["sh", "-c", script], u8[](), dir, false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Shell sh = Shell.create(c, l);
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  i32 status = await shellMain(c, l, sh, 1);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+export async Ran runCase(Sys sys, string dir, string script) {
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  Shell sh = Shell.of(bytesInput(u8[]()), out.out, err.out, sys.clock(), sys.env(), sys.net(), sys.procs(),
+                      sys.files(), ProcTable.create(), dir, true);
+  wireBox(sh, sys.random());
+  i32 status = await shellMain(["sh", "-c", script], sh, 1);
+  return kept(out, err, status);
+}
+
+/** What a run left in its two streams, with its status. */
+Ran kept(Kept out, Kept err, i32 status) {
+  return Ran(string.fromBytes(out.bytes()), string.fromBytes(err.bytes()), status, out.bytes());
 }
 
 // ── Helpers the differential tests share ──────────────────────────────────────────────────────────
@@ -148,9 +155,10 @@ export string differs(u8[] got, u8[] want) {
  * Inherited rather than pinned on purpose: `LC_ALL=C` on an oracle removes the question along with the
  * variable, which is how `issues/system/0143` survived for as long as it did.
  */
-export string realOut(Cli cli, string prog, string[] args) {
-  Exec r = cli.exec(prog, args, u8[]()).wait();
-  return string.fromBytes(r.stdout);
+export string realOut(Procs procs, string prog, string[] args) {
+  auto rRan = flatten(procs.exec(prog, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return string.fromBytes(r!.stdout);
 }
 
 /**
@@ -196,8 +204,8 @@ export string joinWith(string[] xs, string sep) {
  * reads argv from the process, so it is not reachable in-process. Compare against `UNKNOWN` rather
  * than against a number.
  */
-export async Ran runApplet(Core core, Cli cli, string dir, string[] argv) {
-  return await runAppletIn(core, cli, dir, argv, u8[]());
+export async Ran runApplet(Sys sys, string dir, string[] argv) {
+  return await runAppletIn(sys, dir, argv, u8[]());
 }
 
 /**
@@ -207,49 +215,37 @@ export async Ran runApplet(Core core, Cli cli, string dir, string[] argv) {
  * GNU's does not either — ours stopped pretending to in wac-mono 0098. So the only way to hand it
  * input is the way a user would.
  */
-export async Ran runAppletIn(Core core, Cli cli, string dir, string[] argv, u8[] stdin) {
-  Frame f = Frame.of(argv, stdin, dir, false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  i32 status = await dispatch(c, l, Fs.onHost(l, 0), parseList(argv, 1, argv[0]), argv[0]);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+export async Ran runAppletIn(Sys sys, string dir, string[] argv, u8[] stdin) {
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  i32 status = await dispatch(argv, bytesInput(stdin), err.out, out.out, sys.clock(), sys.random(), sys.env(),
+                              sys.files().relativeTo(dir), sys.net(), sys.procs(), () => false,
+                              parseList(argv, 1, argv[0]), argv[0]);
+  return kept(out, err, status);
 }
 
 /**
  * A sealed session: an in-memory filesystem with `/tmp`, `/dev` and `/proc` mounted over it.
  *
  * Wired the way `bin/sealedsh.wac` wires one, including `/bin` from the applet names, so what differs
- * from a host run is the backing and nothing else. `mountSystem` takes `core.randomBytes` — a host
- * function rather than a permission, which is why a session with no filesystem grants still has a
- * working `/dev/urandom`, and why a wac test can build one of these at all.
+ * from a built run is the streams and nothing else. `/dev/urandom` is the program's `Random` — a
+ * capability that needs no grant, which is why a sealed session still has one, and why a wac test can
+ * build one of these at all.
  */
-export async Ran runSealed(Core core, Cli cli, string script) {
-  Fs fs = Fs.inMemory(0);
-  await fs.mkdir("/tmp", true);
+export async Ran runSealed(Sys sys, string script) {
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.mkdir("/tmp", true);
   // **The whole command line, as `bin/sealedsh.wac` builds it**: its own name and then its arguments.
   // `/proc/self/cmdline` and `ps`'s CMD column both read this, so a session that recorded only its name
   // would answer `sealedsh` where the built program answers `sealedsh -c ps`.
-  Vec<string> argv = Vec.create();
-  argv.push("sealedsh");
-  argv.push("-c");
-  argv.push(script);
-  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
-
-  // **Named as the built program names itself.** `ps` prints the session's own argv, so a frame calling
-  // itself `sh` would make this session answer `sh -c ps` where `bin/sealedsh.wac` answers
-  // `sealedsh -c ps` — a difference with no cause but the harness.
-  Frame f = Frame.of(["sealedsh", "-c", script], u8[](), "/", false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Shell sh = Shell.onFs(c, l, fs);
-  sh.cwd = "/";
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  // **Not spawnable**, unlike `bin/sealedsh.wac`. A spawned stage re-enters the program's own `main`, and
-  // a test file's `main` is not a shell that will stop — `yes | /bin/head -2` never returns. The claims
-  // that are about that route keep a built program and a real process; `issues/system/0193` lists them.
-  i32 status = await shellMain(c, l, sh, 1);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+  Vec<string> cmdline = Vec.create();
+  cmdline.push("sealedsh");
+  cmdline.push("-c");
+  cmdline.push(script);
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  i32 status = await shellMain(["-c", script], sealedShell(sys, root, cmdline, out, err), 0);
+  return kept(out, err, status);
 }
 
 /**
@@ -264,30 +260,32 @@ export async Ran runSealed(Core core, Cli cli, string script) {
  * disk and came back. The claim that needs a second *process* — that an image outlives one — stays in
  * `backingsprocess_test.wac`, which spawns.
  */
-export async Ran runImaged(Core core, Cli cli, string path, string script) {
-  Vec<string> argv = Vec.create();
-  argv.push("imaged");
-  argv.push(path);
-  argv.push("-c");
-  argv.push(script);
-  Frame f = Frame.of(["imaged", path, "-c", script], u8[](), "/", false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Booted booted = boot(c, l, path, argv, Vec.fromArray(boxNames()));
-  if (!booted.ok) {
-    c.warn("imaged: \{path}: \{booted.error}");
-    return Ran("", string.fromBytes(f.err.bytes()), 1, u8[]());
+export async Ran runImaged(Sys sys, string path, string script) {
+  Files host = sys.files();
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  MemoryStore store;
+  match (await bootStore(host, sys.clock(), path)) {
+    Ok(st): { store = st; }
+    Err(e): {
+      err.out.line("imaged: \{path}: \{e}");
+      return kept(out, err, 1);
+    }
   }
-  Shell sh = Shell.onFs(c, l, booted.fs);
-  sh.cwd = "/";
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  // **Two, not one.** `shellMain`'s `first` is an index into the arguments, and this program takes one of
-  // its own before the shell's: argv is `imaged <image> -c <script>`, so the shell starts after the image
-  // path. Passing 1 makes it read the image file as a script to open, and every session answers 127.
-  i32 status = await shellMain(c, l, sh, 2);
-  if (!save(c, l, "imaged", path, sh.fs)) { status = 1; }
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+  Vec<string> cmdline = Vec.create();
+  cmdline.push("imaged");
+  cmdline.push(path);
+  cmdline.push("-c");
+  cmdline.push(script);
+  i32 status = await shellMain([path, "-c", script], sealedShell(sys, store.asUser("root"), cmdline, out, err), 1);
+  match (await saveStore(host, store, path)) {
+    Ok(v): { }
+    Err(e): {
+      err.out.line("imaged: \{path}: the session could not be saved: \{e}");
+      status = 1;
+    }
+  }
+  return kept(out, err, status);
 }
 
 /**
@@ -297,18 +295,18 @@ export async Ran runImaged(Core core, Cli cli, string path, string script) {
  * and a case measured against a world the previous one changed is a difference that reproduces for a
  * reason that has nothing to do with the applet.
  */
-export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
-  cli.remove(dir, true).wait();
-  if (!cli.mkdir(dir, true).wait().ok()) { return false; }
-  for (i32 i = 0; i < fs.len(); i++) {
-    if (fs[i].name == "") { continue; }
+export bool layFixtures(Files fs, string dir, Fixture[] fixtures) {
+  fs.remove(dir, true).wait();
+  if (!flatten(fs.mkdir(dir, true).wait()).isOk()) { return false; }
+  for (i32 i = 0; i < fixtures.len(); i++) {
+    if (fixtures[i].name == "") { continue; }
     // A directory is a fixture too: one sweep needs an operand whose *read* refuses rather than whose
     // open fails, which is a different code path and a different message in every tool.
-    if (fs[i].isDir) {
-      if (!cli.mkdir("\{dir}/\{fs[i].name}", true).wait().ok()) { return false; }
+    if (fixtures[i].isDir) {
+      if (!flatten(fs.mkdir("\{dir}/\{fixtures[i].name}", true).wait()).isOk()) { return false; }
       continue;
     }
-    if (!cli.writeFile("\{dir}/\{fs[i].name}", fs[i].bytes).wait().ok()) { return false; }
+    if (!flatten(fs.writeFile("\{dir}/\{fixtures[i].name}", fixtures[i].bytes).wait()).isOk()) { return false; }
   }
   return true;
 }
@@ -319,14 +317,14 @@ export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
  * A missing file is an error rather than an empty list: a replay over zero vectors passes, which is the
  * shape this repository keeps finding — a check that stopped checking and said nothing.
  */
-export Loaded load(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) {
+export Loaded load(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if (r is null) {
     return Loaded(Vector[](), 0, "",
                   "cannot read \{path} — run `wac run --allow-read --allow-write --allow-run " +
                   "tools/wac/appletvectors.wac` to write it");
   }
-  u8[] b = r.bytes;
+  u8[] b = r!;
   Line l = lineAt(b, 0);
   if (l.text != "wac-applet-vectors 1") {
     return Loaded(Vector[](), 0, "", "not an applet vectors file: \{l.text}");

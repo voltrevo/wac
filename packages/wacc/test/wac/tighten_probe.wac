@@ -40,7 +40,7 @@
 // emitter, and a probe nobody runs in the suite can pay it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Files, Output } from "std";
 import { blockedFiles, emitDeclineFiles } from "../../src/api.wac";
 import { typesGrewCatchAll } from "../../src/emit.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
@@ -49,9 +49,9 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string ENTRY = "packages/wacc/src/api.wac";
 
-export string test_what_the_emitter_declines_across_waccs_own_sources(Core core, Cli cli) {
+export string test_what_the_emitter_declines_across_waccs_own_sources(Output err, Files fs) {
   T t = T.create();
-  Corpus c = loadCorpus(cli, "tighten_probe");
+  Corpus c = loadCorpus(fs, "tighten_probe");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
@@ -99,7 +99,7 @@ export string test_what_the_emitter_declines_across_waccs_own_sources(Core core,
   // what it found by failing is a red test for anyone who runs it, and `tools/runTests.wac` picking up
   // one more glob is all it would take. Printing on success is the rule this repository learned the
   // expensive way — an instrument that reports by failing a build installs itself as the seed.
-  core.warn("tighten_probe: " + itoa(declined) + " of " + itoa(cp.len())
+  err.line("tighten_probe: " + itoa(declined) + " of " + itoa(cp.len())
       + " of wacc's own sources declined, " + itoa(emitOnly)
       + " of them the emit path told us more about" + (rows == "" ? "" : "\n" + rows));
   return t.report();

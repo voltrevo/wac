@@ -25,8 +25,8 @@
 // the notes about its standard input and about readiness live.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, HostSocket } from "std";
-import { Buf } from "core";
+import { Datagram, Exec, Pending, HostSocket, ChildEnv, Clock, Env, Files, Launch, Net, Output, Procs, Sys, Datagrams } from "std";
+import { Buf, flatten } from "core";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { alertAt, blockFrom, ckeMessage, cookieAt, curveOfBody, finishedMessage, fingerprintOf,
          fragBodyAt, fragInfoAt, hello, keyExchangeSigned, kindAt, leafOf, masterFrom, openedAt,
@@ -73,25 +73,22 @@ u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
 }
 
 /** The next datagram, or empty. The deadline is on the wait — `issues/system/0206`. */
-u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
-  Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny([p.id], ms) < 0) {
-    p.drop(p.id);
-    return u8[]();
+u8[] receiveWithin(Clock clock, Datagrams sock, i32 ms) {
+  match (flatten(clock.within(sock.receive(), ms).wait())) {
+    Ok(d): { return d.bytes; }
+    Err(e): { return u8[](); }
   }
-  Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[]();
 }
 
 /** OpenSSL's own fingerprint of the file it is serving — the oracle for ours. */
-string opensslFingerprint(Cli cli) {
-  Exec r = cli.exec("openssl",
-                    [
+string opensslFingerprint(Procs procs) {
+  auto rRan = flatten(procs.exec("openssl", [
                              "x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-noout",
                              "-fingerprint", "-sha256"
-                    ], u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return ""; }
-  string said = string.fromBytes(r.stdout);
+                    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) { return ""; }
+  string said = string.fromBytes(r!.stdout);
   i32 eq = said.indexOf("=");
   if (eq < 0) { return ""; }
   string out = "";
@@ -103,33 +100,40 @@ string opensslFingerprint(Cli cli) {
   return out;
 }
 
-export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli) {
+export string test_openssl_completes_a_dtls_handshake_with_us(Sys sys) {
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
   u8[] RANDOM = ramp(32, 7, 3);
   u8[] SCALAR = ramp(32, 11, 5);
 
-  Dtls srv = startServer(t, cli, "handshake");
+  Dtls srv = startServer(t, err, clock, env, fs, net, procs, "handshake");
   if (!srv.ok) { t.fail("the DTLS server did not start — \{srv.error}"); return t.report(); }
-  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  if (sock.handle < 0) {
-    t.fail("our socket did not bind — \{sock.error}");
-    stopServer(cli, srv);
+  auto sockBind = flatten(net.bindDatagram("127.0.0.1", 0).wait());
+  Datagrams? sock = sockBind.ok();
+  if (sock is null) {
+    t.fail("our socket did not bind — \{sockBind.isErr() ? "\{sockBind.err()!}" : ""}");
+    stopServer(procs, srv);
     return t.report();
   }
   // Readiness asks the kernel: a DTLS probe would win the server, which serves one peer. See
   // `openssl.wac`.
-  if (!waitForBind(cli, srv, 200)) {
-    t.fail("openssl never bound \{srv.port} — \{srv.said(cli)}");
-    cli.closeSocket(sock.handle);
-    stopServer(cli, srv);
+  if (!waitForBind(procs, srv, 200)) {
+    t.fail("openssl never bound \{srv.port} — \{srv.said(fs)}");
+    sock!.close();
+    stopServer(procs, srv);
     return t.report();
   }
 
   // ── Flight 1: the cookie exchange ────────────────────────────────────────────
-  cli.sendTo(sock.handle, "127.0.0.1", srv.port, hello(RANDOM, u8[](), 0, 0)).wait();
-  u8[] verify = receiveWithin(core, cli, sock, 5000);
-  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — \{srv.said(cli)}");
-  if (verify.len() == 0) { done(cli, sock, srv); return t.report(); }
+  sock!.sendTo("127.0.0.1", srv.port, hello(RANDOM, u8[](), 0, 0)).wait();
+  u8[] verify = receiveWithin(clock, sock!, 5000);
+  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — \{srv.said(fs)}");
+  if (verify.len() == 0) { done(net, procs, sock!, srv); return t.report(); }
   u8[] cookie = cookieAt(verify, 0);
 
   // **The transcript starts here.** RFC 6347 §4.2.6 excludes the first ClientHello and the
@@ -137,7 +141,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   // would be part of a session at all. The cookied hello is message zero of the hash.
   u8[] second = hello(RANDOM, cookie, 1, 1);
   u8[] clientHelloMsg = slice(second, 13, second.len());   // the handshake message, header included
-  cli.sendTo(sock.handle, "127.0.0.1", srv.port, second).wait();
+  sock!.sendTo("127.0.0.1", srv.port, second).wait();
 
   // ── Flight 2: the server's, across as many datagrams as it takes ─────────────
   //
@@ -159,16 +163,16 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   bool sawDone = false;
 
   for (i32 datagram = 0; datagram < 8 && !sawDone; datagram++) {
-    u8[] got = receiveWithin(core, cli, sock, 5000);
+    u8[] got = receiveWithin(clock, sock!, 5000);
     if (got.len() == 0) {
       t.fail("the flight stopped after \{datagram} datagram(s)");
-      done(cli, sock, srv);
+      done(net, procs, sock!, srv);
       return t.report();
     }
     i32 alert = alertAt(got, 0);
     if (alert >= 0) {
       t.fail("the server sent alert \{alert} during its flight");
-      done(cli, sock, srv);
+      done(net, procs, sock!, srv);
       return t.report();
     }
     i32 at = 0;
@@ -226,7 +230,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   }
   t.isTrue(serverRandom.len() > 0 && serverKey.len() > 0,
            "no ServerHello random or ServerKeyExchange key in the flight");
-  if (serverRandom.len() == 0 || serverKey.len() == 0) { done(cli, sock, srv); return t.report(); }
+  if (serverRandom.len() == 0 || serverKey.len() == 0) { done(net, procs, sock!, srv); return t.report(); }
   t.eqI32(curve, 0x001D, "x25519 is what our list puts first");
   t.eqI32(serverKey.len(), 32, "an x25519 point is thirty-two bytes");
 
@@ -239,13 +243,13 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   // read by them.
   t.isTrue(certBody.len() > 0 && skeBody.len() > 0,
            "the flight had no Certificate or no ServerKeyExchange");
-  if (certBody.len() == 0 || skeBody.len() == 0) { done(cli, sock, srv); return t.report(); }
+  if (certBody.len() == 0 || skeBody.len() == 0) { done(net, procs, sock!, srv); return t.report(); }
 
   u8[] leaf = leafOf(certBody);
   t.isTrue(leaf.len() > 0, "a leaf certificate came out of the Certificate message");
   if (leaf.len() > 0) { t.eqI32(leaf[0] as i32, 0x30, "and it starts with a DER SEQUENCE"); }
 
-  string expected = opensslFingerprint(cli);
+  string expected = opensslFingerprint(procs);
   t.isTrue(expected != "", "openssl printed no fingerprint for the certificate file");
   t.eqStr(hexOf(fingerprintOf(leaf)), expected,
           "the SHA-256 of the certificate on the wire is the one openssl prints for the file — " +
@@ -293,18 +297,18 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   // expects. Epoch 0 for the first two; the Finished is the first thing under the new keys.
   u8[] one = u8[].filled(1, 0);
   one[0] = 1;
-  cli.sendTo(sock.handle, "127.0.0.1", srv.port,
+  sock!.sendTo("127.0.0.1", srv.port,
              cat([
                         recordOf(22, 0, 2, cke), recordOf(20, 0, 3, one),
                         sealedRecord(clientKey, clientIv, 1, 0, 22, finished)
              ])).wait();
 
   // ── Flight 4: the server's ChangeCipherSpec and Finished ─────────────────────
-  u8[] answer = receiveWithin(core, cli, sock, 6000);
+  u8[] answer = receiveWithin(clock, sock!, 6000);
   t.isTrue(answer.len() > 0,
            "the server said nothing after our Finished — it neither accepted nor rejected it, " +
            "which usually means the record never parsed");
-  if (answer.len() == 0) { done(cli, sock, srv); return t.report(); }
+  if (answer.len() == 0) { done(net, procs, sock!, srv); return t.report(); }
 
   t.eqI32(alertAt(answer, 0), -1,
           "the server rejected our Finished. 2/20 is bad_record_mac — the keys or the nonce; " +
@@ -339,11 +343,11 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
             "the server's verify_data is what our own schedule computes for it");
   }
 
-  done(cli, sock, srv);
+  done(net, procs, sock!, srv);
   return t.report();
 }
 
-void done(Cli cli, HostSocket sock, Dtls srv) {
-  if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
-  stopServer(cli, srv);
+void done(Net net, Procs procs, Datagrams sock, Dtls srv) {
+  sock.close();
+  stopServer(procs, srv);
 }

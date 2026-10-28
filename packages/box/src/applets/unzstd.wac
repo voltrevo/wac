@@ -4,19 +4,19 @@
 // is awaited, so the applet awaits all of it and hands the decoder a reader over what it has
 // (`readerOf`). The decoded output is still produced a block at a time and never held whole.
 
-import { Cli, Core } from "std";
+import { Input, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream } from "../lib/input.wac";
+import { Opened, openStream } from "../lib/input.wac";
 import { readerOf } from "../../../platform/src/stream.wac";
+import { flatten } from "core";
 import { unzstdStream } from "../../../zstd/src/stream.wac";
-import { Fs } from "../../../fs/src/fs.wac";
 
-export async i32 unzstd(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
-  Input in = await openStream(core, cli, fs, a, 0, -1);
+export async i32 unzstd(Input stdin, Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
+  Opened in = await openStream(stdin, err, fs, a, 0);
   if (!in.ok) { return 1; }
   u8[] all = await in.fed.rest();
-  unzstdStream(readerOf(all), cli.write);
+  unzstdStream(readerOf(all), (u8[] b) => flatten(out.write(b).wait()).isOk());
   return 0;
 }

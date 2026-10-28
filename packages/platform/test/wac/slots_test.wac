@@ -20,15 +20,17 @@
 // "no such declaration" has to be a failure, not a zero.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
+import { flatten } from "core";
 
 static string WAC = "std/platform.wac";
 static string LAYOUT = "packages/platform/host/layout.ts";
 
-string readOr(T t, Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  t.isTrue(r.ok, "\{path} — \{r.error}");
-  return r.ok ? string.fromBytes(r.bytes) : "";
+string readOr(T t, Files fs, string path) {
+  auto rRead = flatten(fs.readFile(path).wait());
+  u8[]? r = rRead.ok();
+  t.isTrue((r is not null), "\{path} — \{rRead.isErr() ? "\{rRead.err()!}" : ""}");
+  return (r is not null) ? string.fromBytes(r!) : "";
 }
 
 /**
@@ -52,10 +54,11 @@ i32 numberAfter(string src, string marker) {
   return v;
 }
 
-export string test_platform_wacs_call_slots_is_the_rings_real_size(Core core, Cli cli) {
+export string test_platform_wacs_call_slots_is_the_rings_real_size(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 guest = numberAfter(readOr(t, cli, WAC), "export static i32 CALL_SLOTS = ");
-  i32 host = numberAfter(readOr(t, cli, LAYOUT), "export const SLOTS = ");
+  i32 guest = numberAfter(readOr(t, fs, WAC), "export static i32 CALL_SLOTS = ");
+  i32 host = numberAfter(readOr(t, fs, LAYOUT), "export const SLOTS = ");
 
   t.isTrue(guest >= 0, "platform.wac no longer declares CALL_SLOTS");
   t.isTrue(host >= 0, "layout.ts no longer declares SLOTS");

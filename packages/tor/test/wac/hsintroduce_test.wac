@@ -8,7 +8,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import {
   INTRO2_BAD_RENDEZVOUS, INTRO2_COOKIE_SEEN, INTRO2_NO_KEYS, INTRO2_OK, INTRO2_REPLAYED,
   INTRO2_UNREADABLE, Introduction, handleIntroduce2,
@@ -18,6 +18,7 @@ import { REND_OK } from "../../src/hsrendpoint.wac";
 import { serviceRendezvousKeys } from "../../src/hsntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { flatten } from "core";
 
 
 static i64 NOW = 1785931200;
@@ -48,10 +49,10 @@ u8[] ephemeral() {
  * `allowPrivate` cases here would still pass and would prove nothing, because there would be no
  * private address for `allowPrivate` to be about.
  */
-JsonObject introTop(Cli cli) {
-  FileResult r = cli.readFile("packages/tor/test/data/introduce_vectors.json").wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes).ok();
+JsonObject introTop(Files fs) {
+  u8[]? r = flatten(fs.readFile("packages/tor/test/data/introduce_vectors.json").wait()).ok();
+  if ((r is null)) { trap; }
+  JsonValue? v = parse(r!).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }
@@ -59,8 +60,8 @@ JsonObject introTop(Cli cli) {
   }
 }
 
-JsonArray introCases(Cli cli) {
-  JsonValue? cs = introTop(cli).getStr("cases");
+JsonArray introCases(Files fs) {
+  JsonValue? cs = introTop(fs).getStr("cases");
   if (cs is null) { trap; }
   match (cs!) {
     Array(items): { return items; }
@@ -68,10 +69,10 @@ JsonArray introCases(Cli cli) {
   }
 }
 
-i32 caseCount(Cli cli) { return introCases(cli).len(); }
+i32 caseCount(Files fs) { return introCases(fs).len(); }
 
-string fieldOf(Cli cli, i32 i, string key) {
-  match (introCases(cli).get(i)) {
+string fieldOf(Files fs, i32 i, string key) {
+  match (introCases(fs).get(i)) {
     Object(members): {
       JsonValue? v = members.getStr(key);
       if (v is null) { trap; }
@@ -84,7 +85,7 @@ string fieldOf(Cli cli, i32 i, string key) {
   }
 }
 
-u8[] hexOf(Cli cli, i32 i, string key) { return decoded(fieldOf(cli, i, key)); }
+u8[] hexOf(Files fs, i32 i, string key) { return decoded(fieldOf(fs, i, key)); }
 
 /** Whether these link specifiers name a 127.x or 10.x rendezvous point. */
 bool namesAPrivateAddress(u8[] ls) {
@@ -98,9 +99,10 @@ bool namesAPrivateAddress(u8[] ls) {
   return false;
 }
 
-export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
+export string test_the_vectors_are_what_the_tests_assume(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  JsonValue? src = introTop(cli).getStr("source");
+  JsonValue? src = introTop(fs).getStr("source");
   if (src is null) { trap; }
   match (src!) {
     Str(bytes): {
@@ -110,24 +112,25 @@ export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
     }
     default: { trap; }
   }
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   for (i32 i = 0; i < n; i++) {
-    t.isTrue(namesAPrivateAddress(hexOf(cli, i, "linkSpecifiers")),
+    t.isTrue(namesAPrivateAddress(hexOf(fs, i, "linkSpecifiers")),
              "case \{i} no longer names a private rendezvous point; " +
              "the allowPrivate cases would prove less");
   }
   return t.report();
 }
 
-export string test_one_introduction_end_to_end(Core core, Cli cli) {
+export string test_one_introduction_end_to_end(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   t.isTrue(n >= 1, "there is a cell tor built");
 
   for (i32 i = 0; i < n; i++) {
     Introduction got = handleIntroduce2(
-      hexOf(cli, i, "cell"), hexOf(cli, i, "introAuthKey"), hexOf(cli, i, "introEncSecret"),
-      hexOf(cli, i, "subcredential"), ephemeral(), introReplayCache(8), cookieReplayCache(8), NOW,
+      hexOf(fs, i, "cell"), hexOf(fs, i, "introAuthKey"), hexOf(fs, i, "introEncSecret"),
+      hexOf(fs, i, "subcredential"), ephemeral(), introReplayCache(8), cookieReplayCache(8), NOW,
       true);
 
     t.eqI32(got.error, INTRO2_OK, "tor's own INTRODUCE2 is answered");
@@ -137,7 +140,7 @@ export string test_one_introduction_end_to_end(Core core, Cli cli) {
 
     // RENDEZVOUS1 is the cookie the client chose, then our ephemeral public key and AUTH.
     t.eqI32(got.rendezvous1.len(), 84, "the cell is a 20-byte cookie and a 64-byte handshake");
-    t.eqBytes(slice(got.rendezvous1, 0, 20), hexOf(cli, i, "rendCookie"),
+    t.eqBytes(slice(got.rendezvous1, 0, 20), hexOf(fs, i, "rendCookie"),
               "and it opens with the client's own cookie, which is how the rendezvous point pairs it");
     // The 64 bytes between the cookie and the end are `Y | AUTH`, and both halves are checkable
     // here because each is pinned on its own elsewhere: the ephemeral public key is a base
@@ -145,8 +148,8 @@ export string test_one_introduction_end_to_end(Core core, Cli cli) {
     // is being tested is the **assembly** — which half goes where — and nothing about the cell's
     // length or its cookie can see that. Two planted faults, swapping AUTH for the key seed and
     // sending the client's key instead of ours, survived until this assertion existed.
-    u8[] keys = serviceRendezvousKeys(hexOf(cli, i, "introAuthKey"),
-                                      hexOf(cli, i, "introEncSecret"), ephemeral(),
+    u8[] keys = serviceRendezvousKeys(hexOf(fs, i, "introAuthKey"),
+                                      hexOf(fs, i, "introEncSecret"), ephemeral(),
                                       got.clientPublic);
     t.eqI32(keys.len(), 64, "the responder produced keys");
     t.eqBytes(slice(got.rendezvous1, 20, 52), x25519Base(ephemeral()),
@@ -169,14 +172,15 @@ export string test_one_introduction_end_to_end(Core core, Cli cli) {
  * the replay cache is consulted first, the answer is `REPLAYED` and no handshake was computed. That
  * ordering is what stops a replayed cell costing a curve25519 operation.
  */
-export string test_a_replay_is_refused_before_any_crypto(Core core, Cli cli) {
+export string test_a_replay_is_refused_before_any_crypto(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   ReplayCache cells = introReplayCache(8);
   ReplayCache cookies = cookieReplayCache(8);
-  u8[] cell = hexOf(cli, 0, "cell");
-  u8[] auth = hexOf(cli, 0, "introAuthKey");
-  u8[] secret = hexOf(cli, 0, "introEncSecret");
-  u8[] subcred = hexOf(cli, 0, "subcredential");
+  u8[] cell = hexOf(fs, 0, "cell");
+  u8[] auth = hexOf(fs, 0, "introAuthKey");
+  u8[] secret = hexOf(fs, 0, "introEncSecret");
+  u8[] subcred = hexOf(fs, 0, "subcredential");
 
   t.eqI32(handleIntroduce2(cell, auth, secret, subcred, ephemeral(), cells, cookies, NOW, true).error,
           INTRO2_OK, "the first arrival is answered");
@@ -209,13 +213,14 @@ export string test_a_replay_is_refused_before_any_crypto(Core core, Cli cli) {
  * that circuit. Modelled by a fresh cell cache — a different introduction point — and the service's
  * one cookie cache, which is the pair of scopes that makes this case distinguishable at all.
  */
-export string test_the_same_cookie_again_is_dropped(Core core, Cli cli) {
+export string test_the_same_cookie_again_is_dropped(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   ReplayCache cookies = cookieReplayCache(8);
-  u8[] cell = hexOf(cli, 0, "cell");
-  u8[] auth = hexOf(cli, 0, "introAuthKey");
-  u8[] secret = hexOf(cli, 0, "introEncSecret");
-  u8[] subcred = hexOf(cli, 0, "subcredential");
+  u8[] cell = hexOf(fs, 0, "cell");
+  u8[] auth = hexOf(fs, 0, "introAuthKey");
+  u8[] secret = hexOf(fs, 0, "introEncSecret");
+  u8[] subcred = hexOf(fs, 0, "subcredential");
 
   t.eqI32(handleIntroduce2(cell, auth, secret, subcred, ephemeral(), introReplayCache(8), cookies,
                            NOW, true).error,
@@ -241,12 +246,13 @@ export string test_the_same_cookie_again_is_dropped(Core core, Cli cli) {
  * The check is after the parse: unreadable bytes are unreadable, not a bad rendezvous point, because
  * until the MAC verifies there are no link specifiers to have an opinion about.
  */
-export string test_where_the_client_wants_to_meet(Core core, Cli cli) {
+export string test_where_the_client_wants_to_meet(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] cell = hexOf(cli, 0, "cell");
-  u8[] auth = hexOf(cli, 0, "introAuthKey");
-  u8[] secret = hexOf(cli, 0, "introEncSecret");
-  u8[] subcred = hexOf(cli, 0, "subcredential");
+  u8[] cell = hexOf(fs, 0, "cell");
+  u8[] auth = hexOf(fs, 0, "introAuthKey");
+  u8[] secret = hexOf(fs, 0, "introEncSecret");
+  u8[] subcred = hexOf(fs, 0, "subcredential");
 
   Introduction refused = handleIntroduce2(cell, auth, secret, subcred, ephemeral(),
                                           introReplayCache(8), cookieReplayCache(8), NOW, false);
@@ -263,12 +269,13 @@ export string test_where_the_client_wants_to_meet(Core core, Cli cli) {
 }
 
 /** What cannot be answered at all. */
-export string test_what_is_refused(Core core, Cli cli) {
+export string test_what_is_refused(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] cell = hexOf(cli, 0, "cell");
-  u8[] auth = hexOf(cli, 0, "introAuthKey");
-  u8[] secret = hexOf(cli, 0, "introEncSecret");
-  u8[] subcred = hexOf(cli, 0, "subcredential");
+  u8[] cell = hexOf(fs, 0, "cell");
+  u8[] auth = hexOf(fs, 0, "introAuthKey");
+  u8[] secret = hexOf(fs, 0, "introEncSecret");
+  u8[] subcred = hexOf(fs, 0, "subcredential");
 
   t.eqI32(handleIntroduce2(u8[](), auth, secret, subcred, ephemeral(), introReplayCache(8),
                            cookieReplayCache(8), NOW, true).error,

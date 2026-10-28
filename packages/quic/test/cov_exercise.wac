@@ -16,7 +16,7 @@
 // values rather than aborts because a datagram that does not parse is routine — a packet arrives from
 // anyone at any time, so "this is not for me" cannot be an exceptional condition.
 
-import { Core, Cli, Sys } from "std";
+import { Sys, Clock, Env, Files, Net, Output, Procs } from "std";
 
 import {
   test_the_servers_first_application_packet_opens_under_keys_we_derived as a__the_servers_first_application_packet_opens_under_keys_we_derived,
@@ -161,401 +161,405 @@ import {
 } from "./wac/truncated_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   i32 bad = 0;
   if (tr__a_frame_of_varints_cut_short_is_incomplete().len() > 0) {
-    core.warn("error: FAILED truncated_test test_a_frame_of_varints_cut_short_is_incomplete");
+    err.line("error: FAILED truncated_test test_a_frame_of_varints_cut_short_is_incomplete");
     bad = bad + 1;
   }
   if (tr__a_frame_with_a_length_cut_short_is_incomplete().len() > 0) {
-    core.warn("error: FAILED truncated_test test_a_frame_with_a_length_cut_short_is_incomplete");
+    err.line("error: FAILED truncated_test test_a_frame_with_a_length_cut_short_is_incomplete");
     bad = bad + 1;
   }
   if (tr__a_frame_of_fixed_width_cut_short_is_incomplete().len() > 0) {
-    core.warn("error: FAILED truncated_test test_a_frame_of_fixed_width_cut_short_is_incomplete");
+    err.line("error: FAILED truncated_test test_a_frame_of_fixed_width_cut_short_is_incomplete");
     bad = bad + 1;
   }
   if (tr__an_ack_cut_short_is_incomplete().len() > 0) {
-    core.warn("error: FAILED truncated_test test_an_ack_cut_short_is_incomplete");
+    err.line("error: FAILED truncated_test test_an_ack_cut_short_is_incomplete");
     bad = bad + 1;
   }
   if (tr__the_frames_with_nothing_to_truncate().len() > 0) {
-    core.warn("error: FAILED truncated_test test_the_frames_with_nothing_to_truncate");
+    err.line("error: FAILED truncated_test test_the_frames_with_nothing_to_truncate");
     bad = bad + 1;
   }
   if (tr__a_forbidden_frame_is_refused_before_it_is_read().len() > 0) {
-    core.warn("error: FAILED truncated_test test_a_forbidden_frame_is_refused_before_it_is_read");
+    err.line("error: FAILED truncated_test test_a_forbidden_frame_is_refused_before_it_is_read");
     bad = bad + 1;
   }
-  if (a__the_servers_first_application_packet_opens_under_keys_we_derived(core, cli).len() > 0) {
-    core.warn("error: FAILED application_test test_the_servers_first_application_packet_opens_under_keys_we_derived");
+  if (a__the_servers_first_application_packet_opens_under_keys_we_derived(sys).len() > 0) {
+    err.line("error: FAILED application_test test_the_servers_first_application_packet_opens_under_keys_we_derived");
     bad = bad + 1;
   }
-  if (a__the_key_phase_is_zero(core, cli).len() > 0) {
-    core.warn("error: FAILED application_test test_the_key_phase_is_zero");
+  if (a__the_key_phase_is_zero(sys).len() > 0) {
+    err.line("error: FAILED application_test test_the_key_phase_is_zero");
     bad = bad + 1;
   }
-  if (a__the_frames_inside_are_ones_we_can_walk(core, cli).len() > 0) {
-    core.warn("error: FAILED application_test test_the_frames_inside_are_ones_we_can_walk");
+  if (a__the_frames_inside_are_ones_we_can_walk(sys).len() > 0) {
+    err.line("error: FAILED application_test test_the_frames_inside_are_ones_we_can_walk");
     bad = bad + 1;
   }
-  if (a__a_wrong_connection_id_length_does_not_open_the_packet(core, cli).len() > 0) {
-    core.warn("error: FAILED application_test test_a_wrong_connection_id_length_does_not_open_the_packet");
+  if (a__a_wrong_connection_id_length_does_not_open_the_packet(sys).len() > 0) {
+    err.line("error: FAILED application_test test_a_wrong_connection_id_length_does_not_open_the_packet");
     bad = bad + 1;
   }
-  if (a__a_packet_that_does_not_open_leaves_the_window_where_it_was(core, cli).len() > 0) {
-    core.warn("error: FAILED application_test test_a_packet_that_does_not_open_leaves_the_window_where_it_was");
+  if (a__a_packet_that_does_not_open_leaves_the_window_where_it_was(sys).len() > 0) {
+    err.line("error: FAILED application_test test_a_packet_that_does_not_open_leaves_the_window_where_it_was");
     bad = bad + 1;
   }
-  if (c__a_real_quic_server_completes_a_handshake_with_our_client(core, cli).len() > 0) {
-    core.warn("error: FAILED complete_test test_a_real_quic_server_completes_a_handshake_with_our_client");
+  if (c__a_real_quic_server_completes_a_handshake_with_our_client(sys).len() > 0) {
+    err.line("error: FAILED complete_test test_a_real_quic_server_completes_a_handshake_with_our_client");
     bad = bad + 1;
   }
-  if (c__a_finished_sent_to_the_wrong_connection_id_completes_nothing(core, cli).len() > 0) {
-    core.warn("error: FAILED complete_test test_a_finished_sent_to_the_wrong_connection_id_completes_nothing");
+  if (c__a_finished_sent_to_the_wrong_connection_id_completes_nothing(sys).len() > 0) {
+    err.line("error: FAILED complete_test test_a_finished_sent_to_the_wrong_connection_id_completes_nothing");
     bad = bad + 1;
   }
-  if (c__a_finished_the_server_did_not_compute_completes_nothing(core, cli).len() > 0) {
-    core.warn("error: FAILED complete_test test_a_finished_the_server_did_not_compute_completes_nothing");
+  if (c__a_finished_the_server_did_not_compute_completes_nothing(sys).len() > 0) {
+    err.line("error: FAILED complete_test test_a_finished_the_server_did_not_compute_completes_nothing");
     bad = bad + 1;
   }
   if (c2__packet_numbers_are_handed_out_in_order_and_never_reused().len() > 0) {
-    core.warn("error: FAILED connection_test test_packet_numbers_are_handed_out_in_order_and_never_reused");
+    err.line("error: FAILED connection_test test_packet_numbers_are_handed_out_in_order_and_never_reused");
     bad = bad + 1;
   }
   if (c2__everything_sent_is_outstanding_until_acknowledged().len() > 0) {
-    core.warn("error: FAILED connection_test test_everything_sent_is_outstanding_until_acknowledged");
+    err.line("error: FAILED connection_test test_everything_sent_is_outstanding_until_acknowledged");
     bad = bad + 1;
   }
   if (c2__an_ack_clears_everything_at_or_below_it_and_nothing_above().len() > 0) {
-    core.warn("error: FAILED connection_test test_an_ack_clears_everything_at_or_below_it_and_nothing_above");
+    err.line("error: FAILED connection_test test_an_ack_clears_everything_at_or_below_it_and_nothing_above");
     bad = bad + 1;
   }
   if (c2__the_oldest_unacknowledged_packet_is_the_one_to_resend().len() > 0) {
-    core.warn("error: FAILED connection_test test_the_oldest_unacknowledged_packet_is_the_one_to_resend");
+    err.line("error: FAILED connection_test test_the_oldest_unacknowledged_packet_is_the_one_to_resend");
     bad = bad + 1;
   }
   if (c2__resending_takes_a_new_number_and_retires_the_old_record().len() > 0) {
-    core.warn("error: FAILED connection_test test_resending_takes_a_new_number_and_retires_the_old_record");
+    err.line("error: FAILED connection_test test_resending_takes_a_new_number_and_retires_the_old_record");
     bad = bad + 1;
   }
   if (c2__resending_with_nothing_outstanding_burns_no_number().len() > 0) {
-    core.warn("error: FAILED connection_test test_resending_with_nothing_outstanding_burns_no_number");
+    err.line("error: FAILED connection_test test_resending_with_nothing_outstanding_burns_no_number");
     bad = bad + 1;
   }
   if (c2__repeated_resends_do_not_grow_the_outstanding_count().len() > 0) {
-    core.warn("error: FAILED connection_test test_repeated_resends_do_not_grow_the_outstanding_count");
+    err.line("error: FAILED connection_test test_repeated_resends_do_not_grow_the_outstanding_count");
     bad = bad + 1;
   }
   if (c2__a_resend_carries_the_frames_the_lost_packet_carried().len() > 0) {
-    core.warn("error: FAILED connection_test test_a_resend_carries_the_frames_the_lost_packet_carried");
+    err.line("error: FAILED connection_test test_a_resend_carries_the_frames_the_lost_packet_carried");
     bad = bad + 1;
   }
-  if (f__a_real_initials_payload_walks_to_frames_with_nothing_left_over(core, cli).len() > 0) {
-    core.warn("error: FAILED frame_test test_a_real_initials_payload_walks_to_frames_with_nothing_left_over");
+  if (f__a_real_initials_payload_walks_to_frames_with_nothing_left_over(sys).len() > 0) {
+    err.line("error: FAILED frame_test test_a_real_initials_payload_walks_to_frames_with_nothing_left_over");
     bad = bad + 1;
   }
-  if (f__the_crypto_frames_reassemble_into_a_clienthello(core, cli).len() > 0) {
-    core.warn("error: FAILED frame_test test_the_crypto_frames_reassemble_into_a_clienthello");
+  if (f__the_crypto_frames_reassemble_into_a_clienthello(sys).len() > 0) {
+    err.line("error: FAILED frame_test test_the_crypto_frames_reassemble_into_a_clienthello");
     bad = bad + 1;
   }
   if (f__ack_ping_and_connection_close_are_read_at_their_real_lengths().len() > 0) {
-    core.warn("error: FAILED frame_test test_ack_ping_and_connection_close_are_read_at_their_real_lengths");
+    err.line("error: FAILED frame_test test_ack_ping_and_connection_close_are_read_at_their_real_lengths");
     bad = bad + 1;
   }
   if (f__a_frame_that_will_not_fit_stops_the_walk().len() > 0) {
-    core.warn("error: FAILED frame_test test_a_frame_that_will_not_fit_stops_the_walk");
+    err.line("error: FAILED frame_test test_a_frame_that_will_not_fit_stops_the_walk");
     bad = bad + 1;
   }
   if (f__the_crypto_stream_is_reassembled_by_offset_not_by_arrival().len() > 0) {
-    core.warn("error: FAILED frame_test test_the_crypto_stream_is_reassembled_by_offset_not_by_arrival");
+    err.line("error: FAILED frame_test test_the_crypto_stream_is_reassembled_by_offset_not_by_arrival");
     bad = bad + 1;
   }
-  if (g__a_real_servers_reply_has_the_fixed_bit_greased_to_zero(core, cli).len() > 0) {
-    core.warn("error: FAILED greased_test test_a_real_servers_reply_has_the_fixed_bit_greased_to_zero");
+  if (g__a_real_servers_reply_has_the_fixed_bit_greased_to_zero(sys).len() > 0) {
+    err.line("error: FAILED greased_test test_a_real_servers_reply_has_the_fixed_bit_greased_to_zero");
     bad = bad + 1;
   }
-  if (g__greasing_is_something_the_caller_allows(core, cli).len() > 0) {
-    core.warn("error: FAILED greased_test test_greasing_is_something_the_caller_allows");
+  if (g__greasing_is_something_the_caller_allows(sys).len() > 0) {
+    err.line("error: FAILED greased_test test_greasing_is_something_the_caller_allows");
     bad = bad + 1;
   }
-  if (h__the_serverhello_answers_in_the_group_we_offered(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_serverhello_answers_in_the_group_we_offered");
+  if (h__the_serverhello_answers_in_the_group_we_offered(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_serverhello_answers_in_the_group_we_offered");
     bad = bad + 1;
   }
-  if (h__the_server_coalesced_a_handshake_packet_behind_its_initial(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_server_coalesced_a_handshake_packet_behind_its_initial");
+  if (h__the_server_coalesced_a_handshake_packet_behind_its_initial(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_server_coalesced_a_handshake_packet_behind_its_initial");
     bad = bad + 1;
   }
-  if (h__the_handshake_packet_opens_under_keys_we_derived(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_handshake_packet_opens_under_keys_we_derived");
+  if (h__the_handshake_packet_opens_under_keys_we_derived(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_handshake_packet_opens_under_keys_we_derived");
     bad = bad + 1;
   }
-  if (h__the_servers_whole_flight_arrives_in_that_one_packet(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_servers_whole_flight_arrives_in_that_one_packet");
+  if (h__the_servers_whole_flight_arrives_in_that_one_packet(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_servers_whole_flight_arrives_in_that_one_packet");
     bad = bad + 1;
   }
-  if (h__the_servers_finished_verifies(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_servers_finished_verifies");
+  if (h__the_servers_finished_verifies(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_servers_finished_verifies");
     bad = bad + 1;
   }
-  if (h__the_servers_certificateverify_signs_this_handshake(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_servers_certificateverify_signs_this_handshake");
+  if (h__the_servers_certificateverify_signs_this_handshake(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_servers_certificateverify_signs_this_handshake");
     bad = bad + 1;
   }
-  if (h__and_refuses_a_signature_that_is_not_over_this_handshake(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_and_refuses_a_signature_that_is_not_over_this_handshake");
+  if (h__and_refuses_a_signature_that_is_not_over_this_handshake(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_and_refuses_a_signature_that_is_not_over_this_handshake");
     bad = bad + 1;
   }
-  if (h__and_refuses_a_certificate_that_is_not_for_the_name_we_asked_for(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_and_refuses_a_certificate_that_is_not_for_the_name_we_asked_for");
+  if (h__and_refuses_a_certificate_that_is_not_for_the_name_we_asked_for(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_and_refuses_a_certificate_that_is_not_for_the_name_we_asked_for");
     bad = bad + 1;
   }
-  if (h__the_servers_chain_reaches_the_root_that_signed_it(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_the_servers_chain_reaches_the_root_that_signed_it");
+  if (h__the_servers_chain_reaches_the_root_that_signed_it(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_the_servers_chain_reaches_the_root_that_signed_it");
     bad = bad + 1;
   }
-  if (h__and_not_a_root_that_did_not_sign_it(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_and_not_a_root_that_did_not_sign_it");
+  if (h__and_not_a_root_that_did_not_sign_it(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_and_not_a_root_that_did_not_sign_it");
     bad = bad + 1;
   }
-  if (h__and_reads_the_clock_it_was_given(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_and_reads_the_clock_it_was_given");
+  if (h__and_reads_the_clock_it_was_given(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_and_reads_the_clock_it_was_given");
     bad = bad + 1;
   }
-  if (h__a_connection_exists_only_when_both_checks_passed(core, cli).len() > 0) {
-    core.warn("error: FAILED handshake_test test_a_connection_exists_only_when_both_checks_passed");
+  if (h__a_connection_exists_only_when_both_checks_passed(sys).len() > 0) {
+    err.line("error: FAILED handshake_test test_a_connection_exists_only_when_both_checks_passed");
     bad = bad + 1;
   }
   if (h2__the_clienthello_we_write_is_one_we_can_read().len() > 0) {
-    core.warn("error: FAILED hello_test test_the_clienthello_we_write_is_one_we_can_read");
+    err.line("error: FAILED hello_test test_the_clienthello_we_write_is_one_we_can_read");
     bad = bad + 1;
   }
-  if (h2__a_real_quic_server_accepts_a_first_flight_we_authored(core, cli).len() > 0) {
-    core.warn("error: FAILED hello_test test_a_real_quic_server_accepts_a_first_flight_we_authored");
+  if (h2__a_real_quic_server_accepts_a_first_flight_we_authored(sys).len() > 0) {
+    err.line("error: FAILED hello_test test_a_real_quic_server_accepts_a_first_flight_we_authored");
     bad = bad + 1;
   }
-  if (h2__initial_source_connection_id_is_checked(core, cli).len() > 0) {
-    core.warn("error: FAILED hello_test test_initial_source_connection_id_is_checked");
+  if (h2__initial_source_connection_id_is_checked(sys).len() > 0) {
+    err.line("error: FAILED hello_test test_initial_source_connection_id_is_checked");
     bad = bad + 1;
   }
-  if (i__quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello(core, cli).len() > 0) {
-    core.warn("error: FAILED initial_test test_quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello");
+  if (i__quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello(sys).len() > 0) {
+    err.line("error: FAILED initial_test test_quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello");
     bad = bad + 1;
   }
   if (i__the_keys_are_the_right_shapes_and_the_two_directions_differ().len() > 0) {
-    core.warn("error: FAILED initial_test test_the_keys_are_the_right_shapes_and_the_two_directions_differ");
+    err.line("error: FAILED initial_test test_the_keys_are_the_right_shapes_and_the_two_directions_differ");
     bad = bad + 1;
   }
-  if (p__a_real_initial_parses_to_the_fields_it_has(core, cli).len() > 0) {
-    core.warn("error: FAILED packet_test test_a_real_initial_parses_to_the_fields_it_has");
+  if (p__a_real_initial_parses_to_the_fields_it_has(sys).len() > 0) {
+    err.line("error: FAILED packet_test test_a_real_initial_parses_to_the_fields_it_has");
     bad = bad + 1;
   }
-  if (p__a_header_that_cannot_be_read_completely_is_refused(core, cli).len() > 0) {
-    core.warn("error: FAILED packet_test test_a_header_that_cannot_be_read_completely_is_refused");
+  if (p__a_header_that_cannot_be_read_completely_is_refused(sys).len() > 0) {
+    err.line("error: FAILED packet_test test_a_header_that_cannot_be_read_completely_is_refused");
     bad = bad + 1;
   }
-  if (p2__a_wac_program_completes_a_quic_handshake_on_its_own_socket(core, cli).len() > 0) {
-    core.warn("error: FAILED program_test test_a_wac_program_completes_a_quic_handshake_on_its_own_socket");
+  if (p2__a_wac_program_completes_a_quic_handshake_on_its_own_socket(sys).len() > 0) {
+    err.line("error: FAILED program_test test_a_wac_program_completes_a_quic_handshake_on_its_own_socket");
     bad = bad + 1;
   }
-  if (p2__and_on_the_host_with_no_javascript_in_it(core, cli).len() > 0) {
-    core.warn("error: FAILED program_test test_and_on_the_host_with_no_javascript_in_it");
+  if (p2__and_on_the_host_with_no_javascript_in_it(sys).len() > 0) {
+    err.line("error: FAILED program_test test_and_on_the_host_with_no_javascript_in_it");
     bad = bad + 1;
   }
-  if (p2__a_fresh_key_every_run(core, cli).len() > 0) {
-    core.warn("error: FAILED program_test test_a_fresh_key_every_run");
+  if (p2__a_fresh_key_every_run(sys).len() > 0) {
+    err.line("error: FAILED program_test test_a_fresh_key_every_run");
     bad = bad + 1;
   }
   if (r__the_rfcs_own_retry_packet_verifies_against_the_id_it_was_made_for().len() > 0) {
-    core.warn("error: FAILED retry_test test_the_rfcs_own_retry_packet_verifies_against_the_id_it_was_made_for");
+    err.line("error: FAILED retry_test test_the_rfcs_own_retry_packet_verifies_against_the_id_it_was_made_for");
     bad = bad + 1;
   }
   if (r__and_not_against_any_other_id_which_is_what_the_tag_is_for().len() > 0) {
-    core.warn("error: FAILED retry_test test_and_not_against_any_other_id_which_is_what_the_tag_is_for");
+    err.line("error: FAILED retry_test test_and_not_against_any_other_id_which_is_what_the_tag_is_for");
     bad = bad + 1;
   }
   if (r__a_retrys_token_is_the_bytes_between_its_header_and_its_tag().len() > 0) {
-    core.warn("error: FAILED retry_test test_a_retrys_token_is_the_bytes_between_its_header_and_its_tag");
+    err.line("error: FAILED retry_test test_a_retrys_token_is_the_bytes_between_its_header_and_its_tag");
     bad = bad + 1;
   }
   if (r__too_short_to_hold_a_tag_is_refused_rather_than_read().len() > 0) {
-    core.warn("error: FAILED retry_test test_too_short_to_hold_a_tag_is_refused_rather_than_read");
+    err.line("error: FAILED retry_test test_too_short_to_hold_a_tag_is_refused_rather_than_read");
     bad = bad + 1;
   }
   if (r__a_version_negotiation_packet_is_recognised_by_its_version_not_its_type().len() > 0) {
-    core.warn("error: FAILED retry_test test_a_version_negotiation_packet_is_recognised_by_its_version_not_its_type");
+    err.line("error: FAILED retry_test test_a_version_negotiation_packet_is_recognised_by_its_version_not_its_type");
     bad = bad + 1;
   }
   if (r__its_versions_are_read_as_a_list_and_a_reserved_one_does_not_become_the_answer().len() > 0) {
-    core.warn("error: FAILED retry_test test_its_versions_are_read_as_a_list_and_a_reserved_one_does_not_become_the_answer");
+    err.line("error: FAILED retry_test test_its_versions_are_read_as_a_list_and_a_reserved_one_does_not_become_the_answer");
     bad = bad + 1;
   }
   if (r__a_trailing_byte_is_a_malformed_packet_not_a_version_to_guess_at().len() > 0) {
-    core.warn("error: FAILED retry_test test_a_trailing_byte_is_a_malformed_packet_not_a_version_to_guess_at");
+    err.line("error: FAILED retry_test test_a_trailing_byte_is_a_malformed_packet_not_a_version_to_guess_at");
     bad = bad + 1;
   }
   if (r__a_truncated_packet_number_is_decoded_against_the_largest_already_processed().len() > 0) {
-    core.warn("error: FAILED retry_test test_a_truncated_packet_number_is_decoded_against_the_largest_already_processed");
+    err.line("error: FAILED retry_test test_a_truncated_packet_number_is_decoded_against_the_largest_already_processed");
     bad = bad + 1;
   }
-  if (s__a_sealed_initial_is_1200_bytes_and_opens_with_our_own_reader(core, cli).len() > 0) {
-    core.warn("error: FAILED seal_test test_a_sealed_initial_is_1200_bytes_and_opens_with_our_own_reader");
+  if (s__a_sealed_initial_is_1200_bytes_and_opens_with_our_own_reader(sys).len() > 0) {
+    err.line("error: FAILED seal_test test_a_sealed_initial_is_1200_bytes_and_opens_with_our_own_reader");
     bad = bad + 1;
   }
-  if (s__a_real_quic_server_accepts_a_packet_we_built(core, cli).len() > 0) {
-    core.warn("error: FAILED seal_test test_a_real_quic_server_accepts_a_packet_we_built");
+  if (s__a_real_quic_server_accepts_a_packet_we_built(sys).len() > 0) {
+    err.line("error: FAILED seal_test test_a_real_quic_server_accepts_a_packet_we_built");
     bad = bad + 1;
   }
-  if (s__a_source_id_the_borrowed_clienthello_does_not_name_is_refused(core, cli).len() > 0) {
-    core.warn("error: FAILED seal_test test_a_source_id_the_borrowed_clienthello_does_not_name_is_refused");
+  if (s__a_source_id_the_borrowed_clienthello_does_not_name_is_refused(sys).len() > 0) {
+    err.line("error: FAILED seal_test test_a_source_id_the_borrowed_clienthello_does_not_name_is_refused");
     bad = bad + 1;
   }
-  if (s__a_packet_that_fails_authentication_gets_silence(core, cli).len() > 0) {
-    core.warn("error: FAILED seal_test test_a_packet_that_fails_authentication_gets_silence");
+  if (s__a_packet_that_fails_authentication_gets_silence(sys).len() > 0) {
+    err.line("error: FAILED seal_test test_a_packet_that_fails_authentication_gets_silence");
     bad = bad + 1;
   }
-  if (s2__a_real_quic_client_completes_a_handshake_with_our_server(core, cli).len() > 0) {
-    core.warn("error: FAILED server_test test_a_real_quic_client_completes_a_handshake_with_our_server");
+  if (s2__a_real_quic_client_completes_a_handshake_with_our_server(sys).len() > 0) {
+    err.line("error: FAILED server_test test_a_real_quic_client_completes_a_handshake_with_our_server");
     bad = bad + 1;
   }
-  if (s2__and_a_real_client_opens_a_stream_on_it(core, cli).len() > 0) {
-    core.warn("error: FAILED server_test test_and_a_real_client_opens_a_stream_on_it");
+  if (s2__and_a_real_client_opens_a_stream_on_it(sys).len() > 0) {
+    err.line("error: FAILED server_test test_and_a_real_client_opens_a_stream_on_it");
     bad = bad + 1;
   }
   if (s3__every_sealed_short_header_opens_to_what_went_in().len() > 0) {
-    core.warn("error: FAILED short_test test_every_sealed_short_header_opens_to_what_went_in");
+    err.line("error: FAILED short_test test_every_sealed_short_header_opens_to_what_went_in");
     bad = bad + 1;
   }
   if (s3__the_key_phase_read_back_is_the_one_written().len() > 0) {
-    core.warn("error: FAILED short_test test_the_key_phase_read_back_is_the_one_written");
+    err.line("error: FAILED short_test test_the_key_phase_read_back_is_the_one_written");
     bad = bad + 1;
   }
   if (s3__a_packet_read_with_the_wrong_id_length_does_not_open().len() > 0) {
-    core.warn("error: FAILED short_test test_a_packet_read_with_the_wrong_id_length_does_not_open");
+    err.line("error: FAILED short_test test_a_packet_read_with_the_wrong_id_length_does_not_open");
     bad = bad + 1;
   }
   if (s3__padding_reaches_the_length_asked_for_without_disturbing_the_frames().len() > 0) {
-    core.warn("error: FAILED short_test test_padding_reaches_the_length_asked_for_without_disturbing_the_frames");
+    err.line("error: FAILED short_test test_padding_reaches_the_length_asked_for_without_disturbing_the_frames");
     bad = bad + 1;
   }
   if (s3__an_ack_we_write_is_one_we_read().len() > 0) {
-    core.warn("error: FAILED short_test test_an_ack_we_write_is_one_we_read");
+    err.line("error: FAILED short_test test_an_ack_we_write_is_one_we_read");
     bad = bad + 1;
   }
   if (s3__an_ack_refuses_a_range_it_cannot_have_received().len() > 0) {
-    core.warn("error: FAILED short_test test_an_ack_refuses_a_range_it_cannot_have_received");
+    err.line("error: FAILED short_test test_an_ack_refuses_a_range_it_cannot_have_received");
     bad = bad + 1;
   }
   if (s3__a_packet_number_survives_being_written_and_read_back().len() > 0) {
-    core.warn("error: FAILED short_test test_a_packet_number_survives_being_written_and_read_back");
+    err.line("error: FAILED short_test test_a_packet_number_survives_being_written_and_read_back");
     bad = bad + 1;
   }
   if (s3__a_short_header_read_outside_the_packet_is_refused().len() > 0) {
-    core.warn("error: FAILED short_test test_a_short_header_read_outside_the_packet_is_refused");
+    err.line("error: FAILED short_test test_a_short_header_read_outside_the_packet_is_refused");
     bad = bad + 1;
   }
   if (hd__the_packet_reader_answers_for_a_datagram_that_is_not_one().len() > 0) {
-    core.warn("error: FAILED hostile_datagram_test test_the_packet_reader_answers_for_a_datagram_that_is_not_one");
+    err.line("error: FAILED hostile_datagram_test test_the_packet_reader_answers_for_a_datagram_that_is_not_one");
     bad = bad + 1;
   }
   if (hd__every_client_reader_survives_a_datagram_no_server_sent().len() > 0) {
-    core.warn("error: FAILED hostile_datagram_test test_every_client_reader_survives_a_datagram_no_server_sent");
+    err.line("error: FAILED hostile_datagram_test test_every_client_reader_survives_a_datagram_no_server_sent");
     bad = bad + 1;
   }
   if (is__a_whole_client_initial_is_read().len() > 0) {
-    core.warn("error: FAILED initial_sweep_test test_a_whole_client_initial_is_read");
+    err.line("error: FAILED initial_sweep_test test_a_whole_client_initial_is_read");
     bad = bad + 1;
   }
   if (is__no_prefix_of_a_client_initial_is_readable().len() > 0) {
-    core.warn("error: FAILED initial_sweep_test test_no_prefix_of_a_client_initial_is_readable");
+    err.line("error: FAILED initial_sweep_test test_no_prefix_of_a_client_initial_is_readable");
     bad = bad + 1;
   }
   if (is__a_client_initial_whose_header_lies_is_refused().len() > 0) {
-    core.warn("error: FAILED initial_sweep_test test_a_client_initial_whose_header_lies_is_refused");
+    err.line("error: FAILED initial_sweep_test test_a_client_initial_whose_header_lies_is_refused");
     bad = bad + 1;
   }
-  if (s4__a_real_quic_server_reads_a_stream_this_client_opened(core, cli).len() > 0) {
-    core.warn("error: FAILED stream_test test_a_real_quic_server_reads_a_stream_this_client_opened");
+  if (s4__a_real_quic_server_reads_a_stream_this_client_opened(sys).len() > 0) {
+    err.line("error: FAILED stream_test test_a_real_quic_server_reads_a_stream_this_client_opened");
     bad = bad + 1;
   }
-  if (s4__and_answers_on_it_which_this_client_reads_back(core, cli).len() > 0) {
-    core.warn("error: FAILED stream_test test_and_answers_on_it_which_this_client_reads_back");
+  if (s4__and_answers_on_it_which_this_client_reads_back(sys).len() > 0) {
+    err.line("error: FAILED stream_test test_and_answers_on_it_which_this_client_reads_back");
     bad = bad + 1;
   }
-  if (s4__an_acknowledgement_the_server_accepts(core, cli).len() > 0) {
-    core.warn("error: FAILED stream_test test_an_acknowledgement_the_server_accepts");
+  if (s4__an_acknowledgement_the_server_accepts(sys).len() > 0) {
+    err.line("error: FAILED stream_test test_an_acknowledgement_the_server_accepts");
     bad = bad + 1;
   }
-  if (s4__a_dropped_datagram_is_survived(core, cli).len() > 0) {
-    core.warn("error: FAILED stream_test test_a_dropped_datagram_is_survived");
+  if (s4__a_dropped_datagram_is_survived(sys).len() > 0) {
+    err.line("error: FAILED stream_test test_a_dropped_datagram_is_survived");
     bad = bad + 1;
   }
   if (s4__and_a_packet_that_was_acknowledged_is_not_resent().len() > 0) {
-    core.warn("error: FAILED stream_test test_and_a_packet_that_was_acknowledged_is_not_resent");
+    err.line("error: FAILED stream_test test_and_a_packet_that_was_acknowledged_is_not_resent");
     bad = bad + 1;
   }
-  if (s4__an_ack_past_what_the_server_sent_is_refused(core, cli).len() > 0) {
-    core.warn("error: FAILED stream_test test_an_ack_past_what_the_server_sent_is_refused");
+  if (s4__an_ack_past_what_the_server_sent_is_refused(sys).len() > 0) {
+    err.line("error: FAILED stream_test test_an_ack_past_what_the_server_sent_is_refused");
     bad = bad + 1;
   }
   if (t__every_frame_in_table_3_reads_as_itself_at_its_documented_length().len() > 0) {
-    core.warn("error: FAILED table3_test test_every_frame_in_table_3_reads_as_itself_at_its_documented_length");
+    err.line("error: FAILED table3_test test_every_frame_in_table_3_reads_as_itself_at_its_documented_length");
     bad = bad + 1;
   }
   if (t__and_only_in_the_packet_types_table_3_permits().len() > 0) {
-    core.warn("error: FAILED table3_test test_and_only_in_the_packet_types_table_3_permits");
+    err.line("error: FAILED table3_test test_and_only_in_the_packet_types_table_3_permits");
     bad = bad + 1;
   }
   if (t__a_walk_over_all_of_them_ends_exactly_at_the_end().len() > 0) {
-    core.warn("error: FAILED table3_test test_a_walk_over_all_of_them_ends_exactly_at_the_end");
+    err.line("error: FAILED table3_test test_a_walk_over_all_of_them_ends_exactly_at_the_end");
     bad = bad + 1;
   }
   if (t__a_stream_frames_fields().len() > 0) {
-    core.warn("error: FAILED table3_test test_a_stream_frames_fields");
+    err.line("error: FAILED table3_test test_a_stream_frames_fields");
     bad = bad + 1;
   }
   if (t__a_new_connection_ids_parts_land_where_they_belong().len() > 0) {
-    core.warn("error: FAILED table3_test test_a_new_connection_ids_parts_land_where_they_belong");
+    err.line("error: FAILED table3_test test_a_new_connection_ids_parts_land_where_they_belong");
     bad = bad + 1;
   }
   if (t__max_stream_data_and_max_streams_read_their_numbers_and_their_kind().len() > 0) {
-    core.warn("error: FAILED table3_test test_max_stream_data_and_max_streams_read_their_numbers_and_their_kind");
+    err.line("error: FAILED table3_test test_max_stream_data_and_max_streams_read_their_numbers_and_their_kind");
     bad = bad + 1;
   }
   if (t__a_stream_is_reassembled_by_offset_not_by_arrival().len() > 0) {
-    core.warn("error: FAILED table3_test test_a_stream_is_reassembled_by_offset_not_by_arrival");
+    err.line("error: FAILED table3_test test_a_stream_is_reassembled_by_offset_not_by_arrival");
     bad = bad + 1;
   }
   if (t2__an_undamaged_packet_still_opens().len() > 0) {
-    core.warn("error: FAILED tamper_test test_an_undamaged_packet_still_opens");
+    err.line("error: FAILED tamper_test test_an_undamaged_packet_still_opens");
     bad = bad + 1;
   }
   if (t2__a_flipped_ciphertext_byte_is_refused_rather_than_trapped().len() > 0) {
-    core.warn("error: FAILED tamper_test test_a_flipped_ciphertext_byte_is_refused_rather_than_trapped");
+    err.line("error: FAILED tamper_test test_a_flipped_ciphertext_byte_is_refused_rather_than_trapped");
     bad = bad + 1;
   }
   if (t2__a_flipped_tag_byte_is_refused_rather_than_trapped().len() > 0) {
-    core.warn("error: FAILED tamper_test test_a_flipped_tag_byte_is_refused_rather_than_trapped");
+    err.line("error: FAILED tamper_test test_a_flipped_tag_byte_is_refused_rather_than_trapped");
     bad = bad + 1;
   }
   if (t2__a_packet_for_another_connection_is_refused_rather_than_trapped().len() > 0) {
-    core.warn("error: FAILED tamper_test test_a_packet_for_another_connection_is_refused_rather_than_trapped");
+    err.line("error: FAILED tamper_test test_a_packet_for_another_connection_is_refused_rather_than_trapped");
     bad = bad + 1;
   }
   if (v__the_rfc_examples().len() > 0) {
-    core.warn("error: FAILED varint_test test_the_rfc_examples");
+    err.line("error: FAILED varint_test test_the_rfc_examples");
     bad = bad + 1;
   }
   if (v__round_trips_at_every_boundary().len() > 0) {
-    core.warn("error: FAILED varint_test test_round_trips_at_every_boundary");
+    err.line("error: FAILED varint_test test_round_trips_at_every_boundary");
     bad = bad + 1;
   }
   if (v__a_truncated_varint_is_not_a_value().len() > 0) {
-    core.warn("error: FAILED varint_test test_a_truncated_varint_is_not_a_value");
+    err.line("error: FAILED varint_test test_a_truncated_varint_is_not_a_value");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("quic: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("quic: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

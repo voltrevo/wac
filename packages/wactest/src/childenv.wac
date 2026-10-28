@@ -22,7 +22,8 @@
 // and the day `Cli.exec` clears by default, the callers here that *want* the host's environment are
 // the ones that will have to say so.
 
-import { Cli, Exec } from "std";
+import { Cli, Exec, ChildEnv, Launch, Procs } from "std";
+import { flatten } from "core";
 
 /**
  * One shell word.
@@ -60,13 +61,13 @@ string[] pairs(const string[] names, const string[] values) {
  * One process and no quoting: the values are handed over as bytes rather than assembled into a shell
  * line, so a value containing a space, a quote or a `$` arrives as it was written.
  */
-export Exec withEnv(const Cli cli, const string[] names, const string[] values, string prog, string[] args) {
-  return cli.execWith(prog, args, u8[](), pairs(names, values), false, false).wait();
+export Exec withEnv(Procs procs, const string[] names, const string[] values, string prog, string[] args) {
+  return flatten(procs.exec(prog, args, u8[](), ChildEnv(false, pairs(names, values)), Launch("", false, false, false)).wait()).unwrap();
 }
 
 /** The common case: a fixture `HOME`, so `~` resolves somewhere the test built. */
-export Exec withHome(Cli cli, string home, string prog, string[] args) {
-  return withEnv(cli, ["HOME"], [home], prog, args);
+export Exec withHome(Procs procs, string home, string prog, string[] args) {
+  return withEnv(procs, ["HOME"], [home], prog, args);
 }
 
 /**
@@ -83,8 +84,8 @@ export Exec withHome(Cli cli, string home, string prog, string[] args) {
  * machine's locale. `PATH` is the one thing a caller almost always has to name itself, because `env
  * -i` removes it and then nothing can be found by name.
  */
-export Exec onlyEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
-  return cli.execWith(prog, args, u8[](), pairs(names, values), true, false).wait();
+export Exec onlyEnv(Procs procs, string[] names, string[] values, string prog, string[] args) {
+  return flatten(procs.exec(prog, args, u8[](), ChildEnv(true, pairs(names, values)), Launch("", false, false, false)).wait()).unwrap();
 }
 
 /**
@@ -116,9 +117,8 @@ export string onlyEnvLine(string[] names, string[] values, string prog, string[]
  * `unset` rather than an empty assignment — see the header. Names are not quoted because `unset`
  * takes identifiers, and a caller passing something that is not one has a bug this should not hide.
  */
-export Exec withoutEnv(Cli cli, string[] names, string prog, string[] args) {
+export Exec withoutEnv(Procs procs, string[] names, string prog, string[] args) {
   string line = "unset";
   for (i32 i = 0; i < names.len(); i++) { line = line + " \{names[i]}"; }
-  return cli.exec("/bin/sh", ["-c", "\{line}; \{commandLine(prog, args)}"],
-                  u8[]()).wait();
+  return flatten(procs.exec("/bin/sh", ["-c", "\{line}; \{commandLine(prog, args)}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }

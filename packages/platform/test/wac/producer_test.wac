@@ -22,12 +22,13 @@
 // into another package's test helpers is a dependency the packages themselves do not have.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Core, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { joined } from "../../../wactest/src/strings.wac";
 import { leb, name } from "./section.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
-string root(Cli cli) { return cli.cwd().wait(); }
+string root(Env env) { return flatten(env.cwd().wait()).unwrap(); }
 
 /**
  * Every `processed-by` value in a module's `producers` section, in order.
@@ -65,9 +66,9 @@ string[] producedBy(u8[] b) {
 }
 
 /** Build a program with `WAC_APP_FROM` set as given, and read the marker back. */
-string builtBy(T t, Cli cli, string label, string from) {
-  string dir = "\{root(cli)}/.cache/producer-\{label}";
-  string whyDir = freshDir(cli, dir);
+string builtBy(T t, Env env, Files fs, Procs procs, string label, string from) {
+  string dir = "\{root(env)}/.cache/producer-\{label}";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
   // **A program with no imports**, written here rather than an example from the tree.
@@ -76,36 +77,40 @@ string builtBy(T t, Cli cli, string label, string from) {
   // build under both. `hello.wac` cannot: it takes a `Core`, and `packages/platform` is wacc-only now
   // that `Pending.then` is a lambda, which the reference compiler does not have. Using it here would
   // make this test fail for a reason that has nothing to do with what it checks.
-  cli.writeFile("\{dir}/stamp.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
+  fs.writeFile("\{dir}/stamp.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
 
   // `unset` rather than leaving it alone, so the default case is the default rather than whatever
   // this run inherited.
-  string env = from.len() == 0 ? "unset WAC_APP_FROM;" : "WAC_APP_FROM='\{from}'";
-  Exec r = cli.exec("/bin/sh",
-    [
-             "-c", "\{env} exec deno run -A packages/platform/native.ts '\{dir}" +
+  string setting = from.len() == 0 ? "unset WAC_APP_FROM;" : "WAC_APP_FROM='\{from}'";
+  auto rRan = flatten(procs.exec("/bin/sh", [
+             "-c", "\{setting} exec deno run -A packages/platform/native.ts '\{dir}" +
              "/stamp.wac' -o '\{dir}/hello'"
-    ], u8[]()).wait();
-  t.isTrue(r.ran() && r.status == 0,
-           "\{label}: the build — \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}");
-  if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return "<did not build>"; }
+    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null) && r!.status == 0,
+           "\{label}: the build — \{string.fromBytes(r!.stderr)}\{string.fromBytes(r!.stdout)}");
+  if ((r is null) || r!.status != 0) { fs.remove(dir, true).wait(); return "<did not build>"; }
 
-  FileResult f = cli.readFile("\{dir}/hello.wasm").wait();
-  t.isTrue(f.ok, "\{label}: the module is there — \{f.error}");
-  string answer = f.ok ? joined(producedBy(f.bytes), ",") : "<no module>";
-  cli.remove(dir, true).wait();
+  auto fRead = flatten(fs.readFile("\{dir}/hello.wasm").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{label}: the module is there — \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  string answer = (f is not null) ? joined(producedBy(f!), ",") : "<no module>";
+  fs.remove(dir, true).wait();
   return answer;
 }
 
-export string test_a_built_module_names_the_compiler_that_made_it(Core core, Cli cli) {
+export string test_a_built_module_names_the_compiler_that_made_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  t.eqStr(builtBy(t, cli, "default", ""), "wacc", "the default is wacc");
+  t.eqStr(builtBy(t, env, fs, procs, "default", ""), "wacc", "the default is wacc");
   // **And an unrecognised `WAC_APP_FROM` does not quietly build something else.** The variable used
   // to select a compiler and now selects nothing; the risk in a setting that has stopped meaning
   // anything is that it goes on being passed and is read as still working. `reference` is the value
   // that used to do something, so it is the one to ask about — the answer must be the same artefact
   // the default builds, stamped the same way, rather than a build that silently differs.
-  t.eqStr(builtBy(t, cli, "stale-setting", "reference"), "wacc",
+  t.eqStr(builtBy(t, env, fs, procs, "stale-setting", "reference"), "wacc",
           "WAC_APP_FROM=reference selects nothing now, and must not change what is built");
   return t.report();
 }

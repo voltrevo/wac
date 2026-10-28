@@ -16,11 +16,12 @@
 // The sizes are the *only* difference between the two callers. Everything a caller asserts is a field
 // below, so a sweep that quietly stopped running cases cannot pass either of them.
 
-import { Cli, Core, Change, Exec, Stat } from "std";
+import { Change, Exec, Stat, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { gzipBest } from "../../src/gzip.wac";
 import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
+import { flatten } from "core";
 
 static string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
 
@@ -45,7 +46,7 @@ export struct Swept {
   string detail;
 }
 
-string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
+string binary(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/native/v8/target/release/wac"; }
 
 /**
  * `corpora` streams, each corrupted `attempts` ways, each handed to the probe in a process of its own.
@@ -60,22 +61,21 @@ string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wa
  * entries are ordered by generator, so taking the first twelve would be twelve lengths of one
  * generator; every ninth is twelve generators.
  */
-export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 attempts, string what,
-                             i32 seed) {
-  Stat bin = cli.stat(binary(cli)).wait();
-  if (!bin.exists) {
-    return none("the binary that builds the probe is not at \{binary(cli)}");
+export Swept sweepCorruptions(Output err, Env env, Files fs, Procs procs, i32 corpora, i32 stride, i32 attempts, string what, i32 seed) {
+  Stat? bin = flatten(fs.stat(binary(env)).wait()).ok();
+  if ((bin is null)) {
+    return none("the binary that builds the probe is not at \{binary(env)}");
   }
-  string who = agentDir(cli);
+  string who = agentDir(env);
   string work = "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-\{who}");
-  Change made = cli.mkdir(work, true).wait();
-  if (!made.ok()) { return none("a working directory: \{made.message}"); }
+  auto made = flatten(fs.mkdir(work, true).wait());
+  if (made.isErr()) { return none("a working directory: \{made.isErr() ? "\{made.err()!}" : ""}"); }
   string probe = "\{work}/fuzzprobe";
 
-  Exec built = cli.exec(binary(cli), ["build", PROBE, "-o", probe, "--allow-read"],
-                        u8[]()).wait();
-  if (!built.ran() || built.status != 0) {
-    return none("the probe builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  auto builtRan = flatten(procs.exec(binary(env), ["build", PROBE, "-o", probe, "--allow-read"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if ((built is null) || built!.status != 0) {
+    return none("the probe builds: " + ((built is not null) ? string.fromBytes(built!.stderr) : "\{builtRan.isErr() ? "\{builtRan.err()!}" : ""}"));
   }
 
   Case[] all = buildCorpus(corpora, seed);
@@ -98,7 +98,7 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
   for (i32 c = 0; c < base.len(); c++) {
     u8[] data = base[c].data;
     u8[] valid = gzipBest(data);
-    cli.writeFile(originalPath, data).wait();
+    fs.writeFile(originalPath, data).wait();
 
     for (i32 attempt = 0; attempt < attempts; attempt++) {
       u8[] corrupt = u8[].filled(valid.len(), 0);
@@ -120,30 +120,30 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
       }
       u8[] handed = u8[].filled(keep, 0);
       for (i32 i = 0; i < keep; i++) { handed[i] = corrupt[i]; }
-      cli.writeFile(corruptPath, handed).wait();
+      fs.writeFile(corruptPath, handed).wait();
 
-      Exec r = cli.exec(binary(cli), [probe, "--allow-read", originalPath, corruptPath],
-                        u8[]()).wait();
+      auto rRan = flatten(procs.exec(binary(env), [probe, "--allow-read", originalPath, corruptPath], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+      Exec? r = rRan.ok();
       cases = cases + 1;
-      if (!r.ran()) {
+      if ((r is null)) {
         notRan = notRan + 1;
-        if (notRan <= 3) { detail = detail + "\n  \{base[c].name}: the probe would not start — \{r.error}"; }
+        if (notRan <= 3) { detail = detail + "\n  \{base[c].name}: the probe would not start — \{rRan.isErr() ? "\{rRan.err()!}" : ""}"; }
         continue;
       }
       // Some corruptions are genuinely benign — MTIME, XFL and the OS byte are not covered by the
       // CRC — so decoding is allowed, but only to the original bytes.
-      if (r.status == 7) {
+      if (r!.status == 7) {
         wrong = wrong + 1;
         if (wrong <= 5) {
           detail = detail + "\n  \{base[c].name} attempt \{attempt}" +
                    ": a corrupted stream decoded to the wrong bytes without trapping";
         }
-      } else if (r.status == 8) {
+      } else if (r!.status == 8) {
         unreadable = unreadable + 1;
         if (unreadable <= 3) {
           detail = detail + "\n  \{base[c].name}: the probe could not read its inputs";
         }
-      } else if (r.status == 0) {
+      } else if (r!.status == 0) {
         decoded = decoded + 1;
       } else {
         trapped = trapped + 1;
@@ -151,8 +151,8 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
     }
   }
 
-  Change cleaned = cli.remove(work, true).wait();
-  if (!cleaned.ok()) { core.warn("fuzz: could not remove \{work} — \{cleaned.message}"); }
+  auto cleaned = flatten(fs.remove(work, true).wait());
+  if (cleaned.isErr()) { err.line("fuzz: could not remove \{work} — \{cleaned.isErr() ? "\{cleaned.err()!}" : ""}"); }
   return Swept(true, "", base.len(), cases, trapped, decoded, wrong, unreadable, notRan, detail);
 }
 
@@ -162,7 +162,7 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
  * `attempts` is passed rather than read back from the result, because `cases == corpora * attempts` is
  * the assertion that a sweep which stopped part way cannot satisfy.
  */
-export void assertSwept(T t, Core core, Swept s, i32 attempts, string what) {
+export void assertSwept(T t, Output out, Swept s, i32 attempts, string what) {
   t.isTrue(s.ok, s.error);
   if (!s.ok) { return; }
   t.eqI32(s.notRan, 0, "\{s.notRan} cases never ran\{s.detail}");
@@ -175,7 +175,7 @@ export void assertSwept(T t, Core core, Swept s, i32 attempts, string what) {
   t.isTrue(s.trapped * 2 >= s.cases,
            "only \{s.trapped}/\{s.cases}" +
            " corruptions trapped — corruption may not be effective");
-  core.log("  \{what}: \{s.cases} cases, \{s.trapped} trapped, " +
+  out.line("  \{what}: \{s.cases} cases, \{s.trapped} trapped, " +
            "\{s.decoded} benign");
 }
 

@@ -1,65 +1,66 @@
-// Branch coverage for fs: the probe's thirteen transcripts, run natively.
+// Branch coverage for fs: its tests, run natively.
 //
 //   wac task coverage:fs
 //
 // This was fs's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger is
 // `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.
 //
-// **The exercises were already in wac.** `test/wac/cov_probe.wac` has been the whole of the workload
-// since the probe existed; the TypeScript instrumented it, called its thirteen exports and then held
-// the ledger. So this file is the calling, and there is nothing here that was not there.
+// The workload was a probe of transcripts over `packages/fs`'s own filesystem, `Fs`, until that folded into
+// std's `Files` (design/system/0013 step 5). What is left here is ours rather than general — the trees, the
+// image, the process table and the words for a fault — and their tests are the workload: each answers "" or
+// what failed, and a failure stops the run, since a coverage figure over a broken package measures nothing.
 //
-// Each export returns a transcript, and **the transcripts are not compared** — `test/host.test.ts`
-// compares the same operations against the real filesystem and `test/image.test.ts` and
-// `test/synth.test.ts` assert the answers. What is measured here is which lines ran. But an empty
-// transcript is checked, because a probe that returned nothing measured nothing and would read from the
-// outside as a package whose branches are simply not covered.
-//
-// ## Why `main` and no exports
-//
-// Nothing here traps. Every one of these builds a filesystem that needs no capability — that is what
-// makes it a probe rather than a test — so a trapping case has nowhere to come from and there is no
-// sweep to run. `packages/zstd/test/cov_exercise.wac` is the other shape, where most of the file is
-// exports because most of the workload is refusals.
+// `host_test.wac` is not here: it builds and runs `example/ops.wac` against the host, which measures the
+// example and std rather than this package.
 
-import { Core, Sys } from "std";
-import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mountOps, edgeOps,
-         pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
+import { Sys, Output } from "std";
+import { test_dev_has_a_sink_and_two_endless_streams, test_proc_lists_each_process_and_self,
+         test_a_childs_proc_self_is_the_child_whatever_is_current, test_bin_lists_the_programs_as_executables,
+         test_a_system_with_no_programs_has_no_bin, test_a_trees_directory_answers_as_a_directory_before_it_answers_read_only }
+  from "./wac/trees_test.wac";
+import { test_an_image_holds_every_entry_with_its_owner_and_mode, test_a_damaged_image_says_what_is_wrong,
+         test_a_store_is_booted_from_and_saved_to_another,
+         test_any_store_survives_an_image_and_rewriting_gives_the_same_bytes,
+         test_a_name_that_is_not_text_survives_an_image, test_the_committed_fixture_still_loads }
+  from "./wac/storeimage_test.wac";
+import { test_a_pid_is_never_reused, test_a_row_outlives_the_process_until_reaped,
+         test_a_signal_to_something_that_has_exited_is_refused, test_proc_cmdline_is_nul_separated_and_terminated,
+         test_proc_comm_is_one_line_with_a_newline, test_proc_status_uses_the_hosts_shape_and_only_real_keys,
+         test_proc_lists_a_pid_per_process_and_self,
+         test_a_pid_that_is_not_there_is_refused_and_a_wordless_process_has_no_name } from "./wac/proc_test.wac";
+import { test_each_category_has_gnus_words_and_the_rest_keep_their_own, test_absent_is_nothing_there_and_nothing_else }
+  from "./wac/words_test.wac";
 
-/** Every transcript, in the order the TypeScript called them, with what each one is for. */
+/** Every test, in the order the files run them. */
 export async i32 main(Sys sys) {
-  Core core = sys.core;
+  Output err = sys.stderr();
   string[] said = [
-    (await memoryOps()),
-    (await synthOps()),
-    (await imageOps()),
-    (await pathOps()),
-    (await renameOps()),
-    (await rootlessOps()),
-    (await mountOps()),
-    (await edgeOps()),
-    (await imageBadOps()),
-    // The process table, which nothing had asked for — 24.5% of `proc.wac` and none of it needing a
-    // capability, a mount or a host. `issues/system/0134`.
-    procOps(),
-    // The streaming write and the session state — `openOut`/`writeOut`/`closeOut`, `setUser`, `setCwd`.
-    (await streamOps()),
-    // The child/parent wire, round-tripped: the half of `remote.wac` that needs no peer to answer.
-    wireOps(),
-    // Being refused: `may(node, 2)` answering no on every operation that changes what a directory
-    // holds, which was the largest unaccounted group and the one a wrong answer matters most in.
-    (await permissionOps())
+    (await test_dev_has_a_sink_and_two_endless_streams(sys)),
+    (await test_proc_lists_each_process_and_self(sys)),
+    (await test_a_childs_proc_self_is_the_child_whatever_is_current(sys)),
+    (await test_bin_lists_the_programs_as_executables(sys)),
+    (await test_a_system_with_no_programs_has_no_bin(sys)),
+    (await test_a_trees_directory_answers_as_a_directory_before_it_answers_read_only(sys)),
+    (await test_an_image_holds_every_entry_with_its_owner_and_mode(sys)),
+    (await test_a_damaged_image_says_what_is_wrong(sys)),
+    (await test_a_store_is_booted_from_and_saved_to_another(sys)),
+    (await test_any_store_survives_an_image_and_rewriting_gives_the_same_bytes(sys)),
+    (await test_a_name_that_is_not_text_survives_an_image(sys)),
+    (await test_the_committed_fixture_still_loads(sys)),
+    test_a_pid_is_never_reused(),
+    test_a_row_outlives_the_process_until_reaped(),
+    test_a_signal_to_something_that_has_exited_is_refused(),
+    (await test_proc_cmdline_is_nul_separated_and_terminated(sys)),
+    (await test_proc_comm_is_one_line_with_a_newline(sys)),
+    (await test_proc_status_uses_the_hosts_shape_and_only_real_keys(sys)),
+    (await test_proc_lists_a_pid_per_process_and_self()),
+    test_a_pid_that_is_not_there_is_refused_and_a_wordless_process_has_no_name(),
+    test_each_category_has_gnus_words_and_the_rest_keep_their_own(sys),
+    test_absent_is_nothing_there_and_nothing_else(sys)
   ];
-
-  string[] names = [
-    "memoryOps", "synthOps", "imageOps", "pathOps", "renameOps", "rootlessOps", "mountOps",
-    "edgeOps", "imageBadOps", "procOps", "streamOps", "wireOps", "permissionOps"
-  ];
-
-  // **Named rather than counted.** "a probe returned nothing" sent the reader to thirteen candidates.
   for (i32 i = 0; i < said.len(); i++) {
-    if (said[i].len() == 0) {
-      core.warn("error: \{names[i]} returned an empty transcript, so it measured nothing");
+    if (said[i] != "") {
+      err.line("error: a test failed: \{said[i]}");
       return 1;
     }
   }

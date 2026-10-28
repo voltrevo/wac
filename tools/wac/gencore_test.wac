@@ -17,24 +17,29 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { coreFileNames, stdSource } from "../../packages/wacc/src/coretext.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Clock, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
 
-export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
+export string test_the_embeddings_are_in_step_with_the_core_tree(Sys sys) {
+  Env env = sys.env();
+  Procs procs = sys.procs();
   T t = T.create();
-  Exec r = cli.exec(binaryPath(cli), ["task", "gen:core", "--check"], u8[]()).wait();
-  t.isTrue(r.ran(), "the generator ran — " + r.error);
-  if (!r.ran()) { return t.report(); }
-  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.eqI32(r.status, 0,
+  auto rRan = flatten(procs.exec(binaryPath(env), ["task", "gen:core", "--check"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the generator ran — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  string said = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
+  t.eqI32(r!.status, 0,
           "`wac task gen:core --check` — run `wac task gen:core`:\n" + said);
   // The message on success, so a check that started answering nothing at all is not read as a pass.
-  if (r.status == 0) {
+  if (r!.status == 0) {
     t.isTrue(contains(said, "in step"), "and it says so — got \"" + said + "\"");
   }
   return t.report();
 }
 
-export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) {
+export string test_the_tree_is_there_and_says_who_gets_what(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // The canary for the test above: `--check` compares two files it generates from `core/`, and if
   // `core/` were empty it would compare two empty embeddings and agree. So the inputs are asserted
@@ -52,18 +57,18 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
                             "export struct Cli", "A capability, or the type of one"
   ];
   for (i32 i = 0; i < files.len(); i++) {
-    FileResult f = cli.readFile(files[i]).wait();
-    t.isTrue(f.ok, files[i] + " is there");
-    if (f.ok) {
-      t.isTrue(contains(string.fromBytes(f.bytes), holds[i]),
+    u8[]? f = flatten(fs.readFile(files[i]).wait()).ok();
+    t.isTrue((f is not null), files[i] + " is there");
+    if ((f is not null)) {
+      t.isTrue(contains(string.fromBytes(f!), holds[i]),
                files[i] + " holds " + holds[i]);
     }
   }
 
-  FileResult wacc = cli.readFile("packages/wacc/src/coretext.wac").wait();
-  t.isTrue(wacc.ok, "wacc's embedding is there");
-  if (wacc.ok) {
-    string text = string.fromBytes(wacc.bytes);
+  u8[]? wacc = flatten(fs.readFile("packages/wacc/src/coretext.wac").wait()).ok();
+  t.isTrue((wacc is not null), "wacc's embedding is there");
+  if ((wacc is not null)) {
+    string text = string.fromBytes(wacc!);
     t.isTrue(contains(text, "export enum Read"), "and it carries Read");
     t.isTrue(contains(text, "markup.text"), "and the markup symbols as well");
   }
@@ -78,28 +83,31 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
  * fine, because the emitter does not ask either. `std/platform.wac` is checked through the import it
  * makes of `"core"`, which is the same text.
  */
-export string test_core_passes_the_checker(Core core, Cli cli) {
+export string test_core_passes_the_checker(Sys sys) {
+  Env env = sys.env();
+  Procs procs = sys.procs();
   T t = T.create();
   string[] files = coreFileNames();
   string[] args = string[].filled(files.len() + 2, "check");
   args.copyFrom(files, 0, 1, files.len());
   args[files.len() + 1] = "std/platform.wac";
-  Exec r = cli.exec(binaryPath(cli), args, u8[]()).wait();
-  t.isTrue(r.ran(), "wac check ran — " + r.error);
-  if (!r.ran()) { return t.report(); }
-  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.eqI32(r.status, 0, "`wac check` on core:\n" + said);
+  auto rRan = flatten(procs.exec(binaryPath(env), args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "wac check ran — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  if ((r is null)) { return t.report(); }
+  string said = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
+  t.eqI32(r!.status, 0, "`wac check` on core:\n" + said);
   // So a check that read nothing is not a pass: it names how many files it took.
   t.isTrue(contains(said, "no diagnostics"), "and it says so — got \"" + said + "\"");
   return t.report();
 }
 
 /** `bytes` copied once, the work an embedding of the same text cannot avoid. */
-i64 oneCopyNanos(Core core, u8[] bytes) {
-  i64 t0 = core.monotonicNanos().wait();
+i64 oneCopyNanos(Clock clock, u8[] bytes) {
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   u8[] copy = u8[].filled(bytes.len(), 0);
   copy.copyFrom(bytes, 0, 0, bytes.len());
-  return core.monotonicNanos().wait() - t0;
+  return flatten(clock.monotonicNanos().wait()).unwrap() - t0;
 }
 
 // **The embedding is built in time linear in its length.** `stdSource()` and `coreSource()` are
@@ -109,15 +117,16 @@ i64 oneCopyNanos(Core core, u8[] bytes) {
 // 73% of compiling a one-line file. A wall-clock bound would flake on a loaded machine, so this is a
 // ratio against copying the same bytes once, measured back to back: linear is a small factor,
 // quadratic is about half the line count.
-export string test_the_embedding_is_built_in_linear_time(Core core, Cli cli) {
+export string test_the_embedding_is_built_in_linear_time(Sys sys) {
+  Clock clock = sys.clock();
   T t = T.create();
   // Once to warm both paths, so neither side pays for compiling the other.
   u8[] bytes = stdSource().toBytes();
-  oneCopyNanos(core, bytes);
-  i64 t0 = core.monotonicNanos().wait();
+  oneCopyNanos(clock, bytes);
+  i64 t0 = flatten(clock.monotonicNanos().wait()).unwrap();
   string s = stdSource();
-  i64 built = core.monotonicNanos().wait() - t0;
-  i64 copied = oneCopyNanos(core, bytes);
+  i64 built = flatten(clock.monotonicNanos().wait()).unwrap() - t0;
+  i64 copied = oneCopyNanos(clock, bytes);
   if (copied < 1000 as i64) { copied = 1000 as i64; }
   t.eqI32(s.len(), bytes.len(), "the same text both times");
   t.isTrue(built < copied * (50 as i64),

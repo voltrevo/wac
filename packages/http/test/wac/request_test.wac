@@ -25,7 +25,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Procs, Sys } from "std";
 import { Outcome, oracle, outcomeOf, wire } from "./nodeoracle.wac";
 import { Parsed, Request, parseRequest, ERR_METHOD, ERR_TARGET, ERR_VERSION, ERR_LINE,
          ERR_HEADER_NAME, ERR_HEADER_VALUE, ERR_OBS_FOLD, ERR_FRAMING, ERR_CHUNK,
@@ -102,14 +102,14 @@ string wacOutcome(Parsed p) {
  *
  * One subprocess for the whole list, which is what makes a hundred prefixes affordable.
  */
-void check(T t, Cli cli, string[] inputs) {
+void check(T t, Procs procs, string[] inputs) {
   u8[][] cases = u8[][].filled(inputs.len(), u8[]());
   for (i32 i = 0; i < inputs.len(); i++) { cases[i] = wire(inputs[i]); }
-  checkBytes(t, cli, cases);
+  checkBytes(t, procs, cases);
 }
 
-void checkBytes(T t, Cli cli, u8[][] cases) {
-  Outcome[] want = oracle(t, cli, cases, -1);
+void checkBytes(T t, Procs procs, u8[][] cases) {
+  Outcome[] want = oracle(t, procs, cases, -1);
   if (want.len() != cases.len()) { return; }
 
   for (i32 i = 0; i < cases.len(); i++) {
@@ -166,9 +166,10 @@ void compareOk(T t, string label, Parsed got, string method, string target, stri
 
 // ── The corpora ───────────────────────────────────────────────────────────────
 
-export string test_well_formed_requests(Core core, Cli cli) {
+export string test_well_formed_requests(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  check(t, cli, [
+  check(t, procs, [
     "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /path/to?x=1&y=2 HTTP/1.1\r\nHost: example.com\r\n\r\n",
     "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -189,9 +190,10 @@ export string test_well_formed_requests(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_chunked_bodies(Core core, Cli cli) {
+export string test_chunked_bodies(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  check(t, cli, [
+  check(t, procs, [
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\n\r\n",
@@ -211,27 +213,30 @@ string[] prefixesOf(string full) {
   return out;
 }
 
-export string test_incomplete_messages_are_not_rejections(Core core, Cli cli) {
+export string test_incomplete_messages_are_not_rejections(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // Every prefix of a valid request. None of them is malformed; all of them need more bytes, and
   // a parser that says otherwise breaks on any client that writes in more than one packet.
-  check(t, cli, prefixesOf("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello"));
+  check(t, procs, prefixesOf("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello"));
   return t.report();
 }
 
-export string test_incomplete_chunked_messages_are_not_rejections(Core core, Cli cli) {
+export string test_incomplete_chunked_messages_are_not_rejections(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  check(t, cli, prefixesOf(
+  check(t, procs, prefixesOf(
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"));
   return t.report();
 }
 
-export string test_framing_ambiguity_is_refused_the_smuggling_shapes(Core core, Cli cli) {
+export string test_framing_ambiguity_is_refused_the_smuggling_shapes(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // The reason this package exists. Each of these is a message two parsers can disagree about,
   // and a disagreement between a front-end and a back-end is a smuggled request. Both this and
   // llhttp must refuse all of them.
-  check(t, cli, [
+  check(t, procs, [
     // Content-Length and Transfer-Encoding together: one reads 5 bytes, the other reads chunks.
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n0\r\n\r\n",
@@ -262,14 +267,15 @@ export string test_framing_ambiguity_is_refused_the_smuggling_shapes(Core core, 
   return t.report();
 }
 
-export string test_malformed_request_lines_and_headers(Core core, Cli cli) {
+export string test_malformed_request_lines_and_headers(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
   // **Three of these carry a raw NUL, and it is the whole case.** The host-side version wrote them
   // as literal 0x00 bytes in its source, where they are invisible — a reader sees `X: v w` and a
   // method called `G T`. That is what they looked like when this file was first written from it, and
   // the ported corpus quietly became "a space in a header value", which llhttp accepts and this
   // parser accepts and nothing disagreed about. `withByte` puts the byte where the reader can see it.
-  checkBytes(t, cli, [
+  checkBytes(t, procs, [
     "\r\n\r\n".toBytes(),
     "GET\r\n\r\n".toBytes(),
     "GET /\r\n\r\n".toBytes(),
@@ -290,9 +296,10 @@ export string test_malformed_request_lines_and_headers(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_malformed_chunked_bodies(Core core, Cli cli) {
+export string test_malformed_chunked_bodies(Sys sys) {
+  Procs procs = sys.procs();
   T t = T.create();
-  check(t, cli, [
+  check(t, procs, [
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5 \r\nhello\r\n0\r\n\r\n",

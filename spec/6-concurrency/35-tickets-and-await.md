@@ -329,6 +329,7 @@ Nothing here is specific to async: a synchronous generator suspends inside a sco
 struct Continuation {
   TicketBase? t;
   fn<void()> call;
+  fn<bool()> current;
 }
 ```
 
@@ -356,7 +357,9 @@ export i32 continuationResumes() {
 ```
 
 `[§wac-continuation-xj5pyv3]` A `Continuation` holds the ticket its machine is waiting on — `null` for a bare `await;` —
-and a `call` that resumes it.
+and a `call` that resumes it. `current` says whether its machine is still parked there: a `wait` may run the machine
+itself, past a continuation already handed to a queue, and calling that one does nothing — so a scheduler counting
+what is left counts only the current ones.
 
 ```wac
 // expect: traps callsTooEarly
@@ -643,6 +646,35 @@ export i32 firstOf() {
 
 `[§wac-ticket-first-r4k8w2m]` `Ticket.first(parts)` settles with the index, counting from 0, of the first of `parts`
 to settle, by the rule `Ticket.any` keeps. An empty array never settles.
+
+### Host work, and cancelling
+
+A ticket a capability answers stands for work the host is doing. Driving one blocks until the host has answered, so
+`Ticket.any`, `Ticket.anyWithIndex` and `Ticket.first` do not drive such tickets in turn: when every ticket they
+are waiting on is waiting on the host, they ask the host once which of all of it answers first.
+
+`[§wac-ticket-host-together-u4onpys]` A `wait` on `Ticket.any`, `Ticket.anyWithIndex` or `Ticket.first` whose
+tickets are all waiting on host work — directly, or through the machines and combinations parked on them — blocks
+until the host answers any one of them, not until it answers the first.
+
+`cancel()` says the answer is no longer wanted:
+
+```wac
+// expect: cancelled() = 3
+import { Ticket } from "core";
+
+export i32 cancelled() {
+  Ticket<i32> made;
+  made.cancel();          // nothing hosts it: cancelling does nothing
+  made.resolve(3);
+  return made.wait()!;
+}
+```
+
+`[§wac-ticket-cancel-6zeggqz]` `t.cancel()` on a ticket the host answers releases what the host holds for it and
+discards the answer: the ticket never settles, and a `wait` on it is refused (`§wac-wait-refuses-jj8u2ie`). On any
+other ticket it does nothing — a machine is not stopped part-way through its body, and a ticket made directly is
+settled by whoever holds it.
 
 ## `void` as a type argument
 

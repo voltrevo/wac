@@ -24,8 +24,8 @@
 // are ordinary calls.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std";
-import { Vec } from "core";
+import { Cli, Exec, Change, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
+import { Vec, flatten } from "core";
 import { Kind, nameOf } from "../../src/object.wac";
 import { Pack, Opened, Raw, Got, Indexed, openPack, openIndexed, rawAt, applyDelta,
          objectAt, objectNamed, indexPack } from "../../src/pack.wac";
@@ -34,12 +34,13 @@ import { agentDir } from "../../../wactest/src/host.wac";
 
 /** A repository with a pack, and the paths of its two files. */
 struct Packed {
-  Cli cli;
+  Procs procs;
+  Files fs;
   string dir;
   string packPath;
   string idxPath;
 
-  Exec run(const this, string[] args) {
+  Exec run(this, string[] args) {
     string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
@@ -48,15 +49,15 @@ struct Packed {
     full[4] = "-c";
     full[5] = "user.email=wac@example.com";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, u8[]()).wait();
+    return flatten(this.procs.exec("git", full, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
   }
 
-  string text(const this, string[] args) {
+  string text(this, string[] args) {
     return trimmed(string.fromBytes(this.run(args).stdout));
   }
 
-  u8[] packBytes(const this) { return this.cli.readFile(this.packPath).wait().bytes; }
-  u8[] idxBytes(const this) { return this.cli.readFile(this.idxPath).wait().bytes; }
+  u8[] packBytes(this) { return flatten(this.fs.readFile(this.packPath).wait()).orElse(u8[]()); }
+  u8[] idxBytes(this) { return flatten(this.fs.readFile(this.idxPath).wait()).orElse(u8[]()); }
 }
 
 string trimmed(string s) {
@@ -131,34 +132,34 @@ Kind kindOfCode(i32 kind) {
  * lines added. A fixture of unrelated small files packs with no deltas at all and would leave the
  * delta path — most of this file — untested.
  */
-Packed packed(T t, Cli cli, string name) {
-  string who = agentDir(cli);
+Packed packed(T t, Procs procs, Env env, Files fs, string name) {
+  string who = agentDir(env);
   string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  Packed p = Packed(cli, dir, "", "");
-  if (!made.ok()) { return p; }
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  Packed p = Packed(procs, fs, dir, "", "");
+  if (made.isErr()) { return p; }
 
   p.run(["init", "-q"]);
   string body = "";
   for (i32 i = 0; i < 200; i++) { body = body + "a very long shared body\n"; }
-  cli.writeFile("\{dir}/big.txt", body.toBytes()).wait();
+  fs.writeFile("\{dir}/big.txt", body.toBytes()).wait();
   for (i32 i = 1; i <= 3; i++) {
-    cli.writeFile("\{dir}/f\{i as i64}.txt",
+    fs.writeFile("\{dir}/f\{i as i64}.txt",
                   "line \{i as i64}\n".toBytes()).wait();
   }
   p.run(["add", "-A"]);
   p.run(["commit", "-qm", "one"]);
   string more = body;
   for (i32 i = 0; i < 5; i++) { more = more + "a very long shared body\n"; }
-  cli.writeFile("\{dir}/big.txt", more.toBytes()).wait();
+  fs.writeFile("\{dir}/big.txt", more.toBytes()).wait();
   p.run(["add", "-A"]);
   p.run(["commit", "-qm", "two"]);
   p.run(["gc", "-q"]);
 
   string pd = "\{dir}/.git/objects/pack";
-  string[]? listing = cli.readDir(pd).wait();
+  string[]? listing = flatten(fs.readDir(pd).wait()).ok();
   string stem = "";
   if (!(listing is null)) {
     string[] names = listing!;
@@ -168,13 +169,15 @@ Packed packed(T t, Cli cli, string name) {
     }
   }
   t.isTrue(stem != "", "the fixture has a pack");
-  return Packed(cli, dir, "\{pd}/\{stem}.pack", "\{pd}/\{stem}.idx");
+  return Packed(procs, fs, dir, "\{pd}/\{stem}.pack", "\{pd}/\{stem}.idx");
 }
 
-export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name(
-    Core core, Cli cli) {
+export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Packed f = packed(t, cli, "pack");
+  Packed f = packed(t, procs, env, fs, "pack");
   match (openPack(f.packBytes(), f.idxBytes())) {
     Refused(why): { t.isTrue(false, "openPack refused: \{why}"); }
     Ready(p): {
@@ -198,7 +201,7 @@ export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its
                "the fixture pack contains a delta, so the delta path is exercised");
     }
   }
-  cli.remove(f.dir, true).wait();
+  fs.remove(f.dir, true).wait();
   return t.report();
 }
 
@@ -214,9 +217,12 @@ i32 deltasIn(Pack p, PackIndex idx) {
   return deltas;
 }
 
-export string test_the_header_at_each_offset_says_what_verify_pack_says(Core core, Cli cli) {
+export string test_the_header_at_each_offset_says_what_verify_pack_says(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Packed f = packed(t, cli, "pack2");
+  Packed f = packed(t, procs, env, fs, "pack2");
   match (openPack(f.packBytes(), f.idxBytes())) {
     Refused(why): { t.isTrue(false, "openPack refused: \{why}"); }
     Ready(p): {
@@ -267,13 +273,16 @@ export string test_the_header_at_each_offset_says_what_verify_pack_says(Core cor
                "verify-pack reported a delta, so the two-numbers case was exercised");
     }
   }
-  cli.remove(f.dir, true).wait();
+  fs.remove(f.dir, true).wait();
   return t.report();
 }
 
-export string test_a_named_lookup_finds_an_object_through_the_index(Core core, Cli cli) {
+export string test_a_named_lookup_finds_an_object_through_the_index(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Packed f = packed(t, cli, "pack3");
+  Packed f = packed(t, procs, env, fs, "pack3");
   match (openPack(f.packBytes(), f.idxBytes())) {
     Refused(why): { t.isTrue(false, "openPack refused: \{why}"); }
     Ready(p): {
@@ -295,7 +304,7 @@ export string test_a_named_lookup_finds_an_object_through_the_index(Core core, C
       }
     }
   }
-  cli.remove(f.dir, true).wait();
+  fs.remove(f.dir, true).wait();
   return t.report();
 }
 
@@ -321,9 +330,12 @@ bool refused(Opened o) {
   }
 }
 
-export string test_a_pack_or_index_that_does_not_belong_is_refused(Core core, Cli cli) {
+export string test_a_pack_or_index_that_does_not_belong_is_refused(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Packed f = packed(t, cli, "pack4");
+  Packed f = packed(t, procs, env, fs, "pack4");
   u8[] packBytes = f.packBytes();
   u8[] idxBytes = f.idxBytes();
   t.isFalse(refused(openPack(packBytes, idxBytes)), "the genuine pair opens");
@@ -355,7 +367,7 @@ export string test_a_pack_or_index_that_does_not_belong_is_refused(Core core, Cl
     Rejected(why): { t.isTrue(true, why); }
   }
 
-  cli.remove(f.dir, true).wait();
+  fs.remove(f.dir, true).wait();
   return t.report();
 }
 
@@ -389,9 +401,12 @@ export string test_a_delta_that_does_not_describe_its_base_is_refused() {
   return t.report();
 }
 
-export string test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(Core core, Cli cli) {
+export string test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Packed f = packed(t, cli, "pack5");
+  Packed f = packed(t, procs, env, fs, "pack5");
   u8[] packBytes = f.packBytes();
 
   match (indexPack(packBytes)) {
@@ -415,13 +430,16 @@ export string test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(Co
                "the fixture pack held a delta, so two-pass indexing was exercised");
     }
   }
-  cli.remove(f.dir, true).wait();
+  fs.remove(f.dir, true).wait();
   return t.report();
 }
 
-export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core core, Cli cli) {
+export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Packed f = packed(t, cli, "pack6");
+  Packed f = packed(t, procs, env, fs, "pack6");
   u8[] packBytes = f.packBytes();
 
   match (indexPack(packBytes)) {
@@ -464,7 +482,7 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
                "exercised");
     }
   }
-  cli.remove(f.dir, true).wait();
+  fs.remove(f.dir, true).wait();
   return t.report();
 }
 

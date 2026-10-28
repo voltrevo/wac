@@ -14,7 +14,8 @@
 // caller having moved. Not a test file and not discovered as one: `wac test` walks
 // `*_test.wac`. `issues/system/0161`.
 
-import { Core, Cli, Exec } from "std";
+import { Cli, Exec, ChildEnv, Launch, Procs } from "std";
+import { flatten } from "core";
 
 /** What an external tool said: its bytes, or why it refused. */
 export struct External {
@@ -26,19 +27,17 @@ export struct External {
 }
 
 /** Decompress with the system `gunzip`. */
-export External gunzip(Cli cli, u8[] gz) {
-  return through(cli, "gunzip", ["-c"], gz);
+export External gunzip(Procs procs, u8[] gz) {
+  return through(procs, "gunzip", ["-c"], gz);
 }
 
 /** Compress with python's `gzip`, for testing a decompressor against a real encoder. */
-export External pythonGzip(Cli cli, u8[] data, i32 level) {
-  return through(cli, "python3",
-                 [
+export External pythonGzip(Procs procs, u8[] data, i32 level) {
+  return through(procs, "python3", [
                           "-c",
                           "import sys,gzip; sys.stdout.buffer.write(gzip.compress(" +
                           "sys.stdin.buffer.read(), \{level}))"
-                 ],
-                 data);
+                 ], data);
 }
 
 /**
@@ -47,17 +46,15 @@ export External pythonGzip(Cli cli, u8[] data, i32 level) {
  * `mtime=0` so the bytes are a function of the input alone — the default writes the current time into
  * the header, and a test that compares two runs would see it.
  */
-export External pythonGzipNamed(Cli cli, u8[] data, string name) {
-  return through(cli, "python3",
-                 [
+export External pythonGzipNamed(Procs procs, u8[] data, string name) {
+  return through(procs, "python3", [
                           "-c",
                           "import sys,gzip,io\n" +
                           "b = io.BytesIO()\n" +
                           "with gzip.GzipFile(\"\{name}\", \"wb\", 6, b, 0) as f:\n" +
                           "    f.write(sys.stdin.buffer.read())\n" +
                           "sys.stdout.buffer.write(b.getvalue())\n"
-                 ],
-                 data);
+                 ], data);
 }
 
 /**
@@ -66,27 +63,26 @@ export External pythonGzipNamed(Cli cli, u8[] data, string name) {
  * `-15` is a bare deflate stream with no wrapper at all, which is the only way to reach `inflate`
  * with bytes this repository did not write.
  */
-export External pythonZlib(Cli cli, u8[] data, i32 level, i32 wbits) {
-  return through(cli, "python3",
-                 [
+export External pythonZlib(Procs procs, u8[] data, i32 level, i32 wbits) {
+  return through(procs, "python3", [
                           "-c",
                           "import sys,zlib; c=zlib.compressobj(\{level}" +
                           ",zlib.DEFLATED,\{wbits}); " +
                           "sys.stdout.buffer.write(c.compress(sys.stdin.buffer.read())+c.flush())"
-                 ],
-                 data);
+                 ], data);
 }
 
 /** One program, fed `input` on standard input, run to completion. */
-External through(Cli cli, string program, string[] args, u8[] input) {
-  Exec r = cli.exec(program, args, input).wait();
-  if (!r.ran()) { return External(u8[](), "\{program} would not start: \{r.error}"); }
-  if (r.status != 0) {
+External through(Procs procs, string program, string[] args, u8[] input) {
+  auto rRan = flatten(procs.exec(program, args, input, ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return External(u8[](), "\{program} would not start: \{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  if (r!.status != 0) {
     return External(u8[](),
-                    "\{program} refused the stream (exit \{r.status}): " +
-                    string.fromBytes(r.stderr));
+                    "\{program} refused the stream (exit \{r!.status}): " +
+                    string.fromBytes(r!.stderr));
   }
-  return External(r.stdout, "");
+  return External(r!.stdout, "");
 }
 
 /**
@@ -104,8 +100,8 @@ export i32 firstDifference(u8[] a, u8[] b) {
 }
 
 /** `gz` decompressed by the system gunzip, required to equal `input` — as a message or "". */
-export string roundTrip(Cli cli, u8[] gz, string name, u8[] input) {
-  External out = gunzip(cli, gz);
+export string roundTrip(Procs procs, u8[] gz, string name, u8[] input) {
+  External out = gunzip(procs, gz);
   if (!out.ok()) { return "\{name}: \{out.error}"; }
   i32 diff = firstDifference(out.bytes, input);
   if (diff == -2) {

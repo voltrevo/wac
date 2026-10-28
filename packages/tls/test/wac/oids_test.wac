@@ -23,13 +23,14 @@
 // `asn1.wac` for `export u8[] oid…` and fails if the two lists disagree.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std";
+import { Cli, Exec, ChildEnv, Files, Launch, Procs, Sys } from "std";
 import { hex } from "../../../wactest/src/oracle.wac";
 import {
   oidEd25519, oidSubjectAltName, oidBasicConstraints, oidEcPublicKey, oidPrime256v1, oidSecp384r1,
   oidEcdsaSha256, oidEcdsaSha384, oidRsaEncryption, oidRsaPss, oidRsaSha256, oidRsaSha384,
   oidRsaSha512, oidKeyUsage, oidExtKeyUsage, oidServerAuth, oidAnyExtKeyUsage, oidNameConstraints,
 } from "../../src/asn1.wac";
+import { flatten } from "core";
 
 static string SOURCE = "packages/tls/src/asn1.wac";
 
@@ -106,19 +107,18 @@ bool isDigit(string s, i32 at) {
  *
  * `06 <len> <contents>`, and a short-form length because no OID here is anywhere near 128 bytes.
  */
-u8[] opensslOid(T t, Cli cli, string dotted) {
-  Exec r = cli.exec("openssl",
-                    [
+u8[] opensslOid(T t, Procs procs, string dotted) {
+  auto rRan = flatten(procs.exec("openssl", [
                              "asn1parse", "-genstr", "OID:\{dotted}", "-noout", "-out",
                              "/dev/stdout"
-                    ],
-                    u8[]()).wait();
-  t.eqStr(r.error, "", "openssl could not be started");
-  if (r.error != "") { return u8[](); }
-  t.eqI32(r.status, 0,
-          "openssl could not encode \{dotted}: \{string.fromBytes(r.stderr)}");
-  if (r.status != 0) { return u8[](); }
-  u8[] b = r.stdout;
+                    ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.eqStr("\{rRan.isErr() ? "\{rRan.err()!}" : ""}", "", "openssl could not be started");
+  if ("\{rRan.isErr() ? "\{rRan.err()!}" : ""}" != "") { return u8[](); }
+  t.eqI32(r!.status, 0,
+          "openssl could not encode \{dotted}: \{string.fromBytes(r!.stderr)}");
+  if (r!.status != 0) { return u8[](); }
+  u8[] b = r!.stdout;
   t.isTrue(b.len() > 2 && b[0] == 0x06,
            "openssl produced an OBJECT IDENTIFIER for \{dotted}");
   if (b.len() <= 2 || b[0] != 0x06) { return u8[](); }
@@ -129,12 +129,15 @@ u8[] opensslOid(T t, Cli cli, string dotted) {
   return out;
 }
 
-export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
+export string test_every_oid_is_the_one_its_comment_says(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  FileResult f = cli.readFile(SOURCE).wait();
-  t.isTrue(f.ok, "\{SOURCE} could not be read: \{f.error}");
-  if (!f.ok) { return t.report(); }
-  string src = string.fromBytes(f.bytes);
+  auto fRead = flatten(fs.readFile(SOURCE).wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{SOURCE} could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  string src = string.fromBytes(f!);
 
   string[] n = names();
   u8[][] v = values();
@@ -142,7 +145,7 @@ export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
     string dotted = documented(src, n[i]);
     t.isTrue(dotted != "", "\{n[i]}'s doc comment does not say which OID it is");
     if (dotted == "") { continue; }
-    t.eqStr(hex(v[i]), hex(opensslOid(t, cli, dotted)), "\{n[i]} claims to be \{dotted}");
+    t.eqStr(hex(v[i]), hex(opensslOid(t, procs, dotted)), "\{n[i]} claims to be \{dotted}");
   }
   return t.report();
 }
@@ -154,12 +157,14 @@ export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
  * covered without anyone doing anything. wac has no such lookup, so the coverage has to be asserted
  * instead: add an `oid…` to `asn1.wac` and this fails until it is in `names()` and `values()`.
  */
-export string test_every_oid_in_the_source_is_in_the_table(Core core, Cli cli) {
+export string test_every_oid_in_the_source_is_in_the_table(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  FileResult f = cli.readFile(SOURCE).wait();
-  t.isTrue(f.ok, "\{SOURCE} could not be read: \{f.error}");
-  if (!f.ok) { return t.report(); }
-  string src = string.fromBytes(f.bytes);
+  auto fRead = flatten(fs.readFile(SOURCE).wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "\{SOURCE} could not be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  string src = string.fromBytes(f!);
 
   string[] listed = names();
   i32 declared = 0;
@@ -183,17 +188,18 @@ export string test_every_oid_in_the_source_is_in_the_table(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_encoder_being_checked_against_is_really_doing_the_work(Core core, Cli cli) {
+export string test_the_encoder_being_checked_against_is_really_doing_the_work(Sys sys) {
+  Procs procs = sys.procs();
   // The control. If `opensslOid` returned the same bytes for everything — a stub, an empty file, a
   // tool that silently ignored `-genstr` — the test above would pass for eighteen identical
   // constants.
   T t = T.create();
-  string a = hex(opensslOid(t, cli, "1.2.840.113549.1.1.11"));
-  string b = hex(opensslOid(t, cli, "1.2.840.113549.1.1.12"));
+  string a = hex(opensslOid(t, procs, "1.2.840.113549.1.1.11"));
+  string b = hex(opensslOid(t, procs, "1.2.840.113549.1.1.12"));
   t.isTrue(a != b, "openssl gave two different OIDs the same encoding");
   t.eqStr(a, "2a864886f70d01010b", "sha256WithRSAEncryption is a published constant");
   // And a dotted form nothing here uses, to show the encoder is general rather than a lookup of ours.
-  t.eqStr(hex(opensslOid(t, cli, "1.3.6.1.4.1.311.20.2")), "2b0601040182371402",
+  t.eqStr(hex(opensslOid(t, procs, "1.3.6.1.4.1.311.20.2")), "2b0601040182371402",
           "an OID this repo never mentions still encodes");
   return t.report();
 }

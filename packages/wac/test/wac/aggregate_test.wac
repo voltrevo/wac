@@ -22,13 +22,14 @@
 // asked whether one is left. `.cache/` is the observation and the binary is what puts things in it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, Change } from "std";
+import { Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 /** How many `wac-aggregate-*` files are sitting in `<dir>/.cache`. */
-i32 aggregatesIn(Cli cli, string dir) {
-  string[]? names = cli.readDir("\{dir}/.cache").wait();
+i32 aggregatesIn(Files fs, string dir) {
+  string[]? names = flatten(fs.readDir("\{dir}/.cache").wait()).ok();
   if (names is null) { return 0; }
   i32 n = 0;
   for (i32 i = 0; i < names!.len(); i++) {
@@ -38,81 +39,89 @@ i32 aggregatesIn(Cli cli, string dir) {
 }
 
 /** `wac test test` inside `dir`, with `keep` deciding whether `WAC_KEEP_AGGREGATE` is set. */
-Exec runIn(Cli cli, string dir, bool keep) {
+Exec runIn(Env env, Procs procs, string dir, bool keep) {
   // **`export` and then `exec`, not `exec VAR=v cmd`.** The second is not a shell assignment at all —
   // `exec` takes a program, so `VAR=1` becomes the program name and the variable never reaches the
   // child. Written that way first, and the opt-in test failed with the aggregate absent, which reads
   // exactly like the feature being broken rather than the harness being wrong.
   string line = "cd '" + dir + "' && "
               + (keep ? "export WAC_KEEP_AGGREGATE=1 && " : "")
-              + "exec '" + binaryPath(cli) + "' test test";
-  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+              + "exec '" + binaryPath(env) + "' test test";
+  return flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 /** A project directory with one passing or one uncompilable test in it. */
-string fixture(Cli cli, string dir, bool good) {
-  string why = freshDir(cli, dir);
+string fixture(Files fs, string dir, bool good) {
+  string why = freshDir(fs, dir);
   if (why != "") { return why; }
-  return putFile(cli, "\{dir}/test/a_test.wac",
-                 good ? "export string test_ok() { return \"\"; }\n"
+  return putFile(fs, "\{dir}/test/a_test.wac", good ? "export string test_ok() { return \"\"; }\n"
                       : "export string test_bad() { return notAThing(); }\n");
 }
 
-export string test_a_passing_directory_run_leaves_no_aggregate_even_on_a_repeat(Core core, Cli cli) {
+export string test_a_passing_directory_run_leaves_no_aggregate_even_on_a_repeat(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "aggregate-pass");
-  string why = fixture(cli, dir, true);
+  string dir = scratch(env, "aggregate-pass");
+  string why = fixture(fs, dir, true);
   t.eqStr(why, "", "could not write the fixture");
   if (why != "") { return t.report(); }
 
-  Exec first = runIn(cli, dir, false);
+  Exec first = runIn(env, procs, dir, false);
   t.isTrue(first.ran(), "the first run did not start — \{first.error}");
-  t.eqI32(aggregatesIn(cli, dir), 0, "the first run left an aggregate behind");
+  t.eqI32(aggregatesIn(fs, dir), 0, "the first run left an aggregate behind");
 
   // **The one that was failing.** This run hits the build cache — the sources have not changed — and
   // returns through a different exit than the first, which is the exit the old cleanup was not on.
-  Exec again = runIn(cli, dir, false);
+  Exec again = runIn(env, procs, dir, false);
   t.isTrue(again.ran(), "the second run did not start — \{again.error}");
-  t.eqI32(aggregatesIn(cli, dir), 0,
+  t.eqI32(aggregatesIn(fs, dir), 0,
           "a repeat run left an aggregate behind — the cache-hit path returns before the cleanup");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_a_compile_failure_leaves_no_aggregate(Core core, Cli cli) {
+export string test_a_compile_failure_leaves_no_aggregate(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "aggregate-fail");
-  string why = fixture(cli, dir, false);
+  string dir = scratch(env, "aggregate-fail");
+  string why = fixture(fs, dir, false);
   t.eqStr(why, "", "could not write the fixture");
   if (why != "") { return t.report(); }
 
-  Exec r = runIn(cli, dir, false);
+  Exec r = runIn(env, procs, dir, false);
   t.isTrue(r.ran(), "the run did not start — \{r.error}");
   // The point is that it failed to compile, not how: if this program ever becomes legal the test is
   // measuring nothing, so the status is asserted rather than assumed.
   t.isTrue(r.status != 0, "the fixture was supposed to fail to compile and did not");
-  t.eqI32(aggregatesIn(cli, dir), 0, "a compile failure left its generated source behind");
-  cli.remove(dir, true).wait();
+  t.eqI32(aggregatesIn(fs, dir), 0, "a compile failure left its generated source behind");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_opt_in_keeps_one_and_says_where(Core core, Cli cli) {
+export string test_the_opt_in_keeps_one_and_says_where(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "aggregate-keep");
-  string why = fixture(cli, dir, true);
+  string dir = scratch(env, "aggregate-keep");
+  string why = fixture(fs, dir, true);
   t.eqStr(why, "", "could not write the fixture");
   if (why != "") { return t.report(); }
 
-  Exec r = runIn(cli, dir, true);
+  Exec r = runIn(env, procs, dir, true);
   t.isTrue(r.ran(), "the run did not start — \{r.error}");
-  t.eqI32(aggregatesIn(cli, dir), 1, "WAC_KEEP_AGGREGATE=1 did not keep the aggregate");
+  t.eqI32(aggregatesIn(fs, dir), 1, "WAC_KEEP_AGGREGATE=1 did not keep the aggregate");
   // **The canary for the two tests above.** They assert an absence, which a `wac test` that silently
   // stopped generating an aggregate at all would satisfy just as well. This one requires the file to
   // exist when asked for, so the removal above is a removal rather than a nothing.
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
   t.isTrue(contains(said, "WAC_KEEP_AGGREGATE"),
            "keeping it should say where it was left: \{said}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -133,16 +142,19 @@ export string test_the_opt_in_keeps_one_and_says_where(Core core, Cli cli) {
  * a test that passes sometimes. The concurrent case is below as well, since the shape is the reason
  * and the outcome is the claim.
  */
-export string test_the_aggregate_name_carries_a_pid(Core core, Cli cli) {
+export string test_the_aggregate_name_carries_a_pid(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "aggregate-pid");
-  string why = fixture(cli, dir, true);
+  string dir = scratch(env, "aggregate-pid");
+  string why = fixture(fs, dir, true);
   t.eqStr(why, "", "could not write the fixture");
   if (why != "") { return t.report(); }
 
-  Exec r = runIn(cli, dir, true);
+  Exec r = runIn(env, procs, dir, true);
   t.isTrue(r.ran(), "the run did not start — \{r.error}");
-  string[]? names = cli.readDir("\{dir}/.cache").wait();
+  string[]? names = flatten(fs.readDir("\{dir}/.cache").wait()).ok();
   t.isTrue(names is not null, "no .cache after a kept run");
   if (names is null) { return t.report(); }
   string got = "";
@@ -154,69 +166,78 @@ export string test_the_aggregate_name_carries_a_pid(Core core, Cli cli) {
   string rest = got.len() > 14 ? got.slice(14, got.len()) : "";
   t.isTrue(rest.indexOf("-") > 0,
            "the name has no pid in it, so two workers can collide: \{got}");
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_two_runs_at_once_in_one_project_both_succeed(Core core, Cli cli) {
+export string test_two_runs_at_once_in_one_project_both_succeed(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "aggregate-race");
-  string why = fixture(cli, dir, true);
+  string dir = scratch(env, "aggregate-race");
+  string why = fixture(fs, dir, true);
   t.eqStr(why, "", "could not write the fixture");
   if (why != "") { return t.report(); }
 
   // The outcome the pid buys. It is not a reliable *detector* — without the pid this fails often
   // rather than always — so the shape assertion above is the one that cannot be lucky.
-  string line = "cd '\{dir}' && ( '\{binaryPath(cli)}' test test & "
-              + "'\{binaryPath(cli)}' test test & wait )";
-  Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
-  t.isTrue(r.ran(), "the pair did not start — \{r.error}");
-  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  string line = "cd '\{dir}' && ( '\{binaryPath(env)}' test test & "
+              + "'\{binaryPath(env)}' test test & wait )";
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "the pair did not start — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  string said = string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr);
   t.isFalse(contains(said, "cannot read"),
             "one run removed the other's aggregate: \{said}");
-  t.eqI32(aggregatesIn(cli, dir), 0, "a concurrent pair left an aggregate behind");
-  cli.remove(dir, true).wait();
+  t.eqI32(aggregatesIn(fs, dir), 0, "a concurrent pair left an aggregate behind");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
-export string test_the_cleanup_leaves_the_projects_own_files_alone(Core core, Cli cli) {
+export string test_the_cleanup_leaves_the_projects_own_files_alone(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "aggregate-others");
-  string why = fixture(cli, dir, true);
+  string dir = scratch(env, "aggregate-others");
+  string why = fixture(fs, dir, true);
   t.eqStr(why, "", "could not write the fixture");
   if (why != "") { return t.report(); }
   // A file whose name is close enough to be caught by a careless sweep of `.cache`.
-  string wrote = putFile(cli, "\{dir}/.cache/wac-aggregate-keepme.txt", "not mine to delete\n");
+  string wrote = putFile(fs, "\{dir}/.cache/wac-aggregate-keepme.txt", "not mine to delete\n");
   t.eqStr(wrote, "", "could not write the bystander");
 
-  Exec r = runIn(cli, dir, false);
+  Exec r = runIn(env, procs, dir, false);
   t.isTrue(r.ran(), "the run did not start — \{r.error}");
-  t.eqI32(aggregatesIn(cli, dir), 1, "the cleanup removed a file it did not generate");
-  cli.remove(dir, true).wait();
+  t.eqI32(aggregatesIn(fs, dir), 1, "the cleanup removed a file it did not generate");
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
 /** `wac test <target>` run from `dir`, through a shell so the working directory is `dir`. */
-Exec testFrom(Cli cli, string dir, string target) {
-  string line = "cd '" + dir + "' && exec '" + binaryPath(cli) + "' test " + target;
-  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+Exec testFrom(Env env, Procs procs, string dir, string target) {
+  string line = "cd '" + dir + "' && exec '" + binaryPath(env) + "' test " + target;
+  return flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
 }
 
 string saidBy(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
-export string test_a_file_importing_a_namespace_member_is_not_dropped_from_a_directory_run(Core core, Cli cli) {
+export string test_a_file_importing_a_namespace_member_is_not_dropped_from_a_directory_run(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // `import { operators.add } from "core"` is a namespace member, as every JSX test's tags are. The walk found a file's
   // tests by parsing it without lowering its namespaces first, so such a file had none, and the run
   // dropped it without a word — "1 file: 1 ok" for a directory of two.
   T t = T.create();
-  string dir = scratch(cli, "agg-ns");
-  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
-  t.eqStr(putFile(cli, "\{dir}/test/a_test.wac",
-                  "import { operators.add } from \"core\";\n"
+  string dir = scratch(env, "agg-ns");
+  t.eqStr(freshDir(fs, dir), "", "a fresh directory");
+  t.eqStr(putFile(fs, "\{dir}/test/a_test.wac", "import { operators.add } from \"core\";\n"
                   + "export string test_tagged() { return \"\"; }\n"), "", "a test importing a member");
-  t.eqStr(putFile(cli, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
+  t.eqStr(putFile(fs, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
           "and a plain one");
-  Exec r = testFrom(cli, dir, "test");
+  Exec r = testFrom(env, procs, dir, "test");
   string out = saidBy(r);
   t.eqI32(r.status, 0, "both pass — \{out}");
   t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
@@ -224,21 +245,23 @@ export string test_a_file_importing_a_namespace_member_is_not_dropped_from_a_dir
   return t.report();
 }
 
-export string test_a_file_importing_a_member_of_a_neighbours_namespace_is_not_dropped(Core core, Cli cli) {
+export string test_a_file_importing_a_member_of_a_neighbours_namespace_is_not_dropped(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The same drop one step on: the namespace is a neighbouring file's `export * as`, which the walk —
   // parsing each test file alone — cannot see into. `import { tags.p } from "../lib.wac"` did not parse
   // there, and the run reported "1 file: 1 ok" for a directory of two (`packages/web`'s html_test).
   T t = T.create();
-  string dir = scratch(cli, "agg-nsfile");
-  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
-  t.eqStr(putFile(cli, "\{dir}/tags.wac", "export i32 p() { return 1; }\n"), "", "a module of tags");
-  t.eqStr(putFile(cli, "\{dir}/lib.wac", "export * as tags from \"./tags.wac\";\n"), "", "re-exported as a namespace");
-  t.eqStr(putFile(cli, "\{dir}/test/a_test.wac",
-                  "import { tags.p } from \"../lib.wac\";\n"
+  string dir = scratch(env, "agg-nsfile");
+  t.eqStr(freshDir(fs, dir), "", "a fresh directory");
+  t.eqStr(putFile(fs, "\{dir}/tags.wac", "export i32 p() { return 1; }\n"), "", "a module of tags");
+  t.eqStr(putFile(fs, "\{dir}/lib.wac", "export * as tags from \"./tags.wac\";\n"), "", "re-exported as a namespace");
+  t.eqStr(putFile(fs, "\{dir}/test/a_test.wac", "import { tags.p } from \"../lib.wac\";\n"
                   + "export string test_member() { return p() == 1 ? \"\" : \"wrong\"; }\n"), "", "a test importing a member");
-  t.eqStr(putFile(cli, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
+  t.eqStr(putFile(fs, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
           "and a plain one");
-  Exec r = testFrom(cli, dir, "test");
+  Exec r = testFrom(env, procs, dir, "test");
   string out = saidBy(r);
   t.eqI32(r.status, 0, "both pass — \{out}");
   t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
@@ -246,39 +269,72 @@ export string test_a_file_importing_a_member_of_a_neighbours_namespace_is_not_dr
   return t.report();
 }
 
-export string test_dot_is_the_current_directory(Core core, Cli cli) {
+export string test_dot_is_the_current_directory(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // `wac test .` arrived at the walk as "", and "" + "/" + name read a file at the filesystem's root.
   T t = T.create();
-  string dir = scratch(cli, "agg-dot");
-  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
-  t.eqStr(putFile(cli, "\{dir}/a_test.wac", "export string test_here() { return \"\"; }\n"), "", "a test");
-  Exec r = testFrom(cli, dir, ".");
+  string dir = scratch(env, "agg-dot");
+  t.eqStr(freshDir(fs, dir), "", "a fresh directory");
+  t.eqStr(putFile(fs, "\{dir}/a_test.wac", "export string test_here() { return \"\"; }\n"), "", "a test");
+  Exec r = testFrom(env, procs, dir, ".");
   string out = saidBy(r);
   t.eqI32(r.status, 0, "it runs — \{out}");
   t.isTrue(contains(out, "ok   test_here"), "the test here — \{out}");
   return t.report();
 }
 
-export string test_a_nested_project_s_tests_run_from_outside_it(Core core, Cli cli) {
+export string test_a_nested_project_s_tests_run_from_outside_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // A directory with its own `wac.json5` is a project nothing outside may reach into, so an aggregate
   // in the outer project's `.cache/` importing its tests was refused. Run from outside, the aggregate
   // goes beside the files instead, inside their project — which is how the suite, run from the
   // repository's root, reaches `packages/web`.
   T t = T.create();
-  string dir = scratch(cli, "agg-nested");
-  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
-  t.eqStr(putFile(cli, "\{dir}/inner/wac.json5", "{ exports: './lib.wac' }\n"), "", "a nested project");
-  t.eqStr(putFile(cli, "\{dir}/inner/lib.wac", "export i32 two() { return 2; }\n"), "", "its module");
-  t.eqStr(putFile(cli, "\{dir}/inner/test/a_test.wac",
-                  "import { two } from \"../lib.wac\";\n"
+  string dir = scratch(env, "agg-nested");
+  t.eqStr(freshDir(fs, dir), "", "a fresh directory");
+  t.eqStr(putFile(fs, "\{dir}/inner/wac.json5", "{ exports: './lib.wac' }\n"), "", "a nested project");
+  t.eqStr(putFile(fs, "\{dir}/inner/lib.wac", "export i32 two() { return 2; }\n"), "", "its module");
+  t.eqStr(putFile(fs, "\{dir}/inner/test/a_test.wac", "import { two } from \"../lib.wac\";\n"
                   + "export string test_inside() { return two() == 2 ? \"\" : \"wrong\"; }\n"), "", "its test");
-  t.eqStr(putFile(cli, "\{dir}/inner/test/b_test.wac", "export string test_also() { return \"\"; }\n"), "",
+  t.eqStr(putFile(fs, "\{dir}/inner/test/b_test.wac", "export string test_also() { return \"\"; }\n"), "",
           "and another");
-  Exec r = testFrom(cli, dir, "inner/test");
+  Exec r = testFrom(env, procs, dir, "inner/test");
   string out = saidBy(r);
   t.eqI32(r.status, 0, "run from outside the project, both pass — \{out}");
   t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
-  string[]? left = cli.readDir("\{dir}/inner/test").wait();
+  string[]? left = flatten(fs.readDir("\{dir}/inner/test").wait()).ok();
   t.isTrue(left is not null && left!.len() == 2, "and nothing is left beside them");
+  return t.report();
+}
+
+/**
+ * A project with a `wac.json5` keeps its aggregate in `.cache/`, not beside the tests.
+ *
+ * A directory run asks whether the tests it walked are in the same project as `.`, and writes the aggregate
+ * beside them when they are not. It asked with `.` itself, which `candidateRoots` reads as a *file* — so the
+ * search began one directory up and skipped the project's own manifest. Every project with a manifest looked
+ * like a stranger to its own tests, and the aggregate went into the test directory: in the repository, a
+ * gate's `corpuscheck_test.wac` walked straight into another run's `wac-aggregate-…_test.wac` as it was
+ * removed. Invisible until the repository gained a root `wac.json5`; a read-only test directory shows it.
+ */
+export string test_a_project_with_a_manifest_keeps_its_aggregate_in_its_cache(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  string dir = scratch(env, "aggregate-manifest");
+  string why = fixture(fs, dir, true);
+  t.eqStr(why, "", "could not write the fixture");
+  if (why != "") { return t.report(); }
+  t.eqStr(putFile(fs, "\{dir}/wac.json5", "{}\n"), "", "could not write the manifest");
+  procs.exec("chmod", ["555", "\{dir}/test"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  Exec r = runIn(env, procs, dir, false);
+  t.eqI32(r.status, 0, "the run wrote somewhere it may not — \{saidBy(r)}");
+  procs.exec("chmod", ["755", "\{dir}/test"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  fs.remove(dir, true).wait();
   return t.report();
 }

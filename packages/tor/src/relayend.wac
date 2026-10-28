@@ -1,0 +1,70 @@
+// The RELAY_END bodies an exit sends, and which one a failed connect earns.
+//
+// Out of `relayd.wac` because that file is a program: everything it exports is bound when it is built, and
+// `endForFault` takes a fault union, which a host boundary cannot carry. A library beside it can say so
+// freely, and `relayend_test.wac` reads it from here.
+
+import { Refused, TimedOut, Unreachable, ConnectFault } from "std";
+
+/** A one-byte RELAY_END body carrying `reason`. */
+export u8[] endWith(i32 reason) {
+  u8[] r = u8[].filled(1, 0);
+  // Assigned as `i32` and narrowed by the array, which is how every byte writer in this repository
+  // does it — `packages/quic/src/varint.wac` says so in as many words: "an explicit `as~ u8` is what
+  // `wacc` declines, and it was never needed". The diagnostic for trying is worth knowing, because it
+  // reads backwards: `expected i32, found u8`, with a help line offering the two casts that do not
+  // work either.
+  r[0] = reason as@ u8;
+  return r;
+}
+
+/** A one-byte RELAY_END reason: `REASON_DONE`, the ordinary close. */
+export u8[] endReason() { return endWith(6); }
+
+/**
+ * `REASON_MISC` — it failed, and none of tor-spec's named reasons describes how.
+ *
+ * **Honest rather than `DONE`, which is what these sites used to send.** `issues/system/0255c`:
+ * `endReason()` is `REASON_DONE` and five of the seven places that ended a stream were failures, so a
+ * client was told its stream had closed normally when the relay could not open it, could not parse
+ * its BEGIN, or lost it mid-flight. `socks5.wac` maps a reason to a SOCKS reply and `DONE` is in none
+ * of its rows, so every one of those reached a person as "general failure" — the outcome that
+ * mapping's docstring exists to prevent.
+ */
+export u8[] endMisc() { return endWith(1); }
+
+/**
+ * `REASON_RESOURCELIMIT` — this relay will not, rather than the client should not have asked.
+ *
+ * For the second stream on one circuit. A client opening several streams on a circuit is doing an
+ * ordinary thing that tor-spec allows and this relay does not implement, so `TORPROTOCOL` would
+ * blame the caller for our limit.
+ */
+export u8[] endResourceLimit() { return endWith(11); }
+
+/** `REASON_TORPROTOCOL` — the cell was not something this protocol allows, e.g. a BEGIN we cannot read. */
+export u8[] endProtocol() { return endWith(13); }
+
+/** `REASON_NOTDIRECTORY` — a BEGIN_DIR at a relay serving no documents, which is exactly this code. */
+export u8[] endNotDirectory() { return endWith(14); }
+
+/**
+ * Why a connect failed, as the RELAY_END reason a client can act on.
+ *
+ * **This is the half `issues/system/0255c` was waiting for.** The codes `socks5.wac` translates —
+ * `CONNECTREFUSED` to "connection refused", `NOROUTE` to "network unreachable", `TIMEOUT` to "TTL
+ * expired" — need to know *which* failure happened, and `Socket` carried only an English sentence
+ * until `issues/system/0238c` gave it a fault and `0255c`'s first half gave that fault a network
+ * vocabulary. Both landed on 2026-08-25; this is what they were for.
+ *
+ * `NOT_GRANTED` is `MISC` rather than `EXITPOLICY`: a relay that was not granted the network is not
+ * announcing a policy about the address, and a client that reads `EXITPOLICY` learns something untrue
+ * about the destination. `RESOLVEFAILED` has no fault behind it yet — a name that does not resolve
+ * arrives as `NOT_FOUND` at best, and nothing has been measured about that.
+ */
+export u8[] endForFault(ConnectFault fault) {
+  if (fault is Refused) { return endWith(3); }        // CONNECTREFUSED
+  if (fault is Unreachable) { return endWith(8); }    // NOROUTE
+  if (fault is TimedOut) { return endWith(7); }       // TIMEOUT
+  return endMisc();
+}

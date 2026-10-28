@@ -39,11 +39,12 @@
 // the four CLI tests that then failed said nothing about a seed. Watching a directory when the
 // artefact is built from a *graph* is a guard whose scope is a guess; `closureOf` already computes
 // the graph, and is what the build itself walks.
-import { Core, Cli, Stat } from "std";
+import { Cli, Stat, Env, Files, Sys } from "std";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Closure, SEED_ENTRY, WASMTIME_SEED, closureOf, nativeHost, nativeHostWhyNot, seedStale }
        from "../../packages/wactest/src/built.wac";
+import { flatten } from "core";
 
 string SEED() { return "native/v8/seed/wacc.wasm"; }
 string HOST() { return "native/v8/target/release/wac"; }
@@ -82,33 +83,33 @@ string tenths(i64 value, i64 unit) {
  * reason the docstring on the wasmtime binary check below gives for consulting
  * `nativeHostWhyNot` rather than walking again: two copies of a rule get fixed once.
  */
-string seedWhyNot(Cli cli, string seed, string rebuild) {
-  Stat s = cli.stat(seed).wait();
-  if (!s.isFile) {
+string seedWhyNot(Files fs, string seed, string rebuild) {
+  Stat? s = flatten(fs.stat(seed).wait()).ok();
+  if (!(s is not null && s!.isFile)) {
     return seed + " is missing, so `wac build`, `wac run` and `wac test` have no\n"
            + "  compiler in them. It is gitignored — one per agent — so a fresh container has none,\n"
            + "  and the tests that drive the binary fail downstream of this with messages about the\n"
            + "  files it did not write. Build it:\n"
            + "    " + rebuild;
   }
-  Closure c = closureOf(cli, SEED_ENTRY());
+  Closure c = closureOf(fs, SEED_ENTRY());
   // A graph of one file is a walk that did not resolve, and would make this pass for ever. Asserted
   // here rather than inside `seedStale`, which answers "not stale" to an unresolved graph because its
   // other caller is deciding whether to skip and must not skip on a broken walk.
   if (c.count < 10) {
     return "the seed's import graph came back as " + itoa(c.count) + " file(s) — it did not resolve";
   }
-  if (seedStale(cli, seed) == "") { return ""; }
-  return seed + " is " + behind(c.newest - s.modifiedMillis) + " older than " + c.what + ".\n"
+  if (seedStale(fs, seed) == "") { return ""; }
+  return seed + " is " + behind(c.newest - s!.modifiedMillis) + " older than " + c.what + ".\n"
          + "  Every `wac build`, `wac run` and `wac test` on that host is compiling with that older\n"
          + "  compiler, and will report plausible numbers from it. Rebuild:\n"
          + "    " + rebuild;
 }
 
-export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_is_built_from(
-    Core core, Cli cli) {
+export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_is_built_from(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  t.eqStr(seedWhyNot(cli, SEED(), "wac task seed"), "",
+  t.eqStr(seedWhyNot(fs, SEED(), "wac task seed"), "",
           "the compiler inside the default host is not current");
   return t.report();
 }
@@ -127,7 +128,7 @@ export string test_the_seed_inside_wac_is_there_and_not_older_than_anything_it_i
  * `native/spike-v8` is not in the binary either: `native/Cargo.toml` names the members and a spike is
  * not one of them. Watching it would make this red for an edit that changes nothing.
  */
-string[] rustInputs(Cli cli) {
+string[] rustInputs(Files fs) {
   string[] dirs = ["native/v8/src", "native/manifest/src"];
   string[] named = [
                             "native/v8/Cargo.toml", "native/v8/Cargo.lock", "native/v8/build.rs",
@@ -139,7 +140,7 @@ string[] rustInputs(Cli cli) {
     string[] out = pass == 1 ? string[].filled(n, "") : string[].filled(0, "");
     i32 at = 0;
     for (i32 d = 0; d < dirs.len(); d++) {
-      string[]? entries = cli.readDir(dirs[d]).wait();
+      string[]? entries = flatten(fs.readDir(dirs[d]).wait()).ok();
       if (entries is null) { continue; }
       string[] have = entries!;
       for (i32 i = 0; i < have.len(); i++) {
@@ -151,7 +152,7 @@ string[] rustInputs(Cli cli) {
     }
     for (i32 i = 0; i < named.len(); i++) {
       // Not every one of these exists in every layout.
-      if (!cli.stat(named[i]).wait().isFile) { continue; }
+      if (!flatten(fs.stat(named[i]).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) { continue; }
       if (pass == 1) { out[at] = named[i]; }
       at = at + 1;
     }
@@ -177,16 +178,17 @@ string[] rustInputs(Cli cli) {
  * `git pull` leaves the binary stale with nothing to say so, which is the same argument that put the
  * seed check here rather than trusting the script.
  */
-export string test_the_wac_binary_is_not_older_than_the_rust_it_is_built_from(Core core, Cli cli) {
+export string test_the_wac_binary_is_not_older_than_the_rust_it_is_built_from(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Stat host = cli.stat(HOST()).wait();
-  t.isTrue(host.isFile,
+  Stat? host = flatten(fs.stat(HOST()).wait()).ok();
+  t.isTrue((host is not null && host!.isFile),
            HOST() + " is missing, so nothing in the suite that drives the binary can\n"
            + "  run. It is gitignored — one per agent. Build it:\n"
            + "    cd native/v8 && cargo build --release");
-  if (!host.isFile) { return t.report(); }
+  if (!(host is not null && host!.isFile)) { return t.report(); }
 
-  string[] inputs = rustInputs(cli);
+  string[] inputs = rustInputs(fs);
   // A short list is a walk that did not resolve, and would make this pass for ever.
   t.isTrue(inputs.len() >= 4,
            "the host's Rust inputs came back as " + itoa(inputs.len()) + " file(s) — they did not resolve");
@@ -195,11 +197,11 @@ export string test_the_wac_binary_is_not_older_than_the_rust_it_is_built_from(Co
   i64 at = 0 as i64;
   string what = "";
   for (i32 i = 0; i < inputs.len(); i++) {
-    Stat s = cli.stat(inputs[i]).wait();
-    if (s.isFile && s.modifiedMillis > at) { at = s.modifiedMillis; what = inputs[i]; }
+    Stat? s = flatten(fs.stat(inputs[i]).wait()).ok();
+    if ((s is not null && s!.isFile) && s!.modifiedMillis > at) { at = s!.modifiedMillis; what = inputs[i]; }
   }
-  t.isTrue(host.modifiedMillis >= at,
-           HOST() + " is " + behind(at - host.modifiedMillis) + " older than " + what + ".\n"
+  t.isTrue(host!.modifiedMillis >= at,
+           HOST() + " is " + behind(at - host!.modifiedMillis) + " older than " + what + ".\n"
            + "  Every test that drives the binary is driving an older host, and a test written for\n"
            + "  the change you just merged will fail saying something about what the host did rather\n"
            + "  than about the host. Rebuild:\n"
@@ -232,17 +234,18 @@ export string test_the_wac_binary_is_not_older_than_the_rust_it_is_built_from(Co
  * It returns a reason for *absent* as well as for *stale*, which this has to tell apart — so the
  * binary is stat-ed here for that one distinction and nothing else.
  */
-export string test_the_wasmtime_host_is_built_and_not_older_than_the_rust_it_is_built_from(
-    Core core, Cli cli) {
+export string test_the_wasmtime_host_is_built_and_not_older_than_the_rust_it_is_built_from(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
   // **Absent is a failure, not a pass.** This said "not built here, so nothing can be stale" and
   // passed, and every file that drives this host then skipped its half — so a gate in a checkout
   // without the binary was green having asked one host fewer. `tools/push.sh` builds it.
-  Stat built = cli.stat(nativeHost(cli)).wait();
-  t.isTrue(built.exists, "the wasmtime host is not built — `tools/push.sh` builds it before the suite,\n"
-                         + "  and by hand it is `./bootstrap.sh --host wasmtime`");
-  if (!built.exists) { return t.report(); }
-  t.eqStr(nativeHostWhyNot(cli), "",
+  bool built = flatten(fs.stat(nativeHost(env)).wait()).isOk();
+  t.isTrue(built, "the wasmtime host is not built — `tools/push.sh` builds it before the suite,\n"
+                  + "  and by hand it is `./bootstrap.sh --host wasmtime`");
+  if (!built) { return t.report(); }
+  t.eqStr(nativeHostWhyNot(env, fs), "",
           "the wasmtime host is stale. Every test that drives it is running the older one, and a\n"
           + "  two-host differential then fails saying the host lacks something the tree has.\n"
           + "  `./bootstrap.sh --host wasmtime` rebuilds it — or delete the binary and let the\n"
@@ -276,13 +279,14 @@ export string test_the_wasmtime_host_is_built_and_not_older_than_the_rust_it_is_
  * **Absent is fine, stale is not**, on the same reasoning as the binary above: a fresh clone has no
  * wasmtime host and the callers build it when they want it.
  */
-export string test_the_wasmtime_seed_is_not_older_than_anything_it_is_built_from(
-    Core core, Cli cli) {
+export string test_the_wasmtime_seed_is_not_older_than_anything_it_is_built_from(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Stat built = cli.stat(nativeHost(cli)).wait();
-  t.isTrue(built.exists, "the wasmtime host is not built, so it carries no seed to check");
-  if (!built.exists) { return t.report(); }
-  t.eqStr(seedWhyNot(cli, WASMTIME_SEED(), "./bootstrap.sh --host wasmtime"), "",
+  bool built = flatten(fs.stat(nativeHost(env)).wait()).isOk();
+  t.isTrue(built, "the wasmtime host is not built, so it carries no seed to check");
+  if (!built) { return t.report(); }
+  t.eqStr(seedWhyNot(fs, WASMTIME_SEED(), "./bootstrap.sh --host wasmtime"), "",
           "the compiler inside the wasmtime host is not current, and `cargo build` will not fix\n"
           + "  it — the seed is an input to that build, not an output of it, so the binary check\n"
           + "  above passes while an old compiler sits inside it.");

@@ -35,10 +35,11 @@
 // cost is that a line carrying both a covered and an uncovered point reads as uncovered, which is the
 // safe direction — it asks for an entry rather than hiding one.
 
-import { Core, Cli, Exec, Change, FileResult, execReason } from "std";
+import { Cli, Exec, execReason, ChildEnv, Env, Files, Launch, Output, Procs } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, trimmed } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { flatten } from "core";
 
 /** One instrumented point: where it is and what kind. */
 export struct Point {
@@ -151,7 +152,7 @@ export void sortStrings(string[] a, i32 n) {
 // spawning that program and reading its table back as text. A ledger wants the same numbers and a
 // different verdict over them, so it is a function.
 
-export string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+export string binary(Env env) { return flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac"; }
 
 /** The tab-separated fields of a row, padded to `want`. */
 export string[] fields(string row, i32 want) {
@@ -250,7 +251,7 @@ export struct Measured {
  * caught. One name holds one trapping case, so a driver that damages a real frame at every byte needs
  * this rather than a name per byte — spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`.
  */
-export Measured measure(Core core, Cli cli, string entry, string[] grants, string[] exports) {
+export Measured measure(Output err, Env env, Files fs, Procs procs, string entry, string[] grants, string[] exports) {
   Measured none = Measured(Point[].filled(1, Point(0, "", 0, 0, "")), 0, i32[].filled(1, 0));
 
   // **A directory per exercise, because `wac task coverage:all` runs four of these at once.**
@@ -260,9 +261,9 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   // another is building into, and the loser reports *no coverage table beside the module* — a message
   // about its own output, naming nothing about the race. Named from the entry rather than a pid, so a
   // re-run of one package reuses its own directory and two packages can never share one.
-  string dir = cli.cwd().wait() + "/.cache/covreport/" + slug(entry);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/covreport/" + slug(entry);
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
   string stem = dir + "/prog";
 
   string[] build = string[].filled(6 + grants.len(), "");
@@ -273,38 +274,41 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   build[3 + grants.len()] = "-o";
   build[4 + grants.len()] = stem;
   build[5 + grants.len()] = "--quiet";
-  Exec built = cli.exec(binary(cli), build, u8[]()).wait();
-  if (!built.ran() || built.status != 0) {
-    core.warn("error: " + entry + " did not build — " + execReason(built));
-    cli.remove(dir, true).wait();
+  auto builtRan = flatten(procs.exec(binary(env), build, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if ((built is null) || built!.status != 0) {
+    err.line("error: " + entry + " did not build — " + (built is null ? "\{builtRan.err()!}" : execReason(built!)));
+    fs.remove(dir, true).wait();
     return none;
   }
 
-  FileResult table = cli.readFile(stem + ".cov").wait();
-  if (!table.ok) {
-    core.warn("error: no coverage table beside the module — " + table.error);
-    cli.remove(dir, true).wait();
+  auto tableRead = flatten(fs.readFile(stem + ".cov").wait());
+  u8[]? table = tableRead.ok();
+  if (table is null) {
+    err.line("error: no coverage table beside the module — " + "\{tableRead.isErr() ? "\{tableRead.err()!}" : ""}");
+    fs.remove(dir, true).wait();
     return none;
   }
   string[] dump = string[].filled(2 + exports.len(), "");
   dump[0] = "covdump";
   dump[1] = stem + ".wasm";
   dump.copyFrom(exports, 0, 2, exports.len());
-  Exec dumped = cli.exec(binary(cli), dump, u8[]()).wait();
-  if (!dumped.ran() || dumped.status != 0) {
-    core.warn("error: covdump — " + execReason(dumped));
-    cli.remove(dir, true).wait();
+  auto dumpedRan = flatten(procs.exec(binary(env), dump, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? dumped = dumpedRan.ok();
+  if ((dumped is null) || dumped!.status != 0) {
+    err.line("error: covdump — " + (dumped is null ? "\{dumpedRan.err()!}" : execReason(dumped!)));
+    fs.remove(dir, true).wait();
     return none;
   }
   // **What covdump said even when it succeeded**, because the thing it says on a *good* run is that
   // one of the export names is not an export — and that reads from the outside as a package whose
   // trapping branches simply are not covered, which is the same number a real gap gives. A mistyped
   // name was silent until this line: `zzz_not_an_export` produced a clean report four branches short.
-  string said = string.fromBytes(dumped.stderr);
-  if (said.len() > 0) { core.warn(said); }
+  string said = string.fromBytes(dumped!.stderr);
+  if (said.len() > 0) { err.line(said); }
 
   // `<index>\t<count>` per counter, then a line saying how many. Anything else is not a dump.
-  string[] dumpRows = linesOf(string.fromBytes(dumped.stdout));
+  string[] dumpRows = linesOf(string.fromBytes(dumped!.stdout));
   i32 nCounts = 0;
   for (i32 i = 0; i < dumpRows.len(); i++) {
     string[] f = fields(dumpRows[i], 2);
@@ -318,7 +322,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   }
 
   // `index\tline\tcol\tkind\tfile` per counter, in counter order.
-  string[] rows = linesOf(string.fromBytes(table.bytes));
+  string[] rows = linesOf(string.fromBytes(table!));
   Point[] points = Point[].filled(rows.len(), Point(0, "", 0, 0, ""));
   i32 nPoints = 0;
   for (i32 i = 0; i < rows.len(); i++) {
@@ -329,17 +333,17 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
     points[nPoints] = Point(idx, f[4], numberOf(f[1]), numberOf(f[2]), f[3]);
     nPoints = nPoints + 1;
   }
-  cli.remove(dir, true).wait();
+  fs.remove(dir, true).wait();
 
   // **Asserted, not assumed.** A table and a dump of different lengths is a module and a table that do
   // not describe each other, and every count read past the end would be a point reported as missed.
   if (nPoints != nCounts) {
-    core.warn("error: the table has " + itoa(nPoints) + " points and the dump " + itoa(nCounts) +
+    err.line("error: the table has " + itoa(nPoints) + " points and the dump " + itoa(nCounts) +
               " counters; they do not describe the same module");
     return none;
   }
   if (nPoints == 0) {
-    core.warn("error: no instrumented points at all — was " + entry + " built with coverage?");
+    err.line("error: no instrumented points at all — was " + entry + " built with coverage?");
     return none;
   }
   return Measured(points, nPoints, counts);
@@ -410,12 +414,12 @@ export struct LedgerFlags {
   bool verbose;
   bool points;
 
-  LedgerFlags read(Cli cli) {
+  LedgerFlags read(string[] argv) {
     bool v = false;
     bool p = false;
-    i32 argc = cli.argCount().wait();
+    i32 argc = argv.len();
     for (i32 i = 0; i < argc; i++) {
-      string a = string.fromBytes(cli.arg(i).wait());
+      string a = argv[i];
       if (a == "--verbose") { v = true; }
       if (a == "--points") { p = true; }
     }
@@ -444,16 +448,16 @@ export struct LedgerFlags {
  * the position alone would fold a dark branch into a lit one beside it and report 12 dark where the
  * ledger reports 28. That was the first version of this and the ledger's own table is what caught it.
  */
-export void reportPoints(Core core, Point[] points, i32 nPoints, i32[] counts) {
+export void reportPoints(Output out, Point[] points, i32 nPoints, i32[] counts) {
   for (i32 i = 0; i < nPoints; i++) {
     Point p = points[i];
     if (isTest(p.file)) { continue; }
-    core.log(p.file + "\t" + itoa(p.line) + "\t" + itoa(p.col) + "\t" + p.kind
+    out.line(p.file + "\t" + itoa(p.line) + "\t" + itoa(p.col) + "\t" + p.kind
            + "\t" + itoa(counts[i]));
   }
 }
 
-export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string prefix, bool verbose) {
+export void report(Output out, Point[] points, i32 nPoints, i32[] counts, string prefix, bool verbose) {
   // **Merged by source position, so a generic's instantiations are one line each.** See `Merged`.
   Merged[] merged = mergeRoom(nPoints);
   i32 nMerged = mergePoints(points, nPoints, counts, prefix, merged);
@@ -485,27 +489,27 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
     if (p.hit) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
   }
 
-  core.log("| file | points | covered | % |");
-  core.log("|---|---:|---:|---:|");
+  out.line("| file | points | covered | % |");
+  out.line("|---|---:|---:|---:|");
   string[] order = string[].filled(nFiles, "");
   order.copyFrom(files, 0, 0, nFiles);
   sortStrings(order, nFiles);
   for (i32 i = 0; i < nFiles; i++) {
     for (i32 k = 0; k < nFiles; k++) {
       if (files[k] != order[i]) { continue; }
-      core.log("| " + files[k] + " | " + itoa(fileN[k]) + " | " + itoa(fileC[k]) + " | " +
+      out.line("| " + files[k] + " | " + itoa(fileN[k]) + " | " + itoa(fileC[k]) + " | " +
                pct(fileC[k], fileN[k]) + " |");
     }
   }
-  core.log("| **" + prefix + "** | **" + itoa(total) + "** | **" + itoa(covered) + "** | **" +
+  out.line("| **" + prefix + "** | **" + itoa(total) + "** | **" + itoa(covered) + "** | **" +
            pct(covered, total) + "** |");
 
   if (nSkipped > 0) {
     sortStrings(skipped, nSkipped);
     string names = "";
     for (i32 i = 0; i < nSkipped; i++) { names = names + (i > 0 ? ", " : "") + skipped[i]; }
-    core.log("");
-    core.log(itoa(nSkipped) + " test file(s) not counted: " + names);
+    out.line("");
+    out.line(itoa(nSkipped) + " test file(s) not counted: " + names);
   }
 
   i32 nMissed = total - covered;
@@ -524,15 +528,15 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
       m = m + 1;
     }
     sortMissed(missed, m);
-    core.log("");
-    core.log(itoa(m) + " branch points never executed:");
+    out.line("");
+    out.line(itoa(m) + " branch points never executed:");
     i32 show = verbose ? m : (m < 20 ? m : 20);
     for (i32 i = 0; i < show; i++) {
       string[] f = fields(missed[i], 4);
-      core.log("  " + f[0] + ":" + itoa(numberOf(f[1])) + ":" + f[2] + "  " + f[3]);
+      out.line("  " + f[0] + ":" + itoa(numberOf(f[1])) + ":" + f[2] + "  " + f[3]);
     }
     if (show < m) {
-      core.log("  ... and " + itoa(m - show) + " more (--verbose for all)");
+      out.line("  ... and " + itoa(m - show) + " more (--verbose for all)");
     }
   }
 }
@@ -811,8 +815,8 @@ bool isProgramDir(string path) {
       || contains(path, "/size/") || contains(path, "/audit/");
 }
 
-void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, string prefix) {
-  string[] all = sourceFiles(core, cli, [".wac"], string[].filled(0, ""));
+void nameFilesWithNoPoints(Output err, Output out, Files fs, Procs procs, Point[] points, i32 nPoints, string prefix) {
+  string[] all = sourceFiles(err, procs, [".wac"], string[].filled(0, ""));
   string[] missing = string[].filled(all.len() > 0 ? all.len() : 1, "");
   i32 nMissing = 0;
   i32 seen = 0;
@@ -824,9 +828,9 @@ void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, stri
     for (i32 k = 0; k < nPoints && !has; k++) { if (points[k].file == f) { has = true; } }
     if (has) { continue; }
     // Nothing to compile is not the same as not compiled — see the note above.
-    FileResult src = cli.readFile(f).wait();
-    if (!src.ok) { continue; }
-    if (!contains(string.fromBytes(src.bytes), ") {")) { continue; }
+    u8[]? src = flatten(fs.readFile(f).wait()).ok();
+    if (src is null) { continue; }
+    if (!contains(string.fromBytes(src!), ") {")) { continue; }
     missing[nMissing] = f;
     nMissing = nMissing + 1;
   }
@@ -839,28 +843,27 @@ void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, stri
   for (i32 i = 0; i < nMissing; i++) {
     if (!isProgramDir(missing[i])) { library = library + 1; }
   }
-  core.log("");
+  out.line("");
   if (library > 0) {
-    core.log(itoa(library) + " of " + itoa(seen) + " source file(s) under " + prefix +
+    out.line(itoa(library) + " of " + itoa(seen) + " source file(s) under " + prefix +
              " contributed no branch points — nothing the exercise compiled imports them, so they are "
              + "absent from the table above rather than reading zero:");
     for (i32 i = 0; i < nMissing; i++) {
       if (isProgramDir(missing[i])) { continue; }
-      core.log("  " + missing[i]);
+      out.line("  " + missing[i]);
     }
-    core.log("  A program that a test builds and spawns lands here. Reported, not failed — see "
+    out.line("  A program that a test builds and spawns lands here. Reported, not failed — see "
              + "`issues/system/0241b`.");
   }
   if (nMissing > library) {
-    core.log("  ...and " + itoa(nMissing - library) + " under example/, bench/, size/ or audit/, "
+    out.line("  ...and " + itoa(nMissing - library) + " under example/, bench/, size/ or audit/, "
              + "which hold programs by convention and are counted rather than listed.");
   }
 }
 
-export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] counts, string prefix,
-                    Pin[] pins, Rule[] rules) {
+export bool ratchet(Output err, Output out, Files fs, Procs procs, Point[] points, i32 nPoints, i32[] counts, string prefix, Pin[] pins, Rule[] rules) {
   bool failed = false;
-  nameFilesWithNoPoints(core, cli, points, nPoints, prefix);
+  nameFilesWithNoPoints(err, out, fs, procs, points, nPoints, prefix);
   string[] uncovered = string[].filled(nPoints > 0 ? nPoints : 1, "");
   i32 nUncovered = uncoveredLines(points, nPoints, counts, prefix, uncovered);
   // **Which points have been spoken for, as a set.** A point named by a pin *and* matched by a rule was
@@ -873,14 +876,15 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
   for (i32 i = 0; i < pins.len(); i++) {
     Pin u = pins[i];
     string where = u.file + ":" + itoa(u.line);
-    FileResult src = cli.readFile(u.file).wait();
+    auto srcRead = flatten(fs.readFile(u.file).wait());
+    u8[]? src = srcRead.ok();
     string at = "";
-    if (src.ok) {
-      string[] ls = linesOf(string.fromBytes(src.bytes));
+    if (src is not null) {
+      string[] ls = linesOf(string.fromBytes(src!));
       if (u.line >= 1 && u.line <= ls.len()) { at = ls[u.line - 1]; }
     } else {
-      core.log("");
-      core.log("error: " + u.file + " cannot be read — " + src.error);
+      out.line("");
+      out.line("error: " + u.file + " cannot be read — " + "\{srcRead.isErr() ? "\{srcRead.err()!}" : ""}");
       failed = true;
       continue;
     }
@@ -889,29 +893,29 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
     for (i32 k = 0; k < nUncovered; k++) { if (uncovered[k] == where) { listed = true; } }
 
     if (!contains(at, u.snippet)) {
-      core.log("");
-      core.log(where + " no longer holds \"" + u.snippet + "\" — it holds:");
-      core.log("  " + trimmed(at));
-      core.log("  The entry has drifted onto the wrong line; fix the line number.");
+      out.line("");
+      out.line(where + " no longer holds \"" + u.snippet + "\" — it holds:");
+      out.line("  " + trimmed(at));
+      out.line("  The entry has drifted onto the wrong line; fix the line number.");
       failed = true;
     } else if (!listed) {
-      core.log("");
-      core.log(where + " is listed as unreached but was covered. The reason given was:");
-      core.log("  " + u.why);
+      out.line("");
+      out.line(where + " is listed as unreached but was covered. The reason given was:");
+      out.line("  " + u.why);
       // **A failure either way, and only one of them is bad news.** A proven entry that is covered was
       // wrong about the code; an unproven one that is covered means somebody built the input nobody
       // had, which is the outcome the entry was recording the absence of. Both have to go, so both
       // fail — a ledger that quietly dropped the second kind would stop being a record of what is
       // still missing.
-      core.log(u.proven
+      out.line(u.proven
         ? "  That reason no longer holds — drop the entry."
         : "  The gap has been closed — drop the entry, and say so.");
       failed = true;
     } else {
-      core.log("");
-      core.log((u.proven ? "excluded as unreachable: " : "reachable, NOT COVERED: ") + where +
+      out.line("");
+      out.line((u.proven ? "excluded as unreachable: " : "reachable, NOT COVERED: ") + where +
                "  " + u.snippet);
-      core.log("  " + u.why);
+      out.line("  " + u.why);
     }
   }
 
@@ -941,9 +945,9 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
   // ignored; what it costs to make it fail is everybody else's afternoon.
   i32[] claims = i32[].filled(nUncovered > 0 ? nUncovered : 1, 0);
   for (i32 r = 0; r < rules.len(); r++) {
-    FileResult csrc = cli.readFile(rules[r].file).wait();
-    if (!csrc.ok) { continue; }
-    string[] cls = linesOf(string.fromBytes(csrc.bytes));
+    u8[]? csrc = flatten(fs.readFile(rules[r].file).wait()).ok();
+    if (csrc is null) { continue; }
+    string[] cls = linesOf(string.fromBytes(csrc!));
     for (i32 i = 0; i < nUncovered; i++) {
       if (rulePicks(rules[r], cls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
         claims[i] = claims[i] + 1;
@@ -954,14 +958,15 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
   // Rules, applied to the points that are actually uncovered.
   for (i32 r = 0; r < rules.len(); r++) {
     Rule rule = rules[r];
-    FileResult src = cli.readFile(rule.file).wait();
-    if (!src.ok) {
-      core.log("");
-      core.log("error: " + rule.file + " cannot be read — " + src.error);
+    auto srcRead = flatten(fs.readFile(rule.file).wait());
+    u8[]? src = srcRead.ok();
+    if (src is null) {
+      out.line("");
+      out.line("error: " + rule.file + " cannot be read — " + "\{srcRead.isErr() ? "\{srcRead.err()!}" : ""}");
       failed = true;
       continue;
     }
-    string[] ls = linesOf(string.fromBytes(src.bytes));
+    string[] ls = linesOf(string.fromBytes(src!));
     i32 hits = 0;
     for (i32 i = 0; i < nUncovered; i++) {
       if (rulePicks(rule, ls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
@@ -970,19 +975,19 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
       }
     }
     if (hits == 0) {
-      core.log("");
-      core.log(rule.file + " no longer holds any uncovered point matching \"" + rule.holds +
+      out.line("");
+      out.line(rule.file + " no longer holds any uncovered point matching \"" + rule.holds +
                "\" — the rule explains something that is gone; delete it or fix it.");
       failed = true;
       continue;
     }
     i32 only = onlyClaims(rule, ls, uncovered, nUncovered, claims);
-    core.log("");
-    core.log(itoa(hits) + "x " + (rule.proven ? "unreachable" : "reachable, NOT COVERED") + ": " +
+    out.line("");
+    out.line(itoa(hits) + "x " + (rule.proven ? "unreachable" : "reachable, NOT COVERED") + ": " +
              rule.file + " — " + rule.holds);
-    core.log("  " + rule.why);
+    out.line("  " + rule.why);
     if (only == 0) {
-      core.log("  note: every point this claims is claimed by another rule too, so deleting it " +
+      out.line("  note: every point this claims is claimed by another rule too, so deleting it " +
                "would change nothing. Its reason is being read as a separate fact about the code " +
                "and has nothing of its own to keep it true — check it, then merge or delete it.");
     }
@@ -996,9 +1001,9 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
     if (!spoken[i]) { unexpected[nUnexpected] = uncovered[i]; nUnexpected = nUnexpected + 1; }
   }
   if (nUnexpected > 0) {
-    core.log("");
-    core.log(itoa(nUnexpected) + " reachable branch point(s) uncovered:");
-    for (i32 i = 0; i < nUnexpected; i++) { core.log("  " + unexpected[i]); }
+    out.line("");
+    out.line(itoa(nUnexpected) + " reachable branch point(s) uncovered:");
+    for (i32 i = 0; i < nUnexpected; i++) { out.line("  " + unexpected[i]); }
     failed = true;
   }
   return failed;

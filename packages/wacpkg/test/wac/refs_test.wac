@@ -11,11 +11,12 @@
 // one tag, and nothing but a real repository would have told me the object names differ.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
+import { Files, Sys } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { Resolved, resolveRef, R_OK, R_NOT_FOUND, R_AMBIGUOUS, R_MALFORMED }
   from "../../src/refs.wac";
+import { flatten } from "core";
 
 string CORPUS_PATH() { return "packages/wacpkg/test/vendor/refs.json"; }
 
@@ -28,14 +29,14 @@ struct Corpus {
   JsonArray queries;
 }
 
-Corpus load(Cli cli) {
-  FileResult r = cli.readFile(CORPUS_PATH()).wait();
-  if (!r.ok) {
+Corpus load(Files fs) {
+  u8[]? r = flatten(fs.readFile(CORPUS_PATH()).wait()).ok();
+  if ((r is null)) {
     return Corpus(false, "\{CORPUS_PATH()} is not readable — `deno run -A "
                   + "packages/wacpkg/tools/vendorRefs.ts` rebuilds it", "",
                   string[](), string[](), JsonArray.create());
   }
-  JsonValue? doc = parse(r.bytes).ok();
+  JsonValue? doc = parse(r!).ok();
   if (doc is null) {
     return Corpus(false, "\{CORPUS_PATH()} is not valid JSON", "",
                   string[](), string[](), JsonArray.create());
@@ -75,9 +76,10 @@ i32 indexOfName(string[] names, string want) {
   return -1;
 }
 
-export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core, Cli cli) {
+export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = load(cli);
+  Corpus c = load(fs);
   t.isTrue(c.ok, c.error);
   if (!c.ok) { return t.report(); }
   // The corpus being empty would make every assertion below vacuous, and a differential that
@@ -117,9 +119,10 @@ export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core,
   return t.report();
 }
 
-export string test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(Core core, Cli cli) {
+export string test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = load(cli);
+  Corpus c = load(fs);
   t.isTrue(c.ok, c.error);
   if (!c.ok) { return t.report(); }
   // The row the corpus exists for. `refs/tags/v1` and `refs/tags/v1^{}` are both advertised and
@@ -150,9 +153,10 @@ export string test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(Co
   return t.report();
 }
 
-export string test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did(Core core, Cli cli) {
+export string test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = load(cli);
+  Corpus c = load(fs);
   t.isTrue(c.ok, c.error);
   if (!c.ok) { return t.report(); }
   i32 at = indexOfName(c.names, "refs/tags/light");
@@ -167,9 +171,10 @@ export string test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did
   return t.report();
 }
 
-export string test_an_object_name_resolves_to_itself_advertised_or_not(Core core, Cli cli) {
+export string test_an_object_name_resolves_to_itself_advertised_or_not(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = load(cli);
+  Corpus c = load(fs);
   t.isTrue(c.ok, c.error);
   if (!c.ok) { return t.report(); }
   // A manifest may pin a commit the server does not advertise — which is what every lockfile entry
@@ -186,9 +191,10 @@ export string test_an_object_name_resolves_to_itself_advertised_or_not(Core core
   return t.report();
 }
 
-export string test_what_is_not_there_and_what_is_not_a_corpus(Core core, Cli cli) {
+export string test_what_is_not_there_and_what_is_not_a_corpus(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Corpus c = load(cli);
+  Corpus c = load(fs);
   t.isTrue(c.ok, c.error);
   if (!c.ok) { return t.report(); }
   string[] missing = ["nope", "refs/heads/nope", "", "refs/tags/v1^{}x"];

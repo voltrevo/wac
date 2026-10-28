@@ -20,8 +20,8 @@
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending } from "std";
-import { Read } from "core";
+import { Cli, Exec, Pending, Clock, Env, Files, Net, Procs, Sys, Socket } from "std";
+import { Read, flatten } from "core";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
@@ -31,18 +31,18 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 
-string DESCRIPTOR(Cli cli) {
-  return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptor");
+string DESCRIPTOR(Files fs) {
+  return strOf(jsonFile(fs, "packages/tor/test/data/hsdesc_generated.json"), "descriptor");
 }
 
 /** The same service, one revision later — what a republishing service actually sends. */
-string NEWER(Cli cli) {
-  return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptorNext");
+string NEWER(Files fs) {
+  return strOf(jsonFile(fs, "packages/tor/test/data/hsdesc_generated.json"), "descriptorNext");
 }
 
 /** The name the certificate gave it: the blinded key, base64 without padding. */
-string QUERY(Cli cli) {
-  string hex = strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "blindPublic");
+string QUERY(Files fs) {
+  string hex = strOf(jsonFile(fs, "packages/tor/test/data/hsdesc_generated.json"), "blindPublic");
   string b64 = string.fromBytes(encode(decoded(hex), ALPHABET_STANDARD(), false));
   return b64;
 }
@@ -59,9 +59,9 @@ struct Reply {
  * means and what `dird` does: it answers and closes. A read loop bounded by a byte count would have
  * to trust the `Content-Length` the server under test wrote.
  */
-Reply request(Core core, Cli cli, i32 port, u8[] bytes, i32 chunks) {
-  i32 handle = cli.connect("127.0.0.1", port).wait().handle;
-  if (handle < 0) { return Reply(-1, "could not connect to 127.0.0.1:\{port}"); }
+Reply request(Clock clock, Net net, i32 port, u8[] bytes, i32 chunks) {
+  Socket? handle = flatten(net.connect("127.0.0.1", port).wait()).ok();
+  if (handle is null) { return Reply(-1, "could not connect to 127.0.0.1:\{port}"); }
 
   i32 size = (bytes.len() + chunks - 1) / chunks;
   if (size < 1) { size = 1; }
@@ -70,22 +70,26 @@ Reply request(Core core, Cli cli, i32 port, u8[] bytes, i32 chunks) {
     if (end > bytes.len()) { end = bytes.len(); }
     u8[] piece = u8[].filled(end - at, 0);
     for (i32 i = at; i < end; i++) { piece[i - at] = bytes[i]; }
-    cli.send(handle, piece).wait();
+    handle!.send( piece).wait();
     // A pause between pieces, so the server genuinely sees more than one read rather than the kernel
     // coalescing them into one. Without it "sent in four chunks" is a claim about this test.
-    if (chunks > 1) { core.sleepMillis(15).wait(); }
+    if (chunks > 1) { clock.sleepMillis(15).wait(); }
   }
 
   string all = "";
   bool reading = true;
   while (reading) {
-    match (cli.recv(handle).wait()) {
-      Data(got): { all = all + string.fromBytes(got); }
-      End: { reading = false; }
-      Failed(why): { reading = false; }
+    match (flatten(handle!.recv().wait())) {
+      Ok(r): {
+        match (r) {
+          Data(got): { all = all + string.fromBytes(got); }
+          default: { reading = false; }
+        }
+      }
+      Err(e): { reading = false; }
     }
   }
-  cli.closeSocket(handle);
+  handle!.close();
 
   i32 at = all.indexOf("\r\n\r\n");
   string head = at < 0 ? all : all.slice(0, at);
@@ -94,11 +98,11 @@ Reply request(Core core, Cli cli, i32 port, u8[] bytes, i32 chunks) {
                at < 0 ? "" : all.slice(at + 4, all.len()));
 }
 
-Reply get(Core core, Cli cli, i32 port, string target) {
-  return request(core, cli, port, "GET \{target} HTTP/1.0\r\n\r\n".toBytes(), 1);
+Reply get(Clock clock, Net net, i32 port, string target) {
+  return request(clock, net, port, "GET \{target} HTTP/1.0\r\n\r\n".toBytes(), 1);
 }
 
-Reply post(Core core, Cli cli, i32 port, string body, i32 chunks) {
+Reply post(Clock clock, Net net, i32 port, string body, i32 chunks) {
   u8[] encoded = body.toBytes();
   string head = "POST /tor/hs/3/publish HTTP/1.0\r\nHost: 127.0.0.1\r\n" +
                 "Content-Length: \{encoded.len()}\r\n\r\n";
@@ -106,7 +110,7 @@ Reply post(Core core, Cli cli, i32 port, string body, i32 chunks) {
   u8[] all = u8[].filled(headBytes.len() + encoded.len(), 0);
   for (i32 i = 0; i < headBytes.len(); i++) { all[i] = headBytes[i]; }
   for (i32 i = 0; i < encoded.len(); i++) { all[headBytes.len() + i] = encoded[i]; }
-  return request(core, cli, port, all, chunks);
+  return request(clock, net, port, all, chunks);
 }
 
 /**
@@ -134,10 +138,15 @@ i32 portFrom(string log) {
   return at < 0 ? -1 : numberAt(log, at + MARK.len());
 }
 
-export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core core, Cli cli) {
+export string test_dird_publishes_and_serves_an_onion_service_descriptor(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/dird";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/dird";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
   string bin = "\{dir}/dird";
 
@@ -146,65 +155,62 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   // rebuilds only when the sources or the compiler move. A `wac app` executable to a fresh temporary
   // name cannot be cached: the output's base name is in the manifest, so two destinations are two
   // artefacts. Measured on `client_test.wac`: 2s cached against 8s not.
-  string mod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
-                            ["--allow-read", "--allow-net"]);
+  string mod = builtProgram(env, fs, procs, "packages/tor/src/dird.wac", "dird", ["--allow-read", "--allow-net"]);
   t.isTrue(mod != "", "the server built");
   if (mod == "") { return t.report(); }
 
-  string consensus = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+  string consensus = strOf(jsonFile(fs, "packages/tor/test/data/consensus_generated.json"),
                            "consensus");
-  string routerdesc = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+  string routerdesc = strOf(jsonFile(fs, "packages/tor/test/data/consensus_generated.json"),
                             "descriptor");
-  string certificate = strOf(jsonFile(cli, "packages/tor/test/data/authcert_generated.json"),
+  string certificate = strOf(jsonFile(fs, "packages/tor/test/data/authcert_generated.json"),
                              "certificate");
-  cli.writeFile("\{dir}/consensus", consensus.toBytes()).wait();
-  cli.writeFile("\{dir}/cert", certificate.toBytes()).wait();
-  cli.writeFile("\{dir}/desc", routerdesc.toBytes()).wait();
+  fs.writeFile("\{dir}/consensus", consensus.toBytes()).wait();
+  fs.writeFile("\{dir}/cert", certificate.toBytes()).wait();
+  fs.writeFile("\{dir}/desc", routerdesc.toBytes()).wait();
 
   // Port 0 asks the OS for a free one, which two agents running the suite at once cannot collide on.
   // **Through `env`, because the artefact finds its runtime on PATH** with `command -v wac`, and
   // `Cli.exec` passes no environment — so `/bin/sh` starts from its own default, which this
   // checkout's binary is not on. A `PATH=` prefix will not do: `start` wraps the line as
   // `{ exec <line>; }` and `exec` takes a command rather than an assignment.
-  Daemon d = start(cli,
-    quoted(binaryPath(cli)) + " " + quoted(mod) + " " + quoted("\{dir}/consensus") + " " + quoted("\{dir}/cert") + " " +
-      quoted("\{dir}/desc") + " 0",
-    "\{dir}/log");
+  Daemon d = start(procs, quoted(binaryPath(env)) + " " + quoted(mod) + " " + quoted("\{dir}/consensus") + " " + quoted("\{dir}/cert") + " " +
+      quoted("\{dir}/desc") + " 0", "\{dir}/log");
   t.isTrue(d.ok(), "dird started — \{d.error}");
   if (!d.ok()) { return t.report(); }
 
-  if (!waitForLogWithin(core, cli, d, "serving the directory on 127.0.0.1:", 20000)) {
-    t.fail("dird never said it listened. Its output was: \{logOf(cli, d)}");
-    stop(cli, d);
+  if (!waitForLogWithin(clock, fs, d, "serving the directory on 127.0.0.1:", 20000)) {
+    t.fail("dird never said it listened. Its output was: \{logOf(fs, d)}");
+    stop(procs, d);
     return t.report();
   }
-  i32 port = portFrom(logOf(cli, d));
+  i32 port = portFrom(logOf(fs, d));
   t.isTrue(port > 0, "and named the port it got");
-  if (port <= 0) { stop(cli, d); return t.report(); }
+  if (port <= 0) { stop(procs, d); return t.report(); }
 
-  string descriptor = DESCRIPTOR(cli);
-  string newer = NEWER(cli);
-  string query = QUERY(cli);
+  string descriptor = DESCRIPTOR(fs);
+  string newer = NEWER(fs);
+  string query = QUERY(fs);
 
   // ── The control: nothing has been published, so there is nothing to serve ──
-  Reply before = get(core, cli, port, "/tor/hs/3/\{query}");
+  Reply before = get(clock, net, port, "/tor/hs/3/\{query}");
   t.eqI32(before.status, 404, "a descriptor nobody uploaded is not served");
 
   // ── Publish, in four pieces, because a real upload does not arrive in one read ──
-  Reply published = post(core, cli, port, descriptor, 4);
+  Reply published = post(clock, net, port, descriptor, 4);
   t.eqI32(published.status, 200, "a valid descriptor is accepted");
   t.isTrue(contains(published.body, "stored successfully"),
            "the reply says so — got \{published.body}");
 
   // ── And it comes back, byte for byte, under the name the certificate gave it ──
-  Reply after = get(core, cli, port, "/tor/hs/3/\{query}");
+  Reply after = get(clock, net, port, "/tor/hs/3/\{query}");
   t.eqI32(after.status, 200, "the descriptor is served after publication");
   t.eqStr(after.body, descriptor, "and it is the bytes that were uploaded, unchanged");
 
   // A client asks for one service, so another name must not reach this one.
   string other = "";
   for (i32 i = 0; i < 43; i++) { other = other + "A"; }
-  t.eqI32(get(core, cli, port, "/tor/hs/3/\{other}").status, 404,
+  t.eqI32(get(clock, net, port, "/tor/hs/3/\{other}").status, 404,
           "another blinded key is not this descriptor");
 
   // ── A descriptor tor refuses, refused — and it must not evict the good one ──
@@ -215,45 +221,45 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
   string broken = descriptor.slice(0, at) +
                   (descriptor.slice(at, at + 1) == "X" ? "Y" : "X") +
                   descriptor.slice(at + 1, descriptor.len());
-  t.eqI32(post(core, cli, port, broken, 1).status, 400,
+  t.eqI32(post(clock, net, port, broken, 1).status, 400,
           "a descriptor whose signature fails is refused");
-  t.eqStr(get(core, cli, port, "/tor/hs/3/\{query}").body, descriptor,
+  t.eqStr(get(clock, net, port, "/tor/hs/3/\{query}").body, descriptor,
           "and a refused upload does not disturb what is held");
 
   // ── Republishing: strictly newer, or refused ──
   // tor's `cache_store_v3_as_dir` replaces only when the revision counter is greater, so an
   // unchanged descriptor uploaded twice is a 400 rather than a no-op 200. This case asserted 200
   // until the sequence was put to a real HSDir, which refused it.
-  t.eqI32(post(core, cli, port, descriptor, 1).status, 400,
+  t.eqI32(post(clock, net, port, descriptor, 1).status, 400,
           "an unchanged descriptor is refused the second time, as tor refuses it");
-  t.eqStr(get(core, cli, port, "/tor/hs/3/\{query}").body, descriptor,
+  t.eqStr(get(clock, net, port, "/tor/hs/3/\{query}").body, descriptor,
           "and what is held is untouched by the refusal");
 
-  t.eqI32(post(core, cli, port, newer, 1).status, 200, "a newer revision is accepted");
-  t.eqStr(get(core, cli, port, "/tor/hs/3/\{query}").body, newer,
+  t.eqI32(post(clock, net, port, newer, 1).status, 200, "a newer revision is accepted");
+  t.eqStr(get(clock, net, port, "/tor/hs/3/\{query}").body, newer,
           "and replaces what was held rather than joining it");
 
   // An older descriptor arriving late must not undo the newest publication — the failure that makes
   // a service unreachable while every log line says it published.
-  t.eqI32(post(core, cli, port, descriptor, 1).status, 400, "the older one is refused");
-  t.eqStr(get(core, cli, port, "/tor/hs/3/\{query}").body, newer,
+  t.eqI32(post(clock, net, port, descriptor, 1).status, 400, "the older one is refused");
+  t.eqStr(get(clock, net, port, "/tor/hs/3/\{query}").body, newer,
           "and the newer descriptor still stands");
 
   // Two accepted uploads, and the directory still holds one descriptor. A store that appended would
   // serve whichever copy the search reached first, which over a service's lifetime is the stale one
   // — and the count is the only signal that tells the two apart.
-  string log = logOf(cli, d);
+  string log = logOf(fs, d);
   const string HELD = "stored a descriptor, 1 held";
   i32 first = log.indexOf(HELD);
   i32 second = first < 0 ? -1 : log.slice(first + HELD.len(), log.len()).indexOf(HELD);
   t.isTrue(second >= 0, "dird said it stored one descriptor twice. Its output was: \{log}");
 
   // The directory documents still work, so publication did not take the port over.
-  t.eqI32(get(core, cli, port, "/tor/status-vote/current/consensus").status, 200,
+  t.eqI32(get(clock, net, port, "/tor/status-vote/current/consensus").status, 200,
           "the consensus is still served");
 
-  stop(cli, d);
-  cli.remove(dir, true).wait();
+  stop(procs, d);
+  fs.remove(dir, true).wait();
   return t.report();
 }
 
@@ -274,52 +280,54 @@ export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core co
  * `waitForLogWithin`-style timeout would turn "blocked" into "slow" and pass. The stalled socket is
  * held open for the whole check, because closing it is what would let a serial server through.
  */
-export string test_a_stalled_client_does_not_hold_the_door(Core core, Cli cli) {
+export string test_a_stalled_client_does_not_hold_the_door(Sys sys) {
+  Clock clock = sys.clock();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = "\{cli.cwd().wait()}/.cache/dird-stall";
-  string whyDir = freshDir(cli, dir);
+  string dir = "\{flatten(env.cwd().wait()).unwrap()}/.cache/dird-stall";
+  string whyDir = freshDir(fs, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  string mod = builtProgram(cli, "packages/tor/src/dird.wac", "dird",
-                            ["--allow-read", "--allow-net"]);
+  string mod = builtProgram(env, fs, procs, "packages/tor/src/dird.wac", "dird", ["--allow-read", "--allow-net"]);
   t.isTrue(mod != "", "the server built");
   if (mod == "") { return t.report(); }
 
-  string consensus = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+  string consensus = strOf(jsonFile(fs, "packages/tor/test/data/consensus_generated.json"),
                            "consensus");
-  string certificate = strOf(jsonFile(cli, "packages/tor/test/data/authcert_generated.json"),
+  string certificate = strOf(jsonFile(fs, "packages/tor/test/data/authcert_generated.json"),
                              "certificate");
-  string routerdesc = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+  string routerdesc = strOf(jsonFile(fs, "packages/tor/test/data/consensus_generated.json"),
                             "descriptor");
-  cli.writeFile("\{dir}/consensus", consensus.toBytes()).wait();
-  cli.writeFile("\{dir}/cert", certificate.toBytes()).wait();
-  cli.writeFile("\{dir}/desc", routerdesc.toBytes()).wait();
+  fs.writeFile("\{dir}/consensus", consensus.toBytes()).wait();
+  fs.writeFile("\{dir}/cert", certificate.toBytes()).wait();
+  fs.writeFile("\{dir}/desc", routerdesc.toBytes()).wait();
 
-  Daemon d = start(cli,
-    quoted(binaryPath(cli)) + " " + quoted(mod) + " " + quoted("\{dir}/consensus") + " " +
-      quoted("\{dir}/cert") + " " + quoted("\{dir}/desc") + " 0",
-    "\{dir}/log");
+  Daemon d = start(procs, quoted(binaryPath(env)) + " " + quoted(mod) + " " + quoted("\{dir}/consensus") + " " +
+      quoted("\{dir}/cert") + " " + quoted("\{dir}/desc") + " 0", "\{dir}/log");
   t.isTrue(d.ok(), "dird started — \{d.error}");
   if (!d.ok()) { return t.report(); }
 
-  if (!waitForLogWithin(core, cli, d, "serving the directory on 127.0.0.1:", 20000)) {
-    t.fail("dird never said it listened. Its output was: \{logOf(cli, d)}");
-    stop(cli, d);
+  if (!waitForLogWithin(clock, fs, d, "serving the directory on 127.0.0.1:", 20000)) {
+    t.fail("dird never said it listened. Its output was: \{logOf(fs, d)}");
+    stop(procs, d);
     return t.report();
   }
-  i32 port = portFrom(logOf(cli, d));
+  i32 port = portFrom(logOf(fs, d));
   t.isTrue(port > 0, "and named the port it got");
-  if (port <= 0) { stop(cli, d); return t.report(); }
+  if (port <= 0) { stop(procs, d); return t.report(); }
 
   // The stalled client: a request line, no blank line, and the socket kept open.
-  i32 stalled = cli.connect("127.0.0.1", port).wait().handle;
-  t.isTrue(stalled >= 0, "the stalling client connected");
-  if (stalled < 0) { stop(cli, d); return t.report(); }
-  bool sent = cli.send(stalled, "GET /tor/status-vote/current/consensus HTTP/1.0\r\n".toBytes()).wait();
+  Socket? stalled = flatten(net.connect("127.0.0.1", port).wait()).ok();
+  t.isTrue(stalled is not null, "the stalling client connected");
+  if (stalled is null) { stop(procs, d); return t.report(); }
+  bool sent = flatten(stalled!.send("GET /tor/status-vote/current/consensus HTTP/1.0\r\n".toBytes()).wait()).isOk();
   t.isTrue(sent, "and sent a request it will never finish");
   // Long enough that the server has certainly read it and suspended, so this is not a race the
   // second client wins by arriving first.
-  core.sleepMillis(200).wait();
+  clock.sleepMillis(200).wait();
 
   // The second client, whose request is complete. Before the port this could not even be accepted.
   //
@@ -328,15 +336,15 @@ export string test_a_stalled_client_does_not_hold_the_door(Core core, Cli cli) {
   // client holds the accept loop, so this connection is never served and an unbounded read waits for
   // ever. A test that hangs instead of failing tells a future reader nothing and costs a whole gate,
   // so the wait has a deadline and the deadline is the assertion.
-  Reply served = servedWithin(core, cli, port, "/tor/status-vote/current/consensus", 5000);
+  Reply served = servedWithin(clock, net, port, "/tor/status-vote/current/consensus", 5000);
   t.eqI32(served.status, 200,
           "a second client is served while the first is still mid-request — got " +
           "\{served.status}. A status of -2 is the deadline: nothing answered, which is the "
           + "head-of-line block issues/system/0294c describes.");
   t.isTrue(served.body.len() > 0, "and got the consensus, not an empty body");
 
-  cli.closeSocket(stalled);
-  stop(cli, d);
+  stalled!.close();
+  stop(procs, d);
   return t.report();
 }
 
@@ -344,26 +352,26 @@ export string test_a_stalled_client_does_not_hold_the_door(Core core, Cli cli) {
  * `get`, with a deadline — `Reply(-2, "")` when nothing answered in time.
  *
  * `request` above reads until end-of-stream, which is right for a server that answers and closes and
- * wrong for asking *whether* it answers at all. `waitAny(ids, ms)` is the platform's own deadline:
- * one ticket, and a negative answer means it did not become ready.
+ * wrong for asking *whether* it answers at all. `Clock.within` is the deadline: the read, or `TimedOut`
+ * when it did not answer in time.
  */
-Reply servedWithin(Core core, Cli cli, i32 port, string target, i32 ms) {
-  i32 handle = cli.connect("127.0.0.1", port).wait().handle;
-  if (handle < 0) { return Reply(-1, ""); }
-  cli.send(handle, "GET \{target} HTTP/1.0\r\n\r\n".toBytes()).wait();
+Reply servedWithin(Clock clock, Net net, i32 port, string target, i32 ms) {
+  Socket? handle = flatten(net.connect("127.0.0.1", port).wait()).ok();
+  if (handle is null) { return Reply(-1, ""); }
+  handle!.send( "GET \{target} HTTP/1.0\r\n\r\n".toBytes()).wait();
 
   string all = "";
   bool reading = true;
   while (reading) {
-    Pending<Read> p = cli.recv(handle);
-    if (core.waitAny([p.id], ms) < 0) { cli.closeSocket(handle); return Reply(-2, ""); }
-    match (p.wait()) {
+    auto pGot = flatten(clock.within(handle!.recv(), ms).wait());
+    if (pGot.isErr()) { handle!.close(); return Reply(-2, ""); }
+    match (pGot.unwrap()) {
       Data(got): { all = all + string.fromBytes(got); }
       End: { reading = false; }
       Failed(why): { reading = false; }
     }
   }
-  cli.closeSocket(handle);
+  handle!.close();
 
   i32 at = all.indexOf("\r\n\r\n");
   string head = at < 0 ? all : all.slice(0, at);

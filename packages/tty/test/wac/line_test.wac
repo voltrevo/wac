@@ -30,7 +30,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Files, Output, Procs, Sys } from "std";
 import { ttycatBytes } from "../../example/ttycat.wac";
 import { Line, Typed } from "../../src/line.wac";
 import { DEL, EOF, INTR, QUIT, j3, join, k, sameBytes, show, t, typed,
@@ -53,9 +53,11 @@ import { Loaded, Vector, find, load, pty, vectorsPath } from "./replay.wac";
  *
  * It is the one test here that still spawns, because it is the one whose subject is the pty.
  */
-export string test_the_oracle_is_the_configuration_this_module_implements(Core core, Cli cli) {
+export string test_the_oracle_is_the_configuration_this_module_implements(Sys sys) {
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
   T t = T.create();
-  string said = string.fromBytes(pty(core, cli, "stty -a", u8[]()));
+  string said = string.fromBytes(pty(err, procs, "stty -a", u8[]()));
   // As *tokens*, not as substrings. `stty -a` prints `-echoprt` and `-echonl`, so asking whether the
   // output "includes echo" is a check that cannot fail — which is the shape this repo keeps finding
   // in its own measurements and would be a poor thing to add while writing about it.
@@ -73,9 +75,10 @@ export string test_the_oracle_is_the_configuration_this_module_implements(Core c
   return t.report();
 }
 
-export string test_every_editing_rule_answers_what_the_kernel_answers(Core core, Cli cli) {
+export string test_every_editing_rule_answers_what_the_kernel_answers(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -142,7 +145,7 @@ export string test_every_editing_rule_answers_what_the_kernel_answers(Core core,
  * - `^D` on an empty line ends the input; on a line with something on it, it delivers what is there
  *   *without* a newline and the line goes on. That is why `cat` needs two after an unterminated line.
  */
-export string test_interrupt_and_end_of_input(Core core, Cli cli) {
+export string test_interrupt_and_end_of_input() {
   T t = T.create();
 
   // `ttycatBytes` stops at either, so what comes back is everything up to and including the event.
@@ -178,9 +181,12 @@ export string test_interrupt_and_end_of_input(Core core, Cli cli) {
  * the list rather than taken from the front, and compared with what was written down. A kernel or a
  * `script` that started answering differently fails here, naming the capture as the thing to re-run.
  */
-export string test_the_live_pty_still_answers_what_was_recorded(Core core, Cli cli) {
+export string test_the_live_pty_still_answers_what_was_recorded(Sys sys) {
+  Output err = sys.stderr();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Loaded v = load(cli, vectorsPath());
+  Loaded v = load(fs, vectorsPath());
   t.isTrue(v.error == "", v.error);
   if (v.error != "") { return t.report(); }
 
@@ -192,7 +198,7 @@ export string test_the_live_pty_still_answers_what_was_recorded(Core core, Cli c
     Vector? want = find(v, "canonical", cases[i]);
     if (want is null) { continue; }
     asked = asked + 1;
-    t.eqStr(show(pty(core, cli, "cat", cases[i])), show(want!.out),
+    t.eqStr(show(pty(err, procs, "cat", cases[i])), show(want!.out),
             "the live pty no longer answers what \{v.oracle} answered for \{names[i]}" +
             " — re-run `wac run --allow-read --allow-write --allow-run tools/wac/ttyvectors.wac`");
   }

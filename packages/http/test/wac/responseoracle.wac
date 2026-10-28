@@ -14,8 +14,8 @@
 // body however long its Content-Length says it is, and getting that wrong is the client-side desync.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec } from "std";
-import { Buf } from "core";
+import { Exec, ChildEnv, Launch, Procs } from "std";
+import { Buf, flatten } from "core";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
@@ -60,7 +60,7 @@ i32 memberI32(JsonValue v, string key, i32 missing) {
  * `methods` runs alongside `cases`; a short list is a caller error and traps rather than quietly
  * pairing a response with the wrong method, which is the one thing this oracle's answers turn on.
  */
-export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] methods) {
+export ResponseOutcome[] responseOracle(T t, Procs procs, u8[][] cases, string[] methods) {
   if (cases.len() == 0) { return ResponseOutcome[].filled(0, ResponseOutcome.Incomplete); }
   if (methods.len() != cases.len()) { trap; }
   Buf payload = Buf.create();
@@ -75,15 +75,16 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
   }
   payload.push(']');
 
-  Exec r = cli.exec("node", [RESPONSE_ORACLE], payload.take()).wait();
-  if (!r.ran()) {
-    return allResponsesBroken(t, cases.len(), "the response oracle could not be run: \{r.error}");
+  auto rRan = flatten(procs.exec("node", [RESPONSE_ORACLE], payload.take(), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) {
+    return allResponsesBroken(t, cases.len(), "the response oracle could not be run: \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
   }
-  if (r.status != 0) {
+  if (r!.status != 0) {
     return allResponsesBroken(t, cases.len(),
-                              "the response oracle failed: \{string.fromBytes(r.stderr)}");
+                              "the response oracle failed: \{string.fromBytes(r!.stderr)}");
   }
-  JsonValue? doc = parse(r.stdout).ok();
+  JsonValue? doc = parse(r!.stdout).ok();
   if (doc is null) {
     return allResponsesBroken(t, cases.len(), "the response oracle's answer is not JSON");
   }

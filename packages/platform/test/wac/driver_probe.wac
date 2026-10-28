@@ -18,8 +18,6 @@
 import { Cli, Core, Sys } from "std";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
   // Deliberately unused — a program that ignores its world is still handed one.
   i32 answer = 6;
   for (i32 i = 0; i < 6; i++) { answer = answer + i; }

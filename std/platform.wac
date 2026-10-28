@@ -86,7 +86,8 @@
 // never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
 // closures in the language", which is both out of date and never the reason: two declarations of a
 // shape are two types whatever a funcref can capture.)
-import { Continuation, Queue, Read, Result, Ticket, TicketBase, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
+import { Buf, Continuation, Map, Queue, Read, Result, Ticket, TicketBase, Vec, hashString, stringEq, toString, __wacScheduleTarget,
+         __wacSetScheduleTarget } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
 void schedIdle(i32 id) { }
@@ -144,6 +145,28 @@ export struct Sched {
 
   /** How much work is outstanding — what the host asks before deciding a clean exit. */
   i32 pending(const this) { return this.n; }
+
+  /**
+   * How many queued continuations are still current, dropping the rest — the ones a `wait` ran past, which
+   * do nothing when called and would otherwise count as work left.
+   */
+  i32 liveQueued(this) {
+    Queue<Continuation> kept;
+    i32 live = 0;
+    while (true) {
+      Continuation? c = this.queued.pop();
+      if (c is null) { break; }
+      if (!c!.current()) { continue; }
+      kept.push(c!);
+      live = live + 1;
+    }
+    while (true) {
+      Continuation? c = kept.pop();
+      if (c is null) { break; }
+      this.queued.push(c!);
+    }
+    return live;
+  }
 
   /** Run `handler` when `id` answers. Registering the same id twice runs both, in order. */
   void on(this, i32 id, fn<void(i32)> handler, fn<void(i32)> drop) {
@@ -855,6 +878,8 @@ export struct Core {
       while (true) {
         Continuation? c = this.sched.queued.pop();
         if (c is null) { break; }
+        // One a `wait` already ran past does nothing when called, and is not work left.
+        if (!c!.current()) { continue; }
         TicketBase? on = c!.t;
         if (on is null || on!.done) {
           c!.call();
@@ -907,7 +932,7 @@ export struct Core {
   }
 
   /** How much work is outstanding — the question the host asks when `main` returns. */
-  i32 outstanding(const this) { return this.sched.pending() + this.sched.queued.len(); }
+  i32 outstanding(this) { return this.sched.pending() + this.sched.liveQueued(); }
 
   /**
    * Whether the user has asked to interrupt. Call it once per *block* of work, never per byte:
@@ -1380,9 +1405,19 @@ export struct Stat {
    */
   i32 fault;
 
+  /** The permission bits, `0644` and the like, with set-id and sticky above them — 0 where the host has none. */
+  i32 mode;
+
+  /**
+   * Who owns it, by name, in a store that keeps owners (`MemoryStore`) — and `""` from the host, which does not
+   * track owners for a program: its owners are numbers in somebody else's user table.
+   */
+  string owner;
+
+  /** A host's answer, which carries no owner. */
   Stat of(bool exists, bool isFile, bool isDir, i64 size, i64 modifiedMillis, bool isSymlink,
-          bool isExecutable, i32 fault) {
-    return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault);
+          bool isExecutable, i32 fault, i32 mode) {
+    return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault, mode, "");
   }
 
   /**
@@ -1585,6 +1620,12 @@ export i32 GRANT_ALL() { return GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV
  * `issues/lang/0291c`.
  */
 export static i32 INHERIT_NONE = 0;
+/** `Cli.openFile`'s `how`: read it. */
+static i32 OPEN_READ = 0;
+/** `Cli.openFile`'s `how`: write it, created if absent and emptied if not. */
+static i32 OPEN_WRITE = 1;
+/** `Cli.openFile`'s `how`: write after what is there, created if absent. */
+static i32 OPEN_APPEND = 2;
 /**
  * The child reads this program's own standard input instead of the queue `send` fills.
  *
@@ -2096,6 +2137,20 @@ export struct Cli {
   fn<void(i32)> closeSend;
 
   /**
+   * **A file as a stream of its own**, in the socket's handle space: `recv` reads it, `send` writes it and
+   * `closeFile` ends it. `how` is `OPEN_READ`, `OPEN_WRITE` (created or truncated) or `OPEN_APPEND` (created or
+   * added to). Any number may be open at once, so this is what `Files.openRead` and `openWrite` stand on.
+   */
+  fn<Pending<HostSocket>(string, i32)> openFile;
+  /** The end of a file `openFile` opened. What was written is the file's once this answers; `false` if it was not. */
+  fn<Pending<bool>(i32)> closeFile;
+  /**
+   * The end of this program's output (`toErr` false) or its diagnostic output: a reader sees the end while the
+   * program goes on. `false` if the host could not close it.
+   */
+  fn<Pending<bool>(bool)> closeOutput;
+
+  /**
    * Datagrams, under the same one `--allow-net` grant.
    *
    * The authority is "speak to something that is not this process", and the transport does not change
@@ -2512,6 +2567,9 @@ export struct Cli {
     fn<Pending<bool>(i32, u8[])> send,
     fn<void(i32)> closeSocket,
     fn<void(i32)> closeSend,
+    fn<Pending<HostSocket>(string, i32)> openFile,
+    fn<Pending<bool>(i32)> closeFile,
+    fn<Pending<bool>(bool)> closeOutput,
     fn<Pending<HostSocket>(string, i32)> bindDatagram,
     fn<Pending<Datagram>(i32)> receiveFrom,
     fn<Pending<bool>(i32, string, i32, u8[])> sendTo,
@@ -2543,7 +2601,9 @@ export struct Cli {
       (string a0) => openOutput(a0).on(sched), (string a0, i32 a1) => connect(a0, a1).on(sched),
       (string a0, i32 a1) => listen(a0, a1).on(sched), (i32 a0) => accept(a0).on(sched),
       (i32 a0) => recv(a0).on(sched), (i32 a0, u8[] a1) => send(a0, a1).on(sched), closeSocket,
-      closeSend, (string a0, i32 a1) => bindDatagram(a0, a1).on(sched),
+      closeSend, (string a0, i32 a1) => openFile(a0, a1).on(sched), (i32 a0) => closeFile(a0).on(sched),
+      (bool a0) => closeOutput(a0).on(sched),
+      (string a0, i32 a1) => bindDatagram(a0, a1).on(sched),
       (i32 a0) => receiveFrom(a0).on(sched),
       (i32 a0, string a1, i32 a2, u8[] a3) => sendTo(a0, a1, a2, a3).on(sched),
       (u8[] a0, u8[][] a1, i32 a2, string a3, i32 a4, bool a5) =>
@@ -2592,9 +2652,11 @@ Pending<HostChild> owned(Pending<HostChild> p, bool detached, fn<void(i32)> clos
 export struct Sys {
   Core core;
   Cli cli;
+  /** The line to this program's parent, which `files` asks once whether the parent serves it files. */
+  ParentLine parent;
 
-  /** The `Sys` a program's `main` is handed. Only the program adapter calls it (`wacc/src/program.wac`). */
-  Sys __wacOf(Core core, Cli cli) { return Sys(core, cli); }
+  /** The `Sys` a program's `main` is handed — by the program adapter (`wacc/src/program.wac`), or a world of its own. */
+  Sys __wacOf(Core core, Cli cli) { return Sys(core, cli, ParentLine.on(cli)); }
 
   /** The program's arguments, in order, without its own name. Needs no grant. */
   string[] args(const this) {
@@ -2639,19 +2701,22 @@ export struct Sys {
   /** This program's output (spec ch44). Needs no grant. */
   Output stdout(this) {
     Cli cli = this.cli;
-    return Output((u8[] b) => hostWrite(cli, false, b));
+    HostWait wait = this.core.waitAny;
+    return Output((u8[] b) => hostWrite(cli, false, b), () => hostTicket(cli.closeOutput(false), wait, outputClosedOf));
   }
 
   /** This program's diagnostic output. Needs no grant. */
   Output stderr(this) {
     Cli cli = this.cli;
-    return Output((u8[] b) => hostWrite(cli, true, b));
+    HostWait wait = this.core.waitAny;
+    return Output((u8[] b) => hostWrite(cli, true, b), () => hostTicket(cli.closeOutput(true), wait, outputClosedOf));
   }
 
   /** This program's input. Needs no grant. */
   Input stdin(this) {
     Cli cli = this.cli;
-    return Input(() => hostChunk(cli), () => hostReadAll(cli));
+    HostWait wait = this.core.waitAny;
+    return Input(() => hostChunk(cli, wait), () => hostReadAll(cli, wait), nothingToClose);
   }
 
   /** The clocks. Needs no grant. */
@@ -2660,17 +2725,31 @@ export struct Sys {
   /** Random bytes. Needs no grant. */
   Random random(this) { return Random(this.core); }
 
-  /** The environment. Each operation answers `NotGranted` when the host withheld it. */
-  Env env(this) { return Env(this.cli); }
+  /**
+   * Whether the user has asked to interrupt (`^C`) since the last time this asked — answered by whoever owns the
+   * keyboard, so only a page says yes; Deno, Node and the native hosts own none and always say no. Needs no grant.
+   * A long loop asks once per block of work and stops with 130, as a shell reports a program `^C` ended.
+   */
+  bool interrupted(const this) { return this.core.interrupted(); }
 
-  /** The host's files. Each operation answers `NotGranted` when the host withheld it. */
-  Files files(this) { return Files.host(this.cli); }
+  /** The environment. Each operation answers `NotGranted` when the host withheld it. */
+  Env env(this) { return Env(this.cli, this.core.waitAny); }
+
+  /**
+   * The files this program was given: what its parent serves when it was spawned with a composed `Files` (spec ch44
+   * `§wac-std-files-served-t5h2mzr`), and otherwise the host's, where each operation answers `NotGranted` when the host
+   * withheld it.
+   */
+  Files files(this) {
+    if (this.parent.serves()) { return parentFiles(this.parent); }
+    return Files.host(this.cli, this.core.waitAny);
+  }
 
   /** The network. Each operation answers `NotGranted` when the host withheld it. */
-  Net net(this) { return Net(this.cli); }
+  Net net(this) { return Net(this.cli, this.core.waitAny); }
 
   /** Starting other programs, this one included. Each operation answers `NotGranted` when the host withheld it. */
-  Procs procs(this) { return Procs(this.cli); }
+  Procs procs(this) { return Procs(this.cli, this.core.waitAny); }
 
   /** Loading wasm modules into this instance. */
   Modules modules(this) { return Modules(this.cli); }
@@ -2685,6 +2764,12 @@ export struct Sys {
    * Run the continuations nobody awaited. Work that can never run — a continuation waiting on a ticket
    * nothing will settle — leaves this waiting too, and a program waiting on nothing that can move is hung.
    */
+  /**
+   * `drain` for at most `millis`, answering how many continuations ran — none is how a server tells it was
+   * idle. What is left over stays outstanding.
+   */
+  i32 drainFor(this, i32 millis) { return this.core.drainFor(millis); }
+
   async void drain(this) {
     this.core.drain();
     if (this.core.outstanding() > 0) {
@@ -2726,34 +2811,110 @@ export struct Sys {
 // carries the host's own sentence. The aliases below name the sets the handles share.
 
 /** No such file, directory or host. */
-export struct NotFound { string message; }
+export struct NotFound {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** The world refused: permissions, ownership. */
-export struct Denied { string message; }
-export struct Exists { string message; }
-export struct NotEmpty { string message; }
-export struct IsDir { string message; }
-export struct NotADir { string message; }
-export struct ReadOnly { string message; }
-export struct NameTooLong { string message; }
+export struct Denied {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct Exists {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NotEmpty {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct IsDir {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NotADir {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct ReadOnly {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NameTooLong {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** Too many symbolic links. */
-export struct Loop { string message; }
-export struct NoSpace { string message; }
+export struct Loop {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NoSpace {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** A name this host cannot spell. */
-export struct NotRepresentable { string message; }
+export struct NotRepresentable {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** Nothing is listening there. */
-export struct Refused { string message; }
-export struct Unreachable { string message; }
-export struct TimedOut { string message; }
+export struct Refused {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct Unreachable {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct TimedOut {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** The reader of this program's output or diagnostic output has gone — `yes | head`. */
-export struct OutputClosed { string message; }
+export struct OutputClosed {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** The other end of a socket has gone. */
-export struct PeerClosed { string message; }
+export struct PeerClosed {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** This program was not given that authority. */
-export struct NotGranted { string message; }
+export struct NotGranted {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** This host does not provide the capability. A capability it lacks answers this, and never traps. */
-export struct Unsupported { string message; }
+export struct Unsupported {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** A failure no category above names, with whatever the host said. */
-export struct Other { string message; }
+export struct Other {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 
 /** Reading a file or opening it to read. */
 export type ReadFault = union<NotFound, Denied, IsDir, NotADir, NameTooLong, Loop, NotRepresentable, NotGranted,
@@ -2839,8 +3000,45 @@ HostFault hostFault(string m) { return Other(m); }
  * A write whose reader has gone answers `OutputClosed`, and an `OutputClosed` that reaches `main` unhandled ends
  * the program quietly with status 0 — `yes | head` (spec ch44 `§wac-std-output-closed-c9dspr3`).
  */
+/** The host's wait-for-any: block until one of `ids` answers, for at most `millis`; its index, or -1. */
+export type HostWait = fn<i32(i32[], i32)>;
+
+/**
+ * The host's answer `p` as a ticket core can wait on beside others and cancel (design/system/0013): it
+ * carries the host's id, `wait` and a release, so `Ticket.any` over several asks the host once and `cancel`
+ * gives the host its slot back. `f` turns what the host answers into what the handle answers, so a handle's
+ * operation is this ticket itself and not a machine parked on it. **Temporary with `Pending`**: step 6 has
+ * the host's imports make these directly.
+ */
+Ticket<U> hostTicket<T, U>(Pending<T> p, HostWait wait, fn<U(T)> f) {
+  Ticket<U> t;
+  i32 id = p.id;
+  if (p.settled(id)) {
+    t.resolve(f(p.resolve(id)));
+    return t;
+  }
+  Sched? s = p.sched;
+  if (s is not null) { s!.on(id, (i32 k) => { if (!t.done) { t.resolve(f(p.resolve(k))); } }, p.drop); }
+  t.hostId = id;
+  t.waitHost = wait;
+  t.release = () => {
+    if (s is not null) { s!.off(id); } else { p.drop(id); }
+  };
+  t.drive = () => {
+    if (s is not null) { s!.detach(id); }
+    if (!t.done) { t.resolve(f(p.wait())); }
+    return true;
+  };
+  return t;
+}
+
 export struct Output {
   fn<Ticket<Result<void, OutputFault>>(u8[])> write;
+  /**
+   * No more (`§wac-std-close-r4v8ndq`): whoever reads it sees the end, and a file holds what was written once this
+   * answers — a browser commits a file only here.
+   */
+  fn<Ticket<Result<void, OutputFault>>()> close;
 
   /** `text` and a newline. */
   Ticket<Result<void, OutputFault>> line(const this, string text) { return this.write((text + "\n").toBytes()); }
@@ -2852,6 +3050,8 @@ export struct Input {
   fn<Ticket<Result<Read, HostFault>>()> chunk;
   /** Everything up to the end. */
   fn<Ticket<Result<u8[], HostFault>>()> readAll;
+  /** Done reading: a file's handle goes back to the host. This program's input and a child's output need nothing. */
+  fn<Ticket<Result<void, HostFault>>()> close;
 }
 
 async Result<void, OutputFault> hostWrite(Cli cli, bool toErr, u8[] bytes) {
@@ -2863,15 +3063,25 @@ async Result<void, OutputFault> hostWrite(Cli cli, bool toErr, u8[] bytes) {
   return Result.Err(Other(why));
 }
 
-async Result<Read, HostFault> hostChunk(Cli cli) {
-  Read c = await cli.readChunk().ticket();
+Result<Read, HostFault> readOf(Read c) {
   match (c) {
     Failed(why): { return Result.Err(Other(why)); }
     default: { return Result.Ok(c); }
   }
 }
 
-async Result<u8[], HostFault> hostReadAll(Cli cli) { return Result.Ok(await cli.readStdin().ticket()); }
+Ticket<Result<Read, HostFault>> hostChunk(Cli cli, HostWait wait) { return hostTicket(cli.readChunk(), wait, readOf); }
+
+Result<u8[], HostFault> allOf(u8[] b) { return Result.Ok(b); }
+
+Ticket<Result<u8[], HostFault>> hostReadAll(Cli cli, HostWait wait) { return hostTicket(cli.readStdin(), wait, allOf); }
+
+async Result<void, HostFault> nothingToClose() { return Result.Ok(); }
+
+Result<void, OutputFault> outputClosedOf(bool went) {
+  if (!went) { return Result.Err(Other("the output could not be closed")); }
+  return Result.Ok();
+}
 
 // ── Time, randomness, the environment ────────────────────────────────────────────────────────────
 
@@ -2880,28 +3090,76 @@ export struct Clock {
   Core core;
 
   /** Wall-clock time, in milliseconds since the epoch. */
-  async Result<i64, union<Unsupported>> nowMillis(const this) { return Result.Ok(await this.core.nowMillis().ticket()); }
+  Ticket<Result<i64, union<Unsupported>>> nowMillis(const this) { return hostTicket(this.core.nowMillis(), this.core.waitAny, timeOf); }
   /** Nanoseconds from an arbitrary origin, never decreasing within a run. */
-  async Result<i64, union<Unsupported>> monotonicNanos(const this) {
-    return Result.Ok(await this.core.monotonicNanos().ticket());
+  Ticket<Result<i64, union<Unsupported>>> monotonicNanos(const this) {
+    return hostTicket(this.core.monotonicNanos(), this.core.waitAny, timeOf);
   }
   /** Settles after at least `ms` milliseconds. */
-  async Result<void, union<Unsupported>> sleepMillis(const this, i32 ms) {
-    await this.core.sleepMillis(ms).ticket();
-    return Result.Ok();
+  Ticket<Result<void, union<Unsupported>>> sleepMillis(const this, i32 ms) {
+    return hostTicket(this.core.sleepMillis(ms), this.core.waitAny, sleptOf);
   }
+
+  /**
+   * What `t` answers, or `TimedOut` when it has not answered within `millis` (spec ch44
+   * `§wac-std-within-8mdio9r`) — a negative `millis` sets no deadline. Whichever loses is cancelled here, so a
+   * deadline never leaves the host holding a slot. `Unsupported` is a capability's already, so the error is
+   * `t`'s with `TimedOut` beside it.
+   */
+  Ticket<Result<A, union<E, TimedOut, Unsupported>>> within<A, E>(this, Ticket<Result<A, E>> t, i32 millis) {
+    // **Driven, not `async`**, as `Ticket.any` is: settled from `Ticket.first` over `t` and the timer, so it
+    // builds no machine — and `parts` lets a `wait` find the host work beneath it, so a `within` inside a
+    // `Ticket.any` is waited on together with the rest.
+    Ticket<Result<A, union<E, TimedOut, Unsupported>>> out;
+    Ticket<Result<void, union<Unsupported>>>? timer = null;
+    TicketBase[] racing = [t];
+    if (millis >= 0) {
+      timer = this.sleepMillis(millis);
+      racing = [t, timer!];
+    }
+    Ticket<i32> w = Ticket.first(racing);
+    fn<void()> settle = () => {
+      if (out.done || !w.done) { return; }
+      if (w.value() == 1) {
+        t.cancel();
+        if (timer!.value().isErr()) { out.resolve(Result.Err(Unsupported("this host has no timer to bound a wait by"))); }
+        else { out.resolve(Result.Err(TimedOut("no answer within \{millis}ms"))); }
+        return;
+      }
+      if (timer is not null) { timer!.cancel(); }
+      Result<A, union<E, TimedOut, Unsupported>> r = match (t.value()) { Ok(a): Result.Ok(a), Err(e): Result.Err(e) };
+      out.resolve(r);
+    };
+    w.whenSettled(settle);
+    TicketBase[] under = [w];
+    out.parts = under;
+    out.drive = () => {
+      bool moved = w.advance();
+      settle();
+      return moved;
+    };
+    settle();
+    return out;
+  }
+
 }
+
+Result<i64, union<Unsupported>> timeOf(i64 v) { return Result.Ok(v); }
+Result<void, union<Unsupported>> sleptOf(i64 v) { return Result.Ok(); }
 
 /** Random bytes. Needs no grant. */
 export struct Random {
   Core core;
 
-  async Result<u8[], union<Unsupported>> bytes(const this, i32 n) { return Result.Ok(await this.core.randomBytes(n).ticket()); }
+  Ticket<Result<u8[], union<Unsupported>>> bytes(const this, i32 n) { return hostTicket(this.core.randomBytes(n), this.core.waitAny, bytesOk); }
 }
+
+Result<u8[], union<Unsupported>> bytesOk(u8[] b) { return Result.Ok(b); }
 
 /** The environment's variables and the directory relative paths resolve from. */
 export struct Env {
   Cli cli;
+  HostWait wait;
 
   /**
    * A variable's value, `Ok(null)` when it is not set (`§wac-std-env-unset-r4c8tqb`).
@@ -2909,11 +3167,14 @@ export struct Env {
    * **Not yet able to say `NotGranted`**: the hosts answer a withheld environment as an unset variable, and
    * which it was is `issues/system/0261c`, which the host half of design/system/0013 settles.
    */
-  async Result<u8[]?, GrantedFault> get(const this, string name) { return Result.Ok(await this.cli.env(name).ticket()); }
+  Ticket<Result<u8[]?, GrantedFault>> get(const this, string name) { return hostTicket(this.cli.env(name), this.wait, envOf); }
 
   /** Where relative paths resolve from. */
-  async Result<string, HostFault> cwd(const this) { return Result.Ok(await this.cli.cwd().ticket()); }
+  Ticket<Result<string, HostFault>> cwd(const this) { return hostTicket(this.cli.cwd(), this.wait, cwdOf); }
 }
+
+Result<u8[]?, GrantedFault> envOf(u8[]? v) { return Result.Ok(v); }
+Result<string, HostFault> cwdOf(string v) { return Result.Ok(v); }
 
 // ── Files ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -2928,6 +3189,12 @@ export struct Env {
 export struct Files {
   fn<Ticket<Result<u8[], ReadFault>>(string)> readFile;
   fn<Ticket<Result<void, WriteFault>>(string, u8[])> writeFile;
+  /** The file to read a piece at a time; `close` it when done. */
+  fn<Ticket<Result<Input, ReadFault>>(string)> openRead;
+  /** The file, created or emptied, to write a piece at a time; what was written is there once `close` answers. */
+  fn<Ticket<Result<Output, WriteFault>>(string)> openWrite;
+  /** The same, writing after what is there — created if it is not. */
+  fn<Ticket<Result<Output, WriteFault>>(string)> openAppend;
   fn<Ticket<Result<Stat, LookFault>>(string)> stat;
   /** `stat` of a symbolic link itself rather than what it names. */
   fn<Ticket<Result<Stat, LookFault>>(string)> linkStat;
@@ -2937,53 +3204,109 @@ export struct Files {
   fn<Ticket<Result<void, MoveFault>>(string, string)> rename;
   fn<Ticket<Result<void, ModeFault>>(string, i32)> chmod;
   fn<Ticket<Result<void, ModeFault>>(string, bool)> setExecutable;
+  /** Give a file to another owner, which is root's to do — `Unsupported` on the host, whose owners are not names. */
+  fn<Ticket<Result<void, ModeFault>>(string, string)> chown;
   /**
    * The `GRANT_*` bits a spawned child can be handed instead of these files: `GRANT_READ | GRANT_WRITE` for the
    * host's own, `GRANT_READ` read-only, and 0 for anything composed, which the parent has to serve.
    */
   i32 hostGrants;
+  /**
+   * Who these files act as: the owner of what they create and the name each permission check is against. `""` for
+   * the host's, whose owners are not names; the name for `store.asUser(name)`; and the parent's for files a parent
+   * serves, which is how a spawned `whoami` knows the session it runs in.
+   */
+  string user;
 
   /** The host's filesystem, under whatever grants the host gave this program. */
-  Files host(Cli cli) {
+  Files host(Cli cli, HostWait wait) {
     return Files(
-      (string p) => hostReadFile(cli, p),
-      (string p, u8[] b) => hostWriteFile(cli, p, b),
-      (string p) => hostStat(cli, p, false),
-      (string p) => hostStat(cli, p, true),
-      (string p) => hostReadDir(cli, p),
-      (string p, bool parents) => hostMkdir(cli, p, parents),
-      (string p, bool recursive) => hostRemove(cli, p, recursive),
-      (string from, string to) => hostRename(cli, from, to),
-      (string p, i32 mode) => hostChmod(cli, p, mode),
-      (string p, bool on) => hostSetExecutable(cli, p, on),
-      GRANT_READ | GRANT_WRITE);
+      (string p) => hostTicket(cli.readFile(p), wait, readOfFile),
+      (string p, u8[] b) => hostTicket(cli.writeFile(p, b), wait, writtenOf),
+      (string p) => hostTicket(cli.openFile(p, OPEN_READ), wait, (HostSocket s) => openedToRead(cli, wait, p, s)),
+      (string p) => hostTicket(cli.openFile(p, OPEN_WRITE), wait, (HostSocket s) => openedToWrite(cli, wait, p, s)),
+      (string p) => hostTicket(cli.openFile(p, OPEN_APPEND), wait, (HostSocket s) => openedToWrite(cli, wait, p, s)),
+      (string p) => hostTicket(cli.stat(p), wait, (Stat s) => statOf(s, p)),
+      (string p) => hostTicket(cli.linkStat(p), wait, (Stat s) => statOf(s, p)),
+      (string p) => hostReadDir(cli, wait, p),
+      (string p, bool parents) => hostTicket(cli.mkdir(p, parents), wait, madeOf),
+      (string p, bool recursive) => hostTicket(cli.remove(p, recursive), wait, movedOf),
+      (string from, string to) => hostTicket(cli.rename(from, to), wait, movedOf),
+      (string p, i32 mode) => hostTicket(cli.chmod(p, mode), wait, modeOf),
+      (string p, bool on) => hostTicket(cli.setExecutable(p, on), wait, modeOf),
+      (string p, string owner) => hostChown(p),
+      GRANT_READ | GRANT_WRITE, "");
   }
 
   /** The same files, every change answering `NotGranted`. */
   Files readOnly(this) {
-    return Files(this.readFile, (string p, u8[] b) => refusedWrite(p), this.stat, this.linkStat, this.readDir,
+    return Files(this.readFile, (string p, u8[] b) => refusedWrite(p), this.openRead,
+                 (string p) => refusedOpen(p), (string p) => refusedOpen(p), this.stat, this.linkStat, this.readDir,
                  (string p, bool parents) => refusedMkdir(p), (string p, bool r) => refusedMove(p),
                  (string from, string to) => refusedMove(from), (string p, i32 mode) => refusedMode(p),
-                 (string p, bool on) => refusedMode(p), this.hostGrants & GRANT_READ);
+                 (string p, bool on) => refusedMode(p), (string p, string owner) => refusedMode(p),
+                 this.hostGrants & GRANT_READ, this.user);
+  }
+
+  /**
+   * The same files, every read answering `NotGranted` — what `--allow-write` without `--allow-read` holds. A
+   * change still lands; what is there cannot be looked at, its existence included.
+   */
+  Files writeOnly(this) {
+    return Files((string p) => refusedRead(p), this.writeFile, (string p) => refusedOpenRead(p), this.openWrite,
+                 this.openAppend, (string p) => refusedLook(p), (string p) => refusedLook(p),
+                 (string p) => refusedList(p), this.mkdir, this.remove, this.rename, this.chmod, this.setExecutable,
+                 this.chown, this.hostGrants & GRANT_WRITE, this.user);
+  }
+
+  /**
+   * The same files, a relative path starting at `dir` — a shell's current directory. `.` and `..` are taken out
+   * before the path goes on, and an absolute path goes on as it is. A child handed this is told `dir` when it is
+   * spawned, so the host's grants carry over.
+   */
+  Files relativeTo(this, string dir) {
+    Files f = this;
+    return Files(
+      (string p) => f.readFile(pathFrom(dir, p)),
+      (string p, u8[] b) => f.writeFile(pathFrom(dir, p), b),
+      (string p) => f.openRead(pathFrom(dir, p)),
+      (string p) => f.openWrite(pathFrom(dir, p)),
+      (string p) => f.openAppend(pathFrom(dir, p)),
+      (string p) => f.stat(pathFrom(dir, p)),
+      (string p) => f.linkStat(pathFrom(dir, p)),
+      (string p) => f.readDir(pathFrom(dir, p)),
+      (string p, bool parents) => f.mkdir(pathFrom(dir, p), parents),
+      (string p, bool r) => f.remove(pathFrom(dir, p), r),
+      (string from, string to) => f.rename(pathFrom(dir, from), pathFrom(dir, to)),
+      (string p, i32 mode) => f.chmod(pathFrom(dir, p), mode),
+      (string p, bool on) => f.setExecutable(pathFrom(dir, p), on),
+      (string p, string owner) => f.chown(pathFrom(dir, p), owner),
+      f.hostGrants, f.user);
   }
 
   /**
    * Each path to the mount whose `at` is its longest prefix, with that prefix taken off — `/` mounted last is
-   * everything else. A rename across two mounts is `Other`, as a rename across two devices is.
+   * everything else. A rename across two mounts is `Other`, as a rename across two devices is. A listing has the
+   * mount points directly under it among its names, as a directory holding a mount point does. The user is the
+   * root mount's, `""` when nothing is mounted at `/`.
    */
   Files mounted(Mount[] mounts) {
     return Files(
       (string p) => mountOf(mounts, p).files.readFile(innerOf(mounts, p)),
       (string p, u8[] b) => mountOf(mounts, p).files.writeFile(innerOf(mounts, p), b),
+      (string p) => mountOf(mounts, p).files.openRead(innerOf(mounts, p)),
+      (string p) => mountOf(mounts, p).files.openWrite(innerOf(mounts, p)),
+      (string p) => mountOf(mounts, p).files.openAppend(innerOf(mounts, p)),
       (string p) => mountOf(mounts, p).files.stat(innerOf(mounts, p)),
       (string p) => mountOf(mounts, p).files.linkStat(innerOf(mounts, p)),
-      (string p) => mountOf(mounts, p).files.readDir(innerOf(mounts, p)),
+      (string p) => mountedReadDir(mounts, p),
       (string p, bool parents) => mountOf(mounts, p).files.mkdir(innerOf(mounts, p), parents),
       (string p, bool r) => mountOf(mounts, p).files.remove(innerOf(mounts, p), r),
       (string from, string to) => mountedRename(mounts, from, to),
       (string p, i32 mode) => mountOf(mounts, p).files.chmod(innerOf(mounts, p), mode),
       (string p, bool on) => mountOf(mounts, p).files.setExecutable(innerOf(mounts, p), on),
-      0);
+      (string p, string owner) => mountOf(mounts, p).files.chown(innerOf(mounts, p), owner),
+      0, rootUser(mounts));
   }
 }
 
@@ -2991,6 +3314,528 @@ export struct Files {
 export struct Mount {
   string at;
   Files files;
+}
+
+/** The user of the mount at `/`, or `""`. */
+string rootUser(Mount[] mounts) {
+  for (i32 i = 0; i < mounts.len(); i++) {
+    if (mounts[i].at == "/" || mounts[i].at == "") { return mounts[i].files.user; }
+  }
+  return "";
+}
+
+/** `p` from `dir`: as it is when absolute, else after `dir`, with `.` and `..` taken out either way. */
+string pathFrom(string dir, string p) {
+  if (p.len() > 0 && p.slice(0, 1) == "/") { return normalPath(p); }
+  if (p == "") { return normalPath(dir); }
+  return normalPath(dir + "/" + p);
+}
+
+/**
+ * `p` without `.`, `..` or repeated slashes. An absolute path stays absolute and `..` stops at its root; a relative
+ * one keeps the `..`s it starts with, so the view beneath can resolve them.
+ */
+string normalPath(string p) {
+  bool absolute = p.len() > 0 && p.slice(0, 1) == "/";
+  string[] parts = pathParts(p);
+  string[] kept = string[].filled(parts.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    string part = parts[i];
+    if (part == ".") { continue; }
+    if (part == "..") {
+      if (n > 0 && kept[n - 1] != "..") { n = n - 1; continue; }
+      if (absolute) { continue; }
+    }
+    kept[n] = part;
+    n = n + 1;
+  }
+  string out = absolute ? "/" : "";
+  for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + kept[i]; }
+  return out == "" ? "." : out;
+}
+
+/** The non-empty components of a path. */
+string[] pathParts(string p) {
+  i32 count = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    if (i > from) { count = count + 1; }
+    from = i + 1;
+  }
+  string[] out = string[].filled(count, "");
+  i32 k = 0;
+  from = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    if (i > from) {
+      out[k] = p.slice(from, i);
+      k = k + 1;
+    }
+    from = i + 1;
+  }
+  return out;
+}
+
+// ── A store in memory ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One file or directory in a `MemoryStore`, as `entries` lists it and `restore` takes it back — a directory's
+ * entry comes before anything in it.
+ */
+export struct StoreEntry {
+  /** Absolute; the root is `/`. */
+  string path;
+  bool isDir;
+  /** A file's bytes; empty for a directory. */
+  u8[] data;
+  i32 mode;
+  string owner;
+  i64 modifiedMillis;
+}
+
+/** A node of the store: a directory's names, or a file's bytes, and who may do what to it. */
+struct StoreNode {
+  bool isDir;
+  Map<string, i32> names;
+  Buf data;
+  i32 mode;
+  string owner;
+  i64 mtime;
+
+  void setMode(this, i32 mode) { this.mode = mode; }
+  void setOwner(this, string owner) { this.owner = owner; }
+  void replace(this, u8[] b, i64 now) {
+    this.data = Buf.create();
+    this.data.pushAll(b);
+    this.mtime = now;
+  }
+  void append(this, u8[] b, i64 now) {
+    this.data.pushAll(b);
+    this.mtime = now;
+  }
+  void touch(this, i64 now) { this.mtime = now; }
+}
+
+/**
+ * **Files that live in this program's memory, with owners** (spec ch44 `§wac-std-memory-store-p4k7wzn`).
+ *
+ * One tree, and `asUser` a `Files` acting as one person on it: what that view creates is theirs, and every
+ * operation is checked against the mode for them — owner bits for the owner, the last three for everybody
+ * else, and no groups, because there is no group table. `"root"` is exempt. What is checked is the file or
+ * directory touched, not the directories on the way to it.
+ *
+ * The clock stamps each change, and a host with no clock stamps 0.
+ */
+export struct MemoryStore {
+  /** Every node ever made, the root first; a removed one is left unreachable rather than moved. */
+  Vec<StoreNode> nodes;
+  Clock clock;
+
+  /** An empty store: a root directory, `0755`, owned by root. */
+  MemoryStore create(Clock clock) {
+    Vec<StoreNode> nodes = Vec.create();
+    nodes.push(storeDir("root", 0 as i64));
+    return MemoryStore(nodes, clock);
+  }
+
+  /**
+   * A store holding `entries` — what `entries` gave, or the same shape from an image. `Err` when an entry's
+   * directory is not before it, when a path comes twice, or when the first entry is not the root directory.
+   */
+  Result<MemoryStore, Other> restore(Clock clock, StoreEntry[] entries) {
+    if (entries.len() == 0 || normalPath(entries[0].path) != "/" || !entries[0].isDir) {
+      return Result.Err(Other("the first entry must be the root directory"));
+    }
+    Vec<StoreNode> nodes = Vec.create();
+    MemoryStore store = MemoryStore(nodes, clock);
+    nodes.push(StoreNode(true, Map.create(hashString, stringEq), Buf.create(), entries[0].mode, entries[0].owner,
+                         entries[0].modifiedMillis));
+    for (i32 i = 1; i < entries.len(); i++) {
+      StoreEntry e = entries[i];
+      string p = normalPath(e.path);
+      i32 parent = store.find(storeParent(p));
+      if (parent < 0 || !nodes.get(parent).isDir) {
+        return Result.Err(Other(p + ": its directory is not before it"));
+      }
+      if (nodes.get(parent).names.has(storeBase(p))) { return Result.Err(Other(p + ": listed twice")); }
+      Buf held = Buf.create();
+      if (!e.isDir) { held.pushAll(e.data); }
+      nodes.push(StoreNode(e.isDir, Map.create(hashString, stringEq), held, e.mode, e.owner, e.modifiedMillis));
+      nodes.get(parent).names.set(storeBase(p), nodes.len() - 1);
+    }
+    return Result.Ok(store);
+  }
+
+  /** Every file and directory, each directory before what is in it and names in byte order — what `restore` takes. */
+  StoreEntry[] entries(this) {
+    Vec<StoreEntry> out = Vec.create();
+    this.listInto(out, 0, "/");
+    StoreEntry[] all = StoreEntry[].filled(out.len(), StoreEntry("", false, u8[](), 0, "", 0 as i64));
+    for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+    return all;
+  }
+
+  void listInto(this, Vec<StoreEntry> out, i32 node, string path) {
+    StoreNode n = this.nodes.get(node);
+    out.push(StoreEntry(path, n.isDir, n.isDir ? u8[]() : n.data.bytes(), n.mode, n.owner, n.mtime));
+    if (!n.isDir) { return; }
+    string[] names = sortedNames(n.names.keys());
+    for (i32 i = 0; i < names.len(); i++) {
+      this.listInto(out, n.names.getOr(names[i], 0), (path == "/" ? "/" : path + "/") + names[i]);
+    }
+  }
+
+  /** This store as `user` sees it. A relative path is from the root; `relativeTo` gives it somewhere else to start. */
+  Files asUser(this, string user) {
+    MemoryStore st = this;
+    return Files(
+      (string p) => memRead(st, user, p),
+      (string p, u8[] b) => memWrite(st, user, p, b),
+      (string p) => memOpenRead(st, user, p),
+      (string p) => memOpenWrite(st, user, p, true),
+      (string p) => memOpenWrite(st, user, p, false),
+      (string p) => memStat(st, p),
+      (string p) => memStat(st, p),
+      (string p) => memReadDir(st, user, p),
+      (string p, bool parents) => memMkdir(st, user, p, parents),
+      (string p, bool r) => memRemove(st, user, p, r),
+      (string from, string to) => memRename(st, user, from, to),
+      (string p, i32 mode) => memChmod(st, user, p, mode),
+      (string p, bool on) => memSetExecutable(st, user, p, on),
+      (string p, string owner) => memChown(st, user, p, owner),
+      0, user);
+  }
+
+  /** The node at an absolute normal path, or `STORE_NONE` / `STORE_NOT_A_DIR`. */
+  i32 find(const this, string p) {
+    string[] parts = pathParts(p);
+    i32 at = 0;
+    for (i32 i = 0; i < parts.len(); i++) {
+      if (!this.nodes.get(at).isDir) { return STORE_NOT_A_DIR; }
+      i32 next = this.nodes.get(at).names.getOr(parts[i], 0 - 1);
+      if (next < 0) { return STORE_NONE; }
+      at = next;
+    }
+    return at;
+  }
+
+  /** Whether `user` may do `want` — 4 read, 2 write, 1 execute — to a node. */
+  bool may(const this, string user, i32 node, i32 want) {
+    if (user == "root") { return true; }
+    const StoreNode n = this.nodes.get(node);
+    i32 bits = n.owner == user ? (n.mode >> 6) & 7 : n.mode & 7;
+    return (bits & want) == want;
+  }
+}
+
+static i32 STORE_NONE = 0 - 1;
+static i32 STORE_NOT_A_DIR = 0 - 2;
+
+StoreNode storeDir(string owner, i64 now) {
+  return StoreNode(true, Map.create(hashString, stringEq), Buf.create(), 493, owner, now);   // 0755
+}
+
+StoreNode storeFile(string owner, i64 now) {
+  return StoreNode(false, Map.create(hashString, stringEq), Buf.create(), 420, owner, now);  // 0644
+}
+
+/** The directory above an absolute normal path: `/a/b` gives `/a`, and `/a` gives `/`. */
+string storeParent(string p) {
+  i32 cut = 0;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return cut == 0 ? "/" : p.slice(0, cut);
+}
+
+/** The last component: `/a/b` gives `b`, and `/` gives `""`. */
+string storeBase(string p) {
+  i32 cut = 0;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return p.slice(cut + 1, p.len());
+}
+
+/** The names, sorted by their bytes. */
+string[] sortedNames(string[] names) {
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && bytesAfter(names[j], v)) {
+      names[j + 1] = names[j];
+      j = j - 1;
+    }
+    names[j + 1] = v;
+  }
+  return names;
+}
+
+bool bytesAfter(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
+async i64 storeNow(Clock clock) {
+  match (await clock.nowMillis()) {
+    Ok(t): { return t; }
+    Err(e): { return 0 as i64; }
+  }
+}
+
+string noSuchFile(string p) { return p + ": No such file or directory"; }
+string notADirectory(string p) { return p + ": Not a directory"; }
+string permissionDenied(string p) { return p + ": Permission denied"; }
+string notPermitted(string p) { return p + ": Operation not permitted"; }
+
+async Result<u8[], ReadFault> memRead(MemoryStore st, string user, string path) {
+  string p = normalPath("/" + path);
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (st.nodes.get(node).isDir) { return Result.Err(IsDir(p + ": Is a directory")); }
+  if (!st.may(user, node, 4)) { return Result.Err(Denied(permissionDenied(p))); }
+  return Result.Ok(st.nodes.get(node).data.bytes());
+}
+
+/**
+ * The file a write goes to — made, owned by `user`, when it is not there — or why not. `empty` truncates an
+ * existing one, as `writeFile` and `openWrite` do and `openAppend` does not.
+ */
+async Result<i32, WriteFault> memFileToWrite(MemoryStore st, string user, string p, bool empty) {
+  i32 parent = st.find(storeParent(p));
+  if (parent == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (parent < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (!st.nodes.get(parent).isDir) { return Result.Err(NotADir(notADirectory(p))); }
+  i64 now = await storeNow(st.clock);
+  i32 existing = p == "/" ? 0 : st.nodes.get(parent).names.getOr(storeBase(p), 0 - 1);
+  if (existing >= 0) {
+    if (st.nodes.get(existing).isDir) { return Result.Err(IsDir(p + ": Is a directory")); }
+    if (!st.may(user, existing, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+    if (empty) { st.nodes.get(existing).replace(u8[](), now); }
+    return Result.Ok(existing);
+  }
+  if (!st.may(user, parent, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+  st.nodes.push(storeFile(user, now));
+  st.nodes.get(parent).names.set(storeBase(p), st.nodes.len() - 1);
+  st.nodes.get(parent).touch(now);
+  return Result.Ok(st.nodes.len() - 1);
+}
+
+async Result<void, WriteFault> memWrite(MemoryStore st, string user, string path, u8[] b) {
+  string p = normalPath("/" + path);
+  match (await memFileToWrite(st, user, p, true)) {
+    Ok(node): {
+      st.nodes.get(node).append(b, st.nodes.get(node).mtime);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+async Result<Output, WriteFault> memOpenWrite(MemoryStore st, string user, string path, bool empty) {
+  string p = normalPath("/" + path);
+  match (await memFileToWrite(st, user, p, empty)) {
+    Ok(node): {
+      bool[] shut = bool[].filled(1, false);
+      return Result.Ok(Output((u8[] b) => memAppend(st, node, p, shut, b), () => memShut(shut)));
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/** A write through an open file goes to the node it opened, wherever its name has gone since, as on a host. */
+async Result<void, OutputFault> memAppend(MemoryStore st, i32 node, string p, bool[] shut, u8[] b) {
+  if (shut[0]) { return Result.Err(OutputClosed(p + ": closed")); }
+  i64 now = await storeNow(st.clock);
+  st.nodes.get(node).append(b, now);
+  return Result.Ok();
+}
+
+async Result<void, OutputFault> memShut(bool[] shut) {
+  shut[0] = true;
+  return Result.Ok();
+}
+
+async Result<Input, ReadFault> memOpenRead(MemoryStore st, string user, string path) {
+  match (await memRead(st, user, path)) {
+    Ok(b): {
+      bool[] state = bool[].filled(2, false);
+      return Result.Ok(Input(() => memChunk(b, state), () => memRest(b, state), () => memShutRead(state)));
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/**
+ * What was in the file when it was opened, in one piece and then the end. `state` is whether that piece has gone
+ * and whether the file was closed.
+ */
+async Result<Read, HostFault> memChunk(u8[] b, bool[] state) {
+  if (state[1]) { return Result.Err(Other("read after close")); }
+  if (state[0] || b.len() == 0) { return Result.Ok(Read.End); }
+  state[0] = true;
+  return Result.Ok(Read.Data(b));
+}
+
+async Result<u8[], HostFault> memRest(u8[] b, bool[] state) {
+  if (state[1]) { return Result.Err(Other("read after close")); }
+  bool gone = state[0];
+  state[0] = true;
+  return Result.Ok(gone ? u8[]() : b);
+}
+
+async Result<void, HostFault> memShutRead(bool[] state) {
+  state[1] = true;
+  return Result.Ok();
+}
+
+async Result<Stat, LookFault> memStat(MemoryStore st, string path) {
+  string p = normalPath("/" + path);
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  StoreNode n = st.nodes.get(node);
+  return Result.Ok(Stat(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false, (n.mode & 64) != 0, FAULT_NONE(),
+                        n.mode, n.owner));
+}
+
+async Result<string[], LookFault> memReadDir(MemoryStore st, string user, string path) {
+  string p = normalPath("/" + path);
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (!st.nodes.get(node).isDir) { return Result.Err(NotADir(notADirectory(p))); }
+  if (!st.may(user, node, 4)) { return Result.Err(Denied(permissionDenied(p))); }
+  return Result.Ok(sortedNames(st.nodes.get(node).names.keys()));
+}
+
+async Result<void, MkdirFault> memMkdir(MemoryStore st, string user, string path, bool parents) {
+  string p = normalPath("/" + path);
+  i64 now = await storeNow(st.clock);
+  string[] parts = pathParts(p);
+  i32 at = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    bool last = i == parts.len() - 1;
+    i32 next = st.nodes.get(at).names.getOr(parts[i], 0 - 1);
+    if (next >= 0) {
+      if (!st.nodes.get(next).isDir) {
+        if (last) { return Result.Err(Exists(p + ": File exists")); }
+        return Result.Err(NotADir(notADirectory(p)));
+      }
+      if (last && !parents) { return Result.Err(Exists(p + ": File exists")); }
+      at = next;
+      continue;
+    }
+    if (!last && !parents) { return Result.Err(NotFound(noSuchFile(p))); }
+    if (!st.may(user, at, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+    st.nodes.push(storeDir(user, now));
+    st.nodes.get(at).names.set(parts[i], st.nodes.len() - 1);
+    st.nodes.get(at).touch(now);
+    at = st.nodes.len() - 1;
+  }
+  if (parts.len() == 0 && !parents) { return Result.Err(Exists("/: File exists")); }
+  return Result.Ok();
+}
+
+async Result<void, MoveFault> memRemove(MemoryStore st, string user, string path, bool recursive) {
+  string p = normalPath("/" + path);
+  if (p == "/") { return Result.Err(Denied("/: the root cannot be removed")); }
+  i32 parent = st.find(storeParent(p));
+  if (parent == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (parent < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (!st.nodes.get(parent).isDir) { return Result.Err(NotADir(notADirectory(p))); }
+  i32 node = st.nodes.get(parent).names.getOr(storeBase(p), 0 - 1);
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (st.nodes.get(node).isDir && st.nodes.get(node).names.len() > 0 && !recursive) {
+    return Result.Err(NotEmpty(p + ": Directory not empty"));
+  }
+  if (!st.may(user, parent, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+  i64 now = await storeNow(st.clock);
+  st.nodes.get(parent).names.remove(storeBase(p));
+  st.nodes.get(parent).touch(now);
+  return Result.Ok();
+}
+
+async Result<void, MoveFault> memRename(MemoryStore st, string user, string fromPath, string toPath) {
+  string from = normalPath("/" + fromPath);
+  string to = normalPath("/" + toPath);
+  if (from == "/" || to == "/") { return Result.Err(Denied("/: the root cannot be moved")); }
+  i32 fromParent = st.find(storeParent(from));
+  if (fromParent < 0 || !st.nodes.get(fromParent).isDir) {
+    return fromParent == STORE_NONE ? Result.Err(NotFound(noSuchFile(from))) : Result.Err(NotADir(notADirectory(from)));
+  }
+  i32 node = st.nodes.get(fromParent).names.getOr(storeBase(from), 0 - 1);
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(from))); }
+  i32 toParent = st.find(storeParent(to));
+  if (toParent < 0 || !st.nodes.get(toParent).isDir) {
+    return toParent == STORE_NONE ? Result.Err(NotFound(noSuchFile(to))) : Result.Err(NotADir(notADirectory(to)));
+  }
+  if (to.len() > from.len() && to.slice(0, from.len() + 1) == from + "/") {
+    return Result.Err(Other(to + ": a directory cannot move inside itself"));
+  }
+  i32 existing = st.nodes.get(toParent).names.getOr(storeBase(to), 0 - 1);
+  if (existing >= 0 && existing != node) {
+    bool fromDir = st.nodes.get(node).isDir;
+    bool toDir = st.nodes.get(existing).isDir;
+    if (!fromDir && toDir) { return Result.Err(IsDir(to + ": Is a directory")); }
+    if (fromDir && !toDir) { return Result.Err(NotADir(notADirectory(to))); }
+    if (toDir && st.nodes.get(existing).names.len() > 0) { return Result.Err(NotEmpty(to + ": Directory not empty")); }
+  }
+  if (!st.may(user, fromParent, 2) || !st.may(user, toParent, 2)) { return Result.Err(Denied(permissionDenied(from))); }
+  i64 now = await storeNow(st.clock);
+  st.nodes.get(fromParent).names.remove(storeBase(from));
+  st.nodes.get(toParent).names.set(storeBase(to), node);
+  st.nodes.get(fromParent).touch(now);
+  st.nodes.get(toParent).touch(now);
+  return Result.Ok();
+}
+
+/** The node whose mode or owner is changing, when `user` may change it: its owner, or root. */
+Result<i32, ModeFault> memOwned(MemoryStore st, string user, string p) {
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (user != "root" && st.nodes.get(node).owner != user) { return Result.Err(Denied(notPermitted(p))); }
+  return Result.Ok(node);
+}
+
+async Result<void, ModeFault> memChmod(MemoryStore st, string user, string path, i32 mode) {
+  match (memOwned(st, user, normalPath("/" + path))) {
+    Ok(node): {
+      st.nodes.get(node).setMode(mode & 4095);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/** The three execute bits move together, following read as `chmod +x` does: `0640` becomes `0750`. */
+async Result<void, ModeFault> memSetExecutable(MemoryStore st, string user, string path, bool on) {
+  match (memOwned(st, user, normalPath("/" + path))) {
+    Ok(node): {
+      i32 mode = st.nodes.get(node).mode;
+      st.nodes.get(node).setMode(on ? mode | ((mode & 292) >> 2) : mode & ~73);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/** Root's alone: a user who could give files away could hide one behind somebody else's name. */
+async Result<void, ModeFault> memChown(MemoryStore st, string user, string path, string owner) {
+  string p = normalPath("/" + path);
+  if (user != "root") { return Result.Err(Denied(notPermitted(p))); }
+  match (memOwned(st, user, p)) {
+    Ok(node): {
+      st.nodes.get(node).setOwner(owner);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
 }
 
 /** The mount owning `p`: the longest `at` that prefixes it at a path boundary. A table with no `/` and no match traps. */
@@ -3013,6 +3858,32 @@ string innerOf(Mount[] mounts, string p) {
   return rest == "" ? "/" : rest;
 }
 
+/** What the mount owning `p` lists there, with the mounts directly under `p` added — sorted, each name once. */
+async Result<string[], LookFault> mountedReadDir(Mount[] mounts, string p) {
+  string dir = p != "/" && p.len() > 1 && p.slice(p.len() - 1, p.len()) == "/" ? p.slice(0, p.len() - 1) : p;
+  string prefix = dir == "/" ? "/" : dir + "/";
+  Vec<string> extra = Vec.create();
+  for (Mount m in mounts) {
+    string at = m.at;
+    if (at == "/" || at.len() <= prefix.len() || at.slice(0, prefix.len()) != prefix) { continue; }
+    string rest = at.slice(prefix.len(), at.len());
+    if (rest.indexOf("/") < 0) { extra.push(rest); }
+  }
+  string[] own = string[]();
+  match (await mountOf(mounts, dir).files.readDir(innerOf(mounts, dir))) {
+    Ok(names): { own = names; }
+    // A directory that exists only because something is mounted under it lists its mount points.
+    Err(e): { if (extra.len() == 0) { return Result.Err(e); } }
+  }
+  Vec<string> all = Vec.fromArray(own);
+  for (i32 i = 0; i < extra.len(); i++) {
+    bool seen = false;
+    for (i32 k = 0; k < own.len(); k++) { if (own[k] == extra.get(i)) { seen = true; } }
+    if (!seen) { all.push(extra.get(i)); }
+  }
+  return Result.Ok(sortedNames(all.toArray()));
+}
+
 async Result<void, MoveFault> mountedRename(Mount[] mounts, string from, string to) {
   if (mountOf(mounts, from).at != mountOf(mounts, to).at) {
     return Result.Err(Other("cannot rename " + from + " to " + to + ": they are on different mounts"));
@@ -3020,71 +3891,769 @@ async Result<void, MoveFault> mountedRename(Mount[] mounts, string from, string 
   return await mountOf(mounts, from).files.rename(innerOf(mounts, from), innerOf(mounts, to));
 }
 
+async Result<u8[], ReadFault> refusedRead(string p) { return Result.Err(NotGranted(p + ": write-only")); }
+async Result<Input, ReadFault> refusedOpenRead(string p) { return Result.Err(NotGranted(p + ": write-only")); }
+async Result<Stat, LookFault> refusedLook(string p) { return Result.Err(NotGranted(p + ": write-only")); }
+async Result<string[], LookFault> refusedList(string p) { return Result.Err(NotGranted(p + ": write-only")); }
 async Result<void, WriteFault> refusedWrite(string p) { return Result.Err(NotGranted(p + ": read-only")); }
+async Result<Output, WriteFault> refusedOpen(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, MkdirFault> refusedMkdir(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, MoveFault> refusedMove(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, ModeFault> refusedMode(string p) { return Result.Err(NotGranted(p + ": read-only")); }
+async Result<void, ModeFault> hostChown(string p) {
+  return Result.Err(Unsupported(p + ": the host's owners are not names, so a file cannot be given to one"));
+}
 
-async Result<u8[], ReadFault> hostReadFile(Cli cli, string p) {
-  FileResult f = await cli.readFile(p).ticket();
+Result<u8[], ReadFault> readOfFile(FileResult f) {
   if (!f.ok) { return Result.Err(readFault(f.fault, f.error)); }
   return Result.Ok(f.bytes);
 }
 
-async Result<void, WriteFault> hostWriteFile(Cli cli, string p, u8[] b) {
-  Change c = await cli.writeFile(p, b).ticket();
+Result<Input, ReadFault> openedToRead(Cli cli, HostWait wait, string p, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(readFault(s.fault, s.error)); }
+  i32 h = s.handle;
+  bool[] shut = bool[].filled(1, false);
+  return Result.Ok(Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h),
+                         () => closeReadOnce(cli, wait, h, p, shut)));
+}
+
+/** Closing twice is not an error (`§wac-std-close-r4v8ndq`), so the second asks the host nothing. */
+Ticket<Result<void, HostFault>> closeReadOnce(Cli cli, HostWait wait, i32 h, string p, bool[] shut) {
+  if (shut[0]) { return nothingToClose(); }
+  shut[0] = true;
+  return hostTicket(cli.closeFile(h), wait, (bool went) => readClosedOf(went, p));
+}
+
+Result<void, HostFault> readClosedOf(bool went, string p) {
+  if (!went) { return Result.Err(Other(p + ": was not open")); }
+  return Result.Ok();
+}
+
+/**
+ * A failed write says only that it failed: `send` answers a bool, so the host's reason does not reach here yet
+ * (design/system/0013 step 5 gives the reason in the same call).
+ */
+Result<Output, WriteFault> openedToWrite(Cli cli, HostWait wait, string p, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(writeFault(s.fault, s.error)); }
+  i32 h = s.handle;
+  bool[] shut = bool[].filled(1, false);
+  return Result.Ok(Output((u8[] b) => writeUnlessClosed(cli, wait, h, p, shut, b), () => closeWriteOnce(cli, wait, h, p, shut)));
+}
+
+Ticket<Result<void, OutputFault>> writeUnlessClosed(Cli cli, HostWait wait, i32 h, string p, bool[] shut, u8[] b) {
+  if (shut[0]) { return writeAfterClose(p); }
+  return hostTicket(cli.send(h, b), wait, (bool went) => fileWrittenOf(went, p));
+}
+
+/** A write after `close` is `OutputClosed` (`§wac-std-close-r4v8ndq`): the handle is the host's again. */
+async Result<void, OutputFault> writeAfterClose(string p) { return Result.Err(OutputClosed(p + ": closed")); }
+
+async Result<void, OutputFault> closedAlready() { return Result.Ok(); }
+
+Ticket<Result<void, OutputFault>> closeWriteOnce(Cli cli, HostWait wait, i32 h, string p, bool[] shut) {
+  if (shut[0]) { return closedAlready(); }
+  shut[0] = true;
+  return hostTicket(cli.closeFile(h), wait, (bool went) => fileClosedOf(went, p));
+}
+
+Result<void, OutputFault> fileWrittenOf(bool went, string p) {
+  if (!went) { return Result.Err(Other(p + ": the write failed")); }
+  return Result.Ok();
+}
+
+Result<void, OutputFault> fileClosedOf(bool went, string p) {
+  if (!went) { return Result.Err(Other(p + ": what was written could not be kept")); }
+  return Result.Ok();
+}
+
+Result<void, WriteFault> writtenOf(Change c) {
   if (!c.ok()) { return Result.Err(writeFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<Stat, LookFault> hostStat(Cli cli, string p, bool link) {
-  Stat s = link ? await cli.linkStat(p).ticket() : await cli.stat(p).ticket();
+Result<Stat, LookFault> statOf(Stat s, string p) {
   if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
   if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
   return Result.Ok(s);
 }
 
-async Result<string[], LookFault> hostReadDir(Cli cli, string p) {
+/**
+ * **A machine rather than a host ticket**, because a failure takes a second call: `readDir` answers null for
+ * every failure and `stat` says which. So cancelling one leaves the host its slot until it answers.
+ */
+async Result<string[], LookFault> hostReadDir(Cli cli, HostWait wait, string p) {
   string[]? names = await cli.readDir(p).ticket();
   if (names is null) {
-    // `readDir` answers null for every failure; `stat` says which.
     Stat s = await cli.stat(p).ticket();
     if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
     if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
     if (!s.isDir) { return Result.Err(NotADir(p + ": Not a directory")); }
-    return Result.Err(Other(p + ": cannot be listed"));
+    // **A directory that is there and will not list is a refusal.** The host's `readDir` answers no reason,
+    // and for something `stat` finds to be a directory the one that happens is a permission — `chmod 000 d;
+    // ls d` is GNU's "cannot open directory 'd': Permission denied". As `Other` this had no category, and
+    // every caller printed "cannot be listed", a phrase no real tool prints.
+    return Result.Err(Denied(p + ": cannot be listed"));
   }
   return Result.Ok(names!);
 }
 
-async Result<void, MkdirFault> hostMkdir(Cli cli, string p, bool parents) {
-  Change c = await cli.mkdir(p, parents).ticket();
+Result<void, MkdirFault> madeOf(Change c) {
   if (!c.ok()) { return Result.Err(mkdirFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<void, MoveFault> hostRemove(Cli cli, string p, bool recursive) {
-  Change c = await cli.remove(p, recursive).ticket();
+Result<void, MoveFault> movedOf(Change c) {
   if (!c.ok()) { return Result.Err(moveFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<void, MoveFault> hostRename(Cli cli, string from, string to) {
-  Change c = await cli.rename(from, to).ticket();
-  if (!c.ok()) { return Result.Err(moveFault(c.fault, c.message)); }
-  return Result.Ok();
-}
-
-async Result<void, ModeFault> hostChmod(Cli cli, string p, i32 mode) {
-  Change c = await cli.chmod(p, mode).ticket();
+Result<void, ModeFault> modeOf(Change c) {
   if (!c.ok()) { return Result.Err(modeFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<void, ModeFault> hostSetExecutable(Cli cli, string p, bool on) {
-  Change c = await cli.setExecutable(p, on).ticket();
-  if (!c.ok()) { return Result.Err(modeFault(c.fault, c.message)); }
+// ── Files served to a child ──────────────────────────────────────────────────────────────────────
+
+/*
+ * A child handed a composed `Files` asks its parent for each operation on the parent channel, and the parent answers out
+ * of the one `Files` there is (spec ch44 `§wac-std-files-served-t5h2mzr`), so a child's writes are its parent's and
+ * what it may do is what that `Files` allows. Both ends are here because both are std: a frame is a u32 length and
+ * that many bytes, a question is an opcode and its arguments, and an answer is a result — 0 and the value, or 1, a
+ * `FAULT_*` code and the message. The parent answers one question at a time, in the order asked, so a child's
+ * questions take turns and each answer is the oldest question's.
+ */
+
+static i32 ASK_HELLO = 32;
+static i32 ASK_READ_FILE = 33;
+static i32 ASK_WRITE_FILE = 34;
+static i32 ASK_OPEN_READ = 35;
+static i32 ASK_OPEN_WRITE = 36;
+static i32 ASK_OPEN_APPEND = 37;
+static i32 ASK_STAT = 38;
+static i32 ASK_LINK_STAT = 39;
+static i32 ASK_READ_DIR = 40;
+static i32 ASK_MKDIR = 41;
+static i32 ASK_REMOVE = 42;
+static i32 ASK_RENAME = 43;
+static i32 ASK_CHMOD = 44;
+static i32 ASK_SET_EXECUTABLE = 45;
+static i32 ASK_CHOWN = 46;
+static i32 ASK_CHUNK = 47;
+static i32 ASK_READ_ALL = 48;
+static i32 ASK_CLOSE_READ = 49;
+static i32 ASK_WRITE = 50;
+static i32 ASK_CLOSE_WRITE = 51;
+
+/** What the parent answers `ASK_HELLO` with, so a channel speaking anything else is not mistaken for this one. */
+string servedHello() { return "wac files 1"; }
+
+/** `OutputClosed` on the wire; it has no `FAULT_*` code because no host operation answers it. */
+static i32 WIRE_OUTPUT_CLOSED = 100;
+
+/** Every fault a `Files` operation answers. */
+type FilesFault = union<NotFound, Denied, Exists, NotEmpty, IsDir, NotADir, ReadOnly, NameTooLong, Loop, NoSpace,
+                        NotRepresentable, NotGranted, Unsupported, OutputClosed, Other>;
+
+i32 wireCode(FilesFault e) {
+  if (e is NotFound) { return FAULT_NOT_FOUND(); }
+  if (e is Denied) { return FAULT_DENIED(); }
+  if (e is Exists) { return FAULT_EXISTS(); }
+  if (e is NotEmpty) { return FAULT_NOT_EMPTY(); }
+  if (e is IsDir) { return FAULT_IS_DIR(); }
+  if (e is NotADir) { return FAULT_NOT_A_DIR(); }
+  if (e is ReadOnly) { return FAULT_READ_ONLY(); }
+  if (e is NameTooLong) { return FAULT_NAME_TOO_LONG(); }
+  if (e is Loop) { return FAULT_LOOP(); }
+  if (e is NoSpace) { return FAULT_NO_SPACE(); }
+  if (e is NotRepresentable) { return FAULT_NOT_REPRESENTABLE(); }
+  if (e is NotGranted) { return FAULT_NOT_GRANTED(); }
+  if (e is Unsupported) { return FAULT_UNSUPPORTED(); }
+  if (e is OutputClosed) { return WIRE_OUTPUT_CLOSED; }
+  return FAULT_OTHER();
+}
+
+OutputFault outputFault(i32 code, string m) {
+  if (code == WIRE_OUTPUT_CLOSED) { return OutputClosed(m); }
+  if (code == FAULT_NO_SPACE()) { return NoSpace(m); }
+  if (code == FAULT_UNSUPPORTED()) { return Unsupported(m); }
+  return Other(m);
+}
+
+HostFault hostFaultOf(i32 code, string m) {
+  if (code == FAULT_UNSUPPORTED()) { return Unsupported(m); }
+  return Other(m);
+}
+
+void putWireString(Buf out, string s) {
+  u8[] b = s.toBytes();
+  out.pushU32(b.len() as@ u32);
+  out.pushAll(b);
+}
+
+void putWireBytes(Buf out, u8[] b) {
+  out.pushU32(b.len() as@ u32);
+  out.pushAll(b);
+}
+
+void putWireI64(Buf out, i64 v) {
+  for (i32 i = 0; i < 8; i++) { out.push((((v >> (i * 8)) & 255 as i64) as! i32) as@ u8); }
+}
+
+void putFault(Buf out, FilesFault e) {
+  out.push(1);
+  out.pushU32(wireCode(e) as@ u32);
+  putWireString(out, "\{e}");
+}
+
+void putStat(Buf out, Stat s) {
+  out.push(s.exists ? 1 : 0);
+  out.push(s.isFile ? 1 : 0);
+  out.push(s.isDir ? 1 : 0);
+  putWireI64(out, s.size);
+  putWireI64(out, s.modifiedMillis);
+  out.push(s.isSymlink ? 1 : 0);
+  out.push(s.isExecutable ? 1 : 0);
+  out.pushU32(s.fault as@ u32);
+  out.pushU32(s.mode as@ u32);
+  putWireString(out, s.owner);
+}
+
+/** A frame's body, read from the front; running off the end marks it `bad` rather than trapping. */
+struct WireReader {
+  u8[] data;
+  i32 at;
+  bool bad;
+  string why;
+
+  i32 byte(this) {
+    if (this.bad || this.at >= this.data.len()) { this.bad = true; return 0; }
+    i32 v = this.data[this.at] as i32;
+    this.at++;
+    return v;
+  }
+
+  i32 u32(this) {
+    i32 a = this.byte();
+    i32 b = this.byte();
+    i32 c = this.byte();
+    i32 d = this.byte();
+    return a | (b << 8) | (c << 16) | (d << 24);
+  }
+
+  i64 i64(this) {
+    i64 v = 0 as i64;
+    for (i32 i = 0; i < 8; i++) { v = v | ((this.byte() as i64) << (i * 8)); }
+    return v;
+  }
+
+  u8[] bytes(this) {
+    i32 n = this.u32();
+    if (this.bad || n < 0 || this.at + n > this.data.len()) { this.bad = true; return u8[](); }
+    u8[] b = u8[].filled(n, 0);
+    b.copyFrom(this.data, this.at, 0, n);
+    this.at = this.at + n;
+    return b;
+  }
+
+  string text(this) { return string.fromBytes(this.bytes()); }
+
+  bool flag(this) { return this.byte() == 1; }
+
+  Stat stat(this) {
+    bool exists = this.flag();
+    bool isFile = this.flag();
+    bool isDir = this.flag();
+    i64 size = this.i64();
+    i64 mtime = this.i64();
+    bool isSymlink = this.flag();
+    bool isExecutable = this.flag();
+    i32 fault = this.u32();
+    i32 mode = this.u32();
+    string owner = this.text();
+    return Stat(exists, isFile, isDir, size, mtime, isSymlink, isExecutable, fault, mode, owner);
+  }
+
+  /** Whether the answer is an `Err`; `code` and `message` read the fault after it. */
+  bool failed(this) { return this.byte() != 0; }
+}
+
+WireReader brokenReader(string why) { return WireReader(u8[](), 0, true, why); }
+
+/** One end of a framed conversation on a handle. */
+struct WireLine {
+  Cli cli;
+  i32 handle;
+  /** Bytes received and not yet a whole frame. */
+  Buf held;
+  bool broken;
+
+  WireLine on(Cli cli, i32 handle) { return WireLine(cli, handle, Buf.create(), false); }
+
+  /** Send `body` as one frame. */
+  async bool put(this, Buf body) {
+    if (this.broken) { return false; }
+    Buf framed = Buf.create();
+    framed.pushU32(body.len as@ u32);
+    framed.pushAll(body.bytes());
+    bool went = await this.cli.send(this.handle, framed.bytes()).ticket();
+    if (!went) { this.broken = true; }
+    return went;
+  }
+
+  /** The next whole frame, reading as many chunks as it takes; `bad` when the line ended first. */
+  async WireReader next(this) {
+    while (!this.broken) {
+      WireReader whole = this.take();
+      if (!whole.bad) { return whole; }
+      Read c = await this.cli.recv(this.handle).ticket();
+      match (c) {
+        Data(bytes): { this.held.pushAll(bytes); }
+        End: { this.broken = true; }
+        Failed(why): { this.broken = true; }
+      }
+    }
+    return brokenReader("the parent channel has ended");
+  }
+
+  /**
+   * `next`, giving up when `stop` settles first: the read in flight is withdrawn and the line is broken. What a
+   * parent serving a child's files waits on, so that stopping the child also ends the serving rather than
+   * leaving a read of a dead channel registered.
+   */
+  async WireReader nextUnless(this, HostWait wait, TicketBase stop) {
+    while (!this.broken) {
+      WireReader whole = this.take();
+      if (!whole.bad) { return whole; }
+      Ticket<Read> got = recvTicket(this.cli, wait, this.handle);
+      i32 won = await Ticket.first([got, stop]);
+      if (won != 0) {
+        got.cancel();
+        this.broken = true;
+      } else {
+        match (got.value()) {
+          Data(bytes): { this.held.pushAll(bytes); }
+          End: { this.broken = true; }
+          Failed(why): { this.broken = true; }
+        }
+      }
+    }
+    return brokenReader("the parent channel has ended");
+  }
+
+  /** The same, waiting synchronously — for the one question a program asks before it can have a scheduler running. */
+  WireReader nextNow(this) {
+    while (!this.broken) {
+      WireReader whole = this.take();
+      if (!whole.bad) { return whole; }
+      Read c = this.cli.recv(this.handle).wait();
+      match (c) {
+        Data(bytes): { this.held.pushAll(bytes); }
+        End: { this.broken = true; }
+        Failed(why): { this.broken = true; }
+      }
+    }
+    return brokenReader("the parent channel has ended");
+  }
+
+  /** A whole frame off the front of `held`, or a `bad` reader when there is not one yet. */
+  WireReader take(this) {
+    if (this.held.len < 4) { return brokenReader("short"); }
+    i32 n = this.held.get(0) as i32 | (this.held.get(1) as i32 << 8) | (this.held.get(2) as i32 << 16)
+          | (this.held.get(3) as i32 << 24);
+    if (n < 0) {
+      this.broken = true;
+      return brokenReader("a frame longer than two gigabytes");
+    }
+    if (this.held.len < 4 + n) { return brokenReader("short"); }
+    u8[] body = u8[].filled(n, 0);
+    u8[] all = this.held.bytes();
+    body.copyFrom(all, 4, 0, n);
+    this.held.dropFront(4 + n);
+    return WireReader(body, 0, false, "");
+  }
+}
+
+Buf wireAsk(i32 op) {
+  Buf b = Buf.create();
+  b.push(op as@ u8);
+  return b;
+}
+
+// ── The child's end ──
+
+/**
+ * A child's line to its parent: one question in flight at a time, the next waiting on `turn`. `served` is 0 until
+ * `Sys.files` has asked, then 1 when the parent answers files and 2 when it does not.
+ */
+struct ParentLine {
+  WireLine line;
+  Ticket<bool> turn;
+  i32 served;
+  /** Who the parent's files act as, from its answer to the hello. */
+  string user;
+
+  ParentLine on(Cli cli) {
+    Ticket<bool> open;
+    open.resolve(true);
+    return ParentLine(WireLine.on(cli, PARENT_FS), open, 0, "");
+  }
+
+  /** Whether the parent serves files — asked once, the first time, and remembered. */
+  bool serves(this) {
+    if (this.served == 0) {
+      Buf hello = wireAsk(ASK_HELLO);
+      Buf framed = Buf.create();
+      framed.pushU32(hello.len as@ u32);
+      framed.pushAll(hello.bytes());
+      bool asked = this.line.cli.send(PARENT_FS, framed.bytes()).wait();
+      WireReader r = asked ? this.line.nextNow() : brokenReader("not spawned");
+      string said = r.text();
+      this.served = !r.bad && said == servedHello() ? 1 : 2;
+      if (this.served == 1) { this.user = r.text(); }
+    }
+    return this.served == 1;
+  }
+
+  /** Ask `question` when the questions before it have their answers, and answer what the parent says. */
+  async WireReader ask(this, Buf question) {
+    Ticket<bool> before = this.turn;
+    Ticket<bool> mine;
+    this.turn = mine;
+    await before;
+    WireReader r = brokenReader("the parent channel has ended");
+    if (await this.line.put(question)) { r = await this.line.next(); }
+    mine.resolve(true);
+    return r;
+  }
+}
+
+/** The `Files` a child's parent serves. Composed in the parent, so a grandchild is served it in turn. */
+Files parentFiles(ParentLine l) {
+  return Files(
+    (string p) => askRead(l, p),
+    (string p, u8[] b) => askWrite(l, p, b),
+    (string p) => askOpenRead(l, p),
+    (string p) => askOpenWrite(l, ASK_OPEN_WRITE, p),
+    (string p) => askOpenWrite(l, ASK_OPEN_APPEND, p),
+    (string p) => askStat(l, ASK_STAT, p),
+    (string p) => askStat(l, ASK_LINK_STAT, p),
+    (string p) => askReadDir(l, p),
+    (string p, bool parents) => askMkdir(l, p, parents),
+    (string p, bool r) => askMove(l, ASK_REMOVE, p, "", r),
+    (string from, string to) => askMove(l, ASK_RENAME, from, to, false),
+    (string p, i32 mode) => askMode(l, ASK_CHMOD, p, mode, false, ""),
+    (string p, bool on) => askMode(l, ASK_SET_EXECUTABLE, p, 0, on, ""),
+    (string p, string owner) => askMode(l, ASK_CHOWN, p, 0, false, owner),
+    0, l.user);
+}
+
+string lineGone(WireReader r) { return "the parent did not answer: " + r.why; }
+
+async Result<u8[], ReadFault> askRead(ParentLine l, string p) {
+  Buf q = wireAsk(ASK_READ_FILE);
+  putWireString(q, p);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(readFault(r.u32(), r.text())); }
+  u8[] b = r.bytes();
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok(b);
+}
+
+async Result<void, WriteFault> askWrite(ParentLine l, string p, u8[] b) {
+  Buf q = wireAsk(ASK_WRITE_FILE);
+  putWireString(q, p);
+  putWireBytes(q, b);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(writeFault(r.u32(), r.text())); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
   return Result.Ok();
+}
+
+async Result<Input, ReadFault> askOpenRead(ParentLine l, string p) {
+  Buf q = wireAsk(ASK_OPEN_READ);
+  putWireString(q, p);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(readFault(r.u32(), r.text())); }
+  i32 id = r.u32();
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok(Input(() => askChunk(l, id), () => askReadAll(l, id), () => askCloseRead(l, id)));
+}
+
+async Result<Read, HostFault> askChunk(ParentLine l, i32 id) {
+  Buf q = wireAsk(ASK_CHUNK);
+  q.pushU32(id as@ u32);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(hostFaultOf(r.u32(), r.text())); }
+  bool more = r.flag();
+  u8[] b = more ? r.bytes() : u8[]();
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  if (!more) { return Result.Ok(Read.End); }
+  return Result.Ok(Read.Data(b));
+}
+
+async Result<u8[], HostFault> askReadAll(ParentLine l, i32 id) {
+  Buf q = wireAsk(ASK_READ_ALL);
+  q.pushU32(id as@ u32);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(hostFaultOf(r.u32(), r.text())); }
+  u8[] b = r.bytes();
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok(b);
+}
+
+async Result<void, HostFault> askCloseRead(ParentLine l, i32 id) {
+  Buf q = wireAsk(ASK_CLOSE_READ);
+  q.pushU32(id as@ u32);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(hostFaultOf(r.u32(), r.text())); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok();
+}
+
+async Result<Output, WriteFault> askOpenWrite(ParentLine l, i32 op, string p) {
+  Buf q = wireAsk(op);
+  putWireString(q, p);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(writeFault(r.u32(), r.text())); }
+  i32 id = r.u32();
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok(Output((u8[] b) => askOutput(l, ASK_WRITE, id, b), () => askOutput(l, ASK_CLOSE_WRITE, id, u8[]())));
+}
+
+async Result<void, OutputFault> askOutput(ParentLine l, i32 op, i32 id, u8[] b) {
+  Buf q = wireAsk(op);
+  q.pushU32(id as@ u32);
+  if (op == ASK_WRITE) { putWireBytes(q, b); }
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(outputFault(r.u32(), r.text())); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok();
+}
+
+async Result<Stat, LookFault> askStat(ParentLine l, i32 op, string p) {
+  Buf q = wireAsk(op);
+  putWireString(q, p);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(lookFault(r.u32(), r.text())); }
+  Stat s = r.stat();
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok(s);
+}
+
+async Result<string[], LookFault> askReadDir(ParentLine l, string p) {
+  Buf q = wireAsk(ASK_READ_DIR);
+  putWireString(q, p);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(lookFault(r.u32(), r.text())); }
+  i32 n = r.u32();
+  if (r.bad || n < 0) { return Result.Err(Other(lineGone(r))); }
+  string[] names = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { names[i] = r.text(); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok(names);
+}
+
+async Result<void, MkdirFault> askMkdir(ParentLine l, string p, bool parents) {
+  Buf q = wireAsk(ASK_MKDIR);
+  putWireString(q, p);
+  q.push(parents ? 1 : 0);
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(mkdirFault(r.u32(), r.text())); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok();
+}
+
+/** `remove` (`p`, `recursive`) and `rename` (`p` to `to`). */
+async Result<void, MoveFault> askMove(ParentLine l, i32 op, string p, string to, bool recursive) {
+  Buf q = wireAsk(op);
+  putWireString(q, p);
+  if (op == ASK_RENAME) { putWireString(q, to); } else { q.push(recursive ? 1 : 0); }
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(moveFault(r.u32(), r.text())); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok();
+}
+
+/** `chmod` (`mode`), `setExecutable` (`on`) and `chown` (`owner`). */
+async Result<void, ModeFault> askMode(ParentLine l, i32 op, string p, i32 mode, bool on, string owner) {
+  Buf q = wireAsk(op);
+  putWireString(q, p);
+  if (op == ASK_CHMOD) { q.pushU32(mode as@ u32); }
+  if (op == ASK_SET_EXECUTABLE) { q.push(on ? 1 : 0); }
+  if (op == ASK_CHOWN) { putWireString(q, owner); }
+  WireReader r = await l.ask(q);
+  if (r.failed()) { return Result.Err(modeFault(r.u32(), r.text())); }
+  if (r.bad) { return Result.Err(Other(lineGone(r))); }
+  return Result.Ok();
+}
+
+// ── The parent's end ──
+
+/** A read of `handle` as a ticket the host answers — one that `cancel` withdraws. */
+Ticket<Read> recvTicket(Cli cli, HostWait wait, i32 handle) { return hostTicket(cli.recv(handle), wait, sameRead); }
+
+Read sameRead(Read r) { return r; }
+
+/** The streams a served child has open, by the number it was given; a closed one keeps its number. */
+struct ServedStreams {
+  Vec<Input> reads;
+  Vec<bool> readOpen;
+  Vec<Output> writes;
+  Vec<bool> writeOpen;
+}
+
+/**
+ * Answer a child's questions out of `files` until its channel ends — which is the child exiting — or `stop` settles,
+ * which is the child being stopped; then close what it left open. Runs as this program's scheduler does: nothing else
+ * has to drive it.
+ */
+async void serveFiles(Cli cli, HostWait wait, i32 handle, Files files, Ticket<bool> stop) {
+  WireLine line = WireLine.on(cli, handle);
+  ServedStreams open = ServedStreams(Vec.create(), Vec.create(), Vec.create(), Vec.create());
+  bool going = true;
+  while (going) {
+    WireReader q = await line.nextUnless(wait, stop);
+    if (q.bad) {
+      going = false;
+    } else {
+      Buf a = await answerQuestion(files, open, q);
+      going = await line.put(a);
+    }
+  }
+  for (i32 i = 0; i < open.reads.len(); i++) {
+    if (open.readOpen.get(i)) { await open.reads.get(i).close(); }
+  }
+  for (i32 i = 0; i < open.writes.len(); i++) {
+    if (open.writeOpen.get(i)) { await open.writes.get(i).close(); }
+  }
+}
+
+async Buf answerQuestion(Files files, ServedStreams open, WireReader q) {
+  i32 op = q.byte();
+  Buf a = Buf.create();
+  if (op == ASK_HELLO) {
+    putWireString(a, servedHello());
+    putWireString(a, files.user);
+  } else if (op == ASK_READ_FILE) {
+    match (await files.readFile(q.text())) {
+      Ok(b): { a.push(0); putWireBytes(a, b); }
+      Err(e): { putFault(a, e); }
+    }
+  } else if (op == ASK_WRITE_FILE) {
+    string p = q.text();
+    putDone(a, (await files.writeFile(p, q.bytes())).err());
+  } else if (op == ASK_OPEN_READ) {
+    match (await files.openRead(q.text())) {
+      Ok(in): {
+        open.reads.push(in);
+        open.readOpen.push(true);
+        a.push(0);
+        a.pushU32((open.reads.len() - 1) as@ u32);
+      }
+      Err(e): { putFault(a, e); }
+    }
+  } else if (op == ASK_OPEN_WRITE || op == ASK_OPEN_APPEND) {
+    string p = q.text();
+    Result<Output, WriteFault> opened = op == ASK_OPEN_WRITE ? await files.openWrite(p) : await files.openAppend(p);
+    match (opened) {
+      Ok(out): {
+        open.writes.push(out);
+        open.writeOpen.push(true);
+        a.push(0);
+        a.pushU32((open.writes.len() - 1) as@ u32);
+      }
+      Err(e): { putFault(a, e); }
+    }
+  } else if (op == ASK_STAT || op == ASK_LINK_STAT) {
+    string p = q.text();
+    Result<Stat, LookFault> s = op == ASK_STAT ? await files.stat(p) : await files.linkStat(p);
+    match (s) {
+      Ok(st): { a.push(0); putStat(a, st); }
+      Err(e): { putFault(a, e); }
+    }
+  } else if (op == ASK_READ_DIR) {
+    match (await files.readDir(q.text())) {
+      Ok(names): {
+        a.push(0);
+        a.pushU32(names.len() as@ u32);
+        for (i32 i = 0; i < names.len(); i++) { putWireString(a, names[i]); }
+      }
+      Err(e): { putFault(a, e); }
+    }
+  } else if (op == ASK_MKDIR) {
+    string p = q.text();
+    putDone(a, (await files.mkdir(p, q.flag())).err());
+  } else if (op == ASK_REMOVE) {
+    string p = q.text();
+    putDone(a, (await files.remove(p, q.flag())).err());
+  } else if (op == ASK_RENAME) {
+    string from = q.text();
+    putDone(a, (await files.rename(from, q.text())).err());
+  } else if (op == ASK_CHMOD) {
+    string p = q.text();
+    putDone(a, (await files.chmod(p, q.u32())).err());
+  } else if (op == ASK_SET_EXECUTABLE) {
+    string p = q.text();
+    putDone(a, (await files.setExecutable(p, q.flag())).err());
+  } else if (op == ASK_CHOWN) {
+    string p = q.text();
+    putDone(a, (await files.chown(p, q.text())).err());
+  } else if (op == ASK_CHUNK || op == ASK_READ_ALL || op == ASK_CLOSE_READ) {
+    await answerRead(open, op, q.u32(), a);
+  } else if (op == ASK_WRITE || op == ASK_CLOSE_WRITE) {
+    i32 id = q.u32();
+    await answerWrite(open, op, id, op == ASK_WRITE ? q.bytes() : u8[](), a);
+  } else {
+    putFault(a, Unsupported("this parent does not know question \{op}"));
+  }
+  return a;
+}
+
+/** The answer to a question with nothing to answer but whether it worked: `e` is its fault, or null. */
+void putDone(Buf a, FilesFault? e) {
+  if (e is null) { a.push(0); } else { putFault(a, e!); }
+}
+
+async void answerRead(ServedStreams open, i32 op, i32 id, Buf a) {
+  if (id < 0 || id >= open.reads.len() || !open.readOpen.get(id)) {
+    putFault(a, Other("no stream \{id} is open to read"));
+    return;
+  }
+  Input in = open.reads.get(id);
+  if (op == ASK_CHUNK) {
+    match (await in.chunk()) {
+      Ok(c): {
+        a.push(0);
+        match (c) {
+          Data(b): { a.push(1); putWireBytes(a, b); }
+          default: { a.push(0); }
+        }
+      }
+      Err(e): { putFault(a, e); }
+    }
+  } else if (op == ASK_READ_ALL) {
+    match (await in.readAll()) {
+      Ok(b): { a.push(0); putWireBytes(a, b); }
+      Err(e): { putFault(a, e); }
+    }
+  } else {
+    open.readOpen.set(id, false);
+    putDone(a, (await in.close()).err());
+  }
+}
+
+async void answerWrite(ServedStreams open, i32 op, i32 id, u8[] b, Buf a) {
+  if (id < 0 || id >= open.writes.len() || !open.writeOpen.get(id)) {
+    putFault(a, OutputClosed("no stream \{id} is open to write"));
+    return;
+  }
+  Output out = open.writes.get(id);
+  if (op == ASK_WRITE) {
+    putDone(a, (await out.write(b)).err());
+  } else {
+    open.writeOpen.set(id, false);
+    putDone(a, (await out.close()).err());
+  }
 }
 
 // ── Sockets ──────────────────────────────────────────────────────────────────────────────────────
@@ -3117,35 +4686,64 @@ BindFault bindFault(i32 code, string m) {
 /** The network (spec ch44). Each operation answers `NotGranted` when the host withheld it. */
 export struct Net {
   Cli cli;
+  HostWait wait;
 
   /** A connection to `host:port`. */
-  async Result<Socket, ConnectFault> connect(this, string host, i32 port) {
-    HostSocket s = await this.cli.connect(host, port).ticket();
-    if (s.handle < 0) { return Result.Err(connectFault(s.fault, s.error)); }
-    return Result.Ok(Socket(this.cli, s.handle, s.peer, s.port));
+  Ticket<Result<Socket, ConnectFault>> connect(this, string host, i32 port) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.connect(host, port), wait, (HostSocket s) => connectedOf(cli, wait, s));
   }
 
   /**
    * Listen on `addr:port` — `"127.0.0.1"` for loopback, `"0.0.0.0"` for every interface; the address is not
    * optional, so the surprising one is something somebody typed. Port 0 asks the host for any free one.
    */
-  async Result<Listener, BindFault> listen(this, string addr, i32 port) {
-    HostSocket s = await this.cli.listen(addr, port).ticket();
-    if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
-    return Result.Ok(Listener(this.cli, s.handle, addr + ":" + "\{s.port}", s.port));
+  Ticket<Result<Listener, BindFault>> listen(this, string addr, i32 port) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.listen(addr, port), wait, (HostSocket s) => listeningOf(cli, wait, addr, s));
   }
 
   /** A datagram socket on `addr:port`, which one socket uses to talk to many peers. */
-  async Result<Datagrams, BindFault> bindDatagram(this, string addr, i32 port) {
-    HostSocket s = await this.cli.bindDatagram(addr, port).ticket();
-    if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
-    return Result.Ok(Datagrams(this.cli, s.handle, s.port));
+  Ticket<Result<Datagrams, BindFault>> bindDatagram(this, string addr, i32 port) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.bindDatagram(addr, port), wait, (HostSocket s) => boundOf(cli, wait, s));
+  }
+}
+
+Result<Socket, ConnectFault> connectedOf(Cli cli, HostWait wait, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(connectFault(s.fault, s.error)); }
+  return Result.Ok(Socket(cli, wait, s.handle, s.peer, s.port));
+}
+
+Result<Listener, BindFault> listeningOf(Cli cli, HostWait wait, string addr, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
+  return Result.Ok(Listener(cli, wait, s.handle, addr + ":" + "\{s.port}", s.port));
+}
+
+Result<Datagrams, BindFault> boundOf(Cli cli, HostWait wait, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
+  return Result.Ok(Datagrams(cli, wait, s.handle, s.port));
+}
+
+Result<Socket, HostFault> acceptedOf(Cli cli, HostWait wait, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(Other(s.error)); }
+  return Result.Ok(Socket(cli, wait, s.handle, s.peer, s.port));
+}
+
+Result<Read, SocketFault> recvOf(Read c) {
+  match (c) {
+    Failed(why): { return Result.Err(Other(why)); }
+    default: { return Result.Ok(c); }
   }
 }
 
 /** A listening socket. */
 export struct Listener {
   Cli cli;
+  HostWait wait;
   i32 handle;
   /** `"0.0.0.0:8080"`. */
   string addr;
@@ -3156,10 +4754,10 @@ export struct Listener {
    * The next connection. `Err` only when the listener itself cannot go on (spec ch44 `§wac-std-accept-tkafecv`):
    * a connection that ends before it is accepted is never reported.
    */
-  async Result<Socket, HostFault> accept(this) {
-    HostSocket s = await this.cli.accept(this.handle).ticket();
-    if (s.handle < 0) { return Result.Err(Other(s.error)); }
-    return Result.Ok(Socket(this.cli, s.handle, s.peer, s.port));
+  Ticket<Result<Socket, HostFault>> accept(this) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.accept(this.handle), wait, (HostSocket s) => acceptedOf(cli, wait, s));
   }
 
   void close(this) { this.cli.closeSocket(this.handle); }
@@ -3168,25 +4766,19 @@ export struct Listener {
 /** One connection (spec ch44 `§wac-std-socket-gs9parx`). */
 export struct Socket {
   Cli cli;
+  HostWait wait;
   i32 handle;
   /** The other end's address, and its port. */
   string peer;
   i32 port;
 
   /** The next bytes, or the end. */
-  async Result<Read, SocketFault> recv(this) {
-    Read c = await this.cli.recv(this.handle).ticket();
-    match (c) {
-      Failed(why): { return Result.Err(Other(why)); }
-      default: { return Result.Ok(c); }
-    }
-  }
+  Ticket<Result<Read, SocketFault>> recv(this) { return hostTicket(this.cli.recv(this.handle), this.wait, recvOf); }
 
   /** Send `bytes`; a peer that has gone is `PeerClosed`, an ordinary fault a server handles. */
-  async Result<void, SocketFault> send(this, u8[] bytes) {
-    bool went = await this.cli.send(this.handle, bytes).ticket();
-    if (!went) { return Result.Err(PeerClosed(this.peer + ": the connection has closed")); }
-    return Result.Ok();
+  Ticket<Result<void, SocketFault>> send(this, u8[] bytes) {
+    string peer = this.peer;
+    return hostTicket(this.cli.send(this.handle, bytes), this.wait, (bool went) => sentOf(went, peer));
   }
 
   /** No more from this side; reading goes on. */
@@ -3198,25 +4790,35 @@ export struct Socket {
   bool fromLoopback(const this) { return this.peer == "127.0.0.1" || this.peer == "::1" || this.peer == "localhost"; }
 }
 
+Result<void, SocketFault> sentOf(bool went, string peer) {
+  if (!went) { return Result.Err(PeerClosed(peer + ": the connection has closed")); }
+  return Result.Ok();
+}
+
 /** A datagram socket: no connection, the peer named on every send and arriving with every receive. */
 export struct Datagrams {
   Cli cli;
+  HostWait wait;
   i32 handle;
   i32 port;
 
-  async Result<Datagram, HostFault> receive(this) {
-    Datagram d = await this.cli.receiveFrom(this.handle).ticket();
-    if (d.error != "") { return Result.Err(Other(d.error)); }
-    return Result.Ok(d);
-  }
+  Ticket<Result<Datagram, HostFault>> receive(this) { return hostTicket(this.cli.receiveFrom(this.handle), this.wait, datagramOf); }
 
-  async Result<void, union<Unreachable, Unsupported, Other>> sendTo(this, string host, i32 port, u8[] bytes) {
-    bool went = await this.cli.sendTo(this.handle, host, port, bytes).ticket();
-    if (!went) { return Result.Err(Unreachable(host + ":" + "\{port}: the datagram was not sent")); }
-    return Result.Ok();
+  Ticket<Result<void, union<Unreachable, Unsupported, Other>>> sendTo(this, string host, i32 port, u8[] bytes) {
+    return hostTicket(this.cli.sendTo(this.handle, host, port, bytes), this.wait, (bool went) => sentToOf(went, host, port));
   }
 
   void close(this) { this.cli.closeSocket(this.handle); }
+}
+
+Result<Datagram, HostFault> datagramOf(Datagram d) {
+  if (d.error != "") { return Result.Err(Other(d.error)); }
+  return Result.Ok(d);
+}
+
+Result<void, union<Unreachable, Unsupported, Other>> sentToOf(bool went, string host, i32 port) {
+  if (!went) { return Result.Err(Unreachable(host + ":" + "\{port}: the datagram was not sent")); }
+  return Result.Ok();
 }
 
 // ── Processes and modules ────────────────────────────────────────────────────────────────────────
@@ -3275,41 +4877,95 @@ export struct Launch {
   }
 }
 
+/**
+ * The environment a host program gets from `Procs.exec`: a base — this program's own, or none — with variables set over
+ * it (spec ch44 `§wac-std-child-env-k3w8tqa`).
+ */
+export struct ChildEnv {
+  /** The base is empty rather than this program's own environment. */
+  bool clean;
+  /** `NAME=value`, each name once. */
+  string[] pairs;
+
+  /** This program's own environment, unchanged. */
+  ChildEnv inherited() { return ChildEnv(false, string[]()); }
+  /** No variables at all. */
+  ChildEnv empty() { return ChildEnv(true, string[]()); }
+
+  /** This environment with `name` set to `value`, replacing any value it had. */
+  ChildEnv set(const this, string name, string value) {
+    string prefix = name + "=";
+    i32 kept = 0;
+    for (i32 i = 0; i < this.pairs.len(); i++) {
+      if (!namedBy(this.pairs[i], prefix)) { kept++; }
+    }
+    string[] next = string[].filled(kept + 1, "");
+    i32 at = 0;
+    for (i32 i = 0; i < this.pairs.len(); i++) {
+      if (!namedBy(this.pairs[i], prefix)) { next[at] = this.pairs[i]; at++; }
+    }
+    next[kept] = prefix + value;
+    return ChildEnv(this.clean, next);
+  }
+}
+
+/** Whether `pair` is `NAME=…` for the `NAME=` that is `prefix`. */
+bool namedBy(string pair, string prefix) {
+  return pair.len() >= prefix.len() && pair.slice(0, prefix.len()) == prefix;
+}
+
 /** Starting other programs (spec ch44). */
 export struct Procs {
   Cli cli;
+  HostWait wait;
 
   /** Start the compiled module `wasm` with `args`, holding `given`. */
-  async Result<Child, SpawnFault> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
-    if (given.composedFiles()) { return Result.Err(composedRefused()); }
-    HostChild k = await this.cli.spawn(wasm, bytesOf(args), given.grants(), how.cwd, how.flags(), false).ticket();
-    if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
-    return Result.Ok(Child(this.cli, k.handle, k.errHandle));
+  Ticket<Result<Child, SpawnFault>> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    Files? served = given.composedFiles() ? given.files : null;
+    return hostTicket(cli.spawn(wasm, bytesOf(args), given.grants(), how.cwd, how.flags(), served is not null), wait,
+                      (HostChild k) => childOf(cli, wait, k, served));
   }
 
   /** Start another instance of this program — its `main`, with `args` — holding `given`. Needs the grant as `spawn` does. */
-  async Result<Child, SpawnFault> spawnSelf(this, string[] args, Authority given, Launch how) {
-    if (given.composedFiles()) { return Result.Err(composedRefused()); }
-    HostChild k = await this.cli.spawnSelf(bytesOf(args), given.grants(), how.cwd, how.flags(), false).ticket();
-    if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
-    return Result.Ok(Child(this.cli, k.handle, k.errHandle));
+  Ticket<Result<Child, SpawnFault>> spawnSelf(this, string[] args, Authority given, Launch how) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    Files? served = given.composedFiles() ? given.files : null;
+    return hostTicket(cli.spawnSelf(bytesOf(args), given.grants(), how.cwd, how.flags(), served is not null), wait,
+                      (HostChild k) => childOf(cli, wait, k, served));
   }
 
   /**
    * Run a program of the host's — `program` found on its path — to the end, with `input` as its standard input.
    * Its output comes back whole unless `how.inheritOut`, when it went to this program's own.
    */
-  async Result<Exec, SpawnFault> exec(this, string program, string[] args, u8[] input, string[] env, Launch how) {
-    Exec r = await this.cli.execWithIn(program, args, input, env, env.len() > 0, how.inheritOut, how.cwd).ticket();
-    if (!r.ran()) { return Result.Err(r.error == faultWords(FAULT_NOT_GRANTED()) ? NotGranted(r.error) : Other(r.error)); }
-    return Result.Ok(r);
+  Ticket<Result<Exec, SpawnFault>> exec(this, string program, string[] args, u8[] input, ChildEnv env, Launch how) {
+    return hostTicket(this.cli.execWithIn(program, args, input, env.pairs, env.clean, how.inheritOut, how.cwd), this.wait, ranOf);
   }
 }
 
-/** Why a composed `Files` cannot be handed to a child yet. */
+/** The started child — and, when it was handed a composed `Files`, this program serving it from now until it ends. */
+Result<Child, SpawnFault> childOf(Cli cli, HostWait wait, HostChild k, Files? served) {
+  if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
+  if (served is null) { return Result.Ok(Child(cli, wait, k.handle, k.errHandle, null, null)); }
+  Ticket<bool> stopping;
+  return Result.Ok(Child(cli, wait, k.handle, k.errHandle, serveFiles(cli, wait, k.fsHandle, served!, stopping), stopping));
+}
+
+Result<Exec, SpawnFault> ranOf(Exec r) {
+  if (!r.ran()) { return Result.Err(r.error == faultWords(FAULT_NOT_GRANTED()) ? NotGranted(r.error) : Other(r.error)); }
+  return Result.Ok(r);
+}
+
+/**
+ * Why a composed `Files` cannot be handed to a loaded module: it runs on this thread, so a question it asked could
+ * only be answered after it returned.
+ */
 Unsupported composedRefused() {
-  return Unsupported("a Files built in this program cannot be handed to a child until the parent serves it — "
-                     + "design/system/0013 step 5 moves packages/fs's serving into std");
+  return Unsupported("a Files built in this program cannot be handed to a module, which runs on this program's own "
+                     + "thread and so cannot be served; spawn it instead");
 }
 
 u8[][] bytesOf(string[] args) {
@@ -3321,50 +4977,69 @@ u8[][] bytesOf(string[] args) {
 /** A running child (spec ch44). */
 export struct Child {
   Cli cli;
+  HostWait wait;
   i32 handle;
   i32 errHandle;
+  /** This program answering the child's file questions, when it was handed a composed `Files`; done once the child is. */
+  Ticket<void>? serving;
+  /** Settled by `stop`, which ends the serving as well as the child. */
+  Ticket<bool>? stopServing;
 
   /** What it writes to its output, unless that was inherited. */
   Input output(this) {
     Cli cli = this.cli;
+    HostWait wait = this.wait;
     i32 h = this.handle;
-    return Input(() => streamChunk(cli, h), () => streamAll(cli, h));
+    return Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h), nothingToClose);
   }
 
   /** What it writes to its diagnostic output, unless that was inherited. */
   Input errors(this) {
     Cli cli = this.cli;
+    HostWait wait = this.wait;
     i32 h = this.errHandle;
-    return Input(() => streamChunk(cli, h), () => streamAll(cli, h));
+    return Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h), nothingToClose);
   }
 
-  /** Its input, unless inherited. `endInput` ends it without stopping the child. */
+  /** Its input, unless inherited. Closing it ends the child's input without stopping the child. */
   Output input(this) {
     Cli cli = this.cli;
+    HostWait wait = this.wait;
     i32 h = this.handle;
-    return Output((u8[] b) => feed(cli, h, b));
+    return Output((u8[] b) => hostTicket(cli.send(h, b), wait, fedOf), () => endFeed(cli, h));
   }
 
-  /** No more input: the child sees the end and goes on running. */
-  void endInput(this) { this.cli.closeFeed(this.handle); }
-
-  /** Its status when it ends. */
-  async Result<i32, HostFault> exit(this) {
-    i32 code = await this.cli.exitCode(this.handle).ticket();
-    if (code < 0) { return Result.Err(Other("the child did not run to an end")); }
-    return Result.Ok(code);
+  /** Its status when it ends — and, when this program serves it files, once the serving has ended too. */
+  Ticket<Result<i32, HostFault>> exit(this) {
+    Ticket<Result<i32, HostFault>> code = hostTicket(this.cli.exitCode(this.handle), this.wait, exitedOf);
+    if (this.serving is null) { return code; }
+    return exitAfterServing(code, this.serving!);
   }
 
-  /** Stop it now. */
-  void stop(this) { this.cli.closeSocket(this.handle); }
+  /**
+   * Stop it now — and the serving of its files with it. The serving is driven to its end here rather than left to
+   * the scheduler: a program that stops a child and then finishes would otherwise finish with that serving's read
+   * of the dead channel still registered, which the JavaScript hosts refuse (`stoppedserved_probe.wac`).
+   */
+  void stop(this) {
+    this.cli.closeSocket(this.handle);
+    Ticket<bool>? s = this.stopServing;
+    if (s is null || s!.settled()) { return; }
+    s!.resolve(true);
+    Ticket<void>? serving = this.serving;
+    if (serving is not null) { serving!.wait(); }
+  }
 }
 
-async Result<Read, HostFault> streamChunk(Cli cli, i32 h) {
-  Read c = await cli.recv(h).ticket();
-  match (c) {
-    Failed(why): { return Result.Err(Other(why)); }
-    default: { return Result.Ok(c); }
-  }
+async Result<i32, HostFault> exitAfterServing(Ticket<Result<i32, HostFault>> code, Ticket<void> serving) {
+  Result<i32, HostFault> status = await code;
+  await serving;
+  return status;
+}
+
+Result<i32, HostFault> exitedOf(i32 code) {
+  if (code < 0) { return Result.Err(Other("the child did not run to an end")); }
+  return Result.Ok(code);
 }
 
 async Result<u8[], HostFault> streamAll(Cli cli, i32 h) {
@@ -3384,8 +5059,12 @@ async Result<u8[], HostFault> streamAll(Cli cli, i32 h) {
   }
 }
 
-async Result<void, OutputFault> feed(Cli cli, i32 h, u8[] bytes) {
-  bool went = await cli.send(h, bytes).ticket();
+async Result<void, OutputFault> endFeed(Cli cli, i32 h) {
+  cli.closeFeed(h);
+  return Result.Ok();
+}
+
+Result<void, OutputFault> fedOf(bool went) {
   if (!went) { return Result.Err(OutputClosed("the child's input has closed")); }
   return Result.Ok();
 }

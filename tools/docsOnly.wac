@@ -51,8 +51,8 @@
 // What it may skip is work that reads *code* — the coverage ratchets measure branch coverage of each
 // package's own sources, and a markdown edit with no fence in it cannot move them.
 
-import { Cli, Core, Exec, Sys } from "std";
-import { Vec } from "core";
+import { Exec, Sys, ChildEnv, Launch, Output, Procs } from "std";
+import { Vec, flatten } from "core";
 import { itoa } from "../packages/fmt/src/itoa.wac";
 import { startsWith, endsWith, joined } from "../packages/wactest/src/strings.wac";
 import { nonEmptyLines } from "../packages/wactest/src/repo.wac";
@@ -130,9 +130,10 @@ export bool fencesAreRun(string path) {
 }
 
 /** A file's content at a revision, or "" when it did not exist there. */
-string at(Cli cli, string rev, string path) {
-  Exec r = cli.exec("git", ["show", rev + ":" + path], u8[]()).wait();
-  return (r.ran() && r.status == 0) ? string.fromBytes(r.stdout) : "";
+string at(Procs procs, string rev, string path) {
+  auto rRan = flatten(procs.exec("git", ["show", rev + ":" + path], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return ((r is not null) && r!.status == 0) ? string.fromBytes(r!.stdout) : "";
 }
 
 export struct Verdict {
@@ -148,12 +149,13 @@ export struct Verdict {
  * range that already exists. The two spec commits this was checked against are in
  * `tools/wac/docsonly_test.wac`.
  */
-export Verdict verdict(Core core, Cli cli, string base, string tip) {
-  Exec names = cli.exec("git", ["diff", "--name-only", base + ".." + tip], u8[]()).wait();
-  if (!names.ran() || names.status != 0) {
+export Verdict verdict(Procs procs, string base, string tip) {
+  auto namesRan = flatten(procs.exec("git", ["diff", "--name-only", base + ".." + tip], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? names = namesRan.ok();
+  if ((names is null) || names!.status != 0) {
     return Verdict(false, "cannot diff against " + base);
   }
-  string[] changed = nonEmptyLines(string.fromBytes(names.stdout));
+  string[] changed = nonEmptyLines(string.fromBytes(names!.stdout));
   // **Nothing changed is not documentation.** It is a caller asking the wrong question, and answering
   // "yes, skip the expensive part" to it would be the one wrong answer with no upside.
   if (changed.len() == 0) { return Verdict(false, "nothing changed against " + base); }
@@ -174,7 +176,7 @@ export Verdict verdict(Core core, Cli cli, string base, string tip) {
 
   for (i32 i = 0; i < changed.len(); i++) {
     if (!fencesAreRun(changed[i])) { continue; }
-    if (wacFences(at(cli, base, changed[i])) != wacFences(at(cli, tip, changed[i]))) {
+    if (wacFences(at(procs, base, changed[i])) != wacFences(at(procs, tip, changed[i]))) {
       return Verdict(false, "a " + fenceOpen() + " fence changed in " + changed[i]);
     }
   }
@@ -182,12 +184,13 @@ export Verdict verdict(Core core, Cli cli, string base, string tip) {
 }
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 argc = cli.argCount().wait();
-  string base = argc > 0 ? string.fromBytes(cli.arg(0).wait()) : "origin/master";
-  string tip = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : "HEAD";
-  Verdict v = verdict(core, cli, base, tip);
-  core.warn(v.why);
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Procs procs = sys.procs();
+  i32 argc = argv.len();
+  string base = argc > 0 ? argv[0] : "origin/master";
+  string tip = argc > 1 ? argv[1] : "HEAD";
+  Verdict v = verdict(procs, base, tip);
+  err.line(v.why);
   return v.docsOnly ? 0 : 1;
 }

@@ -10,7 +10,7 @@
 // each.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Env, Files, Procs, Sys } from "std";
 import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -26,7 +26,10 @@ string literal(i32 n, string form) {
   return out + "]";
 }
 
-export string test_a_literal_past_the_engines_limit_runs(Core core, Cli cli) {
+export string test_a_literal_past_the_engines_limit_runs(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   i32 n = 20005;
   string source = "export i32 main() {\n" +
@@ -38,7 +41,7 @@ export string test_a_literal_past_the_engines_limit_runs(Core core, Cli cli) {
       "  if (s.len() != 10001 || s[10000] != \"0\" || s[9999] != \"9\") { return 3; }\n" +
       "  return 7;\n" +
       "}\n";
-  Ran r = runEmittedOne(cli, "/t/long.wac", source, scratchDir(cli), "longliteral.wasm");
+  Ran r = runEmittedOne(env, fs, procs, "/t/long.wac", source, scratchDir(env, fs), "longliteral.wasm");
   t.isTrue(r.ok, "the module was built and started — " + r.error);
   if (!r.ok) { return t.report(); }
   t.isFalse(r.trapped, "it did not trap — " + r.stderr);
@@ -51,11 +54,14 @@ export string test_a_literal_past_the_engines_limit_runs(Core core, Cli cli) {
  * different path from a literal in a function body — and the one `packages/raster/src/font16.wac`'s
  * glyph table takes.
  */
-export string test_a_long_static_array_runs(Core core, Cli cli) {
+export string test_a_long_static_array_runs(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
   string source = "static i32[] BIG = " + literal(20005, "int") + ";\n" +
       "export i32 main() { return BIG.len() == 20005 && BIG[10000] == 10000 && BIG[20004] == 20004 ? 7 : 1; }\n";
-  Ran r = runEmittedOne(cli, "/t/longstatic.wac", source, scratchDir(cli), "longstatic.wasm");
+  Ran r = runEmittedOne(env, fs, procs, "/t/longstatic.wac", source, scratchDir(env, fs), "longstatic.wasm");
   t.isTrue(r.ok, "the module was built and started — " + r.error);
   if (!r.ok) { return t.report(); }
   t.isFalse(r.trapped, "it did not trap — " + r.stderr);

@@ -41,7 +41,7 @@ import { test_traps_getting_past_the_end, test_traps_getting_a_negative_index,
          test_slice_returns_the_bytes_when_the_range_is_inside,
          test_clamped_answers_every_range_slice_refuses, test_get_returns_the_byte_when_in_range,
          test_repeating_from_the_last_written_byte_is_allowed } from "./wac/bounds_test.wac";
-import { Core, Cli, Sys } from "std";
+import { Sys, Output } from "std";
 import {
   test_traps_getting_past_the_end as bounds__traps_getting_past_the_end,
   test_traps_getting_a_negative_index as bounds__traps_getting_a_negative_index,
@@ -88,8 +88,7 @@ import {
 } from "./wac/buf_test.wac";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
   i32 seen = 0;
   seen = seen + test_growth_from_empty().len();
   seen = seen + test_bytes_are_stored_unsigned().len();
@@ -132,115 +131,115 @@ export i32 main(Sys sys) {
   // calls one at a time with the trap caught.
   i32 bad = 0;
   if (bounds__slice_returns_the_bytes_when_the_range_is_inside().len() > 0) {
-    core.warn("error: FAILED bounds_test test_slice_returns_the_bytes_when_the_range_is_inside");
+    err.line("error: FAILED bounds_test test_slice_returns_the_bytes_when_the_range_is_inside");
     bad = bad + 1;
   }
   if (bounds__clamped_answers_every_range_slice_refuses().len() > 0) {
-    core.warn("error: FAILED bounds_test test_clamped_answers_every_range_slice_refuses");
+    err.line("error: FAILED bounds_test test_clamped_answers_every_range_slice_refuses");
     bad = bad + 1;
   }
   if (bounds__get_returns_the_byte_when_in_range().len() > 0) {
-    core.warn("error: FAILED bounds_test test_get_returns_the_byte_when_in_range");
+    err.line("error: FAILED bounds_test test_get_returns_the_byte_when_in_range");
     bad = bad + 1;
   }
   if (bounds__repeating_from_the_last_written_byte_is_allowed().len() > 0) {
-    core.warn("error: FAILED bounds_test test_repeating_from_the_last_written_byte_is_allowed");
+    err.line("error: FAILED bounds_test test_repeating_from_the_last_written_byte_is_allowed");
     bad = bad + 1;
   }
   if (bounds__equal_compares_length_before_content().len() > 0) {
-    core.warn("error: FAILED bounds_test test_equal_compares_length_before_content");
+    err.line("error: FAILED bounds_test test_equal_compares_length_before_content");
     bad = bad + 1;
   }
   if (buf__growth_from_empty().len() > 0) {
-    core.warn("error: FAILED buf_test test_growth_from_empty");
+    err.line("error: FAILED buf_test test_growth_from_empty");
     bad = bad + 1;
   }
   if (buf__bytes_are_stored_unsigned().len() > 0) {
-    core.warn("error: FAILED buf_test test_bytes_are_stored_unsigned");
+    err.line("error: FAILED buf_test test_bytes_are_stored_unsigned");
     bad = bad + 1;
   }
   if (buf__push_truncates_to_a_byte().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_truncates_to_a_byte");
+    err.line("error: FAILED buf_test test_push_truncates_to_a_byte");
     bad = bad + 1;
   }
   if (buf__with_capacity().len() > 0) {
-    core.warn("error: FAILED buf_test test_with_capacity");
+    err.line("error: FAILED buf_test test_with_capacity");
     bad = bad + 1;
   }
   if (buf__push_bytes_range().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_bytes_range");
+    err.line("error: FAILED buf_test test_push_bytes_range");
     bad = bad + 1;
   }
   if (buf__push_bytes_grows_once_and_correctly().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_bytes_grows_once_and_correctly");
+    err.line("error: FAILED buf_test test_push_bytes_grows_once_and_correctly");
     bad = bad + 1;
   }
   if (buf__push_all().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_all");
+    err.line("error: FAILED buf_test test_push_all");
     bad = bad + 1;
   }
   if (buf__little_endian_writes().len() > 0) {
-    core.warn("error: FAILED buf_test test_little_endian_writes");
+    err.line("error: FAILED buf_test test_little_endian_writes");
     bad = bad + 1;
   }
   if (buf__push_codepoint_widths().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_codepoint_widths");
+    err.line("error: FAILED buf_test test_push_codepoint_widths");
     bad = bad + 1;
   }
   if (buf__push_codepoint_rejects_non_scalars().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_codepoint_rejects_non_scalars");
+    err.line("error: FAILED buf_test test_push_codepoint_rejects_non_scalars");
     bad = bad + 1;
   }
   if (buf__take_avoids_the_copy_when_exactly_full().len() > 0) {
-    core.warn("error: FAILED buf_test test_take_avoids_the_copy_when_exactly_full");
+    err.line("error: FAILED buf_test test_take_avoids_the_copy_when_exactly_full");
     bad = bad + 1;
   }
   if (buf__grows_from_zero_capacity().len() > 0) {
-    core.warn("error: FAILED buf_test test_grows_from_zero_capacity");
+    err.line("error: FAILED buf_test test_grows_from_zero_capacity");
     bad = bad + 1;
   }
   if (buf__bulk_append_onto_a_partly_filled_buffer().len() > 0) {
-    core.warn("error: FAILED buf_test test_bulk_append_onto_a_partly_filled_buffer");
+    err.line("error: FAILED buf_test test_bulk_append_onto_a_partly_filled_buffer");
     bad = bad + 1;
   }
   if (buf__bulk_append_from_zero_capacity().len() > 0) {
-    core.warn("error: FAILED buf_test test_bulk_append_from_zero_capacity");
+    err.line("error: FAILED buf_test test_bulk_append_from_zero_capacity");
     bad = bad + 1;
   }
   if (buf__bytes_is_a_copy().len() > 0) {
-    core.warn("error: FAILED buf_test test_bytes_is_a_copy");
+    err.line("error: FAILED buf_test test_bytes_is_a_copy");
     bad = bad + 1;
   }
   if (buf__to_str().len() > 0) {
-    core.warn("error: FAILED buf_test test_to_str");
+    err.line("error: FAILED buf_test test_to_str");
     bad = bad + 1;
   }
   if (buf__take_empties_the_buffer_when_it_copies().len() > 0) {
-    core.warn("error: FAILED buf_test test_take_empties_the_buffer_when_it_copies");
+    err.line("error: FAILED buf_test test_take_empties_the_buffer_when_it_copies");
     bad = bad + 1;
   }
   if (buf__drop_front_shifts_what_is_left().len() > 0) {
-    core.warn("error: FAILED buf_test test_drop_front_shifts_what_is_left");
+    err.line("error: FAILED buf_test test_drop_front_shifts_what_is_left");
     bad = bad + 1;
   }
   if (buf__drop_front_at_the_edges().len() > 0) {
-    core.warn("error: FAILED buf_test test_drop_front_at_the_edges");
+    err.line("error: FAILED buf_test test_drop_front_at_the_edges");
     bad = bad + 1;
   }
   if (buf__push_repeat_copies_from_earlier_in_the_buffer().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_repeat_copies_from_earlier_in_the_buffer");
+    err.line("error: FAILED buf_test test_push_repeat_copies_from_earlier_in_the_buffer");
     bad = bad + 1;
   }
   if (buf__push_repeat_overlaps_to_make_a_run().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_repeat_overlaps_to_make_a_run");
+    err.line("error: FAILED buf_test test_push_repeat_overlaps_to_make_a_run");
     bad = bad + 1;
   }
   if (buf__push_decimal_writes_the_number_including_its_sign().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_decimal_writes_the_number_including_its_sign");
+    err.line("error: FAILED buf_test test_push_decimal_writes_the_number_including_its_sign");
     bad = bad + 1;
   }
   if (buf__push_repeat_grows_the_buffer().len() > 0) {
-    core.warn("error: FAILED buf_test test_push_repeat_grows_the_buffer");
+    err.line("error: FAILED buf_test test_push_repeat_grows_the_buffer");
     bad = bad + 1;
   }
   seen = seen + bad;

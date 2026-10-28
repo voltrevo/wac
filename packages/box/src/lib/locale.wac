@@ -16,13 +16,14 @@
 // environment counts bytes. That is also what `tools/wac/appletvectors.wac` asks for when it captures
 // through `env -i … LC_ALL=C`, so the captured expectations and an unset environment agree.
 
-import { Cli } from "std";
+import { Env } from "std";
+import { flatten } from "core";
 
 /** The first of `LC_ALL`, `LC_CTYPE`, `LANG` that is set and non-empty, or "". */
-string ctypeSetting(Cli cli) {
+string ctypeSetting(Env env) {
   string[] names = ["LC_ALL", "LC_CTYPE", "LANG"];
   for (string name in names) {
-    u8[]? v = cli.env(name).wait();
+    u8[]? v = flatten(env.get(name).wait()).orElse(null);
     if (v is null) { continue; }
     if (v!.len() == 0) { continue; }
     return string.fromBytes(v!);
@@ -38,8 +39,8 @@ string ctypeSetting(Cli cli) {
  * only the charset matters to the callers here. Anything without a UTF-8 charset — `C`, `POSIX`,
  * `en_GB`, or nothing at all — is bytes.
  */
-export bool utf8Locale(Cli cli) {
-  string s = ctypeSetting(cli);
+export bool utf8Locale(Env env) {
+  string s = ctypeSetting(env);
   i32 dot = s.indexOf(".");
   if (dot < 0) { return false; }
   string charset = s.slice(dot + 1, s.len());

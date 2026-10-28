@@ -26,7 +26,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Core, Cli } from "std";
+import { Output, Procs, Sys } from "std";
 import { Outcome, oracle } from "./nodeoracle.wac";
 import { Parsed, Request, parseRequest } from "../../src/request.wac";
 
@@ -219,7 +219,7 @@ string describe(u8[] input) {
   return "\"\{out}\"";
 }
 
-void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
+void sweep(T t, Output out, Procs procs, i32 seedValue, i32 rounds) {
   Rng rng = Rng(seedValue);
   string[] all = seeds();
   u8[][] cases = u8[][].filled(rounds, u8[]());
@@ -233,7 +233,7 @@ void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
     cases[i] = bytes;
   }
 
-  Outcome[] want = oracle(t, cli, cases, -1);
+  Outcome[] want = oracle(t, procs, cases, -1);
   if (want.len() != rounds) { return; }
 
   i32 disagreed = 0;
@@ -313,18 +313,22 @@ void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
            "seed \{seedValue}: of \{compared} compared, only " +
            "\{acceptedByLlhttp} were accepted by llhttp — a corpus of rejections agrees " +
            "trivially");
-  core.log("  seed \{seedValue}: \{compared} compared, " +
+  out.line("  seed \{seedValue}: \{compared} compared, " +
            "\{acceptedByLlhttp} accepted by llhttp");
 }
 
-export string test_fuzz_neither_parser_accepts_what_the_other_refuses(Core core, Cli cli) {
+export string test_fuzz_neither_parser_accepts_what_the_other_refuses(Sys sys) {
+  Output out = sys.stdout();
+  Procs procs = sys.procs();
   T t = T.create();
-  sweep(t, core, cli, 0x1234abcd, 250);
+  sweep(t, out, procs, 0x1234abcd, 250);
   return t.report();
 }
 
-export string test_fuzz_a_second_seed(Core core, Cli cli) {
+export string test_fuzz_a_second_seed(Sys sys) {
+  Output out = sys.stdout();
+  Procs procs = sys.procs();
   T t = T.create();
-  sweep(t, core, cli, 0x5150cafe, 250);
+  sweep(t, out, procs, 0x5150cafe, 250);
   return t.report();
 }

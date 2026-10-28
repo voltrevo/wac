@@ -11,19 +11,20 @@
 //
 // The program on the other side is `cat` because `cat` is the one that adds nothing of its own.
 
-import { Cli, Core, Sys } from "std";
+import { Sys, Input, Output } from "std";
 import { Line, Typed } from "../src/line.wac";
-import { Buf } from "core";
+import { Buf, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  u8[] typed = cli.readStdin().wait();
+  string[] argv = sys.args();
+  Input stdin = sys.stdin();
+  Output out = sys.stdout();
+  u8[] typed = flatten(stdin.readAll().wait()).orElse(u8[]());
   // The mode to run in, so the same program can be compared against the same pty in each of them.
   // Nothing but the constructor differs — which is the claim worth testing, since a mode that needed
   // its own loop would be a second implementation of the discipline rather than a setting on one.
-  string mode = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : "canonical";
-  cli.write(ttycatBytes(typed, mode));
+  string mode = argv.len() > 0 ? argv[0] : "canonical";
+  out.write(ttycatBytes(typed, mode));
   return 0;
 }
 

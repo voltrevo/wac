@@ -16,13 +16,14 @@
 
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../json/src/value.wac";
-import { Cli, FileResult } from "std";
+import { Files } from "std";
+import { flatten } from "core";
 
 /** The top-level object of a JSON file, read relative to the repository root. */
-export JsonObject jsonFile(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { trap; }
-  return parse(r.bytes)!.object()!;
+export JsonObject jsonFile(Files fs, string path) {
+  u8[]? r = flatten(fs.readFile(path).wait()).ok();
+  if ((r is null)) { trap; }
+  return parse(r!)!.object()!;
 }
 
 export string strOf(JsonObject o, string key) { return o.getStr(key)!.text()!; }

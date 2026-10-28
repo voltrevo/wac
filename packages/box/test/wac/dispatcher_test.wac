@@ -1,38 +1,41 @@
 // The dispatcher itself: an unknown applet, `--help`, and the usage listing.
 //
-//     wac test --allow-read --allow-write packages/box/test/wac/dispatcher_test.wac
+//     wac test --allow-read packages/box/test/wac/dispatcher_test.wac
 //
 // From `box.test.ts`, where it was left behind on a claim that turned out to be false. The note said
-// this could not move because "`main` reads argv from the process" — but `Frame.of` takes an argv and
-// `childCli` answers `argCount` and `arg` out of it, which is stated plainly in `frame.wac:282`. So
-// `main(Sys(childCore(f, core), childCli(f, cli)))` runs the whole program, argv and all, with its streams
-// captured. Nothing was blocking this; I had not looked.
+// this could not move because "`main` reads argv from the process" — but the program could be handed
+// an argv in this process all along. Since `main` became `boxMain` over handles, it is handed one
+// directly, with its streams kept. Nothing was blocking this; I had not looked.
 //
 // `applets_test.wac` asserts what `dispatch` answers for a name it has not got — `UNKNOWN`, a sentinel
 // rather than a status. This is the other half: what `main` turns that into.
 
-import { Cli, Core, GRANT_ALL, Sys } from "std";
+import { MemoryStore, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
-import { main } from "../../src/box.wac";
+import { Kept } from "../../../platform/src/stream.wac";
+import { bytesInput } from "../../../fs/src/trees.wac";
+import { boxMain } from "../../src/box.wac";
 import { splitOn } from "./replay.wac";
 
-/** What `box` said, running the whole program in a frame. */
+/** What `box` said, running the whole program in this process. */
 struct Said {
   i32 code;
   string out;
   string err;
 }
 
-async Said box(Core core, Cli cli, string[] argv) {
-  Frame f = Frame.of(argv, u8[](), cli.cwd().wait(), false);
-  i32 code = await main(Sys(childCore(f, core), childCli(f, cli)));
-  return Said(code, string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()));
+async Said box(Sys sys, string[] argv) {
+  Kept out = Kept.create();
+  Kept err = Kept.create();
+  i32 code = await boxMain(argv, bytesInput(u8[]()), err.out, out.out, sys.clock(), sys.random(), sys.env(),
+                           MemoryStore.create(sys.clock()).asUser(""),
+                           sys.net(), sys.procs(), () => false);
+  return Said(code, string.fromBytes(out.bytes()), string.fromBytes(err.bytes()));
 }
 
-export async string test_an_unknown_applet_is_a_usage_error(Core core, Cli cli) {
+export async string test_an_unknown_applet_is_a_usage_error(Sys sys) {
   T t = T.create();
-  Said said = await box(core, cli, ["nope"]);
+  Said said = await box(sys, ["nope"]);
   t.eqI32(said.code, 2, "an unknown applet is a usage error");
   // The name it did not have, quoted back. A usage message that did not say which name failed would
   // be the same message for every typo.
@@ -41,11 +44,11 @@ export async string test_an_unknown_applet_is_a_usage_error(Core core, Cli cli) 
   return t.report();
 }
 
-export async string test_help_is_answered_three_ways(Core core, Cli cli) {
+export async string test_help_is_answered_three_ways(Sys sys) {
   T t = T.create();
   string[] spellings = ["help", "--help", "-h"];
   for (i32 i = 0; i < spellings.len(); i++) {
-    Said said = await box(core, cli, [spellings[i]]);
+    Said said = await box(sys, [spellings[i]]);
     t.eqI32(said.code, 0, "box \{spellings[i]} should succeed: \{said.err}");
     t.isTrue(said.err.indexOf("usage: box") >= 0, "box \{spellings[i]}: \{said.err}");
   }
@@ -58,9 +61,9 @@ export async string test_help_is_answered_three_ways(Core core, Cli cli) {
  * Nothing looked at it, so `wrapped` could return the empty string — and the list of what this program
  * can do would simply be missing, with the exit status and the first line both still right.
  */
-export async string test_the_usage_lists_every_applet_and_wraps_it(Core core, Cli cli) {
+export async string test_the_usage_lists_every_applet_and_wraps_it(Sys sys) {
   T t = T.create();
-  Said help = await box(core, cli, string[]());
+  Said help = await box(sys, string[]());
   t.eqI32(help.code, 2, "no applet at all is a usage error");
 
   string[] want = ["cat", "grep", "sha256sum", "zstd"];

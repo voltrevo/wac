@@ -13,7 +13,7 @@
 //   1. connect to a peer that will never send anything
 //   2. issue `recv` and keep the ticket
 //   3. `send` on the same handle, repeatedly
-//   4. ask `waitAny` whether that `recv` has settled, and if so with what
+//   4. ask whether that `recv` has settled, and if so with what — by racing it against a timer
 //
 // A second argument, `drain`, makes the peer **read** what is sent to it. That is the one way the
 // first version of this differed from a relay's stream socket: there the target is a real server that
@@ -29,49 +29,53 @@
 // Either answer is worth having in one place, which is why this is an example rather than a scratch
 // file: it is the smallest program that distinguishes them.
 
-import { Core, Cli, HostSocket, Pending, Sys } from "std";
-import { Read } from "core";
+import { Clock, Sys, Net, Output, Socket, Listener, Unsupported } from "std";
+import { Read, Result, Ticket, TicketBase, flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  i32 port = cli.argCount().wait() > 0 ? parsePort(cli.arg(0).wait()) : 18099;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
+  Clock clock = sys.clock();
+  i32 port = argv.len() > 0 ? parsePort(argv[0].toBytes()) : 18099;
   if (port <= 0) {
-    core.warn("writeread: the argument must be a port");
+    err.line("writeread: the argument must be a port");
     return 2;
   }
 
-  HostSocket listener = cli.listen("127.0.0.1", port).wait();
-  if (listener.handle < 0) {
-    core.warn("writeread: listen: \{listener.error}");
+  auto listenerBind = flatten(net.listen("127.0.0.1", port).wait());
+  Listener? listener = listenerBind.ok();
+  if (listener is null) {
+    err.line("writeread: listen: \{listenerBind.isErr() ? "\{listenerBind.err()!}" : ""}");
     return 1;
   }
 
   // The accept has to be outstanding before the connect, or the connect has nobody to talk to.
-  Pending<HostSocket> incoming = cli.accept(listener.handle);
-  HostSocket client = cli.connect("127.0.0.1", listener.port).wait();
-  if (client.handle < 0) {
-    core.warn("writeread: connect: \{client.error}");
+  auto incoming = listener!.accept();
+  auto clientDial = flatten(net.connect("127.0.0.1", listener!.port).wait());
+  Socket? client = clientDial.ok();
+  if (client is null) {
+    err.line("writeread: connect: \{clientDial.isErr() ? "\{clientDial.err()!}" : ""}");
     return 1;
   }
-  HostSocket server = incoming.wait();
-  if (server.handle < 0) {
-    core.warn("writeread: accept: \{server.error}");
+  auto accepted = flatten(incoming.wait());
+  if (accepted.isErr()) {
+    err.line("writeread: accept: \{accepted.err()!}");
     return 1;
   }
-  core.log("writeread: connected on port \{listener.port}");
+  Socket server = accepted.unwrap();
+  out.line("writeread: connected on port \{listener!.port}");
 
   // The peer — `server` — never sends and never closes. So a `recv` on `client` should stay pending
   // for as long as that holds, and anything else is the thing being looked for.
-  Pending<Read> pending = cli.recv(client.handle);
+  auto pending = client!.recv();
 
-  i32[] one = i32[].filled(1, 0);
-  one[0] = pending.id;
-  if (core.waitAny(one, 200) >= 0) {
-    core.warn("writeread: the read settled before anything was written — the peer is not silent");
+  if (settledWithin(clock, pending, 200)) {
+    err.line("writeread: the read settled before anything was written — the peer is not silent");
     return 1;
   }
-  core.log("writeread: the read is outstanding and the peer is silent, as expected");
+  out.line("writeread: the read is outstanding and the peer is silent, as expected");
 
   // Now write, in the same shape a relay forwards cells: several sends, one after another, with that
   // read still in flight. 498 bytes each, which is a relay cell's payload.
@@ -80,45 +84,53 @@ export i32 main(Sys sys) {
 
   // Whether the peer consumes. Both ends are in this process, so the read can be driven by hand
   // rather than hoped for.
-  bool drain = cli.argCount().wait() > 1 &&
-               string.fromBytes(cli.arg(1).wait()) == "drain";
-  if (drain) { core.log("writeread: the peer will read what it is sent"); }
+  bool drain = argv.len() > 1 &&
+               argv[1] == "drain";
+  if (drain) { out.line("writeread: the peer will read what it is sent"); }
 
   i32 sent = 0;
   for (i32 i = 0; i < 20; i++) {
-    if (!cli.send(client.handle, payload).wait()) {
-      core.warn("writeread: send \{i} failed");
+    if (flatten(client!.send(payload).wait()).isErr()) {
+      err.line("writeread: send \{i} failed");
       break;
     }
     sent = sent + 1;
     if (drain) {
       // Consume it, exactly as a server on the far side of a relay's stream would. The read is
       // waited on rather than polled: the bytes are already there.
-      match (cli.recv(server.handle).wait()) {
-        Data(got): { }
-        End: { core.warn("writeread: the peer's own read ended"); }
-        Failed(why): { core.warn("writeread: the peer's read failed: \{why}"); }
+      auto got = flatten(server.recv().wait());
+      if (got.isErr()) { err.line("writeread: the peer's read failed: \{got.err()!}"); }
+      else {
+        match (got.unwrap()) {
+          Data(bytes): { }
+          End: { err.line("writeread: the peer's own read ended"); }
+          Failed(why): { err.line("writeread: the peer's read failed: \{why}"); }
+        }
       }
     }
-    // After each send, ask whether the outstanding read has settled. Polling with a zero deadline is
-    // what `waitAny` is for — this is a question about *now*, not a wait.
-    i32 which = core.waitAny(one, 0);
-    if (which >= 0) {
-      core.log("writeread: the read settled after \{sent} sends (" +
+    // After each send, ask whether the outstanding read has settled — a question about *now*, not a
+    // wait, so the timer it races is zero.
+    if (settledWithin(clock, pending, 0)) {
+      out.line("writeread: the read settled after \{sent} sends (" +
                "\{sent * 498} bytes)");
-      match (pending.wait()) {
+      auto heard = flatten(pending.wait());
+      if (heard.isErr()) {
+        err.line("writeread: VERDICT failed — \{heard.err()!}");
+        return 4;
+      }
+      match (heard.unwrap()) {
         Data(bytes): {
-          core.log("writeread: VERDICT data — \{bytes.len()}" +
+          out.line("writeread: VERDICT data — \{bytes.len()}" +
                    " bytes, so the peer spoke after all");
           return 0;
         }
         End: {
-          core.warn("writeread: VERDICT End — a write ended a read on the same handle, with the " +
+          err.line("writeread: VERDICT End — a write ended a read on the same handle, with the " +
                     "peer still connected. This is the platform, not the caller.");
           return 3;
         }
         Failed(why): {
-          core.warn("writeread: VERDICT failed — \{why}");
+          err.line("writeread: VERDICT failed — \{why}");
           return 4;
         }
       }
@@ -127,30 +139,49 @@ export i32 main(Sys sys) {
 
   // Give it a moment: a read broken by a write might settle a little after the write rather than
   // during it, and a poll that only ever ran between sends would miss that.
-  i32 late = core.waitAny(one, 1000);
-  if (late >= 0) {
-    match (pending.wait()) {
+  if (settledWithin(clock, pending, 1000)) {
+    auto heard = flatten(pending.wait());
+    if (heard.isErr()) {
+      err.line("writeread: VERDICT failed, late — \{heard.err()!}");
+      return 4;
+    }
+    match (heard.unwrap()) {
       Data(bytes): {
-        core.log("writeread: VERDICT data — \{bytes.len()} bytes, late");
+        out.line("writeread: VERDICT data — \{bytes.len()} bytes, late");
         return 0;
       }
       End: {
-        core.warn("writeread: VERDICT End, shortly after the writes — the platform, not the caller.");
+        err.line("writeread: VERDICT End, shortly after the writes — the platform, not the caller.");
         return 3;
       }
       Failed(why): {
-        core.warn("writeread: VERDICT failed, late — \{why}");
+        err.line("writeread: VERDICT failed, late — \{why}");
         return 4;
       }
     }
   }
 
-  core.log("writeread: VERDICT still pending after \{sent} sends (" +
+  out.line("writeread: VERDICT still pending after \{sent} sends (" +
            "\{sent * 498} bytes). A write does not disturb a read on the same handle.");
-  cli.closeSocket(client.handle);
-  cli.closeSocket(server.handle);
-  cli.closeSocket(listener.handle);
+  // The read is still outstanding, and nothing wants its answer now.
+  pending.cancel();
+  client!.close();
+  server.close();
+  listener!.close();
   return 0;
+}
+
+/**
+ * Whether `t` settles within `millis`, raced against a timer that is cancelled whichever wins — so
+ * asking leaves nothing holding a slot, and `t` itself is left running to be asked again.
+ */
+bool settledWithin(Clock clock, TicketBase t, i32 millis) {
+  if (t.settled()) { return true; }
+  Ticket<Result<void, union<Unsupported>>> timer = clock.sleepMillis(millis);
+  Ticket<i32> race = Ticket.first([t, timer]);
+  bool won = race.wait().orElse(1) == 0;
+  timer.cancel();
+  return won;
 }
 
 i32 parsePort(u8[] text) {

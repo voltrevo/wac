@@ -41,6 +41,7 @@ struct Sys {
 
   never exit(const this, i32 code);
   async void drain(this);
+  i32 drainFor(this, i32 millis);
 }
 ```
 
@@ -155,12 +156,14 @@ Reading them needs no grant: they are what the person running the program chose 
 // fragment — from std
 struct Output {
   fn<Ticket<Result<void, OutputFault>>(u8[])> write;
+  fn<Ticket<Result<void, OutputFault>>()> close;    // no more
   Ticket<Result<void, OutputFault>> line(const this, string text);   // text and a newline
 }
 
 struct Input {
   fn<Ticket<Result<Read, HostFault>>()> chunk;     // the next bytes, or the end
   fn<Ticket<Result<u8[], HostFault>>()> readAll;
+  fn<Ticket<Result<void, HostFault>>()> close;     // done reading
 }
 ```
 
@@ -214,6 +217,12 @@ export Result<i32> main(Sys sys) {
 `[§wac-std-input-u7m2rjd]` `chunk` answers the next bytes as a `Read` ([41](41-read.md)), data or the end; a failure is
 its `Err`, never `Read.Failed`. `readAll` answers everything up to the end.
 
+`[§wac-std-close-r4v8ndq]` Closing an `Output` ends it: whoever reads it sees the end, a file holds what was written once
+`close` answers, and a write after it answers `OutputClosed`. Closing `sys.stdout()` ends the program's output while the
+program runs on; closing a child's `input()` ends the child's input. Closing an `Input` gives back what it held — a file
+opened to read — and reading after it is not defined; the program's own input and a child's output hold nothing to give
+back. Closing twice is not an error.
+
 ## Time and randomness
 
 ```wac
@@ -240,6 +249,7 @@ struct Clock {
   async Result<i64, union<Unsupported>> nowMillis(const this);
   async Result<i64, union<Unsupported>> monotonicNanos(const this);
   async Result<void, union<Unsupported>> sleepMillis(const this, i32 ms);
+  async Result<A, union<E, TimedOut, Unsupported>> within<A, E>(this, Ticket<Result<A, E>> t, i32 millis);
 }
 
 struct Random {
@@ -249,6 +259,22 @@ struct Random {
 
 `[§wac-std-time-mzn6gvc]` `monotonicNanos` never decreases within a run; `nowMillis` is wall-clock time; `sleepMillis` settles
 after at least that long; `bytes(n)` answers `n` random bytes.
+
+A deadline belongs to the clock. `within` answers what a capability's ticket answers, or `TimedOut`:
+
+```wac
+// fragment
+match (await sys.clock().within(sock.recv(), 30000)) {
+  Ok(Data(bytes)): { … }
+  Ok(End): { … }
+  Err(TimedOut t): { sock.close(); }        // silent for thirty seconds
+  Err(e): { … }
+}
+```
+
+`[§wac-std-within-8mdio9r]` `clock.within(t, millis)` answers `t`'s answer, or `Err(TimedOut)` when `t` has not
+answered within `millis` milliseconds; a negative `millis` sets no deadline. Whichever of `t` and the deadline loses
+is cancelled (`§wac-ticket-cancel-6zeggqz`), so a deadline leaves nothing held at the host.
 
 ## The environment
 
@@ -270,6 +296,9 @@ not read the environment at all — so the two cannot be confused.
 struct Files {
   fn<Ticket<Result<u8[], ReadFault>>(string)> readFile;
   fn<Ticket<Result<void, WriteFault>>(string, u8[])> writeFile;
+  fn<Ticket<Result<Input, ReadFault>>(string)> openRead;         // to read a piece at a time
+  fn<Ticket<Result<Output, WriteFault>>(string)> openWrite;      // created or emptied, to write a piece at a time
+  fn<Ticket<Result<Output, WriteFault>>(string)> openAppend;     // created or added to
   fn<Ticket<Result<Stat, LookFault>>(string)> stat;
   fn<Ticket<Result<Stat, LookFault>>(string)> linkStat;          // a symbolic link itself
   fn<Ticket<Result<string[], LookFault>>(string)> readDir;
@@ -278,12 +307,23 @@ struct Files {
   fn<Ticket<Result<void, MoveFault>>(string, string)> rename;
   fn<Ticket<Result<void, ModeFault>>(string, i32)> chmod;
   fn<Ticket<Result<void, ModeFault>>(string, bool)> setExecutable;
+  fn<Ticket<Result<void, ModeFault>>(string, string)> chown;     // root's to do; Unsupported on the host
 
   Files readOnly(this);                    // the same files, every change answering NotGranted
+  Files relativeTo(this, string dir);      // a relative path starts at dir
   Files mounted(Mount[] mounts);           // each path to the longest mount that prefixes it
 }
 
 struct Mount { string at; Files files; }
+
+struct MemoryStore {
+  MemoryStore create(Clock clock);
+  Files asUser(this, string user);         // the store as user sees it
+  StoreEntry[] entries(this);              // each directory before what is in it
+  Result<MemoryStore, Other> restore(Clock clock, StoreEntry[] entries);
+}
+
+struct StoreEntry { string path; bool isDir; u8[] data; i32 mode; string owner; i64 modifiedMillis; }
 ```
 
 `[§wac-std-file-result-z28bp2x]` A missing file, a directory, or a change through a read-only `Files` is an `Err`, not a
@@ -293,11 +333,59 @@ trap.
 branches on which backing it is: `sys.files()` is the host's, `readOnly` wraps any `Files`, and `mounted` routes each path
 to the mount that owns it. A rename across two mounts is `Other`, as a rename across two devices is.
 
+`[§wac-std-relative-files-c3n9vka]` `relativeTo(dir)` gives the same files with a relative path starting at `dir`, as a
+shell's current directory does. `.` and `..` are taken out before a path reaches the files beneath, `..` at the root
+stays there, and an absolute path is left alone.
+
+`[§wac-std-memory-store-p4k7wzn]` A `MemoryStore` is one tree in the program's memory, and `asUser(user)` is a `Files`
+acting as one person on it: what it creates is theirs — a file `0644`, a directory `0755` — and each operation is checked
+against the mode of what it touches, the owner bits for its owner and the last three for anybody else. There are no
+groups, the directories on the way are not checked, and `"root"` is exempt. `chmod` is the owner's or root's and `chown`
+is root's; refusing is `Denied`. `Stat.owner` and `Stat.mode` answer what the store recorded. The host answers its own
+mode bits, an owner of `""`, and `Unsupported` for `chown`, because its owners are numbers in a table that is not the
+program's. `entries` and `restore` save a store and bring it back.
+
+```wac
+// fragment — two people on one store
+async Result<void> share(Clock clock) {
+  MemoryStore store = MemoryStore.create(clock);
+  Files root = store.asUser("root");
+  try await root.mkdir("/home/ada", true);
+  try await root.chown("/home/ada", "ada");
+  try await store.asUser("ada").writeFile("/home/ada/notes", "hi".toBytes());
+  return Result.Ok();
+}
+```
+
 ```wac
 // fragment — a program built with read and write grants
 async Result<void> copy(Files fs, string from, string to) {
   u8[] bytes = try await fs.readFile(from);
   try await fs.writeFile(to, bytes);
+  return Result.Ok();
+}
+```
+
+`[§wac-std-file-stream-m6t2wqe]` `openRead`, `openWrite` and `openAppend` open a file as a stream of its own, so a program
+holds as many as it likes and none has to fit in memory. Opening fails as reading or writing the whole file would — a
+missing directory is `NotFound`, and opening to write through `readOnly` is `NotGranted`. `openWrite` empties a file that
+exists; `openAppend` writes after what is there. Each creates a file that does not exist.
+
+```wac
+// fragment — the same copy, a piece at a time
+async Result<void> copyStreaming(Files fs, string from, string to) {
+  Input in = try await fs.openRead(from);
+  Output out = try await fs.openWrite(to);
+  bool more = true;
+  while (more) {
+    Read r = try await in.chunk();
+    match (r) {
+      Data(bytes): { try await out.write(bytes); }
+      default: { more = false; }
+    }
+  }
+  try await in.close();
+  try await out.close();
   return Result.Ok();
 }
 ```
@@ -384,7 +472,7 @@ at all is different, and `try` is right there.
 struct Procs {
   async Result<Child, SpawnFault> spawn(this, u8[] wasm, string[] args, Authority given, Launch how);
   async Result<Child, SpawnFault> spawnSelf(this, string[] args, Authority given, Launch how);
-  async Result<Exec, SpawnFault> exec(this, string program, string[] args, u8[] input, string[] env, Launch how);
+  async Result<Exec, SpawnFault> exec(this, string program, string[] args, u8[] input, ChildEnv env, Launch how);
 }
 
 struct Authority {             // what a child holds: each the parent's own or narrowed from it
@@ -392,6 +480,12 @@ struct Authority {             // what a child holds: each the parent's own or n
   Net? net;
   Env? env;
   Procs? procs;
+}
+
+struct ChildEnv {               // the environment exec gives a host program
+  ChildEnv inherited();        // this program's own
+  ChildEnv empty();            // none at all
+  ChildEnv set(const this, string name, string value);   // with name set over it
 }
 
 struct Launch {
@@ -404,8 +498,7 @@ struct Launch {
 struct Child {
   Input output(this);          // what it writes, unless inherited
   Input errors(this);          // what it writes to its diagnostic output, unless inherited
-  Output input(this);          // what it reads, unless inherited
-  void endInput(this);         // the end of its input; it goes on running
+  Output input(this);          // what it reads, unless inherited; closing it ends its input and it goes on running
   async Result<i32, HostFault> exit(this);
   void stop(this);
 }
@@ -413,6 +506,23 @@ struct Child {
 
 `[§wac-std-spawn-grants-ykmq5tw]` A spawned child holds exactly the handles in its `Authority`, so it never holds more than
 its parent. Spawning needs the program's own `procs` authority — another instance of itself included.
+
+`[§wac-std-files-served-t5h2mzr]` A child handed a `Files` built in this program — a `MemoryStore` view, a `mounted` table,
+a `relativeTo` over either — is served it: the child's `sys.files()` asks this program, which answers out of that
+`Files` while it runs its scheduler, until the child ends, and the child's `exit` answers once the serving has ended
+too. So the child's writes are this program's and it may do what that `Files` allows and nothing more; it is given no
+host files. A child hands its served `Files` on to its own children in the same way. `sys.files()` and its `readOnly`
+are granted to the child by the host instead, and a loaded module, which runs on this thread and so cannot be served,
+is refused a composed `Files` with `Unsupported`.
+
+`[§wac-std-child-env-k3w8tqa]` A host program started by `exec` gets the environment its `ChildEnv` describes: a base,
+this program's own environment or an empty one, with each name `set` over it holding the last value it was set to. Nothing
+else reaches the child's environment.
+
+```wac
+// fragment — git sees this program's PATH and HOME, and GIT_DIR as set here
+Exec r = try await procs.exec("git", ["status"], u8[](), ChildEnv.inherited().set("GIT_DIR", dir), Launch.plain());
+```
 
 `[§wac-std-child-drop-n2r5vxe]` Dropping a `Child` that has not been waited for stops it, unless it was launched `detached`.
 
@@ -451,6 +561,10 @@ returns when the export does.
 `sys.exit(n)` ends the program at once with status `n`. `sys.drain()` runs the continuations nobody awaited
 ([35](../6-concurrency/35-tickets-and-await.md)), and a program whose `main` returns while work remains exits 1
 ([07](../1-programs/07-programs.md)).
+
+`[§wac-std-drain-for-wr24p09]` `sys.drainFor(millis)` runs the continuations nobody awaited until none remain or
+`millis` milliseconds have passed, and answers how many it ran — none is how a server tells that nothing spoke. What
+it did not run is still outstanding.
 
 ## Not yet given a form
 

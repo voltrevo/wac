@@ -87,28 +87,29 @@
 // result.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Change, Cli, Core, Exec, FileResult, Stat } from "std";
+import { Change, Cli, Core, Exec, FileResult, Stat, ChildEnv, Env, Files, Launch, Net, Output, Procs, Sys, Socket } from "std";
 import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, joined } from "../../../wactest/src/strings.wac";
+import { flatten } from "core";
 
 static string ENTRY = "packages/wac/src/wac.wac";
 
-string scratch(Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/parity-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir + "/src", true).wait();
+string scratch(Env env, Files fs, string name) {
+  string dir = flatten(env.cwd().wait()).unwrap() + "/.cache/parity-" + name;
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir + "/src", true).wait();
   // A second source directory for the fixtures a *named* row uses and the directory rows must not
   // discover. See the note beside the `--allow-env` row.
-  cli.mkdir(dir + "/capsrc", true).wait();
+  fs.mkdir(dir + "/capsrc", true).wait();
   return dir;
 }
 
 /** One file, and the write is checked: a fixture that failed to appear is not a disagreement. */
-bool put(T t, Cli cli, string path, string text) {
-  Change c = cli.writeFile(path, text.toBytes()).wait();
-  t.isTrue(c.ok(), "could not write " + path + " — " + c.message);
-  return c.ok();
+bool put(T t, Files fs, string path, string text) {
+  auto c = flatten(fs.writeFile(path, text.toBytes()).wait());
+  t.isTrue(c.isOk(), "could not write " + path + " — " + "\{c.isErr() ? "\{c.err()!}" : ""}");
+  return c.isOk();
 }
 
 /**
@@ -190,12 +191,13 @@ struct Said {
  * an environment and not a cwd, which `issues/system/0231c` prices — and `exec` at the front so the
  * status is the command's own rather than a shell's copy of it.
  */
-Said say(Cli cli, string dir, string command, string[] argv) {
+Said say(Procs procs, string dir, string command, string[] argv) {
   string line = "cd " + dir + " && exec " + command;
   for (i32 i = 0; i < argv.len(); i++) { line = line + " " + argv[i]; }
-  Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
-  if (!r.ran()) { return Said(-1, "the host did not start: " + r.error); }
-  return Said(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null)) { return Said(-1, "the host did not start: " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}"); }
+  return Said(r!.status, string.fromBytes(r!.stdout) + string.fromBytes(r!.stderr));
 }
 
 /** The invocations, as argument vectors. */
@@ -372,48 +374,47 @@ string[][] cases() {
  * needs happens in the wac program rather than in either host — so a host that handed the program a
  * different view of the project would show up here rather than in a report from outside.
  */
-export string test_the_three_hosts_answer_the_same_command_the_same_way(Core core, Cli cli) {
+export string test_the_three_hosts_answer_the_same_command_the_same_way(Sys sys) {
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Net net = sys.net();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratch(cli, "hosts");
-  bool wrote = put(t, cli, dir + "/wac.json5", "{}\n")
-    && put(t, cli, dir + "/src/lib.wac", "export i32 two() { return 2; }\n")
-    && put(t, cli, dir + "/src/main.wac",
-           "import { two } from \"@/src/lib.wac\";\nexport i32 main() { return two(); }\n")
-    && put(t, cli, dir + "/src/bad.wac", "export i32 f() { return \"no\"; }\n")
+  string dir = scratch(env, fs, "hosts");
+  bool wrote = put(t, fs, dir + "/wac.json5", "{}\n")
+    && put(t, fs, dir + "/src/lib.wac", "export i32 two() { return 2; }\n")
+    && put(t, fs, dir + "/src/main.wac", "import { two } from \"@/src/lib.wac\";\nexport i32 main() { return two(); }\n")
+    && put(t, fs, dir + "/src/bad.wac", "export i32 f() { return \"no\"; }\n")
     // For `run`: one that says something and succeeds, and one whose exit code is neither 0 nor the
     // 1 and 2 every failure here uses — so a forwarded status cannot be confused with a diagnosis.
-    && put(t, cli, dir + "/src/hello.wac",
-           "import { Core, Sys } from \"std\";\n" +
-           "export i32 main(Sys sys) { Core core = sys.core; core.log(\"ran\"); return 0; }\n")
-    && put(t, cli, dir + "/src/seven.wac", "export i32 main() { return 7; }\n")
+    && put(t, fs, dir + "/src/hello.wac", "import { Sys } from \"std\";\n" +
+           "export i32 main(Sys sys) { sys.stdout().line(\"ran\"); return 0; }\n")
+    && put(t, fs, dir + "/src/seven.wac", "export i32 main() { return 7; }\n")
     // For `wac <module.wasm>`: one that reads a file, so the grants its *own manifest* declares can be
     // seen from outside, and a file whose name ends in `.wasm` and whose contents do not.
-    && put(t, cli, dir + "/src/reader.wac",
-           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Sys } from \"std\";\n" +
-           "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
-           "  FileResult f = cli.readFile(\"src/lib.wac\").wait();\n" +
-           "  core.log(f.ok ? \"read ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"read denied\"\n" +
-           "                                                                : \"read failed\"));\n" +
+    && put(t, fs, dir + "/src/reader.wac", "import { NotGranted, Sys } from \"std\";\n" +
+           "export async i32 main(Sys sys) {\n" +
+           "  auto f = await sys.files().readFile(\"src/lib.wac\");\n" +
+           "  sys.stdout().line(f.isOk() ? \"read ok\" : (f.err()! is NotGranted ? \"read denied\" : \"read failed\"));\n" +
            "  return 0;\n}\n")
-    && put(t, cli, dir + "/notamodule.wasm", "not a module\n")
+    && put(t, fs, dir + "/notamodule.wasm", "not a module\n")
     // **The first row here that touches the network.** Port 1 on loopback: nothing listens, and
     // connecting needs no privilege — only binding does — so every host gets a refusal rather than a
     // hang. It prints the *category*, which is the thing three hosts had no reason to agree on.
-    && put(t, cli, dir + "/src/dial.wac",
-           "import { Cli, Core, HostSocket, faultWords, Sys } from \"std\";\n"
-           + "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n"
-           + "  HostSocket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
-           + "  core.log(s.handle < 0 ? \"dial: \" + faultWords(s.fault) : \"dial: connected\");\n"
+    && put(t, fs, dir + "/src/dial.wac", "import { Refused, Sys } from \"std\";\n"
+           + "export async i32 main(Sys sys) {\n"
+           + "  auto s = await sys.net().connect(\"127.0.0.1\", 1);\n"
+           + "  sys.stdout().line(s.isOk() ? \"dial: connected\" : (s.err()! is Refused ? \"dial: Connection refused\" : \"dial: \\{s.err()!}\"));\n"
            + "  return 0;\n}\n")
     // For `test`: one of each outcome the runner has to tell apart — a pass, a failing report, a
     // `test_traps_*` that traps as its name says, and one that returns instead, which is a failure
     // whose whole point is that an empty report from it must not read as a pass.
-    && put(t, cli, dir + "/src/one_test.wac",
-           "import { Cli, Core, Sys } from \"std\";\n" +
-           "export string test_passes(Core core, Cli cli) { return \"\"; }\n" +
-           "export string test_fails(Core core, Cli cli) { return \"1 of 1 assertions failed\"; }\n" +
-           "export string test_traps_here(Core core, Cli cli) { return \"\"; }\n" +
-           "export string test_traps_on_purpose(Core core, Cli cli) { trap; }\n"
+    && put(t, fs, dir + "/src/one_test.wac", "import { Sys } from \"std\";\n" +
+           "export string test_passes(Sys sys) { return \"\"; }\n" +
+           "export string test_fails(Sys sys) { return \"1 of 1 assertions failed\"; }\n" +
+           "export string test_traps_here(Sys sys) { return \"\"; }\n" +
+           "export string test_traps_on_purpose(Sys sys) { trap; }\n"
            // **The camelCase spelling of the same rule.** `wactest/README.md` documents the prefix as
            // "`test_traps_` (or `testTraps`)" and three implementations take both; the wac runner took
            // only the first, so this export was a pass on the native binary and a failure on the other
@@ -422,22 +423,20 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            //
            // A bare trap, like its neighbour: two traps in one module and neither saying anything, so
            // `issues/lang/0254c` cannot make one of them report the other's sentence.
-           + "export string testTrapsOnPurpose(Core core, Cli cli) { trap; }\n")
+           + "export string testTrapsOnPurpose(Sys sys) { trap; }\n")
     // One trap, saying something, under a name that does *not* start `test_traps_` — so it is a
     // failure, and a failure is what prints the sentence. See the row that uses it.
-    && put(t, cli, dir + "/src/breaks_test.wac",
-           "import { Cli, Core, Sys } from \"std\";\n" +
-           "export string test_falls_over(Core core, Cli cli) { trap \"the reason it stopped\"; }\n")
+    && put(t, fs, dir + "/src/breaks_test.wac", "import { Sys } from \"std\";\n" +
+           "export string test_falls_over(Sys sys) { trap \"the reason it stopped\"; }\n")
     // **The capability canary.** A test that writes, run on a read-only grant. `issues/system/0242c`
     // is the day this passed on the JavaScript hosts and left `leaked.txt` on disk: a loaded module
     // was handed the *command's* world, and a `wac` command holds every grant because it has to
     // compile and write. The row that would notice is one where a test asks for more than the run did.
-    && put(t, cli, dir + "/src/writes_test.wac",
-           "import { Change, Cli, Core, FAULT_NOT_GRANTED, Sys } from \"std\";\n" +
-           "export string test_writes_a_file(Core core, Cli cli) {\n" +
-           "  Change c = cli.writeFile(\"leaked.txt\", \"leaked\\n\".toBytes()).wait();\n" +
-           "  if (c.ok()) { return \"\"; }\n" +
-           "  return c.fault == FAULT_NOT_GRANTED() ? \"the write was denied\" : \"the write failed\";\n" +
+    && put(t, fs, dir + "/src/writes_test.wac", "import { NotGranted, Sys } from \"std\";\n" +
+           "export async string test_writes_a_file(Sys sys) {\n" +
+           "  auto c = await sys.files().writeFile(\"leaked.txt\", \"leaked\\n\".toBytes());\n" +
+           "  if (c.isOk()) { return \"\"; }\n" +
+           "  return c.err()! is NotGranted ? \"the write was denied\" : \"the write failed\";\n" +
            "}\n")
     // **And the same capability *withheld*, which is where the hosts actually disagreed.** The three
     // rows that walk `src` grant read and write and never env, so a file here is asked the denied
@@ -450,10 +449,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // same test one step better: it asserts the *refusal* rather than the grant, so the rows stay
     // green instead of failing identically on three hosts — and a host that traps still breaks the
     // comparison, which is the whole job.
-    && put(t, cli, dir + "/src/deniedenv_test.wac",
-           "import { Cli, Core, Sys } from \"std\";\n" +
-           "export string test_a_denied_environment_is_null(Core core, Cli cli) {\n" +
-           "  u8[]? v = cli.env(\"PATH\").wait();\n" +
+    && put(t, fs, dir + "/src/deniedenv_test.wac", "import { Sys } from \"std\";\n" +
+           "export async string test_a_denied_environment_is_null(Sys sys) {\n" +
+           "  u8[]? v = (await sys.env().get(\"PATH\")).orElse(null);\n" +
            "  return v is null ? \"\" : \"PATH was readable without --allow-env\";\n" +
            "}\n")
     // **The environment grant reaching a loaded module.** `--allow-env` was in the list `test` accepts
@@ -464,24 +462,20 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // **Its own directory, and that is not tidiness.** Put in `src/` it joins the three rows that walk
     // a directory, where the run grants read and write and *not* env — and there the hosts disagree:
     // the native answers the null this capability documents, and the JavaScript hosts **trap**.
-    // `issues/system/0256c`. Moving this file back into `src/` is the regression test for that issue,
-    // and is what turns those rows red today.
-    && put(t, cli, dir + "/capsrc/net_test.wac",
-           "import { Cli, Core, FAULT_REFUSED, HostSocket, Sys } from \"std\";\n"
-           + "export string test_dials_a_closed_port(Core core, Cli cli) {\n"
-           + "  HostSocket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
-           + "  if (s.handle >= 0) { cli.closeSocket(s.handle);\n"
+    // `issues/system/0256c`. Moving this file back into `src/` is the regression test for that issue, // and is what turns those rows red today.
+    && put(t, fs, dir + "/capsrc/net_test.wac", "import { Refused, Sys } from \"std\";\n"
+           + "export async string test_dials_a_closed_port(Sys sys) {\n"
+           + "  auto s = await sys.net().connect(\"127.0.0.1\", 1);\n"
+           + "  if (s.isOk()) { s.unwrap().close();\n"
            + "    return \"something is listening on 127.0.0.1:1\"; }\n"
-           + "  return s.fault == FAULT_REFUSED() ? \"\" : \"the dial did not report a refusal\";\n}\n")
-    // What a program is allowed to do, reported rather than assumed — `probe.wac`'s shape, inline,
-    // for the two `run` rows that differ only in what they grant.
-    && put(t, cli, dir + "/src/caps.wac",
-           "import { Change, Cli, Core, FAULT_NOT_GRANTED, FileResult, Sys } from \"std\";\n"
-           + "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n"
-           + "  FileResult f = cli.readFile(\"src/hello.wac\").wait();\n"
-           + "  string read = f.ok ? \"ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
-           + "  Change w = cli.writeFile(\"caps.txt\", \"x\\n\".toBytes()).wait();\n"
-           + "  string write = w.ok() ? \"ok\" : (w.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
+           + "  return s.err()! is Refused ? \"\" : \"the dial did not report a refusal\";\n}\n")
+    // What a program is allowed to do, reported rather than assumed — `probe.wac`'s shape, inline, // for the two `run` rows that differ only in what they grant.
+    && put(t, fs, dir + "/src/caps.wac", "import { NotGranted, Sys } from \"std\";\n"
+           + "export async i32 main(Sys sys) {\n"
+           + "  auto f = await sys.files().readFile(\"src/hello.wac\");\n"
+           + "  string read = f.isOk() ? \"ok\" : (f.err()! is NotGranted ? \"denied\" : \"failed\");\n"
+           + "  auto w = await sys.files().writeFile(\"caps.txt\", \"x\\n\".toBytes());\n"
+           + "  string write = w.isOk() ? \"ok\" : (w.err()! is NotGranted ? \"denied\" : \"failed\");\n"
            // **And the environment, beside the two this already reported.** The row that wanted this
            // was excused in `tools/wac/testflagrows_test.wac` while `issues/system/0256c` was open —
            // a *denied* `env` answered null on the native hosts and trapped on the JavaScript ones, so
@@ -492,29 +486,27 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            // `PATH` rather than something of ours: it is set in every environment this runs in, so
            // `unset` here means the capability was withheld rather than that the variable was absent —
            // which is the distinction `issues/system/0261c` is about the type being unable to make.
-           + "  u8[]? e = cli.env(\"PATH\").wait();\n"
+           + "  u8[]? e = (await sys.env().get(\"PATH\")).orElse(null);\n"
            + "  string env = e is null ? \"unset\" : \"ok\";\n"
-           + "  core.log(\"read=\" + read + \" write=\" + write + \" env=\" + env);\n"
+           + "  sys.stdout().line(\"read=\" + read + \" write=\" + write + \" env=\" + env);\n"
            + "  return 0;\n}\n")
-    && put(t, cli, dir + "/capsrc/env_test.wac",
-           "import { Cli, Core, Sys } from \"std\";\n"
-           + "export string test_reads_the_environment(Core core, Cli cli) {\n"
-           + "  u8[]? v = cli.env(\"PATH\").wait();\n"
+    && put(t, fs, dir + "/capsrc/env_test.wac", "import { Sys } from \"std\";\n"
+           + "export async string test_reads_the_environment(Sys sys) {\n"
+           + "  u8[]? v = (await sys.env().get(\"PATH\")).orElse(null);\n"
            + "  return v is null ? \"PATH is not readable\" : \"\";\n}\n")
     // ...and one that only reads, for the run that grants nothing: a test wanting a capability it was
     // not given is *skipped and named*, not failed, because "you forgot a flag" and "your test is
     // wrong" are different answers.
-    && put(t, cli, dir + "/src/reads_test.wac",
-           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Sys } from \"std\";\n" +
-           "export string test_reads_a_file(Core core, Cli cli) {\n" +
-           "  FileResult f = cli.readFile(\"src/lib.wac\").wait();\n" +
-           "  if (f.ok) { return \"\"; }\n" +
-           "  return f.fault == FAULT_NOT_GRANTED() ? \"the read was denied\" : \"the read failed\";\n" +
+    && put(t, fs, dir + "/src/reads_test.wac", "import { NotGranted, Sys } from \"std\";\n" +
+           "export async string test_reads_a_file(Sys sys) {\n" +
+           "  auto f = await sys.files().readFile(\"src/lib.wac\");\n" +
+           "  if (f.isOk()) { return \"\"; }\n" +
+           "  return f.err()! is NotGranted ? \"the read was denied\" : \"the read failed\";\n" +
            "}\n");
-  if (!wrote) { cli.remove(dir, true).wait(); return t.report(); }
+  if (!wrote) { fs.remove(dir, true).wait(); return t.report(); }
 
-  string native = wacBinary(cli);
-  t.isTrue(cli.stat(native).wait().isFile, "the native binary is built: " + native);
+  string native = wacBinary(env);
+  t.isTrue(flatten(fs.stat(native).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile, "the native binary is built: " + native);
 
   // **A traced artefact, built once by the native binary and read by all three.** `tracestat` moved
   // out of `native/v8/src/main.rs` into the program on 2026-08-25 — `issues/system/0257c`'s rule that
@@ -525,37 +517,37 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // Built here rather than written as bytes: the artefact has to be a *real* traced module, and the
   // number `tracestat` reports depends on the instrumentation rather than on the source. Small slots
   // on purpose, so `wanted` and `slots` are both small numbers a reader can check by eye.
-  Exec traced = cli.exec(native,
-                         [
+  auto tracedRan = flatten(procs.exec(native, [
                                   "build", dir + "/src/hello.wac", "--trace", "--trace-slots", "8",
                                   "-o", dir + "/traced", "--quiet"
-                         ], u8[]()).wait();
-  t.isTrue(traced.ran() && traced.status == 0,
-           "the traced fixture built: " + traced.error + string.fromBytes(traced.stderr));
+                         ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? traced = tracedRan.ok();
+  t.isTrue((traced is not null) && traced!.status == 0,
+           "the traced fixture built: " + "\{tracedRan.isErr() ? "\{tracedRan.err()!}" : ""}" + string.fromBytes(traced!.stderr));
   // And the coverage half, for `covdump` — the same source, counted rather than journalled.
-  Exec covered = cli.exec(native,
-                          [
+  auto coveredRan = flatten(procs.exec(native, [
                                    "build", dir + "/src/hello.wac", "--coverage",
                                    "-o", dir + "/covered", "--quiet"
-                          ], u8[]()).wait();
-  t.isTrue(covered.ran() && covered.status == 0,
-           "the coverage fixture built: " + covered.error + string.fromBytes(covered.stderr));
+                          ], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? covered = coveredRan.ok();
+  t.isTrue((covered is not null) && covered!.status == 0,
+           "the coverage fixture built: " + "\{coveredRan.isErr() ? "\{coveredRan.err()!}" : ""}" + string.fromBytes(covered!.stderr));
   string[] grants = [
                              "--allow-read", "--allow-write", "--allow-run", "--allow-env",
                              "--allow-net"
   ];
-  string deno = builtByDeno(cli, ENTRY, "wac-deno-cli", grants, "deno", false);
+  string deno = builtByDeno(env, fs, procs, ENTRY, "wac-deno-cli", grants, "deno", false);
   // **Node is the third host and not an afterthought.** It is the same wac program through a
   // different runtime, and the only thing that differs underneath is how a worker is made — so if a
   // difference between hosts is ever going to appear anywhere, this is a column that would show it
   // at no extra risk of a false alarm. Its `run` goes through `host/childWasmNode.ts` where Deno's
   // goes through `host/childWasm.ts`, which is the one place the two are not literally one file.
-  string node = builtByDeno(cli, ENTRY, "wac-node-cli", grants, "node", false);
-  t.isTrue(cli.stat(deno).wait().isFile, "the Deno-hosted command was built: " + deno);
-  t.isTrue(cli.stat(node).wait().isFile, "the Node-hosted command was built: " + node);
-  if (!cli.stat(deno).wait().isFile || !cli.stat(node).wait().isFile
-      || !cli.stat(native).wait().isFile) {
-    cli.remove(dir, true).wait();
+  string node = builtByDeno(env, fs, procs, ENTRY, "wac-node-cli", grants, "node", false);
+  t.isTrue(flatten(fs.stat(deno).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile, "the Deno-hosted command was built: " + deno);
+  t.isTrue(flatten(fs.stat(node).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile, "the Node-hosted command was built: " + node);
+  if (!flatten(fs.stat(deno).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile || !flatten(fs.stat(node).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile
+      || !flatten(fs.stat(native).wait()).orElse(Stat.of(false, false, false, 0, 0, false, false, 0, 0)).isFile) {
+    fs.remove(dir, true).wait();
     return t.report();
   }
 
@@ -563,15 +555,14 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // difference in what a host does with a module cannot be a difference in the module. Not
   // `builtProgram`, which keys a cache by name under `.cache/` — these belong to this fixture, and one
   // of them exists only to be denied.
-  Said mk = say(cli, dir, native, ["build", "src/hello.wac", "-o", "hello"]);
-  Said mkR = say(cli, dir, native, ["build", "src/reader.wac", "-o", "reader"]);
-  Said mkG = say(cli, dir, native,
-                 ["build", "--allow-read", "src/reader.wac", "-o", "reader-read"]);
+  Said mk = say(procs, dir, native, ["build", "src/hello.wac", "-o", "hello"]);
+  Said mkR = say(procs, dir, native, ["build", "src/reader.wac", "-o", "reader"]);
+  Said mkG = say(procs, dir, native, ["build", "--allow-read", "src/reader.wac", "-o", "reader-read"]);
   t.eqI32(mk.status, 0, "hello.wasm built: " + mk.out);
   t.eqI32(mkR.status, 0, "reader.wasm built: " + mkR.out);
   t.eqI32(mkG.status, 0, "reader-read.wasm built: " + mkG.out);
   if (mk.status != 0 || mkR.status != 0 || mkG.status != 0) {
-    cli.remove(dir, true).wait();
+    fs.remove(dir, true).wait();
     return t.report();
   }
 
@@ -585,10 +576,10 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   i32 granted = 0;
   i32 refused = 0;
   for (i32 i = 0; i < table.len(); i++) {
-    Said n = say(cli, dir, native, table[i]);
-    Said d = say(cli, dir, deno, table[i]);
+    Said n = say(procs, dir, native, table[i]);
+    Said d = say(procs, dir, deno, table[i]);
     // A built Node program is not executable by itself; `node` runs it, as `spawn_test.wac` does.
-    Said j = say(cli, dir, "node " + node, table[i]);
+    Said j = say(procs, dir, "node " + node, table[i]);
     string what = joined(table[i], " ");
     // Timing is the one thing the header says is not compared, and every `test` row prints some now.
     // Mapped to `(N ms)` rather than deleted: a host that printed no timing at all would pass a
@@ -612,7 +603,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
   // returns 0, and the three modules run directly.
-  // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
+  // **Fifteen since 2026-08-25**: `tracestat traced!.wasm` reads a journal and exits 0, and the second
   // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
   // **Twenty-four since 2026-08-26** and the five are worth naming, because the count is the only
   // thing standing between a new row and a row that silently does nothing: `app` writes its artefact,
@@ -646,34 +637,38 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // `baseName(stem) + ".wasm"` taken from the `-o`, so the name travels *inside* the module and a
   // comparison across two of them fails for a reason that has nothing to do with the pipeline —
   // which is the mistake `bootstrap.sh` records above its fixpoint loop.
-  cli.mkdir(dir + "/h1", true).wait();
-  cli.mkdir(dir + "/h2", true).wait();
-  cli.mkdir(dir + "/h3", true).wait();
-  Said b1 = say(cli, dir, native, ["build", "src/hello.wac", "-o", "h1/same"]);
-  Said b2 = say(cli, dir, deno, ["build", "src/hello.wac", "-o", "h2/same"]);
-  Said b3 = say(cli, dir, "node " + node, ["build", "src/hello.wac", "-o", "h3/same"]);
+  fs.mkdir(dir + "/h1", true).wait();
+  fs.mkdir(dir + "/h2", true).wait();
+  fs.mkdir(dir + "/h3", true).wait();
+  Said b1 = say(procs, dir, native, ["build", "src/hello.wac", "-o", "h1/same"]);
+  Said b2 = say(procs, dir, deno, ["build", "src/hello.wac", "-o", "h2/same"]);
+  Said b3 = say(procs, dir, "node " + node, ["build", "src/hello.wac", "-o", "h3/same"]);
   t.eqI32(b1.status, 0, "the native host built it: " + b1.out);
   t.eqI32(b2.status, 0, "the Deno host built it: " + b2.out);
   t.eqI32(b3.status, 0, "the Node host built it: " + b3.out);
-  FileResult a1 = cli.readFile(dir + "/h1/same.wasm").wait();
-  FileResult a2 = cli.readFile(dir + "/h2/same.wasm").wait();
-  FileResult a3 = cli.readFile(dir + "/h3/same.wasm").wait();
-  t.isTrue(a1.ok && a2.ok && a3.ok,
-           "three artefacts: " + a1.error + " " + a2.error + " " + a3.error);
-  if (a1.ok && a2.ok && a3.ok) {
-    // Not `a1.bytes.len() > 0` as well: a build that wrote nothing would fail the status assertions
+  auto a1Read = flatten(fs.readFile(dir + "/h1/same.wasm").wait());
+  u8[]? a1 = a1Read.ok();
+  auto a2Read = flatten(fs.readFile(dir + "/h2/same.wasm").wait());
+  u8[]? a2 = a2Read.ok();
+  auto a3Read = flatten(fs.readFile(dir + "/h3/same.wasm").wait());
+  u8[]? a3 = a3Read.ok();
+  t.isTrue((a1 is not null) && (a2 is not null) && (a3 is not null),
+           "three artefacts: " + "\{a1Read.isErr() ? "\{a1Read.err()!}" : ""}" + " " + "\{a2Read.isErr() ? "\{a2Read.err()!}" : ""}" + " " + "\{a3Read.isErr() ? "\{a3Read.err()!}" : ""}");
+  if ((a1 is not null) && (a2 is not null) && (a3 is not null)) {
+    // Not `a1!.len() > 0` as well: a build that wrote nothing would fail the status assertions
     // above, and an empty file compared with an empty file is the shape this is here to refuse.
-    t.isTrue(a1.bytes.len() > 0, "and the native one is not empty");
-    t.eqStr(sameBytes(a1.bytes, a2.bytes), "", "Deno's `build` writes the native host's bytes");
-    t.eqStr(sameBytes(a1.bytes, a3.bytes), "", "Node's `build` writes the native host's bytes");
+    t.isTrue(a1!.len() > 0, "and the native one is not empty");
+    t.eqStr(sameBytes(a1!, a2!), "", "Deno's `build` writes the native host's bytes");
+    t.eqStr(sameBytes(a1!, a3!), "", "Node's `build` writes the native host's bytes");
     // **And the comparison can fail**, which three assertions that pass do not show. `reader.wasm` is
     // a different program built earlier in this test, so a `sameBytes` that answered `""` for
     // everything — a loop that never ran, a length check reading the wrong array — would satisfy the
     // two above and be caught here. The oracle has to be able to disagree.
-    FileResult other = cli.readFile(dir + "/reader.wasm").wait();
-    t.isTrue(other.ok, "the reader fixture is there to compare against — " + other.error);
-    if (other.ok) {
-      t.isFalse(sameBytes(a1.bytes, other.bytes) == "",
+    auto otherRead = flatten(fs.readFile(dir + "/reader.wasm").wait());
+    u8[]? other = otherRead.ok();
+    t.isTrue((other is not null), "the reader fixture is there to compare against — " + "\{otherRead.isErr() ? "\{otherRead.err()!}" : ""}");
+    if ((other is not null)) {
+      t.isFalse(sameBytes(a1!, other!) == "",
                 "two different programs do not have the same bytes");
     }
   }
@@ -687,10 +682,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // Its own directory, made after everything above has finished with `dir`, so "never built anything"
   // is true of it.
   string fresh = dir + "/fresh";
-  bool ready = cli.mkdir(fresh + "/t", true).wait().ok()
-    && put(t, cli, fresh + "/wac.json5", "{}\n")
-    && put(t, cli, fresh + "/t/x_test.wac",
-           "export string test_two_is_two() { i32 two = 2; return two == 2 ? \"\" : \"no\"; }\n");
+  bool ready = flatten(fs.mkdir(fresh + "/t", true).wait()).isOk()
+    && put(t, fs, fresh + "/wac.json5", "{}\n")
+    && put(t, fs, fresh + "/t/x_test.wac", "export string test_two_is_two() { i32 two = 2; return two == 2 ? \"\" : \"no\"; }\n");
   t.isTrue(ready, "the fresh project was written");
   if (ready) {
     // **Granted, because the command's own capabilities are not a host's to differ on.** A hosted
@@ -699,9 +693,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // cannot read the directory to discover it is one and compiles it as a file, and the hosted one
     // walks it. These pass what the directory rows above pass.
     string[] g = ["test", "--allow-read", "--allow-write", "t"];
-    Said rel1 = say(cli, fresh, native, g);
-    Said rel2 = say(cli, fresh, deno, g);
-    Said rel3 = say(cli, fresh, "node " + node, g);
+    Said rel1 = say(procs, fresh, native, g);
+    Said rel2 = say(procs, fresh, deno, g);
+    Said rel3 = say(procs, fresh, "node " + node, g);
     t.eqI32(rel1.status, 0, "native, a fresh project and a relative directory: " + rel1.out);
     t.eqStr(steadied(rel2.out), steadied(rel1.out), "deno agrees on a fresh project");
     t.eqStr(steadied(rel3.out), steadied(rel1.out), "node agrees on a fresh project");
@@ -714,8 +708,8 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // narrowed to the files walked, not the whole graph, or it reads `2%` for a suite that covers its
     // own files well.
     string[] c = ["test", "--allow-read", "--allow-write", "--coverage", "t"];
-    Said cov1 = say(cli, fresh, native, c);
-    Said cov2 = say(cli, fresh, deno, c);
+    Said cov1 = say(procs, fresh, native, c);
+    Said cov2 = say(procs, fresh, deno, c);
     t.isTrue(contains(cov1.out, "branch coverage:"), "native reports coverage: " + cov1.out);
     t.eqStr(steadied(cov2.out), steadied(cov1.out), "deno's coverage table is the native's");
     t.isFalse(contains(cov2.out, "std/platform.wac"),
@@ -724,14 +718,12 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // Absolute, and compared with each host's own relative answer rather than across hosts: the
     // per-file header names the path the caller typed, so the two forms differ on purpose. What must
     // hold is that both work — an absolute directory produced `..//abs/path` and failed to compile.
-    Said abs2 = say(cli, fresh, deno, ["test", "--allow-read", "--allow-write", fresh + "/t"]);
-    Said abs3 = say(cli, fresh, "node " + node,
-                    ["test", "--allow-read", "--allow-write", fresh + "/t"]);
+    Said abs2 = say(procs, fresh, deno, ["test", "--allow-read", "--allow-write", fresh + "/t"]);
+    Said abs3 = say(procs, fresh, "node " + node, ["test", "--allow-read", "--allow-write", fresh + "/t"]);
     t.eqI32(abs2.status, 0, "deno, the same directory named absolutely: " + abs2.out);
     t.eqI32(abs3.status, 0, "node, the same directory named absolutely: " + abs3.out);
     t.isTrue(contains(abs2.out, "1 passed, 0 failed"), "and it ran the test: " + abs2.out);
   }
 
-  cli.remove(dir, true).wait();
-  return t.report();
-}
+  fs.remove(dir, true).wait();
+  return t.report();}

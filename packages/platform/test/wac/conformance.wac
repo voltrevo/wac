@@ -10,12 +10,13 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Cli, FileResult } from "std";
+import { Cli, Files } from "std";
+import { flatten } from "core";
 
-export string sourceOf(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { trap; }
-  return string.fromBytes(f.bytes);
+export string sourceOf(Files fs, string path) {
+  u8[]? f = flatten(fs.readFile(path).wait()).ok();
+  if ((f is null)) { trap; }
+  return string.fromBytes(f!);
 }
 
 /** Every line of `text`, without its terminator. */
@@ -56,8 +57,8 @@ string[] firstOf(string[] all, i32 n) {
  * Two spaces, a `SCREAMING_SNAKE` name, a colon, a number and a comma: the shape of one entry in the
  * object literal, and nothing else in that file has it.
  */
-export string[] opcodes(Cli cli) {
-  string[] lines = linesOf(sourceOf(cli, "packages/platform/host/ops.ts"));
+export string[] opcodes(Files fs) {
+  string[] lines = linesOf(sourceOf(fs, "packages/platform/host/ops.ts"));
   string[] found = string[].filled(lines.len(), "");
   i32 n = 0;
   for (i32 i = 0; i < lines.len(); i++) {
@@ -85,8 +86,8 @@ export string[] opcodes(Cli cli) {
  *
  * `("Core", "name") => Cap::` in `native/src/main.rs`. An opcode with no entry here is page-only.
  */
-export string[] nativeCapabilities(Cli cli) {
-  string src = sourceOf(cli, "native/src/main.rs");
+export string[] nativeCapabilities(Files fs) {
+  string src = sourceOf(fs, "native/src/main.rs");
   u8[] b = src.toBytes();
   string[] found = string[].filled(512, "");
   i32 n = 0;
@@ -122,8 +123,8 @@ export string[] nativeCapabilities(Cli cli) {
  * `fn<Pending<bool>(string, i32, i32, u8[])> drawPixels;` — so stopping at the first `]` drops the
  * field silently. Written that way first, the TypeScript reported 20 `Cli` fields where there are 31.
  */
-export string[] declaredFields(Cli cli, string name) {
-  string src = sourceOf(cli, "std/platform.wac");
+export string[] declaredFields(Files fs, string name) {
+  string src = sourceOf(fs, "std/platform.wac");
   i32 from = src.indexOf("export struct \{name} {");
   if (from < 0) { trap; }
   i32 to = src.slice(from, src.len()).indexOf("\n}");

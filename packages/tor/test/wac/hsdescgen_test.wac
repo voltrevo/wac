@@ -66,7 +66,7 @@
 // Host-side until 2026-08-17, and the tables above were in the wrapper. `issues/system/0161` step 4.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import {
   DECOY_CLIENTS, authCert, blindExpanded, blindPublic, cert, decoyClient, descriptor, encCert,
   ephemeral, factor, identityPublic, identitySeed, inner, innerPlainLen, innerSalt, ipEnc, ipNtor,
@@ -96,25 +96,27 @@ import { equal } from "../../../bytes/src/slice.wac";
  * an offset *into* the document, and a value outside it would make the span test compare a slice
  * against nothing in particular.
  */
-export string test_the_fixture_is_a_v3_descriptor(Core core, Cli cli) {
+export string test_the_fixture_is_a_v3_descriptor(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] doc = descriptor(cli);
+  u8[] doc = descriptor(fs);
   string text = string.fromBytes(doc);
   t.isTrue(text.indexOf("hs-descriptor 3\n") == 0, "the fixture is not a v3 descriptor");
   t.isTrue(text.indexOf("\nsignature ") >= 0, "the fixture has no signature line");
-  t.isTrue(signedSpanLen(cli) > 0 && signedSpanLen(cli) < doc.len(),
+  t.isTrue(signedSpanLen(fs) > 0 && signedSpanLen(fs) < doc.len(),
            "signedSpanLen is not inside the document");
   return t.report();
 }
 
-u8[] built(Cli cli) {
-  return descriptorDocument(lifetimeMinutes(cli), cert(cli), revision(cli) as i64,
-                            superencrypted(cli), signSeed(cli));
+u8[] built(Files fs) {
+  return descriptorDocument(lifetimeMinutes(fs), cert(fs), revision(fs) as i64,
+                            superencrypted(fs), signSeed(fs));
 }
 
-export string test_the_document_tor_decoded_is_reproduced(Core core, Cli cli) {
+export string test_the_document_tor_decoded_is_reproduced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  t.eqBytes(built(cli), descriptor(cli),
+  t.eqBytes(built(fs), descriptor(fs),
             "the descriptor is the one tor's hs_desc_decode_plaintext accepted");
   return t.report();
 }
@@ -126,12 +128,13 @@ export string test_the_document_tor_decoded_is_reproduced(Core core, Cli cli) {
  * either way leaves a document that parses and a signature that does not verify — the same shape as
  * the ESTABLISH_INTRO span, and the reason both are pinned rather than described.
  */
-export string test_the_signed_span_is_where_tor_stops(Core core, Cli cli) {
+export string test_the_signed_span_is_where_tor_stops(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] doc = built(cli);
+  u8[] doc = built(fs);
   u8[] span = signedSpanOf(doc);
 
-  t.eqI32(span.len(), signedSpanLen(cli), "the span is the length recorded when tor accepted it");
+  t.eqI32(span.len(), signedSpanLen(fs), "the span is the length recorded when tor accepted it");
   t.eqI32(span[span.len() - 1] as i32, 10, "and it ends on the newline, which tor includes");
   // What follows the span is exactly the signature line.
   t.isTrue(startsWith(sub(doc, span.len(), doc.len()), "signature "),
@@ -141,14 +144,14 @@ export string test_the_signed_span_is_where_tor_stops(Core core, Cli cli) {
   // alone — the prefix is part of the message, as it is for ESTABLISH_INTRO.
   u8[] sig = signatureOf(doc);
   t.eqI32(sig.len(), 64, "there is a 64-byte signature to check");
-  t.isTrue(ed25519Verify(signPublic(cli), prefixed(span), sig),
+  t.isTrue(ed25519Verify(signPublic(fs), prefixed(span), sig),
            "the signature covers the prefixed span");
-  t.isTrue(!ed25519Verify(signPublic(cli), span, sig),
+  t.isTrue(!ed25519Verify(signPublic(fs), span, sig),
            "and not the bare span");
   t.eqStr(DESC_SIG_PREFIX, "Tor onion service descriptor sig v3", "with tor's own prefix string");
 
   // One byte more or less is a different message, which is the whole trap.
-  t.isTrue(!ed25519Verify(signPublic(cli), prefixed(sub(doc, 0, span.len() - 1)),
+  t.isTrue(!ed25519Verify(signPublic(fs), prefixed(sub(doc, 0, span.len() - 1)),
                           sig), "a span one byte short does not verify");
   return t.report();
 }
@@ -161,10 +164,11 @@ export string test_the_signed_span_is_where_tor_stops(Core core, Cli cli) {
  * ciphertext and not the plaintext — each of which a self-consistent pair would agree on wrongly.
  * The layer contents are pinned against tor when the encrypted layers exist; this is the arithmetic.
  */
-export string test_a_layer_round_trips_and_is_shaped_right(Core core, Cli cli) {
+export string test_a_layer_round_trips_and_is_shaped_right(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   u8[] plain = "create2-formats 2\nintroduction-point AQAGAX8AAAEjKQ\n".toBytes();
-  u8[] secret = blindPublic(cli);
+  u8[] secret = blindPublic(fs);
   u8[] subcred = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { subcred[i] = ((i * 5 + 1) & 0xFF) as@ u8; }
   u8[] salt = u8[].filled(SALT_LEN, 0);
@@ -195,14 +199,15 @@ export string test_a_layer_round_trips_and_is_shaped_right(Core core, Cli cli) {
 }
 
 /** Inputs that cannot make a descriptor produce nothing, rather than an unsigned document. */
-export string test_bad_inputs_make_no_descriptor(Core core, Cli cli) {
+export string test_bad_inputs_make_no_descriptor(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   // **Named apart from the accessors they came from.** A local called `cert` shadows the imported
-  // `cert`, and a later `cert(cli)` in the same scope is then a call on a `u8[]`. `wac build`
+  // `cert`, and a later `cert(fs)` in the same scope is then a call on a `u8[]`. `wac build`
   // accepts it and the type-checker slice does not — `issues/lang/0170`.
-  u8[] certBytes = cert(cli);
-  u8[] sup = superencrypted(cli);
-  u8[] seed = signSeed(cli);
+  u8[] certBytes = cert(fs);
+  u8[] sup = superencrypted(fs);
+  u8[] seed = signSeed(fs);
 
   t.eqI32(descriptorDocument(180, u8[](), 42, sup, seed).len(), 0, "no certificate, no descriptor");
   t.eqI32(descriptorDocument(180, certBytes, 42, sup, u8[]()).len(), 0, "no signing key, no descriptor");
@@ -221,20 +226,21 @@ export string test_bad_inputs_make_no_descriptor(Core core, Cli cli) {
  * sixteen auth clients and the inner object, so reproducing the blob byte for byte reproduces
  * something an independent implementation understood.
  */
-export string test_the_middle_layer_tor_decrypted_is_reproduced(Core core, Cli cli) {
+export string test_the_middle_layer_tor_decrypted_is_reproduced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   i32 n = DECOY_CLIENTS;
   u8[][] clients = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { clients[i] = decoyClient(i); }
 
-  u8[] plain = superencryptedPlaintext(ephemeral(cli), clients,
-                                       inner(cli));
+  u8[] plain = superencryptedPlaintext(ephemeral(fs), clients,
+                                       inner(fs));
   t.isTrue(plain.len() > 0, "the middle plaintext builds");
   t.isTrue(startsWith(plain, "desc-auth-type x25519\n"),
            "it opens with the auth type, which tor's token rule requires first");
 
   u8[] padded = padToBlock(plain);
-  t.eqI32(padded.len(), middleLen(cli), "padded to the length tor decrypted");
+  t.eqI32(padded.len(), middleLen(fs), "padded to the length tor decrypted");
   t.eqI32(padded.len() % SUPERENC_PAD_MULTIPLE, 0, "and to a multiple of ten thousand");
   t.isTrue(padded.len() >= plain.len(), "padding never shortens");
   t.eqI32(padded[padded.len() - 1] as i32, 0, "the padding is NULs, which is where a reader stops");
@@ -251,37 +257,38 @@ export string test_the_middle_layer_tor_decrypted_is_reproduced(Core core, Cli c
   t.eqI32(padToBlock(exact).len(), SUPERENC_PAD_MULTIPLE,
           "an exact block is left alone rather than grown");
 
-  u8[] blob = encryptLayer(padded, blindPublic(cli),
-                           subcred(cli), revision(cli) as i64,
-                           salt(cli), superencryptedConstant());
-  t.eqBytes(blob, superencrypted(cli),
+  u8[] blob = encryptLayer(padded, blindPublic(fs),
+                           subcred(fs), revision(fs) as i64,
+                           salt(fs), superencryptedConstant());
+  t.eqBytes(blob, superencrypted(fs),
             "and the encrypted layer is the blob tor decrypted");
   return t.report();
 }
 
 /** The decoy clients are present and uniform, because their absence would leak. */
-export string test_the_decoy_clients_are_written(Core core, Cli cli) {
+export string test_the_decoy_clients_are_written(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   i32 n = DECOY_CLIENTS;
   u8[][] clients = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) { clients[i] = decoyClient(i); }
-  u8[] plain = superencryptedPlaintext(ephemeral(cli), clients,
-                                       inner(cli));
+  u8[] plain = superencryptedPlaintext(ephemeral(fs), clients,
+                                       inner(fs));
 
   t.eqI32(countOf(plain, "auth-client "), n, "one line per client, and tor counted the same number");
 
   // A layer with no clients is refused rather than written: the token rule wants at least one, and a
   // descriptor whose shape says "nobody is authorised" is the leak the decoys exist to prevent.
-  t.eqI32(superencryptedPlaintext(ephemeral(cli), u8[][](),
-                                  inner(cli)).len(), 0,
+  t.eqI32(superencryptedPlaintext(ephemeral(fs), u8[][](),
+                                  inner(fs)).len(), 0,
           "no clients at all is refused");
   // A client of the wrong size would produce fields tor cannot parse.
   u8[][] wrong = u8[][].defaulted(1);
   wrong[0] = u8[].filled(39, 0);
-  t.eqI32(superencryptedPlaintext(ephemeral(cli), wrong,
-                                  inner(cli)).len(), 0,
+  t.eqI32(superencryptedPlaintext(ephemeral(fs), wrong,
+                                  inner(fs)).len(), 0,
           "a thirty-nine byte client is not one");
-  t.eqI32(superencryptedPlaintext(u8[].filled(31, 0), clients, inner(cli)).len(), 0,
+  t.eqI32(superencryptedPlaintext(u8[].filled(31, 0), clients, inner(fs)).len(), 0,
           "and a thirty-one byte ephemeral key is not a key");
   return t.report();
 }
@@ -294,14 +301,15 @@ export string test_the_decoy_clients_are_written(Core core, Cli cli) {
  * so a descriptor that decodes with zero introduction points is a failure wearing a success. Two
  * deliberately-wrong builds produced exactly that, and are recorded in the registrar's header.
  */
-export string test_the_inner_layer_tor_read_is_reproduced(Core core, Cli cli) {
+export string test_the_inner_layer_tor_read_is_reproduced(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] ls = linkSpecs(cli);
+  u8[] ls = linkSpecs(fs);
   t.isTrue(linkSpecifiersValid(ls), "the link specifiers are a list our own validator accepts");
 
-  u8[] section = introPointSection(ls, ipNtor(cli),
-                                   authCert(cli), ipEnc(cli),
-                                   encCert(cli));
+  u8[] section = introPointSection(ls, ipNtor(fs),
+                                   authCert(fs), ipEnc(fs),
+                                   encCert(fs));
   t.isTrue(section.len() > 0, "the introduction point section builds");
   t.isTrue(startsWith(section, "introduction-point "),
            "it opens with the keyword tor's token rule requires first");
@@ -314,12 +322,12 @@ export string test_the_inner_layer_tor_read_is_reproduced(Core core, Cli cli) {
   u8[] plain = encryptedPlaintext(intros);
   t.isTrue(startsWith(plain, "create2-formats 2\n"),
            "the inner layer opens with create2-formats, which tor requires first");
-  t.eqI32(plain.len(), innerPlainLen(cli), "and is the length tor decrypted");
+  t.eqI32(plain.len(), innerPlainLen(fs), "and is the length tor decrypted");
 
-  u8[] blob = encryptLayer(plain, blindPublic(cli),
-                           subcred(cli), revision(cli) as i64,
-                           innerSalt(cli), encryptedConstant());
-  t.eqBytes(blob, inner(cli),
+  u8[] blob = encryptLayer(plain, blindPublic(fs),
+                           subcred(fs), revision(fs) as i64,
+                           innerSalt(fs), encryptedConstant());
+  t.eqBytes(blob, inner(fs),
             "the encrypted inner layer is the blob tor decrypted");
 
   // The inner layer is **not** padded, unlike the middle one. Its length tracks the number of
@@ -334,13 +342,14 @@ export string test_the_inner_layer_tor_read_is_reproduced(Core core, Cli cli) {
 }
 
 /** Inputs that cannot make an introduction point produce nothing. */
-export string test_a_bad_introduction_point_is_refused(Core core, Cli cli) {
+export string test_a_bad_introduction_point_is_refused(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] ls = linkSpecs(cli);
-  u8[] ntor = ipNtor(cli);
-  u8[] enc = ipEnc(cli);
-  u8[] a = authCert(cli);
-  u8[] e = encCert(cli);
+  u8[] ls = linkSpecs(fs);
+  u8[] ntor = ipNtor(fs);
+  u8[] enc = ipEnc(fs);
+  u8[] a = authCert(fs);
+  u8[] e = encCert(fs);
 
   t.eqI32(introPointSection(u8[](), ntor, a, enc, e).len(), 0, "no link specifiers, no section");
   t.eqI32(introPointSection(ls, u8[].filled(31, 0), a, enc, e).len(), 0, "a 31-byte onion key is not one");
@@ -362,49 +371,50 @@ export string test_a_bad_introduction_point_is_refused(Core core, Cli cli) {
  * So this walks the chain a service actually walks — identity, factor, blinded keypair,
  * subcredential — and ends at the value tor was handed when it decrypted both layers.
  */
-export string test_the_chain_from_identity_to_subcredential(Core core, Cli cli) {
+export string test_the_chain_from_identity_to_subcredential(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] seed = identitySeed(cli);
+  u8[] seed = identitySeed(fs);
 
-  t.eqBytes(ed25519PublicKey(seed), identityPublic(cli),
+  t.eqBytes(ed25519PublicKey(seed), identityPublic(fs),
             "the identity public key is the seed's own");
 
-  i64 period = periodNum(cli) as i64;
-  i64 periodLen = periodLength(cli) as i64;
-  u8[] blindFactor = blindingFactor(identityPublic(cli), period, periodLen);
-  t.eqBytes(blindFactor, factor(cli),
+  i64 period = periodNum(fs) as i64;
+  i64 periodLen = periodLength(fs) as i64;
+  u8[] blindFactor = blindingFactor(identityPublic(fs), period, periodLen);
+  t.eqBytes(blindFactor, factor(fs),
             "the blinding factor is the one this period gives");
 
   u8[] expanded = blindedSecretKey(ed25519ExpandedSecret(seed), blindFactor);
-  t.eqBytes(expanded, blindExpanded(cli),
+  t.eqBytes(expanded, blindExpanded(fs),
             "the blinded secret follows from the identity and the factor");
-  t.eqBytes(ed25519PublicKeyExpanded(expanded), blindPublic(cli),
+  t.eqBytes(ed25519PublicKeyExpanded(expanded), blindPublic(fs),
             "and its public half is the blinded key tor read out of the certificate");
 
-  t.eqBytes(subcredential(identityPublic(cli), blindPublic(cli)),
-            subcred(cli),
+  t.eqBytes(subcredential(identityPublic(fs), blindPublic(fs)),
+            subcred(fs),
             "the subcredential tor decrypted with is the derived one, not a constant");
 
   // And the certificate itself, rebuilt from the blinded secret. Every other test here takes the
   // certificate from the vector as an *input*, so a fault in how it is built was invisible to all of
   // them — one planted fault ("omit the signing key extension") survived until this line existed.
   // Without that extension tor has nowhere to read `blinded_pubkey` from at all.
-  t.eqBytes(ed25519CertExpandedWithKey(CERT_TYPE_SIGNING_HS_DESC, expiryHoursOf(cli), 1,
-                                       signPublic(cli),
-                                       blindPublic(cli), expanded),
-            cert(cli),
+  t.eqBytes(ed25519CertExpandedWithKey(CERT_TYPE_SIGNING_HS_DESC, expiryHoursOf(fs), 1,
+                                       signPublic(fs),
+                                       blindPublic(fs), expanded),
+            cert(fs),
             "the signing-key certificate is signed by the blinded key and carries it");
 
   // A neighbouring period gives a different everything, which is what makes a descriptor expire from
   // the hash ring rather than linger under a stale name.
-  u8[] otherFactor = blindingFactor(identityPublic(cli), period + 1, periodLen);
+  u8[] otherFactor = blindingFactor(identityPublic(fs), period + 1, periodLen);
   t.isTrue(!equal(otherFactor, blindFactor), "the next period has its own factor");
   u8[] otherBlind = ed25519PublicKeyExpanded(
     blindedSecretKey(ed25519ExpandedSecret(seed), otherFactor));
-  t.isTrue(!equal(otherBlind, blindPublic(cli)),
+  t.isTrue(!equal(otherBlind, blindPublic(fs)),
            "and its own blinded key");
-  t.isTrue(!equal(subcredential(identityPublic(cli), otherBlind),
-                      subcred(cli)),
+  t.isTrue(!equal(subcredential(identityPublic(fs), otherBlind),
+                      subcred(fs)),
            "and its own subcredential, so last period's descriptor will not decrypt");
   return t.report();
 }
@@ -415,8 +425,8 @@ export string test_the_chain_from_identity_to_subcredential(Core core, Cli cli) 
  * Taken from the bytes rather than recomputed, because the generator's choice of expiry is not
  * something this test is about — and hard-coding it here would be a second place to update.
  */
-i64 expiryHoursOf(Cli cli) {
-  u8[] c = cert(cli);
+i64 expiryHoursOf(Files fs) {
+  u8[] c = cert(fs);
   // VERSION[1] CERT_TYPE[1] EXPIRATION[4] — big-endian hours since the epoch.
   return ((c[2] as i64) << 24) | ((c[3] as i64) << 16) | ((c[4] as i64) << 8) |
          (c[5] as i64);

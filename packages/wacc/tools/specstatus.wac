@@ -6,28 +6,33 @@
 // Run it after a change that moves the count, and commit both files: STATUS.md says where the implementation
 // stands, and MET is the ratchet — an example in it that stops being met fails the suite.
 
-import { Change, Cli, Core, Sys } from "std";
+import { Change, Sys, Env, Files, Output, Procs } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { ExJudged, ExVerdict, judgeAll } from "../test/wac/specexamples.wac";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  string[] argv = sys.args();
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   string dir = "spec";
-  if (cli.argCount().wait() > 0) { dir = string.fromBytes(cli.arg(0).wait()); }
+  if (argv.len() > 0) { dir = argv[0]; }
   string status = dir + "/_status/STATUS.md";
   string metPath = dir + "/_status/MET";
 
-  ExJudged j = judgeAll(cli, dir);
-  if (j.verdicts.len() == 0) { core.warn("no examples under " + dir + " — is the cwd the repository?"); return 2; }
+  ExJudged j = judgeAll(env, fs, procs, dir);
+  if (j.verdicts.len() == 0) { err.line("no examples under " + dir + " — is the cwd the repository?"); return 2; }
   ExVerdict[] vs = j.verdicts;
-  Change wrote = cli.writeFile(status, render(dir, j.docs, vs).toBytes()).wait();
-  if (!wrote.ok()) { core.warn("could not write " + status); return 1; }
+  auto wrote = flatten(fs.writeFile(status, render(dir, j.docs, vs).toBytes()).wait());
+  if (wrote.isErr()) { err.line("could not write " + status); return 1; }
   string met = "";
   for (i32 i = 0; i < vs.len(); i++) { if (vs[i].state == "met") { met = met + j.keys[i] + "\n"; } }
-  Change wroteMet = cli.writeFile(metPath, met.toBytes()).wait();
-  if (!wroteMet.ok()) { core.warn("could not write " + metPath); return 1; }
-  core.log(itoa(vs.len()) + " examples: " + itoa(count(vs, "met")) + " met, " + itoa(count(vs, "missed"))
+  auto wroteMet = flatten(fs.writeFile(metPath, met.toBytes()).wait());
+  if (wroteMet.isErr()) { err.line("could not write " + metPath); return 1; }
+  out.line(itoa(vs.len()) + " examples: " + itoa(count(vs, "met")) + " met, " + itoa(count(vs, "missed"))
            + " missed, " + itoa(count(vs, "unsupported")) + " unsupported — " + status);
   return 0;
 }

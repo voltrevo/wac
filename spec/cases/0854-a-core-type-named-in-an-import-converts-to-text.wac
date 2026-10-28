@@ -1,0 +1,17 @@
+// expect: f() = 9
+// spec:  §wac-interp-union-member-m3vq8ke
+// why: a core type keeps its conversion when a file imports it by name and not core's `toString` — `Stuck` is what
+//      every `flatten` of a capability's answer carries, so a fault union with it in must reach its message
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { Result, Stuck, Ticket, flatten } from "core";
+
+struct Gone { string why; }
+
+string said(Stuck e) { return "\{e}"; }
+
+export i32 f() {
+  Result<Result<i32, Stuck>, Stuck> r = Result.Err(Stuck("late"));
+  auto flat = flatten(r);
+  Ticket<i32> unused;
+  return said(Stuck("stuck")).len() + (flat.isErr() ? "\{flat.err()!}" : "").len();
+}

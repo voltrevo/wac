@@ -24,9 +24,10 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "std";
+import { Cli, Exec, Change, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { emitFilesCovered, covTableFiles } from "../../src/api.wac";
 import { scratchDir } from "./artifacts_probe.wac";
+import { flatten } from "core";
 
 static string ENTRY = "/t/m.wac";
 
@@ -63,7 +64,7 @@ string field(string line, i32 n) {
 }
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Env env) { return flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac"; }
 
 /**
  * Run one route and hand back its counters.
@@ -71,21 +72,22 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  * The last line is `<n> counter(s)` and is checked against the table's length — a dump that stopped
  * halfway would otherwise report zeroes, which is what an unreached branch looks like.
  */
-i32[] countsFor(T t, Cli cli, string dir, i32 arg, i32 want) {
+i32[] countsFor(T t, Env env, Files fs, Procs procs, string dir, i32 arg, i32 want) {
   string[] paths = [ENTRY];
   string[] sources = [program(arg)];
   u8[] wasm = emitFilesCovered(paths, sources, ENTRY);
   string at = dir + "/cov" + itoa(arg) + ".wasm";
-  Change wrote = cli.writeFile(at, wasm).wait();
-  if (wrote.fault != 0) { t.fail("could not write " + at); return i32[](); }
+  auto wrote = flatten(fs.writeFile(at, wasm).wait());
+  if (wrote.isErr()) { t.fail("could not write " + at); return i32[](); }
 
-  Exec r = cli.exec(binary(cli), ["covdump", at], u8[]()).wait();
-  if (!r.ran() || r.status != 0) {
-    t.fail("covdump did not run for classify(" + itoa(arg) + ") — " + r.error +
-           string.fromBytes(r.stderr));
+  auto rRan = flatten(procs.exec(binary(env), ["covdump", at], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if ((r is null) || r!.status != 0) {
+    t.fail("covdump did not run for classify(" + itoa(arg) + ") — " + "\{rRan.isErr() ? "\{rRan.err()!}" : ""}" +
+           string.fromBytes(r!.stderr));
     return i32[]();
   }
-  string[] lines = splitLines(string.fromBytes(r.stdout));
+  string[] lines = splitLines(string.fromBytes(r!.stdout));
   if (lines.len() == 0) { t.fail("covdump said nothing"); return i32[](); }
   if (trimmed(lines[lines.len() - 1]) != itoa(want) + " counter(s)") {
     t.fail("covdump reported \"" + lines[lines.len() - 1] + "\", the table has " + itoa(want));
@@ -123,9 +125,12 @@ i32 at(i32[] counts, string[] kinds, string kind, i32 nth) {
   return -1;
 }
 
-export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core core, Cli cli) {
+export string test_coverage_a_counter_says_how_many_times_its_point_ran(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  string dir = scratchDir(cli);
+  string dir = scratchDir(env, fs);
   string[] rows = splitLines(covTableFiles([ENTRY], [program(3)], ENTRY));
   t.isTrue(rows.len() >= 6,
            "only " + itoa(rows.len()) + " points — the instrumentation is not reaching the branches");
@@ -134,9 +139,9 @@ export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core cor
   string[] kinds = string[].filled(rows.len(), "");
   for (i32 i = 0; i < rows.len(); i++) { kinds[i] = field(rows[i], 3); }
 
-  i32[] three = countsFor(t, cli, dir, 3, rows.len());
-  i32[] twenty = countsFor(t, cli, dir, 20, rows.len());
-  i32[] zero = countsFor(t, cli, dir, 0, rows.len());
+  i32[] three = countsFor(t, env, fs, procs, dir, 3, rows.len());
+  i32[] twenty = countsFor(t, env, fs, procs, dir, 20, rows.len());
+  i32[] zero = countsFor(t, env, fs, procs, dir, 0, rows.len());
   if (three.len() == 0 || twenty.len() == 0 || zero.len() == 0) { return t.report(); }
 
   string[] wrong = string[].filled(16, "");

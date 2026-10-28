@@ -5,9 +5,9 @@
 //   client read back "world"
 //   both directions independent
 //
-// `closeSocket` stops a socket both ways, so a client that used it to signal end-of-input could never
+// `Socket.close` stops a socket both ways, so a client that used it to signal end-of-input could never
 // receive the answer — which is the exchange every request/response protocol over a raw socket needs,
-// where the server reads to the end and only then replies. `cli.closeSend` ends one direction and
+// where the server reads to the end and only then replies. `Socket.closeSend` ends one direction and
 // leaves the other alone. `issues/system/0215`.
 //
 // **Both ends are in this one program**, which is what makes it comparable across hosts: no peer to
@@ -26,52 +26,63 @@
 // complete them in either order and a program that waits on `accept` first would deadlock against a
 // host that has not dialled yet.
 
-import { Core, Cli, HostSocket, Pending, Sys } from "std";
+import { Sys, Net, Output, Socket, Listener } from "std";
+import { flatten } from "core";
 
 export i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
-  HostSocket srv = cli.listen("127.0.0.1", 0).wait();
-  if (srv.error != "") { core.warn("listen: \{srv.error}"); return 1; }
-  Pending<HostSocket> accepting = cli.accept(srv.handle);
+  Output err = sys.stderr();
+  Output out = sys.stdout();
+  Net net = sys.net();
+  auto srvBind = flatten(net.listen("127.0.0.1", 0).wait());
+  if (srvBind.isErr()) { err.line("listen: \{srvBind.err()!}"); return 1; }
+  Listener? srv = srvBind.ok();
+  auto accepting = srv!.accept();
 
-  HostSocket c = cli.connect("127.0.0.1", srv.port).wait();
-  if (c.error != "") { core.warn("connect: \{c.error}"); return 1; }
-  HostSocket a = accepting.wait();
-  if (a.error != "") { core.warn("accept: \{a.error}"); return 1; }
+  auto cDial = flatten(net.connect("127.0.0.1", srv!.port).wait());
+  if (cDial.isErr()) { err.line("connect: \{cDial.err()!}"); return 1; }
+  Socket? c = cDial.ok();
+  auto accepted = flatten(accepting.wait());
+  if (accepted.isErr()) { err.line("accept: \{accepted.err()!}"); return 1; }
+  Socket a = accepted.unwrap();
 
-  cli.send(c.handle, "hello".toBytes()).wait();
-  cli.closeSend(c.handle);
+  c!.send("hello".toBytes()).wait();
+  c!.closeSend();
 
   // The server side sees the bytes and then the end of them, while the client is still connected.
   string got = "";
   bool reading = true;
   while (reading) {
-    match (cli.recv(a.handle).wait()) {
+    auto heard = flatten(a.recv().wait());
+    if (heard.isErr()) { err.line("server recv: \{heard.err()!}"); return 1; }
+    match (heard.unwrap()) {
       Data(b): { got = got + string.fromBytes(b); }
       End: { reading = false; }
-      Failed(e): { core.warn("server recv: \{e}"); return 1; }
+      Failed(e): { err.line("server recv: \{e}"); return 1; }
     }
   }
-  core.log("server saw \"\{got}\" then End");
+  out.line("server saw \"\{got}\" then End");
 
   // And the answer travels the direction that was left open.
-  cli.send(a.handle, "world".toBytes()).wait();
-  cli.closeSocket(a.handle);
+  a.send("world".toBytes()).wait();
+  a.close();
   string back = "";
   reading = true;
   while (reading) {
-    match (cli.recv(c.handle).wait()) {
-      Data(b): { back = back + string.fromBytes(b); }
-      End: { reading = false; }
-      Failed(e): { core.warn("client recv: \{e}"); return 1; }
+    match (flatten(c!.recv().wait())) {
+      Ok(got): {
+        match (got) {
+          Data(b): { back = back + string.fromBytes(b); }
+          default: { reading = false; }
+        }
+      }
+      Err(e): { err.line("client recv: \{e}"); return 1; }
     }
   }
-  core.log("client read back \"\{back}\"");
+  out.line("client read back \"\{back}\"");
 
-  cli.closeSocket(c.handle);
-  cli.closeSocket(srv.handle);
+  c!.close();
+  srv!.close();
   if (got != "hello" || back != "world") { return 2; }
-  core.log("both directions independent");
+  out.line("both directions independent");
   return 0;
 }

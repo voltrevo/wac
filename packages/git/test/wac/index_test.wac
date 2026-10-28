@@ -31,17 +31,17 @@
 // `Cli.exec` passes no environment; the fixed `GIT_*_DATE` values it used to set were never read.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std";
+import { Cli, Exec, Change, Env, Files, Sys, ChildEnv, Launch, Procs } from "std";
 import { Staged, GitIndex, IndexEntry, parseIndex, writeIndex } from "../../src/index.wac";
-import { Vec } from "core";
+import { Vec, flatten } from "core";
 import { sha1 } from "../../../crypto/src/sha1.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
 
 struct Git {
-  Cli cli;
+  Procs procs;
   string dir;
 
-  Exec run(const this, string[] args) {
+  Exec run(this, string[] args) {
     string[] full = string[].filled(args.len() + 6, "");
     full[0] = "-C";
     full[1] = this.dir;
@@ -50,10 +50,10 @@ struct Git {
     full[4] = "-c";
     full[5] = "user.email=a@b";
     for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
-    return this.cli.exec("git", full, u8[]()).wait();
+    return flatten(this.procs.exec("git", full, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
   }
 
-  string text(const this, string[] args) {
+  string text(this, string[] args) {
     return trimmed(string.fromBytes(this.run(args).stdout));
   }
 }
@@ -89,23 +89,23 @@ string[] splitLines(string s) {
  * come after `exec.sh` and a reader that sorted by component would disagree. An executable, because
  * the mode is a field rather than a flag. A path long enough that its own length field is exercised.
  */
-Git staged(T t, Cli cli, string name) {
-  string who = agentDir(cli);
+Git staged(T t, Procs procs, Env env, Files fs, string name) {
+  string who = agentDir(env);
   string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
-  cli.remove(dir, true).wait();
-  Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: \{made.message}");
-  Git g = Git(cli, dir);
-  if (!made.ok()) { return g; }
+  fs.remove(dir, true).wait();
+  auto made = flatten(fs.mkdir(dir, true).wait());
+  t.isTrue(made.isOk(), "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}");
+  Git g = Git(procs, dir);
+  if (made.isErr()) { return g; }
 
   g.run(["init", "-q"]);
-  string whyDir1 = madeDir(cli, "\{dir}/sub");
+  string whyDir1 = madeDir(fs, "\{dir}/sub");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
-  cli.writeFile("\{dir}/sub/b.txt", "two\n".toBytes()).wait();
-  cli.writeFile("\{dir}/exec.sh", "#!/bin/sh\n".toBytes()).wait();
-  cli.setExecutable("\{dir}/exec.sh", true).wait();
-  cli.writeFile("\{dir}/a-rather-long-path-name-that-exercises-the-length-field.txt",
+  fs.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
+  fs.writeFile("\{dir}/sub/b.txt", "two\n".toBytes()).wait();
+  fs.writeFile("\{dir}/exec.sh", "#!/bin/sh\n".toBytes()).wait();
+  fs.setExecutable("\{dir}/exec.sh", true).wait();
+  fs.writeFile("\{dir}/a-rather-long-path-name-that-exercises-the-length-field.txt",
                 "long\n".toBytes()).wait();
   g.run(["add", "-A"]);
   Exec c = g.run(["commit", "-qm", "one"]);
@@ -140,20 +140,23 @@ i32 pastWhitespace(string line, i32 from) {
   return i;
 }
 
-export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
-    Core core, Cli cli) {
+export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = staged(t, cli, "index");
+  Git g = staged(t, procs, env, fs, "index");
   t.eqStr(g.text(["status", "--porcelain"]), "", "the fixture was clean to begin with");
 
-  FileResult f = cli.readFile("\{g.dir}/.git/index").wait();
-  t.isTrue(f.ok, "git's index could be read: \{f.error}");
-  if (!f.ok) { return t.report(); }
+  auto fRead = flatten(fs.readFile("\{g.dir}/.git/index").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "git's index could be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
 
   Vec<IndexEntry> empty = Vec.create();
   GitIndex idx = GitIndex(empty, u8[]());
   bool read = false;
-  match (parseIndex(f.bytes)) {
+  match (parseIndex(f!)) {
     Unreadable(why): { t.isTrue(false, "git's index did not parse: \{why}"); }
     Present(index): { idx = index; read = true; }
   }
@@ -188,8 +191,8 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
            " bytes");
 
   // **The test that matters**: hand our own bytes back and let git judge them.
-  Change wrote = cli.writeFile("\{g.dir}/.git/index", writeIndex(idx)).wait();
-  t.isTrue(wrote.ok(), "our index was written: \{wrote.message}");
+  auto wrote = flatten(fs.writeFile("\{g.dir}/.git/index", writeIndex(idx)).wait());
+  t.isTrue(wrote.isOk(), "our index was written: \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
   t.eqStr(g.text(["status", "--porcelain"]), "",
           "git called the repository dirty after reading our index");
   t.eqStr(g.text(["ls-files"]), joined(want), "ls-files is unchanged after our write");
@@ -208,7 +211,7 @@ export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
     Unreadable(why): { t.isTrue(true, why); }
   }
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 
@@ -218,17 +221,21 @@ string joined(string[] all) {
   return out;
 }
 
-export string test_a_zeroed_stat_cache_still_leaves_git_clean(Core core, Cli cli) {
+export string test_a_zeroed_stat_cache_still_leaves_git_clean(Sys sys) {
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  Files fs = sys.files();
   T t = T.create();
-  Git g = staged(t, cli, "index2");
+  Git g = staged(t, procs, env, fs, "index2");
 
   // Zero every stat field of *git's own* index and repair the trailing SHA-1. This is the
   // measurement `design/system/0005` rests on, kept as a test so the plan cannot quietly stop being
   // true: if a future git trusts these fields, this fails and says so.
-  FileResult f = cli.readFile("\{g.dir}/.git/index").wait();
-  t.isTrue(f.ok, "git's index could be read: \{f.error}");
-  if (!f.ok) { return t.report(); }
-  u8[] b = f.bytes;
+  auto fRead = flatten(fs.readFile("\{g.dir}/.git/index").wait());
+  u8[]? f = fRead.ok();
+  t.isTrue((f is not null), "git's index could be read: \{fRead.isErr() ? "\{fRead.err()!}" : ""}");
+  if ((f is null)) { return t.report(); }
+  u8[] b = f!;
 
   i32 n = (b[8] as i32 << 24) | (b[9] as i32 << 16) | (b[10] as i32 << 8) | b[11] as i32;
   i32 at = 12;
@@ -243,13 +250,13 @@ export string test_a_zeroed_stat_cache_still_leaves_git_clean(Core core, Cli cli
   for (i32 i = 0; i < body.len(); i++) { body[i] = b[i]; }
   u8[] sum = sha1(body);
   for (i32 i = 0; i < 20; i++) { b[b.len() - 20 + i] = sum[i]; }
-  cli.writeFile("\{g.dir}/.git/index", b).wait();
+  fs.writeFile("\{g.dir}/.git/index", b).wait();
 
   t.eqStr(g.text(["status", "--porcelain"]), "",
           "git called the repository dirty once the stat cache was zeroed — `index.wac` writing " +
           "zeros is no longer sound, and design/system/0005 step 4's criterion has to change");
 
-  cli.remove(g.dir, true).wait();
+  fs.remove(g.dir, true).wait();
   return t.report();
 }
 

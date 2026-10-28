@@ -32,10 +32,11 @@
 // their children.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat, FileResult } from "std";
+import { Cli, Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { newestCarried } from "../../../wactest/src/built.wac";
+import { flatten } from "core";
 
 /** One built launcher and its child bundles, built once and reused. */
 struct Fixture {
@@ -45,9 +46,9 @@ struct Fixture {
   string launcher;
 }
 
-string scratch(Cli cli) { return "\{cli.cwd().wait()}/.cache/network"; }
+string scratch(Env env) { return "\{flatten(env.cwd().wait()).unwrap()}/.cache/network"; }
 
-bool build(T t, Cli cli, string entry, string out, string[] grants, bool worker) {
+bool build(T t, Procs procs, string entry, string out, string[] grants, bool worker) {
   string[] head = ["run", "-A", "packages/platform/build.ts", entry];
   string[] tail = worker ? ["--worker", "-o", out] : ["-o", out];
   string[] args = string[].filled(head.len() + grants.len() + tail.len(), "");
@@ -55,37 +56,38 @@ bool build(T t, Cli cli, string entry, string out, string[] grants, bool worker)
   for (i32 i = 0; i < head.len(); i++) { args[at] = head[i]; at = at + 1; }
   for (i32 i = 0; i < grants.len(); i++) { args[at] = grants[i]; at = at + 1; }
   for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
-  Exec r = cli.exec("deno", args, u8[]()).wait();
-  t.isTrue(r.ran(), "deno ran — \{r.error}");
-  t.eqI32(r.status, 0, "building \{entry}: \{string.fromBytes(r.stderr)}");
-  return r.ran() && r.status == 0;
+  auto rRan = flatten(procs.exec("deno", args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue((r is not null), "deno ran — \{rRan.isErr() ? "\{rRan.err()!}" : ""}");
+  t.eqI32(r!.status, 0, "building \{entry}: \{string.fromBytes(r!.stderr)}");
+  return (r is not null) && r!.status == 0;
 }
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
-i64 newestUnder(Cli cli, string dir) {
+i64 newestUnder(Files fs, string dir) {
   i64 newest = 0 as i64;
-  string[]? names = cli.readDir(dir).wait();
+  string[]? names = flatten(fs.readDir(dir).wait()).ok();
   if (names is null) { return 0 as i64; }
   string[] here = names!;
   for (i32 i = 0; i < here.len(); i++) {
     string path = "\{dir}/\{here[i]}";
-    Stat s = cli.stat(path).wait();
-    if (!s.exists) { continue; }
-    if (s.isDir) {
-      i64 deep = newestUnder(cli, path);
+    Stat? s = flatten(fs.stat(path).wait()).ok();
+    if ((s is null)) { continue; }
+    if ((s is not null && s!.isDir)) {
+      i64 deep = newestUnder(fs, path);
       if (deep > newest) { newest = deep; }
       continue;
     }
-    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+    if (s!.modifiedMillis > newest) { newest = s!.modifiedMillis; }
   }
   return newest;
 }
 
 /** `from` to `to`, since `Cli` has no copy — these are build outputs of a few hundred kilobytes. */
-bool copyOver(Cli cli, string from, string to) {
-  FileResult r = cli.readFile(from).wait();
-  if (!r.ok) { return false; }
-  return cli.writeFile(to, r.bytes).wait().ok();
+bool copyOver(Files fs, string from, string to) {
+  u8[]? r = flatten(fs.readFile(from).wait()).ok();
+  if ((r is null)) { return false; }
+  return flatten(fs.writeFile(to, r!).wait()).isOk();
 }
 
 /**
@@ -103,38 +105,34 @@ bool copyOver(Cli cli, string from, string to) {
  * built again. It is coarser than an import walk on purpose — after any edit in those trees the first
  * case rebuilds and the other twelve reuse, which is the shape that matters here.
  */
-bool built(T t, Cli cli, string shared) {
+bool built(T t, Files fs, Procs procs, string shared) {
   // `madeDir`, not `freshDir`: `shared` is the build cache the other twelve cases reuse.
-  t.isTrue(madeDir(cli, shared) == "", "the shared build directory");
-  Stat have = cli.stat("\{shared}/network").wait();
-  i64 newest = newestUnder(cli, "packages/tor/src");
-  i64 platform = newestUnder(cli, "packages/platform/src");
+  t.isTrue(madeDir(fs, shared) == "", "the shared build directory");
+  Stat? have = flatten(fs.stat("\{shared}/network").wait()).ok();
+  i64 newest = newestUnder(fs, "packages/tor/src");
+  i64 platform = newestUnder(fs, "packages/platform/src");
   if (platform > newest) { newest = platform; }
-  i64 examples = newestUnder(cli, "packages/platform/example");
+  i64 examples = newestUnder(fs, "packages/platform/example");
   if (examples > newest) { newest = examples; }
-  Stat builder = cli.stat("packages/platform/build.ts").wait();
-  if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
-  i64 carried = newestCarried(cli);
+  Stat? builder = flatten(fs.stat("packages/platform/build.ts").wait()).ok();
+  if ((builder is not null) && builder!.modifiedMillis > newest) { newest = builder!.modifiedMillis; }
+  i64 carried = newestCarried(fs);
   if (carried > newest) { newest = carried; }
-  if (have.exists && have.modifiedMillis > newest) { return true; }
+  if ((have is not null) && have!.modifiedMillis > newest) { return true; }
 
-  if (!build(t, cli, "packages/tor/src/network.wac", "\{shared}/network",
-             ["--allow-read", "--allow-write", "--allow-net"], false)) {
+  if (!build(t, procs, "packages/tor/src/network.wac", "\{shared}/network", ["--allow-read", "--allow-write", "--allow-net"], false)) {
     return false;
   }
-  if (!build(t, cli, "packages/platform/example/waiter.wac", "\{shared}/waiter.worker.js",
-             string[].filled(0, ""), true)) {
+  if (!build(t, procs, "packages/platform/example/waiter.wac", "\{shared}/waiter.worker.js", string[].filled(0, ""), true)) {
     return false;
   }
-  if (!build(t, cli, "packages/platform/example/wc.wac", "\{shared}/wc.worker.js",
-             string[].filled(0, ""), true)) {
+  if (!build(t, procs, "packages/platform/example/wc.wac", "\{shared}/wc.worker.js", string[].filled(0, ""), true)) {
     return false;
   }
   // Two-stage: prints `stages: listening`, waits, then `stages: serving`. The second line cannot
   // already have arrived when the ready marker resolves, which is what makes the `wait` cases below
   // test the waiting rather than the luck.
-  return build(t, cli, "packages/platform/example/stages.wac", "\{shared}/stages.worker.js",
-               string[].filled(0, ""), true);
+  return build(t, procs, "packages/platform/example/stages.wac", "\{shared}/stages.worker.js", string[].filled(0, ""), true);
 }
 
 /**
@@ -144,29 +142,29 @@ bool built(T t, Cli cli, string shared) {
  * names from, and two cases writing `net.txt` into the same place would race. The four artefacts are
  * built once by `built` above and copied in.
  */
-Fixture fixture(T t, Cli cli, string name) {
-  string shared = "\{scratch(cli)}/_built";
-  if (!built(t, cli, shared)) {
-    return Fixture(false, "the shared build failed", "\{scratch(cli)}/\{name}", "");
+Fixture fixture(T t, Env env, Files fs, Procs procs, string name) {
+  string shared = "\{scratch(env)}/_built";
+  if (!built(t, fs, procs, shared)) {
+    return Fixture(false, "the shared build failed", "\{scratch(env)}/\{name}", "");
   }
-  string dir = "\{scratch(cli)}/\{name}";
-  string why = freshDir(cli, dir);
+  string dir = "\{scratch(env)}/\{name}";
+  string why = freshDir(fs, dir);
   if (why != "") { return Fixture(false, why, dir, ""); }
   string launcher = "\{dir}/network";
 
   string[] parts = ["network", "waiter.worker.js", "wc.worker.js", "stages.worker.js"];
   for (i32 i = 0; i < parts.len(); i++) {
-    if (!copyOver(cli, "\{shared}/\{parts[i]}", "\{dir}/\{parts[i]}")) {
+    if (!copyOver(fs, "\{shared}/\{parts[i]}", "\{dir}/\{parts[i]}")) {
       return Fixture(false, "could not copy \{parts[i]} into the case's directory", dir, "");
     }
   }
   // The launcher is run as `./network`, so it has to be executable — a copy is not.
-  cli.setExecutable(launcher, true).wait();
+  fs.setExecutable(launcher, true).wait();
 
-  cli.writeFile("\{dir}/counted.txt", ("one two three\n").toBytes()).wait();
+  fs.writeFile("\{dir}/counted.txt", ("one two three\n").toBytes()).wait();
   // Named for what `waiter: running` leaves after the marker `waiter: runn`, which is how the
   // substitution case below gets a value that only exists once the node has spoken.
-  cli.writeFile("\{dir}/ing.txt", ("captured from a ready line\n").toBytes()).wait();
+  fs.writeFile("\{dir}/ing.txt", ("captured from a ready line\n").toBytes()).wait();
   return Fixture(true, "", dir, launcher);
 }
 
@@ -184,32 +182,34 @@ struct Ran {
  * resolves a description's bundle names relative to where it is running. `issues/system/0199` is why
  * a pushed child's `cwd` is not an option either.
  */
-Ran run(Cli cli, Fixture f, string description) {
-  Exec r = cli.exec("/bin/sh",
-                    ["-c", "cd \{f.dir} && exec ./network \{description}"],
-                    u8[]()).wait();
-  return Ran(r.ran() ? r.status : -1, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
+Ran run(Procs procs, Fixture f, string description) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "cd \{f.dir} && exec ./network \{description}"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  return Ran((r is not null) ? r!.status : -1, string.fromBytes(r!.stdout), string.fromBytes(r!.stderr));
 }
 
-void describe(Cli cli, Fixture f, string name, string[] lines) {
+void describe(Files fs, Fixture f, string name, string[] lines) {
   string text = "";
   for (i32 i = 0; i < lines.len(); i++) { text = text + "\{lines[i]}\n"; }
-  cli.writeFile("\{f.dir}/\{name}", text.toBytes()).wait();
+  fs.writeFile("\{f.dir}/\{name}", text.toBytes()).wait();
 }
 
-void done(Cli cli, Fixture f) { cli.remove(f.dir, true).wait(); }
+void done(Files fs, Fixture f) { fs.remove(f.dir, true).wait(); }
 
-export string test_a_network_comes_up_work_runs_and_everything_stops(Core core, Cli cli) {
+export string test_a_network_comes_up_work_runs_and_everything_stops(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "up");
+  Fixture f = fixture(t, env, fs, procs, "up");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "# two nodes and one piece of work",
     "node alpha | waiter: running | waiter.worker.js",
     "node beta  | waiter: running | waiter.worker.js",
     "run  count |               | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
   // Both nodes were seen to announce themselves, by name. "started" is not "up": the first is this
@@ -221,13 +221,16 @@ export string test_a_network_comes_up_work_runs_and_everything_stops(Core core, 
   // The work ran and its output came back through the handle rather than to the terminal.
   t.isTrue(contains(r.out, "1 3 14"), "wc counted the file the description named");
   t.isTrue(contains(r.err, "network: ok"), "and the run reported success");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_node_that_never_announces_itself_fails_the_run(Core core, Cli cli) {
+export string test_a_node_that_never_announces_itself_fails_the_run(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "ghost");
+  Fixture f = fixture(t, env, fs, procs, "ghost");
   if (!f.ok) { t.fail(f.error); return t.report(); }
   // `alpha` will print "waiter: running" and never this. The timeout is seconds rather than the
   // two-minute default because this case is *expected* to reach it — so the bound is this test's
@@ -239,13 +242,13 @@ export string test_a_node_that_never_announces_itself_fails_the_run(Core core, C
   // waits for a later state is 972ms. What has to fit inside the bound is `alpha` starting and
   // printing its marker, because the assertion below is that a node which *is* up is not reported
   // down. Four seconds was eight to twenty times that; two is four to ten, under load.
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "timeout 2000",
     "node alpha | waiter: running    | waiter.worker.js",
     "node ghost | never printed this | waiter.worker.js",
     "run  count |                    | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 1, "a network that did not come up is a failed run");
   t.isTrue(contains(r.err, "ghost never said"), "the node that did not come up is named");
@@ -254,21 +257,24 @@ export string test_a_node_that_never_announces_itself_fails_the_run(Core core, C
   t.isFalse(contains(r.out, "1 3 14"), "no work runs across a network that is not up");
   // The one that did come up is not blamed.
   t.isFalse(contains(r.err, "alpha never said"), "a node that is up is not reported down");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_the_exit_code_of_the_work_is_the_exit_code_of_the_run(Core core, Cli cli) {
+export string test_the_exit_code_of_the_work_is_the_exit_code_of_the_run(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "exitcode");
+  Fixture f = fixture(t, env, fs, procs, "exitcode");
   if (!f.ok) { t.fail(f.error); return t.report(); }
   // `wc` on a file that is not there exits 1. Every node comes up, so this separates "the network
   // failed" from "the network was fine and the thing we asked it to do did not work".
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "run  count |               | wc.worker.js nosuch.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 1, "the failing work fails the run");
   t.isTrue(contains(r.err, "all 1 nodes are up"), "the network itself was fine");
@@ -281,48 +287,57 @@ export string test_the_exit_code_of_the_work_is_the_exit_code_of_the_run(Core co
   t.isTrue(contains(r.err, "wc: nosuch.txt"), "the child's diagnosis reaches the error channel");
   t.isFalse(contains(r.out, "wc: nosuch.txt"),
             "and not stdout, which belongs to whatever the work produced");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_description_with_nothing_to_run_is_a_failure(Core core, Cli cli) {
+export string test_a_description_with_nothing_to_run_is_a_failure(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "nothing");
+  Fixture f = fixture(t, env, fs, procs, "nothing");
   if (!f.ok) { t.fail(f.error); return t.report(); }
   // The failure mode this guards: a description whose `run` line was commented out stands the
   // network up, tears it down, and exits 0 — reporting success for having done nothing.
-  describe(cli, f, "net.txt", ["node alpha | waiter: running | waiter.worker.js"]);
-  Ran r = run(cli, f, "net.txt");
+  describe(fs, f, "net.txt", ["node alpha | waiter: running | waiter.worker.js"]);
+  Ran r = run(procs, f, "net.txt");
   t.eqI32(r.status, 1, "standing a network up is not the same as using it");
   t.isTrue(contains(r.err, "asks for nothing to be run"), "and it says so");
 
   // And a description with no nodes at all.
-  describe(cli, f, "empty.txt", ["run count | | wc.worker.js counted.txt"]);
-  Ran e = run(cli, f, "empty.txt");
+  describe(fs, f, "empty.txt", ["run count | | wc.worker.js counted.txt"]);
+  Ran e = run(procs, f, "empty.txt");
   t.eqI32(e.status, 1, "there is no network to run across");
   t.isTrue(contains(e.err, "no nodes"), "and it says so");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_bundle_that_is_not_there_is_reported_against_the_node(Core core, Cli cli) {
+export string test_a_bundle_that_is_not_there_is_reported_against_the_node(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "nobundle");
+  Fixture f = fixture(t, env, fs, procs, "nobundle");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "node gone  | waiter: running | nosuch.worker.js",
     "run  count |               | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
   t.eqI32(r.status, 1, "a missing bundle is a failed run");
   t.isTrue(contains(r.err, "gone"), "the node is named, not just the file");
   t.isFalse(contains(r.out, "1 3 14"), "no work runs");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_nodes_ready_line_supplies_an_argument_to_the_work(Core core, Cli cli) {
+export string test_a_nodes_ready_line_supplies_an_argument_to_the_work(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The point of this, in one sentence: a relay told to bind port 0 is given a port by the operating
   // system, so no description file can name it, but the relay *says* it on the line that makes it
   // ready. Ending the marker before the part that varies makes the rest of that line the node's
@@ -332,13 +347,13 @@ export string test_a_nodes_ready_line_supplies_an_argument_to_the_work(Core core
   // `waiter` prints `waiter: running`, so a marker of `waiter: runn` captures `ing` — a value that
   // does not appear anywhere in the description and could not have been written into it.
   T t = T.create();
-  Fixture f = fixture(t, cli, "capture");
+  Fixture f = fixture(t, env, fs, procs, "capture");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | waiter: runn | waiter.worker.js",
     "run  count |              | wc.worker.js {alpha}.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
   // `wc` echoes the name it was given, so this is the substituted argument coming back from the
@@ -346,64 +361,73 @@ export string test_a_nodes_ready_line_supplies_an_argument_to_the_work(Core core
   t.isTrue(contains(r.out, "1 5 27 ing.txt"),
            "wc counted ing.txt, which only {alpha} could have named");
   t.isTrue(contains(r.err, "network: ok"), "and the run succeeded");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_reference_to_a_node_not_in_the_description_fails(Core core, Cli cli) {
+export string test_a_reference_to_a_node_not_in_the_description_fails(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Passing `{relya1}` through as a literal is the failure this program exists to prevent: the
   // client would dial a host called `{relya1}`, fail, and the failure would look like the network
   // rather than like the typo it is.
   T t = T.create();
-  Fixture f = fixture(t, cli, "typo");
+  Fixture f = fixture(t, env, fs, procs, "typo");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "run  count |                 | wc.worker.js {alpah}.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 1, "an unresolved reference is a failed run");
   t.isTrue(contains(r.err, "{alpah} is not a node"),
            "the reference that could not be resolved is named");
   t.isFalse(contains(r.err, "running count"), "and nothing was run with it unresolved");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_braces_that_are_not_references_are_left_alone(Core core, Cli cli) {
+export string test_braces_that_are_not_references_are_left_alone(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // A launcher that rewrote every brace could not run a program whose argument is JSON. `{}` is not
   // a name, and `{` with no `}` is not a reference — both reach the child as written.
   T t = T.create();
-  Fixture f = fixture(t, cli, "braces");
+  Fixture f = fixture(t, env, fs, procs, "braces");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  cli.writeFile("\{f.dir}/{}.txt", ("literal braces\n").toBytes()).wait();
-  describe(cli, f, "net.txt", [
+  fs.writeFile("\{f.dir}/{}.txt", ("literal braces\n").toBytes()).wait();
+  describe(fs, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "run  count |                 | wc.worker.js {}.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
   t.isTrue(contains(r.out, "1 2 15"), "the file literally called {}.txt was counted");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_wait_holds_the_next_step_until_a_node_reaches_a_later_state(Core core, Cli cli) {
+export string test_wait_holds_the_next_step_until_a_node_reaches_a_later_state(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Being up is not one event. A relay listens, and only later finds the documents an authority
   // built from descriptors it could not write until it had bound. `stages` prints
   // `stages: listening` and then `stages: serving` a moment afterwards, which is the same two-stage
   // shape: the second line is not available at ready time.
   T t = T.create();
-  Fixture f = fixture(t, cli, "wait");
+  Fixture f = fixture(t, env, fs, procs, "wait");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | stages: listening | stages.worker.js",
     "wait alpha | stages: serving   |",
     "run  count |                    | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
   t.isTrue(contains(r.err, "alpha says stages: serving"), "the later state was seen, not assumed");
@@ -412,47 +436,56 @@ export string test_wait_holds_the_next_step_until_a_node_reaches_a_later_state(C
   i32 waitedAt = r.err.indexOf("alpha says stages: serving");
   i32 ranAt = r.err.indexOf("running count");
   t.isTrue(waitedAt >= 0 && ranAt > waitedAt, "the wait resolved before the work started");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_wait_for_something_a_node_never_says_fails(Core core, Cli cli) {
+export string test_a_wait_for_something_a_node_never_says_fails(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "waitnever");
+  Fixture f = fixture(t, env, fs, procs, "waitnever");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "timeout 2000",
     "node alpha | waiter: running | waiter.worker.js",
     "wait alpha | never says this |",
     "run  count |                 | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 1, "a state never reached is a failed run");
   t.isTrue(contains(r.err, "alpha never said \"never says this\""), "the state is quoted back");
   t.isTrue(contains(r.err, "what alpha did say"), "and what it did say is shown");
   t.isFalse(contains(r.err, "running count"), "the step behind the wait did not run");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_wait_naming_a_node_that_does_not_exist_fails(Core core, Cli cli) {
+export string test_a_wait_naming_a_node_that_does_not_exist_fails(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   T t = T.create();
-  Fixture f = fixture(t, cli, "waitnonode");
+  Fixture f = fixture(t, env, fs, procs, "waitnonode");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | waiter: running | waiter.worker.js",
     "wait beta  | waiter: running |",
     "run  count |                 | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
   t.eqI32(r.status, 1, "a wait for a node that is not there is a failed run");
   t.isTrue(contains(r.err, "wait names beta, which is not a node"), "and it says which");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_wait_captures_even_when_the_node_had_already_said_it(Core core, Cli cli) {
+export string test_a_wait_captures_even_when_the_node_had_already_said_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // The capture has to move with the marker on *both* paths, or the same description means different
   // things depending on how fast the node was — a value on a slow machine, an empty string on a
   // quick one. `stages` prints `listening` and then, 300ms later, `serving`; making the second line
@@ -462,24 +495,27 @@ export string test_a_wait_captures_even_when_the_node_had_already_said_it(Core c
   // serving` has nothing after it, so a wait that failed to re-capture would leave the empty string
   // behind and the work would be asked for `.txt`.
   T t = T.create();
-  Fixture f = fixture(t, cli, "waitalready");
+  Fixture f = fixture(t, env, fs, procs, "waitalready");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node alpha | stages: serving | stages.worker.js",
     "wait alpha | stages: listen  |",
     "run  count |                 | wc.worker.js {alpha}.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
   t.isTrue(contains(r.err, "alpha had already said \"stages: listen\""), "it did not have to wait");
   t.isTrue(contains(r.out, "1 5 27 ing.txt"),
            "and the capture moved to the marker it had already seen");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }
 
-export string test_a_node_after_a_run_starts_after_it(Core core, Cli cli) {
+export string test_a_node_after_a_run_starts_after_it(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
   // Stages. A server that cannot begin until something has happened on the network — an onion
   // service needs a consensus to bootstrap through — has to start late, and the plan says so by
   // position.
@@ -487,15 +523,15 @@ export string test_a_node_after_a_run_starts_after_it(Core core, Cli cli) {
   // `wc` writes nothing the launcher watches, so the ordering is read off the launcher's own log:
   // "started late" must appear after "running first", and "started early" before it.
   T t = T.create();
-  Fixture f = fixture(t, cli, "ordering");
+  Fixture f = fixture(t, env, fs, procs, "ordering");
   if (!f.ok) { t.fail(f.error); return t.report(); }
-  describe(cli, f, "net.txt", [
+  describe(fs, f, "net.txt", [
     "node early | waiter: running | waiter.worker.js",
     "run  first |                 | wc.worker.js counted.txt",
     "node late  | waiter: running | waiter.worker.js",
     "run  second|                 | wc.worker.js counted.txt"
   ]);
-  Ran r = run(cli, f, "net.txt");
+  Ran r = run(procs, f, "net.txt");
 
   t.eqI32(r.status, 0, r.err);
   i32 startedEarly = r.err.indexOf("started early");
@@ -503,6 +539,6 @@ export string test_a_node_after_a_run_starts_after_it(Core core, Cli cli) {
   i32 startedLate = r.err.indexOf("started late");
   t.isTrue(startedEarly >= 0 && startedEarly < ranFirst, "early started before the run");
   t.isTrue(startedLate > ranFirst, "late started after it — this is the whole feature");
-  done(cli, f);
+  done(fs, f);
   return t.report();
 }

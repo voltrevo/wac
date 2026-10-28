@@ -14,7 +14,7 @@
 //
 // ## Using it
 //
-//     Sink out = Sink.toOutput(cli);
+//     Sink sink = Sink.to(sys.stdout());
 //     while (…) { if (!out.line(text)) { break; } }
 //     out.flush();
 //
@@ -24,14 +24,13 @@
 //
 // ## Why the answer matters
 //
-// `write` answers false when the other end has gone away, and `box yes` is `while (cli.write(b)) {}`
+// `write` answers `OutputClosed` when the other end has gone away, and `box yes` writes until it does
 // precisely so that it stops. A buffer must pass that on rather than swallowing it, so every method
 // answers "keep going", and a sink that has been refused once stays `broken` — a producer that ignored
 // the answer would fill memory with output nobody is going to read.
 
-import { Cli } from "std";
-import { Buf } from "core";
-import { Read } from "core";
+import { Input, Output, OutputFault } from "std";
+import { Buf, Read, Result, flatten } from "core";
 
 /**
  * How much to hold before writing it out.
@@ -41,52 +40,29 @@ import { Read } from "core";
  */
 i32 BLOCK() { return 65536; }
 
-/** Where a `Sink`'s bytes go. */
-i32 TO_OUTPUT() { return 0; }
-i32 TO_ERR() { return 1; }
-i32 TO_BUFFER() { return 2; }
-
 /**
- * A buffered writer, to standard output, to standard error, or into memory.
+ * A buffered writer, to an `Output` or into memory.
  *
- * The third is what lets one program body serve both ways of being run. An applet spawned as a worker
- * writes through the capability and streams; the same applet called *in process* by a shell that
- * cannot spawn has its output collected, exactly as it did when the seam returned bytes. The applet
- * cannot tell, which is the point — the alternative was two implementations of every program.
+ * The second is what lets one program body serve both ways of being run. An applet spawned as a worker
+ * writes to its own output and streams; the same applet called *in process* by a shell that cannot spawn
+ * has its output collected, exactly as it did when the seam returned bytes. The applet cannot tell, which
+ * is the point — the alternative was two implementations of every program.
  */
 export struct Sink {
-  Cli cli;
-  i32 to;
+  /** Where the bytes go; null for a sink that only collects. */
+  Output? out;
   Buf held;
   /** A write was refused: the reader has gone. Nothing more will be sent. */
   bool broken;
 
-  /** Bytes to standard output, buffered. */
-  Sink toOutput(Cli cli) { return Sink(cli, TO_OUTPUT(), Buf.create(), false); }
-
-  /** The same, under the name `packages/box`'s sixty applets already call it. */
-  Sink create(Cli cli) { return Sink(cli, TO_OUTPUT(), Buf.create(), false); }
-
   /**
-   * Bytes to standard error, buffered.
-   *
-   * Separate from the output sink rather than a flag on it, because a program has two streams and
+   * Bytes to `out`, buffered. A program's two streams are two sinks rather than a flag on one, because
    * merging them is a bug a shell notices: `cat nosuch | wc -c` counted the error message.
    */
-  Sink toErr(Cli cli) { return Sink(cli, TO_ERR(), Buf.create(), false); }
+  Sink to(Output out) { return Sink(out, Buf.create(), false); }
 
-  /**
-   * Into memory, for a caller that wants the bytes rather than a stream.
-   *
-   * `taken()` is how they come out. Nothing is ever written through the capability, so the `Cli` here
-   * is unused — it is a field rather than an option because the branch is not worth it, and an unused
-   * capability reference costs nothing.
-   *
-   * (This said wac "has no nullable struct fields", which it does —
-   * spec ch12 `§wac-field-initialiser-default-28c4ffw`. The judgement is unchanged; the reason given for it was not
-   * a judgement.)
-   */
-  Sink toBuffer(Cli cli) { return Sink(cli, TO_BUFFER(), Buf.create(), false); }
+  /** Into memory, for a caller that wants the bytes rather than a stream; `taken()` is how they come out. */
+  Sink toBuffer() { return Sink(null, Buf.create(), false); }
 
   /** Bytes, exactly as given. False once the reader has gone away. */
   bool bytes(this, u8[] b) {
@@ -125,7 +101,7 @@ export struct Sink {
 
   /** A buffer that has reached the block size sends; one that has not keeps collecting. */
   bool maybeFlush(this) {
-    if (this.to == TO_BUFFER()) { return true; }
+    if (this.out is null) { return true; }
     if (this.held.len >= BLOCK()) { return this.flush(); }
     return true;
   }
@@ -139,11 +115,9 @@ export struct Sink {
    */
   bool flush(this) {
     if (this.broken) { return false; }
-    if (this.to == TO_BUFFER()) { return true; }
+    if (this.out is null) { return true; }
     if (this.held.len == 0) { return true; }
-    u8[] out = this.held.take();
-    bool sent = this.to == TO_ERR() ? this.cli.writeErr(out) : this.cli.write(out);
-    if (!sent) {
+    if (flatten(this.out!.write(this.held.take()).wait()).isErr()) {
       this.broken = true;
       return false;
     }
@@ -158,6 +132,30 @@ export struct Sink {
 }
 
 /**
+ * An `Output` that keeps what is written — a program run in this process, with its output wanted as bytes
+ * rather than as a stream. Nothing caps it: a caller that might be handed a great deal holds a `Sink` instead.
+ */
+export struct Kept {
+  Buf held;
+  Output out;
+
+  Kept create() {
+    Buf held = Buf.create();
+    return Kept(held, Output((u8[] b) => keep(held, b), keptOpen));
+  }
+
+  /** Everything written so far. */
+  u8[] bytes(const this) { return this.held.bytes(); }
+}
+
+async Result<void, OutputFault> keep(Buf held, u8[] b) {
+  held.pushAll(b);
+  return Result.Ok();
+}
+
+async Result<void, OutputFault> keptOpen() { return Result.Ok(); }
+
+/**
  * Input, in chunks or all at once, from a capability or from bytes somebody already has.
  *
  * The mirror of `Sink`, and needed for the same reason: `seq 1 2000000000 | wc -l` cannot hand `wc` a
@@ -166,19 +164,19 @@ export struct Sink {
  * and where the bytes come from is the caller's business.
  */
 export struct Feed {
-  Cli cli;
-  bool streaming;
+  /** The stream pulled a chunk at a time; null for bytes somebody already has. */
+  Input? in;
   u8[] held;
   i32 at;
   bool ended;
   /** Why a read failed, or empty. */
   string why;
 
-  /** Standard input, pulled a chunk at a time through the capability. */
-  Feed fromStdin(Cli cli) { return Feed(cli, true, u8[](), 0, false, ""); }
+  /** `in`, pulled a chunk at a time. */
+  Feed from(Input in) { return Feed(in, u8[](), 0, false, ""); }
 
   /** Bytes somebody already has — a here-document, a pipeline stage's collected output. */
-  Feed of(Cli cli, u8[] bytes) { return Feed(cli, false, bytes, 0, false, ""); }
+  Feed of(u8[] bytes) { return Feed(null, bytes, 0, false, ""); }
 
   /**
    * The next chunk, empty at the end.
@@ -192,23 +190,26 @@ export struct Feed {
    */
   async u8[] next(this) {
     if (this.ended) { return u8[](); }
-    if (!this.streaming) {
+    if (this.in is null) {
       this.ended = true;
       return this.remaining();
     }
-    match (await this.cli.readChunk().ticket()) {
-      Data(bytes): { return bytes; }
-      End: {
-        this.ended = true;
-        return u8[]();
+    // A read that failed *ends* the input as far as a filter is concerned, and the reason is kept: a
+    // program that reported success over a half-read file would be the worst of the three possible answers.
+    match (await this.in!.chunk()) {
+      Ok(r): {
+        match (r) {
+          Data(bytes): { return bytes; }
+          End: { this.ended = true; }
+          Failed(why): {
+            this.ended = true;
+            this.why = why;
+          }
+        }
       }
-      Failed(why): {
-        // A read that failed *ends* the input as far as a filter is concerned, and the reason is kept:
-        // a program that reported success over a half-read file would be the worst of the three
-        // possible answers.
+      Err(e): {
         this.ended = true;
-        this.why = why;
-        return u8[]();
+        this.why = "\{e}";
       }
     }
     return u8[]();
@@ -339,22 +340,6 @@ export async Line nextLine(Lines s, Feed in) {
 export bool emitTo(Sink out, u8[] line, bool nl) {
   if (!nl) { return out.bytes(line); }
   return out.lineBytes(line);
-}
-
-/**
- * A line written *now*, terminated only if the one it came from was.
- *
- * Unbuffered, for the handful of places that write once and return — `emitTo` is the one to use in a
- * loop, since a `write` per line is a park and a wake per line.
- */
-export void emit(Cli cli, u8[] line, bool nl) {
-  if (!nl) {
-    cli.write(line);
-    return;
-  }
-  u8[] out = u8[].filled(line.len() + 1, '\n');
-  out.copyFrom(line, 0, 0, line.len());
-  cli.write(out);
 }
 
 /**

@@ -19,8 +19,8 @@
 // deleted.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "std";
-import { Vec } from "core";
+import { Files, Sys } from "std";
+import { Vec, flatten } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { codeLines, walk } from "./deadexports.wac";
 
@@ -74,19 +74,21 @@ void urlTargets(string text, Vec<string> out) {
   }
 }
 
-export string test_no_file_reaches_out_of_the_repository_by_counting_dots(Core core, Cli cli) {
+export string test_no_file_reaches_out_of_the_repository_by_counting_dots(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
   Vec<string> files = Vec.create();
   string[] roots = ["packages", "harness", "tools"];
-  for (i32 i = 0; i < roots.len(); i++) { walk(cli, ".", roots[i], ".ts", files); }
+  for (i32 i = 0; i < roots.len(); i++) { walk(fs, ".", roots[i], ".ts", files); }
   t.isTrue(files.len() > 50, "only " + itoa(files.len()) + " .ts files found — did the walk resolve?");
 
   string offenders = "";
   i32 n = 0;
   for (i32 i = 0; i < files.len(); i++) {
-    FileResult r = cli.readFile(files.get(i)).wait();
-    if (!r.ok) { t.fail("cannot read " + files.get(i) + " — " + r.error); continue; }
-    string[] lines = codeLines(string.fromBytes(r.bytes));
+    auto rRead = flatten(fs.readFile(files.get(i)).wait());
+    u8[]? r = rRead.ok();
+    if ((r is null)) { t.fail("cannot read " + files.get(i) + " — " + "\{rRead.isErr() ? "\{rRead.err()!}" : ""}"); continue; }
+    string[] lines = codeLines(string.fromBytes(r!));
     string code = "";
     for (i32 k = 0; k < lines.len(); k++) { code = code + lines[k] + "\n"; }
     Vec<string> targets = Vec.create();
@@ -103,7 +105,7 @@ export string test_no_file_reaches_out_of_the_repository_by_counting_dots(Core c
   return t.report();
 }
 
-export string test_the_check_would_catch_the_shape_it_was_written_for(Core core, Cli cli) {
+export string test_the_check_would_catch_the_shape_it_was_written_for() {
   T t = T.create();
   // The rule is a search over source, so what is worth pinning is that it finds the exact line that
   // was wrong, and that *resolution* — not the number of `..` — is what decides.

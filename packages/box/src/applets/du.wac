@@ -5,10 +5,10 @@
 // answer and was not. Anything that could not be counted is now said out loud and the status is
 // nonzero, while the partial figure is still printed — which is what GNU's does.
 
-import { Cli, Core, Stat } from "std";
+import { Stat, Output, Files } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Fs } from "../../../fs/src/fs.wac";
+import { reason } from "../../../fs/src/words.wac";
 
 /** As in `find`: a bound rather than a cycle check, because `stat` cannot see a symlink. */
 i32 MAX_DEPTH() { return 64; }
@@ -16,37 +16,38 @@ i32 MAX_DEPTH() { return 64; }
 /** A subtotal, and whether everything under it was actually counted. */
 struct Sum { i64 bytes; bool complete; }
 
-export async i32 du(Core core, Cli cli, Fs fs, Args a) {
-  if (refuseFlags(core, a)) { return 1; }
+export async i32 du(Output err, Output out, Files fs, Args a) {
+  if (refuseFlags(err, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
-  Stat st = await fs.stat(root);
+  auto looked = await fs.stat(root);
+  Stat? st = looked.ok();
   // GNU's frame and GNU's words: `du: cannot access 'nosuch': No such file or directory`. This said
   // `du: nosuch: not found` — a phrase no real tool prints — and, worse, it said it for **every**
   // absence, including the ones that are not absences at all. `Stat` carries a category, so a path
   // this build was never granted answered "not found" about a file that is plainly there: a denial
   // reported as absence, which is the failure `Stat.fault` exists to prevent.
-  if (!st.exists) {
-    core.warn(a.name + ": cannot access '" + root + "': " + st.words("No such file or directory"));
+  if (st is null) {
+    err.line(a.name + ": cannot access '" + root + "': " + reason(looked.err()!));
     return 1;
   }
-  if (!st.isDir) {
-    core.log("\{st.size}\t\{root}");
+  if (!((st is not null) && st!.isDir)) {
+    out.line("\{st!.size}\t\{root}");
     return 0;
   }
-  Sum s = await sizeOf(core, cli, fs, a.name, root, 0);
-  core.log("\{s.bytes}\t\{root}");
+  Sum s = await sizeOf(err, fs, a.name, root, 0);
+  out.line("\{s.bytes}\t\{root}");
   return s.complete ? 0 : 1;
 }
 
-async Sum sizeOf(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
+async Sum sizeOf(Output err, Files fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
-    core.warn("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
+    err.line("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
       " levels, not counting further");
     return Sum(0, false);
   }
-  string[]? names = await fs.readDir(dir);
+  string[]? names = (await fs.readDir(dir)).ok();
   if (names is null) {
-    core.warn("\{name}: \{dir}: cannot read directory");
+    err.line("\{name}: \{dir}: cannot read directory");
     return Sum(0, false);
   }
   string[] found = names!;
@@ -54,13 +55,15 @@ async Sum sizeOf(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) 
   bool complete = true;
   for (i32 i = 0; i < found.len(); i++) {
     string path = "\{dir}/\{found[i]}";
-    Stat st = await fs.stat(path);
-    if (st.isDir) {
-      Sum sub = await sizeOf(core, cli, fs, name, path, depth + 1);
+    // A name that will not stat — a dangling link, a link to itself — adds nothing, as it always has here.
+    Stat? st = (await fs.stat(path)).ok();
+    if (st is null) { continue; }
+    if (st!.isDir) {
+      Sum sub = await sizeOf(err, fs, name, path, depth + 1);
       total = total + sub.bytes;
       if (!sub.complete) { complete = false; }
     } else {
-      total = total + st.size;
+      total = total + st!.size;
     }
   }
   return Sum(total, complete);

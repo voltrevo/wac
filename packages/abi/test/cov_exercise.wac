@@ -15,7 +15,7 @@
 //
 // None of the nine tests expects a trap.
 
-import { Core, Cli, Sys } from "std";
+import { Output, Sys } from "std";
 import {
   test_a_bool_is_a_padded_zero_or_one_and_nothing_else as al__a_bool_is_a_padded_zero_or_one_and_nothing_else,
   test_an_element_offset_cannot_point_into_the_head_or_past_the_end as al__an_element_offset_cannot_point_into_the_head_or_past_the_end,
@@ -40,65 +40,64 @@ import {
 } from "./wac/strictness_test.wac";
 
 export async i32 main(Sys sys) {
-  Core core = sys.core;
-  Cli cli = sys.cli;
+  Output err = sys.stderr();
   i32 bad = 0;
   if (al__encoding_a_value_of_the_wrong_shape_says_which_and_where().len() > 0) {
-    core.warn("error: FAILED aliasing_test test_encoding_a_value_of_the_wrong_shape_says_which_and_where");
+    err.line("error: FAILED aliasing_test test_encoding_a_value_of_the_wrong_shape_says_which_and_where");
     bad = bad + 1;
   }
   if (al__an_accessor_asked_for_the_wrong_variant_answers_an_empty_default().len() > 0) {
-    core.warn("error: FAILED aliasing_test test_an_accessor_asked_for_the_wrong_variant_answers_an_empty_default");
+    err.line("error: FAILED aliasing_test test_an_accessor_asked_for_the_wrong_variant_answers_an_empty_default");
     bad = bad + 1;
   }
   if (al__a_bool_is_a_padded_zero_or_one_and_nothing_else().len() > 0) {
-    core.warn("error: FAILED aliasing_test test_a_bool_is_a_padded_zero_or_one_and_nothing_else");
+    err.line("error: FAILED aliasing_test test_a_bool_is_a_padded_zero_or_one_and_nothing_else");
     bad = bad + 1;
   }
   if (al__an_element_offset_cannot_point_into_the_head_or_past_the_end().len() > 0) {
-    core.warn("error: FAILED aliasing_test test_an_element_offset_cannot_point_into_the_head_or_past_the_end");
+    err.line("error: FAILED aliasing_test test_an_element_offset_cannot_point_into_the_head_or_past_the_end");
     bad = bad + 1;
   }
   if (al__a_word_that_cannot_be_an_index_is_refused_rather_than_wrapped().len() > 0) {
-    core.warn("error: FAILED aliasing_test test_a_word_that_cannot_be_an_index_is_refused_rather_than_wrapped");
+    err.line("error: FAILED aliasing_test test_a_word_that_cannot_be_an_index_is_refused_rather_than_wrapped");
     bad = bad + 1;
   }
-  if (ca__bytes_another_implementation_produced_round_trip(core, cli).len() > 0) {
-    core.warn("error: FAILED cast_test test_bytes_another_implementation_produced_round_trip");
+  if (ca__bytes_another_implementation_produced_round_trip(sys).len() > 0) {
+    err.line("error: FAILED cast_test test_bytes_another_implementation_produced_round_trip");
     bad = bad + 1;
   }
-  if (co__every_case_decodes_to_what_ethers_says_it_means(core, cli).len() > 0) {
-    core.warn("error: FAILED corpus_test test_every_case_decodes_to_what_ethers_says_it_means");
+  if (co__every_case_decodes_to_what_ethers_says_it_means(sys).len() > 0) {
+    err.line("error: FAILED corpus_test test_every_case_decodes_to_what_ethers_says_it_means");
     bad = bad + 1;
   }
-  if (co__and_re_encodes_to_the_bytes_ethers_produced(core, cli).len() > 0) {
-    core.warn("error: FAILED corpus_test test_and_re_encodes_to_the_bytes_ethers_produced");
+  if (co__and_re_encodes_to_the_bytes_ethers_produced(sys).len() > 0) {
+    err.line("error: FAILED corpus_test test_and_re_encodes_to_the_bytes_ethers_produced");
     bad = bad + 1;
   }
-  if (co__the_nested_cases_are_actually_in_the_corpus(core, cli).len() > 0) {
-    core.warn("error: FAILED corpus_test test_the_nested_cases_are_actually_in_the_corpus");
+  if (co__the_nested_cases_are_actually_in_the_corpus(sys).len() > 0) {
+    err.line("error: FAILED corpus_test test_the_nested_cases_are_actually_in_the_corpus");
     bad = bad + 1;
   }
   if (co__a_malformed_offset_or_length_is_refused().len() > 0) {
-    core.warn("error: FAILED corpus_test test_a_malformed_offset_or_length_is_refused");
+    err.line("error: FAILED corpus_test test_a_malformed_offset_or_length_is_refused");
     bad = bad + 1;
   }
   if (co__a_value_that_does_not_fit_its_type_is_refused().len() > 0) {
-    core.warn("error: FAILED corpus_test test_a_value_that_does_not_fit_its_type_is_refused");
+    err.line("error: FAILED corpus_test test_a_value_that_does_not_fit_its_type_is_refused");
     bad = bad + 1;
   }
   if (co__the_descriptor_tags_are_what_this_file_thinks().len() > 0) {
-    core.warn("error: FAILED corpus_test test_the_descriptor_tags_are_what_this_file_thinks");
+    err.line("error: FAILED corpus_test test_the_descriptor_tags_are_what_this_file_thinks");
     bad = bad + 1;
   }
   if (st__every_malformation_is_refused_and_says_which_rule().len() > 0) {
-    core.warn("error: FAILED strictness_test test_every_malformation_is_refused_and_says_which_rule");
+    err.line("error: FAILED strictness_test test_every_malformation_is_refused_and_says_which_rule");
     bad = bad + 1;
   }
   if ((await st__the_table_of_what_the_real_tools_do_is_still_true(sys)).len() > 0) {
-    core.warn("error: FAILED strictness_test test_the_table_of_what_the_real_tools_do_is_still_true");
+    err.line("error: FAILED strictness_test test_the_table_of_what_the_real_tools_do_is_still_true");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("abi: \{bad} test(s) failed under the coverage driver"); }
+  if (bad > 0) { err.line("abi: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

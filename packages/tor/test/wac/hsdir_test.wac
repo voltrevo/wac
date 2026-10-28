@@ -38,7 +38,7 @@ import {
 } from "../../src/hsdir.wac";
 import { Relay, parseConsensus, attachMicrodescriptors, base64NoPad } from "../../src/directory.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { Core, Cli } from "std";
+import { Files, Sys } from "std";
 import {
   candidateCount, candidateEd, caseBlinded, caseCount, caseHsdirCount, caseHsdirEd, caseHsdirIndex,
   casePeriodLength, caseSrv, caseTimePeriod, caseUsedCurrentSrv, consensusDocument, microdescriptors,
@@ -59,22 +59,23 @@ i32 bit(i32 k) {
  * And the candidate set has to be bigger than the slots: with eight candidates for 2 replicas x a
  * spread of 4, every relay is chosen and there is no wrong answer to give.
  */
-export string test_the_capture_can_discriminate(Core core, Cli cli) {
+export string test_the_capture_can_discriminate(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 n = caseCount(cli);
+  i32 n = caseCount(fs);
   t.isTrue(n >= 2, "the vector records fewer than two service uploads");
 
   bool current = false;
   bool previous = false;
   for (i32 c = 0; c < n; c++) {
-    if (caseUsedCurrentSrv(cli, c)) { current = true; } else { previous = true; }
+    if (caseUsedCurrentSrv(fs, c)) { current = true; } else { previous = true; }
   }
   t.isTrue(current && previous,
            "both uploads used the same shared random value, so the assignment is untested");
 
   i32 slots = HSDIR_N_REPLICAS_DEFAULT * HSDIR_SPREAD_STORE_DEFAULT;
-  t.isTrue(candidateCount(cli) > slots,
-           "only \{candidateCount(cli) as i64} HSDir candidates for " +
+  t.isTrue(candidateCount(fs) > slots,
+           "only \{candidateCount(fs) as i64} HSDir candidates for " +
            "\{slots as i64} slots — the selection test cannot discriminate. Recapture from " +
            "a wider network (chutney networks/hs-v3-wide).");
 
@@ -82,29 +83,30 @@ export string test_the_capture_can_discriminate(Core core, Cli cli) {
   // would make a spread of four cover fewer than four relays. It is also the only thing here that
   // would notice `candidateEd` walking the list wrongly.
   i32 duplicates = 0;
-  for (i32 i = 0; i < candidateCount(cli); i++) {
-    for (i32 j = i + 1; j < candidateCount(cli); j++) {
-      if (equal(candidateEd(cli, i), candidateEd(cli, j))) { duplicates = duplicates + 1; }
+  for (i32 i = 0; i < candidateCount(fs); i++) {
+    for (i32 j = i + 1; j < candidateCount(fs); j++) {
+      if (equal(candidateEd(fs, i), candidateEd(fs, j))) { duplicates = duplicates + 1; }
     }
   }
   t.eqI32(duplicates, 0, "the candidates are distinct relays");
   return t.report();
 }
 
-export string test_every_relay_index_is_the_one_tor_computed(Core core, Cli cli) {
+export string test_every_relay_index_is_the_one_tor_computed(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  i32 cases = caseCount(cli);
+  i32 cases = caseCount(fs);
   t.isTrue(cases >= 1, "the vector has at least one case");
   i32 checked = 0;
   for (i32 c = 0; c < cases; c++) {
-    u8[] srv = caseSrv(cli, c);
-    i64 tp = caseTimePeriod(cli, c);
-    i64 plen = casePeriodLength(cli, c);
+    u8[] srv = caseSrv(fs, c);
+    i64 tp = caseTimePeriod(fs, c);
+    i64 plen = casePeriodLength(fs, c);
 
-    i32 n = caseHsdirCount(cli, c);
+    i32 n = caseHsdirCount(fs, c);
     t.isTrue(n > 0, "case \{c as i64} names some directories");
     for (i32 i = 0; i < n; i++) {
-      t.isTrue(equal(hsRelayIndex(caseHsdirEd(cli, c, i), srv, tp, plen), caseHsdirIndex(cli, c, i)),
+      t.isTrue(equal(hsRelayIndex(caseHsdirEd(fs, c, i), srv, tp, plen), caseHsdirIndex(fs, c, i)),
                "case \{c as i64} relay \{i as i64}" +
                ": hs_relay_index agrees with tor's");
       checked = checked + 1;
@@ -114,31 +116,32 @@ export string test_every_relay_index_is_the_one_tor_computed(Core core, Cli cli)
   return t.report();
 }
 
-export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
+export string test_we_choose_the_directories_tor_chose(Sys sys) {
+  Files fs = sys.files();
   // The whole ring, end to end: from a blinded key and the consensus's HSDir set, pick the
   // responsible directories and require exactly tor's set. This is what `hsServiceIndex` is tested
   // by — tor does not log a service index, so the only evidence it is right is that the relays it
   // selects are the relays tor uploaded to.
   T t = T.create();
-  i32 cases = caseCount(cli);
-  i32 nr = candidateCount(cli);
+  i32 cases = caseCount(fs);
+  i32 nr = candidateCount(fs);
   t.isTrue(nr > HSDIR_N_REPLICAS_DEFAULT * HSDIR_SPREAD_STORE_DEFAULT,
            "there are more candidates than slots, so the choice discriminates");
 
   for (i32 c = 0; c < cases; c++) {
-    u8[] blinded = caseBlinded(cli, c);
-    u8[] srv = caseSrv(cli, c);
-    i64 tp = caseTimePeriod(cli, c);
-    i64 plen = casePeriodLength(cli, c);
+    u8[] blinded = caseBlinded(fs, c);
+    u8[] srv = caseSrv(fs, c);
+    i64 tp = caseTimePeriod(fs, c);
+    i64 plen = casePeriodLength(fs, c);
 
     u8[][] indices = u8[][].defaulted(nr);
     for (i32 i = 0; i < nr; i++) {
-      indices[i] = hsRelayIndex(candidateEd(cli, i), srv, tp, plen);
+      indices[i] = hsRelayIndex(candidateEd(fs, i), srv, tp, plen);
     }
     i32[] chosen = responsibleHsdirs(blinded, indices, HSDIR_N_REPLICAS_DEFAULT,
                                      HSDIR_SPREAD_STORE_DEFAULT, plen, tp);
 
-    i32 want = caseHsdirCount(cli, c);
+    i32 want = caseHsdirCount(fs, c);
     t.eqI32(chosen.len(), want,
             "case \{c as i64}: we chose as many directories as tor did");
 
@@ -146,10 +149,10 @@ export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
     // would pass for a subset.
     i32 missing = 0;
     for (i32 i = 0; i < want; i++) {
-      u8[] theirs = caseHsdirEd(cli, c, i);
+      u8[] theirs = caseHsdirEd(fs, c, i);
       bool found = false;
       for (i32 j = 0; j < chosen.len(); j++) {
-        if (equal(candidateEd(cli, chosen[j]), theirs)) { found = true; }
+        if (equal(candidateEd(fs, chosen[j]), theirs)) { found = true; }
       }
       if (!found) { missing = missing + 1; }
     }
@@ -169,22 +172,23 @@ export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_trailing_field_order_differs_between_the_two_indices(Core core, Cli cli) {
+export string test_the_trailing_field_order_differs_between_the_two_indices(Sys sys) {
+  Files fs = sys.files();
   // `store-at-idx` ends with period **length then number**; `node-idx` ends with **number then
   // length**. It reads like a transcription slip in the specification and it is not. Anyone tidying
   // this code would normalise them, so the asymmetry is asserted rather than left as a comment: swap
   // the arguments and the index must change.
   T t = T.create();
-  u8[] blinded = caseBlinded(cli, 0);
-  u8[] srv = caseSrv(cli, 0);
-  i64 tp = caseTimePeriod(cli, 0);
-  i64 plen = casePeriodLength(cli, 0);
+  u8[] blinded = caseBlinded(fs, 0);
+  u8[] srv = caseSrv(fs, 0);
+  i64 tp = caseTimePeriod(fs, 0);
+  i64 plen = casePeriodLength(fs, 0);
   t.isFalse(tp == plen, "the two values differ, or this test proves nothing");
 
   u8[] service = hsServiceIndex(blinded, 1, plen, tp);
   t.isFalse(equal(service, hsServiceIndex(blinded, 1, tp, plen)),
             "swapping length and number changes the service index");
-  u8[] ed = candidateEd(cli, 0);
+  u8[] ed = candidateEd(fs, 0);
   u8[] relay = hsRelayIndex(ed, srv, tp, plen);
   t.isFalse(equal(relay, hsRelayIndex(ed, srv, plen, tp)),
             "swapping number and length changes the relay index");
@@ -197,7 +201,7 @@ export string test_the_trailing_field_order_differs_between_the_two_indices(Core
   return t.report();
 }
 
-export string test_the_ring_wraps(Core core, Cli cli) {
+export string test_the_ring_wraps() {
   // A service index above every relay's index must come back round to the lowest, not fall off the
   // end. Constructed rather than found: with a handful of relays the natural case may not occur, and
   // an off-by-one at the wrap is exactly the bug that leaves a client asking nobody.
@@ -275,7 +279,7 @@ export string test_the_ring_wraps(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_index_comparison_is_unsigned(Core core, Cli cli) {
+export string test_index_comparison_is_unsigned() {
   // The indices are 256-bit unsigned numbers held in `u8[]`. If a byte were ever compared as signed,
   // every index with the high bit set would sort below every index without one — half the ring
   // inverted, which still produces a plausible-looking set of directories.
@@ -301,7 +305,7 @@ export string test_index_comparison_is_unsigned(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_the_disaster_srv_is_deterministic(Core core, Cli cli) {
+export string test_the_disaster_srv_is_deterministic() {
   // When the consensus carries no shared random value, everyone falls back to a value derived from
   // the period alone. Entirely predictable, and that is the point: an unpredictable fallback would
   // put clients and services on different rings, which is worse than a predictable one.
@@ -316,7 +320,8 @@ export string test_the_disaster_srv_is_deterministic(Core core, Cli cli) {
 
 // ── From a consensus, which is what a client actually has ─────────────────────
 
-export string test_the_directories_are_chosen_from_a_parsed_consensus(Core core, Cli cli) {
+export string test_the_directories_are_chosen_from_a_parsed_consensus(Sys sys) {
+  Files fs = sys.files();
   // Everything above works from ed25519 keys handed over directly. A client has a consensus and a
   // pile of microdescriptors, and has to get from those to the same answer — which means parsing the
   // `HSDir` flag out of the consensus and the `id ed25519` line out of a microdescriptor, neither of
@@ -325,8 +330,8 @@ export string test_the_directories_are_chosen_from_a_parsed_consensus(Core core,
   // This is the same assertion as `we_choose_the_directories_tor_chose`, one layer lower down: the
   // relays tor uploaded to, reached from the bytes a client downloads.
   T t = T.create();
-  u8[] consensus = consensusDocument(cli);
-  u8[] microdescs = microdescriptors(cli);
+  u8[] consensus = consensusDocument(fs);
+  u8[] microdescs = microdescriptors(fs);
   t.isTrue(consensus.len() > 1000, "the vector carries a real consensus");
   t.isTrue(microdescs.len() > 1000, "and the microdescriptors that go with it");
 
@@ -342,21 +347,21 @@ export string test_the_directories_are_chosen_from_a_parsed_consensus(Core core,
   t.isTrue(candidates.len() > HSDIR_N_REPLICAS_DEFAULT * HSDIR_SPREAD_STORE_DEFAULT,
            "after attaching them there are more candidates than slots");
 
-  i32 cases = caseCount(cli);
+  i32 cases = caseCount(fs);
   for (i32 c = 0; c < cases; c++) {
-    u8[] blinded = caseBlinded(cli, c);
-    u8[] srv = caseSrv(cli, c);
-    i64 tp = caseTimePeriod(cli, c);
-    i64 plen = casePeriodLength(cli, c);
+    u8[] blinded = caseBlinded(fs, c);
+    u8[] srv = caseSrv(fs, c);
+    i64 tp = caseTimePeriod(fs, c);
+    i64 plen = casePeriodLength(fs, c);
 
     i32[] chosen = hsdirsForDescriptor(relays, blinded, srv, tp, plen,
                                        HSDIR_N_REPLICAS_DEFAULT, HSDIR_SPREAD_STORE_DEFAULT);
-    i32 want = caseHsdirCount(cli, c);
+    i32 want = caseHsdirCount(fs, c);
     t.eqI32(chosen.len(), want, "case \{c as i64}: as many directories as tor used");
 
     i32 missing = 0;
     for (i32 i = 0; i < want; i++) {
-      u8[] theirs = caseHsdirEd(cli, c, i);
+      u8[] theirs = caseHsdirEd(fs, c, i);
       bool found = false;
       for (i32 j = 0; j < chosen.len(); j++) {
         if (equal(relays[chosen[j]].ed25519Identity, theirs)) { found = true; }
@@ -369,9 +374,10 @@ export string test_the_directories_are_chosen_from_a_parsed_consensus(Core core,
   return t.report();
 }
 
-export string test_the_descriptor_path_is_the_one_an_hsdir_answers(Core core, Cli cli) {
+export string test_the_descriptor_path_is_the_one_an_hsdir_answers(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] blinded = caseBlinded(cli, 0);
+  u8[] blinded = caseBlinded(fs, 0);
   string path = descriptorPath(blinded);
   // `/tor/hs/3/<z>`, z being the blinded key in unpadded base64: 32 bytes is 43 characters.
   t.eqI32(path.len(), 10 + 43, "the path is the prefix plus an unpadded base64 key");
@@ -387,7 +393,7 @@ export string test_the_descriptor_path_is_the_one_an_hsdir_answers(Core core, Cl
   return t.report();
 }
 
-export string test_only_flagged_relays_with_an_identity_are_candidates(Core core, Cli cli) {
+export string test_only_flagged_relays_with_an_identity_are_candidates() {
   // The vector cannot show this: chutney gives every relay the HSDir flag, so on that data the
   // filter is a no-op and removing it changes nothing. Planting `if (true)` in place of the flag
   // check survived every test above, which is how the gap was found.
@@ -432,19 +438,20 @@ export string test_only_flagged_relays_with_an_identity_are_candidates(Core core
  * periods, produces documents filed under names no client computes: the same silent failure as a
  * wrong blinded key, and invisible to everyone involved.
  */
-export string test_a_service_publishes_for_the_two_periods_tor_did(Core core, Cli cli) {
+export string test_a_service_publishes_for_the_two_periods_tor_did(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] consensus = consensusDocument(cli);
-  i32 n = caseCount(cli);
+  u8[] consensus = consensusDocument(fs);
+  i32 n = caseCount(fs);
   t.isTrue(n >= 2, "the vector records both of a service's uploads");
 
   StorePeriod[] store = serviceStorePeriods(consensus, true, 0);
   t.eqI32(store.len(), 2, "a service publishes two descriptors, not one");
 
   for (i32 i = 0; i < 2; i++) {
-    t.eqI64(store[i].periodNum, caseTimePeriod(cli, i), "the period tor published under");
-    t.eqI64(store[i].periodLength, casePeriodLength(cli, i), "and its length");
-    bool wantedCurrent = caseUsedCurrentSrv(cli, i);
+    t.eqI64(store[i].periodNum, caseTimePeriod(fs, i), "the period tor published under");
+    t.eqI64(store[i].periodLength, casePeriodLength(fs, i), "and its length");
+    bool wantedCurrent = caseUsedCurrentSrv(fs, i);
     t.isTrue(store[i].useCurrentSrv == wantedCurrent,
              "and the shared random value tor used for it");
   }
@@ -468,9 +475,10 @@ export string test_a_service_publishes_for_the_two_periods_tor_did(Core core, Cl
  * current one — and why a service that ignored the predicate would have published the current and
  * next periods, missing the period half its clients are still asking under.
  */
-export string test_the_stretch_between_a_period_and_an_srv(Core core, Cli cli) {
+export string test_the_stretch_between_a_period_and_an_srv(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] consensus = consensusDocument(cli);
+  u8[] consensus = consensusDocument(fs);
   t.isTrue(betweenTimePeriodAndSrv(consensus, true, 0),
            "this consensus is between a new time period and a new shared random value");
 
@@ -516,32 +524,33 @@ export string test_the_stretch_between_a_period_and_an_srv(Core core, Cli cli) {
  * this package keeps being caught by. Pick the wrong SRV for a period and every ingredient is still
  * correct; the plan is not.
  */
-export string test_the_plan_reaches_the_directories_tor_used(Core core, Cli cli) {
+export string test_the_plan_reaches_the_directories_tor_used(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] consensus = consensusDocument(cli);
+  u8[] consensus = consensusDocument(fs);
   Relay[] relays = parseConsensus(consensus);
-  attachMicrodescriptors(relays, microdescriptors(cli));
+  attachMicrodescriptors(relays, microdescriptors(fs));
 
   // The blinded keys are the service's, one per store period, and they are index-matched to the
   // vector's two cases — case 0 is the earlier period, case 1 the later.
   u8[][] blinded = u8[][].defaulted(2);
-  for (i32 i = 0; i < 2; i++) { blinded[i] = caseBlinded(cli, i); }
+  for (i32 i = 0; i < 2; i++) { blinded[i] = caseBlinded(fs, i); }
 
   Publication[] plan = servicePlan(consensus, relays, blinded, true, 0);
   t.eqI32(plan.len(), 2, "a service plans two uploads");
 
   for (i32 i = 0; i < 2; i++) {
-    t.eqI64(plan[i].periodNum, caseTimePeriod(cli, i), "the period tor used");
+    t.eqI64(plan[i].periodNum, caseTimePeriod(fs, i), "the period tor used");
     // The shared random value, taken from the consensus rather than handed in. Asserting it directly
     // matters because nothing downstream reveals it: two plans that used different values produce
     // different directories, and a directory list does not say which value produced it.
-    t.eqBytes(plan[i].srv, caseSrv(cli, i), "and the shared random value tor used with it");
+    t.eqBytes(plan[i].srv, caseSrv(fs, i), "and the shared random value tor used with it");
 
-    i32 want = caseHsdirCount(cli, i);
+    i32 want = caseHsdirCount(fs, i);
     t.eqI32(plan[i].hsdirs.len(), want, "as many directories as tor uploaded to");
     i32 missing = 0;
     for (i32 k = 0; k < want; k++) {
-      u8[] theirs = caseHsdirEd(cli, i, k);
+      u8[] theirs = caseHsdirEd(fs, i, k);
       bool found = false;
       for (i32 j = 0; j < plan[i].hsdirs.len(); j++) {
         if (equal(relays[plan[i].hsdirs[j]].ed25519Identity, theirs)) { found = true; }
@@ -571,13 +580,14 @@ export string test_the_plan_reaches_the_directories_tor_used(Core core, Cli cli)
  * period alone, so they still agree about the ring. A plan that refused here would take a service
  * offline for a condition the protocol expects.
  */
-export string test_a_consensus_with_no_srv_falls_back(Core core, Cli cli) {
+export string test_a_consensus_with_no_srv_falls_back(Sys sys) {
+  Files fs = sys.files();
   T t = T.create();
-  u8[] consensus = consensusDocument(cli);
+  u8[] consensus = consensusDocument(fs);
   Relay[] relays = parseConsensus(consensus);
-  attachMicrodescriptors(relays, microdescriptors(cli));
+  attachMicrodescriptors(relays, microdescriptors(fs));
   u8[][] blinded = u8[][].defaulted(2);
-  for (i32 i = 0; i < 2; i++) { blinded[i] = caseBlinded(cli, i); }
+  for (i32 i = 0; i < 2; i++) { blinded[i] = caseBlinded(fs, i); }
 
   // The same timings, with both shared-rand lines gone.
   u8[] bare = timings("04:07:00", "04:07:20");
