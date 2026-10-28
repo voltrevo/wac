@@ -594,7 +594,16 @@ export string systemSide() {
             const why = wacNotRunnable(wasm);
             if (why !== "") return answer(req, 5, why, NONE, 0n, 0n, 0);
           }
-          const worker = new Worker(self.location.href);
+          // **A page opened from a file may not start a worker from a worker**: its origin is opaque, and the
+          // browser throws. That is said at `spawn`, in words, rather than thrown through the program's worker,
+          // which it would kill. design/system/0015 decision 3 — the page's own thread starting every child — is
+          // what lifts it.
+          let worker;
+          try { worker = new Worker(self.location.href); }
+          catch (e) {
+            return answer(req, 5, "a page opened from a file cannot start a program from a worker: " + String(e?.message ?? e),
+                          NONE, 0n, 0n, 0);
+          }
           let settle;
           const c = { worker, out: wacQueue(), err: wacQueue(), fs: wacQueue(), gone: false,
                       exit: new Promise((r) => { settle = r; }) };
