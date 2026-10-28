@@ -1,0 +1,36 @@
+// A terminal's screen, in the order things were written.
+//
+// `Session` is what a page's terminal runs a shell in, and its screen is what a person reads. It captured a
+// command's output and its complaints into two buffers and showed one after the other, so `echo one; nope; echo
+// two` read as `one`, `two`, and then the complaint about `nope` — the error after output that came later, which
+// is the ordering `issues/system/0282c` fixed for `wac run` and the desktop project's terminal showed again.
+
+import { MemoryStore, Sys } from "std";
+import { T } from "../../../wactest/src/assert.wac";
+import { Session } from "../../src/lib/session.wac";
+import { ProcTable } from "../../../fs/src/proc.wac";
+
+/** A terminal's session on a disk of its own, running box's programs in its own process. */
+Session terminal(Sys sys) {
+  Session s = Session.startOn(sys, MemoryStore.create(sys.clock()).asUser("root"), ProcTable.create(), "sh");
+  s.sh.externalSpawnable = false;
+  return s;
+}
+
+export async string test_a_complaint_is_shown_where_it_was_made(Sys sys) {
+  T t = T.create();
+  Session s = terminal(sys);
+  await s.feedLine("echo one; nope; echo two");
+  t.eqStr(s.screen, "/ $ echo one; nope; echo two\none\nsh: nope: command not found\ntwo\n",
+          "the complaint between the two lines");
+  return t.report();
+}
+
+export async string test_each_complaint_in_its_place_and_the_status_after(Sys sys) {
+  T t = T.create();
+  Session s = terminal(sys);
+  await s.feedLine("echo one; nope; echo two; nope");
+  t.eqStr(s.screen, "/ $ echo one; nope; echo two; nope\none\nsh: nope: command not found\ntwo\n"
+                    + "sh: nope: command not found\n[exit 127]\n", "each in its place, and the status after");
+  return t.report();
+}
