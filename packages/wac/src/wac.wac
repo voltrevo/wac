@@ -1161,7 +1161,9 @@ export async i32 main(Sys sys) {
       dir = argv[1];
     } else {
       string here = normalisePath((await env.cwd()).orElse("."));
-      string found = await projectRootAbs(fs, here, ".");
+      // A *file* in it: `candidateRoots` starts from the directory holding what it is given, so `.` would
+      // skip this directory's own manifest.
+      string found = await projectRootAbs(fs, here, "./x.wac");
       // Empty means no manifest anywhere above, and then `.` is the right thing to report on: the
       // message names what the user is in rather than a root that was never found.
       if (found != "") { dir = found; }
@@ -1355,7 +1357,10 @@ export async i32 main(Sys sys) {
       Files tfs = fs;
       string here = normalisePath(flatten(env.cwd().wait()).unwrap());
       string theirs = await projectRootAbs(tfs, here, walked[0]);
-      if (theirs != await projectRootAbs(tfs, here, ".")) { imports = string[](); }
+      // `./x.wac`, not `.`: the search starts from the directory holding the path it is given, and `.`
+      // skipped this project's own manifest — every project with one looked like a stranger to its own
+      // tests, and the aggregate went beside them (`aggregate_test.wac`).
+      if (theirs != await projectRootAbs(tfs, here, "./x.wac")) { imports = string[](); }
     }
     if (imports.len() == 0) {
       // **`beside` needs one directory, and several paths do not name one.** One target *is* the

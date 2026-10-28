@@ -310,3 +310,31 @@ export string test_a_nested_project_s_tests_run_from_outside_it(Sys sys) {
   t.isTrue(left is not null && left!.len() == 2, "and nothing is left beside them");
   return t.report();
 }
+
+/**
+ * A project with a `wac.json5` keeps its aggregate in `.cache/`, not beside the tests.
+ *
+ * A directory run asks whether the tests it walked are in the same project as `.`, and writes the aggregate
+ * beside them when they are not. It asked with `.` itself, which `candidateRoots` reads as a *file* — so the
+ * search began one directory up and skipped the project's own manifest. Every project with a manifest looked
+ * like a stranger to its own tests, and the aggregate went into the test directory: in the repository, a
+ * gate's `corpuscheck_test.wac` walked straight into another run's `wac-aggregate-…_test.wac` as it was
+ * removed. Invisible until the repository gained a root `wac.json5`; a read-only test directory shows it.
+ */
+export string test_a_project_with_a_manifest_keeps_its_aggregate_in_its_cache(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  string dir = scratch(env, "aggregate-manifest");
+  string why = fixture(fs, dir, true);
+  t.eqStr(why, "", "could not write the fixture");
+  if (why != "") { return t.report(); }
+  t.eqStr(putFile(fs, "\{dir}/wac.json5", "{}\n"), "", "could not write the manifest");
+  procs.exec("chmod", ["555", "\{dir}/test"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  Exec r = runIn(env, procs, dir, false);
+  t.eqI32(r.status, 0, "the run wrote somewhere it may not — \{saidBy(r)}");
+  procs.exec("chmod", ["755", "\{dir}/test"], u8[](), ChildEnv.inherited(), Launch.plain()).wait();
+  fs.remove(dir, true).wait();
+  return t.report();
+}
