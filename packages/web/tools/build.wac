@@ -685,19 +685,66 @@ export string documentSide() {
           },
         };
         // Files arrive whether or not the program has asked yet; the page keeps them until it does.
-        const take = (files) => {
-          for (const f of files ?? []) {
-            f.arrayBuffer().then(
-              (buf) => emit(["file", true, f.name, new Uint8Array(buf), ""], [buf]),
-              (e) => emit(["file", false, f.name, new Uint8Array(0), String(e?.message ?? e)]));
+        // A file's name is its path below what the user handed over — `photos/2024/a.jpg` for a file
+        // in a folder, picked with `webkitdirectory` or dropped, and `a.jpg` for a file on its own.
+        const send = (f, path) => f.arrayBuffer().then(
+          (buf) => emit(["file", true, path, new Uint8Array(buf), ""], [buf]),
+          (e) => emit(["file", false, path, new Uint8Array(0), String(e?.message ?? e)]));
+        const take = (files) => { for (const f of files ?? []) send(f, f.webkitRelativePath || f.name); };
+        // A dropped folder is a directory entry rather than a file — reading it as one fails — so it is
+        // walked. `readEntries` answers in batches, and an empty batch is the end of the directory.
+        const rel = (p) => p.startsWith("/") ? p.slice(1) : p;
+        const failed = (path, e) => emit(["file", false, path, new Uint8Array(0), String(e?.message ?? e)]);
+        const walk = (entry) => {
+          if (entry.isFile) {
+            entry.file((f) => send(f, rel(entry.fullPath)), (e) => failed(rel(entry.fullPath), e));
+          } else if (entry.isDirectory) {
+            // Some browsers refuse to list a dropped folder on a page opened from a `file://` URL: the
+            // error says it was a folder, so a program can say what to do instead.
+            const reader = entry.createReader();
+            const more = () => reader.readEntries(
+              (batch) => { if (batch.length > 0) { batch.forEach(walk); more(); } },
+              (e) => failed(rel(entry.fullPath), `a dropped folder could not be listed here (${e?.name}: ${e?.message})`));
+            more();
           }
+        };
+        // **A handle where the browser has one** (Chrome, Edge): the entry API's `readEntries` fails with
+        // an EncodingError on a page opened from a `file://` URL, and a built page is often opened that way.
+        const walkHandle = async (h, path) => {
+          if (h.kind === "file") {
+            try { send(await h.getFile(), path); } catch (e) { failed(path, e); }
+            return;
+          }
+          try { for await (const kid of h.values()) await walkHandle(kid, path + "/" + kid.name); }
+          catch (e) { failed(path, e); }
+        };
+        // **Only a folder is walked.** A dropped file is read as the file it is: through an entry, some
+        // browsers cannot read even a lone file on a page opened from a `file://` URL. Entries and handles
+        // are taken during the event, because a drop's items are unreadable once it returns; a handle the
+        // browser then refuses — as it may in a sandboxed frame — falls back to the entry. A browser with
+        // no entries at all cannot tell a folder from a file, and is given `files` as it always was.
+        const dropped = (dt) => {
+          const items = [...(dt?.items ?? [])].filter((it) => it.kind === "file");
+          const files = [...(dt?.files ?? [])];
+          const entries = items.map((it) => it.webkitGetAsEntry?.() ?? null);
+          if (items.length === 0 || files.length !== items.length || entries.some((x) => x === null)) {
+            take(dt?.files);
+            return;
+          }
+          const handles = items.map((it, i) =>
+            entries[i].isDirectory && it.getAsFileSystemHandle ? it.getAsFileSystemHandle() : null);
+          items.forEach((it, i) => {
+            if (!entries[i].isDirectory) take([files[i]]);
+            else if (handles[i]) handles[i].then((h) => h ? walkHandle(h, h.name) : walk(entries[i]), () => walk(entries[i]));
+            else walk(entries[i]);
+          });
         };
         root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
         // A link to `#/somewhere`, and the browser's back and forward, move the location; the program follows.
         addEventListener("hashchange", () => emit(["where", location.hash]));
         // Without preventing dragover a dropped file replaces the page.
         document.addEventListener("dragover", (ev) => ev.preventDefault());
-        document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
+        document.addEventListener("drop", (ev) => { ev.preventDefault(); dropped(ev.dataTransfer); });
         const apply = (m) => ops[m[0]](...m.slice(1));
         return (m) => { if (m[0] === "ops") { for (const x of m[1]) apply(x); } else apply(m); };
       };

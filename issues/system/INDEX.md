@@ -5,6 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0369c](open/0369c-a-package-cannot-use-a-sibling-package-in-its-own-repository.md) | Only `web` has a `wac.json5`, so a project outside the repo cannot depend on `gzip`, `zstd`, `crypto`, `json` or `fmt` — the archive explorer vendored 25 files for it. Giving them manifests means rewriting 400 relative imports in 259 files into directory imports, and it leaves `json` with no legal way to use `fmt`: the compiler refuses a package that reaches a sibling package, by file or by directory. Options are a `path:` mapping, a git import of the repo itself, or moving `json`'s two `fmt` functions into `core`. **Operator, 2026-10-28: needs further thought** | design decision | not implemented — packages outside `web` cannot be dependencies |
+| [0368c](open/0368c-a-build-embeds-the-package-caches-absolute-path.md) | The same app with byte-identical cache contents builds to 2,106,808 bytes under one `$WAC_HOME` and 2,110,840 under another: a dependency's symbols are prefixed with its checkout's absolute path in the cache (`…home_two_cache_git_https_3A_2F_2Fgithub_com_…_packages_web_src_page_new`), so builds differ across machines and every page carries its builder's home path. ch46 says the same lock produces the same program | bug | wrong answer — one lock, two programs |
 | [0367c](closed/0367c-the-wasmtime-host-cannot-finish-any-program.md) | The wasmtime host answers *"main cannot finish: nothing that can run will settle what it waits on"* for every program, `export i32 main() { return 0; }` included, and for `wac build`; the v8 binary carrying the byte-identical seed runs them. The seed starts (`wac version` gets its own *unknown command* answer) and stalls at its first host wait. Unseen because the eleven files that drive wasmtime skip when its binary is absent, which is most checkouts; with one present the gate fails 18 cases in 7 files | bug | wrong answer — no program finishes on wasmtime |
 | [0366a](open/0366a-wac-run-suggests-a-spelling-it-then-refuses.md) | `wac run` on a file with no `main` lists `f()` as the thing to name, and `wac run g.wac 'f()'` answers "exports no `f()`. It exports: f()" — the spelling that works is `f` | diagnostic | the suggested spelling is refused |
 | [0365a](open/0365a-a-seed-the-engine-rejects-is-reported-as-the-programs-module.md) | When the binary's own seed fails to load, `wac` says the module compiled from `packages/wac/src/wac.wac` was rejected and that `wac build … -o out` keeps it — the failure is before any build, nothing is kept, and the engine's own message (which names the function) is not shown | diagnostic | wrong module named, advice that keeps nothing |
@@ -131,7 +133,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-346 issues, 251 closed.
+348 issues, 251 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
