@@ -14,8 +14,8 @@
 // re-export of a name its source does not declare, so a rename in a package that forgot the entry is
 // caught here rather than by the first project that depends on it.
 //
-// **A program reads what it reaches, not the repository.** `libentry_probe.wac` takes two names from two
-// packages through the entry; the build reads a few files, where checking the entry reads every one.
+// **A program reads what it reaches, not the repository.** A probe takes two names from two packages
+// through the entry; the build reads a few files, where checking the entry reads every one.
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath } from "../../packages/wactest/src/host.wac";
@@ -60,11 +60,26 @@ export string test_every_name_the_root_entry_offers_exists(Core core, Cli cli) {
   return t.report();
 }
 
+/**
+ * A program that depends on the repository through its root entry, as a project outside it would: two
+ * names from two packages. Written at run time into `.cache/`, inside the repository's project so
+ * `../lib.wac` reaches the entry, and outside the corpus `corpuscheck_test.wac` sweeps, which walks
+ * `packages/` and `tools/` and would not hold the root file this imports.
+ */
+static string PROBE =
+  "import { json.parse, zstd.decompress } from \"../lib.wac\";\n" +
+  "export i32 main() {\n" +
+  "  if (parse(\"[1, 2]\".toBytes()).ok() is null) { return 1; }\n" +
+  "  return decompress(u8[]()).len() == 0 ? 0 : 2;\n" +
+  "}\n";
+
 export string test_a_program_reads_what_it_reaches_through_the_root_entry(Core core, Cli cli) {
   T t = T.create();
+  string probe = ".cache/libentry_probe-\{cli.cwd().wait().len()}.wac";
+  cli.mkdir(".cache", true).wait();
+  t.isTrue(cli.writeFile(probe, PROBE.toBytes()).wait().ok(), "wrote the probe at \{probe}");
   string out = "/tmp/wac-libentry-\{cli.cwd().wait().len()}";
-  Exec built = cli.exec(binaryPath(cli), ["build", "--no-cache", "tools/wac/libentry_probe.wac", "-o", out],
-                        u8[]()).wait();
+  Exec built = cli.exec(binaryPath(cli), ["build", "--no-cache", probe, "-o", out], u8[]()).wait();
   string said = string.fromBytes(built.stdout) + string.fromBytes(built.stderr);
   t.eqI32(built.status, 0, "the probe builds: \{said}");
   // The entry, the json and zstd files the two names need, and their own imports — twenty is a bound
@@ -79,5 +94,6 @@ export string test_a_program_reads_what_it_reaches_through_the_root_entry(Core c
   Exec ran = cli.exec(binaryPath(cli), ["\{out}.wasm"], u8[]()).wait();
   t.eqI32(ran.status, 0, "and it runs: \{string.fromBytes(ran.stderr)}");
   cli.remove("\{out}.wasm", false).wait();
+  cli.remove(probe, false).wait();
   return t.report();
 }
