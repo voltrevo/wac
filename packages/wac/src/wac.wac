@@ -846,7 +846,7 @@ export async i32 main(Sys sys) {
   // a missing file rather than reaching the compiler and coming back as "unknown command
   // 'prog.wasm'" — a message about the wrong thing entirely.
   if (cmd.len() > 5 && cmd.slice(cmd.len() - 5, cmd.len()) == ".wasm") {
-    return runModule(argv, err, fs, net, env, procs, argc, cmd);
+    return await runModule(argv, err, fs, net, env, procs, argc, cmd);
   }
 
   // **The commands that validated nothing at all.** `build`, `app`, `run` and `test` each check their
@@ -1478,7 +1478,7 @@ export async i32 main(Sys sys) {
                   + "it before \{entry}, or after `--` if the program wants the string");
         return 2;
       }
-      return spawnWith(err, held, grantsBefore(argv, argc, entry), hit!, programArgs(argv, argc, entry), entry);
+      return await spawnWith(err, held, grantsBefore(argv, argc, entry), hit!, programArgs(argv, argc, entry), entry);
     }
     if ((hit is not null) && hit!.len() > 8 && cmd == "test") {
       // **A cached test module is run, not written.** `build`'s hit ends in a file because the file is
@@ -1808,7 +1808,7 @@ export async i32 main(Sys sys) {
     // a hit.
     rememberBuild(env, fs, cachePath, whole, entry);
 
-    return spawnWith(err, held, grants, whole, programArgs(argv, argc, entry), entry);
+    return await spawnWith(err, held, grants, whole, programArgs(argv, argc, entry), entry);
   }
 
   // **`app` is `build` with a different thing written**, and it goes here for that reason: the shared

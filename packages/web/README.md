@@ -112,7 +112,9 @@ module `wac build` wrote — read from the page's disk, say — runs it in a wor
 shell on a page runs a program from its disk as it does anywhere else. The worker drives the module from the
 `wac.manifest` section it carries and serves its requests as it serves the page's; a page cannot wait, so an
 `async` program hands control back at each wait and is run on when the answer arrives, and one whose `main` is not
-`async` stops at its first wait for the browser. A file that is not a wac module is refused at `spawn`.
+`async` stops at its first wait for the browser. A file that is not a wac module is refused at `spawn`. Such a
+module holds what it was handed and no more, and can itself `load` a module and call it by name — so the `wac`
+command, run that way, can `check`, `build`, `run` and `test`.
 [`packages/platform/example/spawnpage.wac`](../platform/example/spawnpage.wac) runs
 [`spawnchild.wac`](../platform/example/spawnchild.wac), built, from its storage. Not yet: a page opened from
 `file://` cannot start workers from its worker at all, which decision 3 of that design is for.

@@ -1,6 +1,6 @@
-// A page that runs a module from its own disk (design/system/0015): `child.wasm`, which is `spawnchild.wac`
-// built and put in the page's storage by the live test in `packages/web/test/spawn_live.test.ts`, started with
-// `procs().spawn` and its output shown as it was written.
+// A page that runs modules from its own disk (design/system/0015): `child.wasm`, `plain.wasm` and `load.wasm`, which
+// are `spawnchild.wac`, `spawnplain.wac` and `spawnload.wac` built and put in the page's storage by the live test in
+// `packages/web/test/spawn_live.test.ts`, each started with `procs().spawn` and its output shown as it was written.
 
 import { Sys, Authority, Launch } from "std";
 import { Node, Page, State, Ui, html.pre } from "../../web";
@@ -19,16 +19,29 @@ Node shows(Ui ui, Page page) {
   return <pre id="out">{shown.get()}</pre>;
 }
 
-async void run(Sys sys, State<string> shown) { shown.set(await ran(sys)); }
+async void run(Sys sys, State<string> shown) {
+  string child = await ran(sys, "child.wasm", false, Authority(sys.files(), null, null, null));
+  string plain = await ran(sys, "plain.wasm", false, Authority(sys.files(), null, null, null));
+  // Writing this page's own streams instead — the page's console — as `wac run` has the program it starts do.
+  string inherited = await ran(sys, "child.wasm", true, Authority(sys.files(), null, null, null));
+  // Handed nothing: it may not read the page's storage, however it asks.
+  string bare = await ran(sys, "child.wasm", false, Authority.none());
+  // A module that loads another and calls it.
+  string loads = await ran(sys, "load.wasm", false, Authority(sys.files(), null, null, null));
+  shown.set("\{child}\n\{plain}\n\{inherited}\n\{bare}\n\{loads}");
+}
 
-/** What `child.wasm` wrote, its errors, and its status — or why it did not run. */
-async string ran(Sys sys) {
+/**
+ * What the module in `file` wrote, its errors, and its status — or why it did not run. `inherit`: it writes this
+ * page's own streams, so there is nothing here to read but its status.
+ */
+async string ran(Sys sys, string file, bool inherit, Authority given) {
   u8[] module;
-  match (await sys.files().readFile("child.wasm")) {
+  match (await sys.files().readFile(file)) {
     Ok(b): { module = b; }
     Err(e): { return "no module: \{e}"; }
   }
-  match (await sys.procs().spawn(module, ["one", "two"], Authority(sys.files(), null, null, null), Launch.plain())) {
+  match (await sys.procs().spawn(module, ["one", "two"], given, Launch("", false, inherit, false))) {
     Ok(child): {
       string out = "";
       match (await child.output().readAll()) {

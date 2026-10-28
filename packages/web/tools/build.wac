@@ -322,6 +322,8 @@ export string systemSide() {
         let ended = false;
         return {
           push(b) { if (waiters.length) waiters.shift()({ bytes: b }); else items.push(b); },
+          // Put a piece back at the front: read on a reader's behalf, and not wanted after all.
+          unshift(b) { if (waiters.length) waiters.shift()({ bytes: b }); else items.unshift(b); },
           end() { ended = true; while (waiters.length) waiters.shift()({ end: true }); },
           next() {
             if (items.length) return Promise.resolve({ bytes: items.shift() });
@@ -498,8 +500,8 @@ export string systemSide() {
             case 12: case 48: emit(op === 48, bytes); return ok(id, NONE, 0n, 0n, 1);
             case 19: return read(id, me.stdin);
             case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(performance.now() * 1e6))), n); return;
-            case 27: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0, moduleOf(bytes));
-            case 49: return spawn(id, partsOf(bytes), n, text, (Number(b) & 256) !== 0, null);
+            case 27: return spawn(id, partsOf(bytes), n, text, Number(b), moduleOf(bytes));
+            case 49: return spawn(id, partsOf(bytes), n, text, Number(b), null);
             case 24: return read(id, n === 1 && me.served ? me.fsIn : handles.get(n)?.q);
             case 25: {
               const to = handles.get(n);
@@ -579,7 +581,10 @@ export string systemSide() {
         }
         // `wasm` is a module to run (`OP_SPAWN`), or null for another copy of this page (`OP_SPAWN_SELF`). Either
         // way the child is a worker on this very script; its first message says which it is.
-        function spawn(req, args, grants, cwd, serveFs, wasm) {
+        // `flags` is `Launch`'s: 1 the child reads this program's input, 2 it writes this program's output and
+        // errors, and 256 this program serves it files.
+        function spawn(req, args, grants, cwd, flags, wasm) {
+          const serveFs = (flags & 256) !== 0, inheritIn = (flags & 1) !== 0, inheritOut = (flags & 2) !== 0;
           if (typeof WorkerGlobalScope === "undefined") {
             return answer(req, 9, "a page built --in-page cannot start programs", NONE, 0n, 0n, 0);
           }
@@ -598,10 +603,12 @@ export string systemSide() {
           handles.set(h, { kind: "out", child: c, q: c.out });
           handles.set(eh, { kind: "err", child: c, q: c.err });
           if (fh >= 0) handles.set(fh, { kind: "fs", child: c, q: c.fs });
+          // **Inherited output is written as it arrives**, to this program's own streams, which keeps the order
+          // between the two; the child's queues are left empty, and end when it does.
           worker.onmessage = (e) => {
             const [k, v] = e.data;
-            if (k === "out") c.out.push(v);
-            else if (k === "err") c.err.push(v);
+            if (k === "out") { if (inheritOut) emit(false, v); else c.out.push(v); }
+            else if (k === "err") { if (inheritOut) emit(true, v); else c.err.push(v); }
             else if (k === "fs") c.fs.push(v);
             else if (k === "exit") stop(c, v);
           };
@@ -610,6 +617,18 @@ export string systemSide() {
             c.err.push(enc.encode((e.message || "the program stopped") + "\\n"));
             stop(c, 134);
           };
+          // **Inherited input is read for the child while it runs** — from this program's input, which a page has
+          // none of — and a piece read after it ended goes back for whoever reads next.
+          if (inheritIn && me.stdin !== undefined) {
+            (async () => {
+              while (!c.gone) {
+                const r = await me.stdin.next();
+                if (c.gone) { if (!r.end) me.stdin.unshift(r.bytes); return; }
+                if (r.end) { worker.postMessage(["stdinEnd"]); return; }
+                worker.postMessage(["stdin", r.bytes]);
+              }
+            })();
+          }
           if (wasm === null) worker.postMessage(["init", { args, grants, cwd, serveFs }]);
           else worker.postMessage(["module", { wasm, args, grants, cwd, serveFs }], wacOwn(wasm));
           if (dropped.delete(req)) return stop(c, 143);
@@ -659,24 +678,16 @@ export string childSide() {
  * argument, a write to a stream — is delivered inside the request that asked, as on every host; anything else is
  * delivered between turns, when the module is running nothing. A program whose `main` is not `async` blocks on its
  * first wait for the browser, and stops saying so.
+ *
+ * **It holds what it was handed and no more**: the browser half decides nothing, so what a page's own program has
+ * refused for it by `system.wac`, a module has refused for it here (`wacServe`). And it may `load` a module into
+ * its own worker and call it by name (`wacLoad`), answered at once as on every host — which is how `wac test`
+ * runs tests.
  */
 export string moduleSide() {
   return """
-      const wacModule = (init) => {
-        const stdin = wacQueue(), fsIn = wacQueue();
-        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
-                     post: (m, transfer) => postMessage(m, transfer ?? []) };
-        const mod = new WebAssembly.Module(init.wasm);
-        const section = WebAssembly.Module.customSections(mod, "wac.manifest");
-        const manifest = section.length === 0 ? null : JSON.parse(new TextDecoder().decode(section[0]));
-        const said = (text) => postMessage(["err", new TextEncoder().encode(text + String.fromCharCode(10))]);
-        if (manifest === null) {
-          said("this is not a wac program: it carries no wac.manifest section");
-          postMessage(["exit", 126]);
-          close();
-          return () => {};
-        }
-        // ── The conversions: `marshal.ts`, by the shape of a type string. ──────────────────────────────
+      // ── A module, driven from its manifest: `marshal.ts`'s conversions, by the shape of a type string. ──────
+      const wacDrive = (mod, manifest) => {
         let ex = null;
         const call = (name, ...a) => {
           if (typeof ex[name] !== "function") throw new Error("the module exports no " + name);
@@ -750,16 +761,16 @@ export string moduleSide() {
             case "string": return give("$bind$str_from_mem", new TextEncoder().encode(String(v)));
             case "array": {
               if (sh.elem.kind === "scalar" && sh.elem.name === "u8") return give("$bind$arr_u8_from_mem", Uint8Array.from(v));
+              const elem = base.slice(0, -2);
               const filled = typeof ex["$bind$arr_" + sh.suffix + "_new0"] === "function";
               if (filled && v.length === 0) return call("$bind$arr_" + sh.suffix + "_new0");
-              const arr = filled ? call("$bind$arr_" + sh.suffix + "_new", v.length, toWasm(elemType(base), v[0]))
+              const arr = filled ? call("$bind$arr_" + sh.suffix + "_new", v.length, toWasm(elem, v[0]))
                                  : call("$bind$arr_" + sh.suffix + "_new", v.length);
-              for (let i = filled ? 1 : 0; i < v.length; i++) call("$bind$arr_" + sh.suffix + "_set", arr, i, toWasm(elemType(base), v[i]));
+              for (let i = filled ? 1 : 0; i < v.length; i++) call("$bind$arr_" + sh.suffix + "_set", arr, i, toWasm(elem, v[i]));
               return arr;
             }
           }
         };
-        const elemType = (t) => t.slice(0, -2);
         const wac = {};
         manifest.callbacks.forEach((cb, j) => {
           wac[cb.field] = (slot, ...rest) => {
@@ -778,13 +789,137 @@ export string moduleSide() {
             return sig.ret === "" || sig.ret === "void" ? undefined : fromWasm(shapeOf(sig.ret), out);
           };
         }
-        // ── Serving it. ───────────────────────────────────────────────────────────────────────────────
-        // Answers the browser has at once, delivered inside the request: the clock, randomness, an argument,
-        // the directory, a write to standard output or error.
-        const AT_ONCE = new Set([1, 2, 3, 6, 7, 41, 12, 48]);
-        let host = null, run = null, asking = -1, finished = false, turning = false;
+        // What `trap "…"` left behind, or "" — asked of a module that has just trapped, so it may trap itself.
+        const trapSaid = () => {
+          try { return typeof ex["$trap$message"] === "function" ? fromWasm({ kind: "string" }, ex["$trap$message"]()) ?? "" : ""; }
+          catch { return ""; }
+        };
+        return { app, manifest, trapSaid };
+      };
+      const wacManifestOf = (mod) => {
+        const section = WebAssembly.Module.customSections(mod, "wac.manifest");
+        return section.length === 0 ? null : JSON.parse(new TextDecoder().decode(section[0]));
+      };
+
+      // ── Serving a module: one `wacServer` per module, so each keeps its own requests and handles. ────────────
+      //
+      // `wasm` is the module's bytes, for its `spawnSelf`; `grants` is what it was handed; `deliver` gives it an
+      // answer. **What it was not handed is refused here**, as `system.wac`'s `refusal` refuses what the page was
+      // not built with: its requests come straight to `wacServer`, which does what it is asked and decides nothing.
+      // Files need `GRANT_READ` (1) to look and `GRANT_WRITE` (2) to change, and what it starts or loads holds no
+      // more than it does. A program with no files of its own is served its parent's over handle 1, and asks
+      // nothing here. Answers the browser has at once — the clock, randomness, an argument, the directory, a write
+      // to a stream, and the module calls — are delivered inside the request that asked; the rest when `later`
+      // says, which is between turns, when the module is running nothing.
+      const AT_ONCE = new Set([1, 2, 3, 6, 7, 41, 12, 48, 64, 65, 66, 67]);
+      const wacServe = (me, wasm, grants, deliver, later) => {
+        const NONE = new Uint8Array(0);
+        let asking = -1;
+        const answer = (...a) => {
+          if (asking >= 0 && AT_ONCE.has(asking)) deliver(a);
+          else later(a);
+        };
+        const server = wacServer(answer, me);
+        const loaded = new Map();
+        let nextLoaded = 1;
+        const looks = (op, a) => op === 9 || op === 13 || op === 47 || op === 14 || (op === 61 && Number(a) === 0);
+        const changes = (op) => op === 10 || op === 15 || op === 16 || op === 17 || op === 61 || op === 52 || op === 60;
+        const notHanded = (what) => "Not granted to this application: the program that started it did not hand it `" + what + "`";
+        const ok = (id, n = 0n, flags = 0, text = "") => answer(id, 0, text, NONE, n, 0n, flags);
+        const request = (op, id, a, b, text, bytes) => {
+          const was = asking;
+          asking = op;
+          try {
+            if (looks(op, a) && (grants & 1) === 0) return answer(id, 7, notHanded("read"), NONE, 0n, 0n, 0);
+            if (!looks(op, a) && changes(op) && (grants & 2) === 0) return answer(id, 7, notHanded("write"), NONE, 0n, 0n, 0);
+            // No environment and no standard input to read whole, as for the page's own program.
+            if (op === 8 || op === 11) return ok(id);
+            if (op === 27) return server.request(op, id, BigInt(Number(a) & grants), b, text, bytes);
+            // **Itself again is this module again**, not a copy of the page whose script the worker runs on.
+            if (op === 49) {
+              const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+              const rest = bytes.slice(4 + v.getUint32(0, true));
+              const whole = new Uint8Array(4 + wasm.length + rest.length);
+              new DataView(whole.buffer).setUint32(0, wasm.length, true);
+              whole.set(wasm, 4);
+              whole.set(rest, 4 + wasm.length);
+              return server.request(27, id, BigInt(Number(a) & grants), b, text, whole);
+            }
+            // **A module in this worker, called by name** — how `wac test` runs tests. Answered at once, as on every host.
+            if (op === 67) {
+              const why = wacNotRunnable(bytes);
+              return why === "" ? ok(id) : answer(id, 5, why, NONE, 0n, 0n, 0);
+            }
+            if (op === 64) {
+              const why = wacNotRunnable(bytes);
+              if (why !== "") return answer(id, 5, why, NONE, 0n, 0n, 0);
+              const h = nextLoaded++;
+              loaded.set(h, wacLoad(me, bytes.slice(), Number(a) & grants));
+              return ok(id, BigInt(h));
+            }
+            if (op === 65) {
+              const m = loaded.get(Number(a));
+              if (m === undefined) return ok(id, 0n, 2, "no module loaded as " + Number(a));
+              const [status, said, n] = m.call(text, Number(b));
+              return ok(id, BigInt(n), status, said);
+            }
+            if (op === 66) { loaded.delete(Number(a)); return; }
+            server.request(op, id, a, b, text, bytes);
+          } finally { asking = was; }
+        };
+        return { request, exit: server.exit };
+      };
+
+      // A module loaded into this worker: driven, given a host of its own, and called by name — the native host's
+      // `call_loaded`. An export taking nothing, an `i32` or its `__WacHost`, and answering nothing, an `i32` or a
+      // `string`: status 0 with the answer, 1 for a trap with what it said, 2 for no such export, 3 for one this
+      // cannot call.
+      const wacLoad = (me, wasm, grants) => {
+        const mod = new WebAssembly.Module(wasm);
+        const d = wacDrive(mod, wacManifestOf(mod));
+        let host = null;
+        const deliver = (a) => d.app.__wacAnswered(host, ...a);
+        const s = wacServe(me, wasm, grants, deliver, (a) => setTimeout(() => deliver(a), 0));
+        if (typeof d.app.__wacHost === "function") {
+          host = d.app.__wacHost(s.request, (ids, millis) => -2, (code) => { throw new Error("exited with " + code); }, () => false);
+        }
+        return {
+          call(name, arg) {
+            const sig = d.manifest.exports.find((e) => e.name === name);
+            if (sig === undefined || typeof d.app[name] !== "function") return [2, "no export named " + name, 0];
+            const takesInt = sig.params.length === 1 && sig.params[0] === "i32";
+            const takesHost = sig.params.length === 1 && sig.params[0] === "__WacHost";
+            if (sig.params.length > 0 && !takesInt && !takesHost) return [3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0];
+            if (takesHost && host === null) return [3, name + " takes a __WacHost and this module exports no __wacHost", 0];
+            const ret = sig.ret === "" ? "void" : sig.ret;
+            if (ret !== "void" && ret !== "i32" && ret !== "string") return [3, name + " answers " + ret, 0];
+            let out;
+            try { out = d.app[name](...(takesInt ? [arg] : takesHost ? [host] : [])); }
+            catch { return [1, d.trapSaid(), 0]; }
+            return ret === "string" ? [0, out ?? "", 0] : [0, "", ret === "i32" ? out : 0];
+          },
+        };
+      };
+
+      // ── A module the page was handed, as a process: `OP_SPAWN`'s other half. ─────────────────────────────────
+      const wacModule = (init) => {
+        const stdin = wacQueue(), fsIn = wacQueue();
+        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
+                     post: (m, transfer) => postMessage(m, transfer ?? []) };
+        const said = (text) => postMessage(["err", new TextEncoder().encode(text + String.fromCharCode(10))]);
+        const wasm = init.wasm;
+        const mod = new WebAssembly.Module(wasm);
+        const manifest = wacManifestOf(mod);
+        if (manifest === null) {
+          said("this is not a wac program: it carries no wac.manifest section");
+          postMessage(["exit", 126]);
+          close();
+          return () => {};
+        }
+        const { app } = wacDrive(mod, manifest);
+        let host = null, run = null, finished = false, turning = false;
         const arrived = [];
-        const deliver = (a) => app.__wacAnswered(host, ...a);
+        const deliver = (a) => { if (!finished) app.__wacAnswered(host, ...a); };
         const turn = () => {
           turning = false;
           if (finished) return;
@@ -793,33 +928,29 @@ export string moduleSide() {
           run = app.__wacAdvance(run);
           settle();
         };
-        const answer = (...a) => {
+        const later = (a) => {
           if (finished) return;
-          if (asking >= 0 && AT_ONCE.has(asking)) return deliver(a);
           arrived.push(a);
           if (!turning) { turning = true; setTimeout(turn, 0); }
         };
-        const server = wacServer(answer, me);
+        const s = wacServe(me, wasm, Number(init.grants), deliver, later);
         const settle = () => {
           if (finished || run === null || !app.__wacDone(run)) return;
           finished = true;
-          server.exit(app.__wacStatus(run));
-        };
-        const request = (op, id, a, b, text, bytes) => {
-          const was = asking;
-          asking = op;
-          try { server.request(op, id, a, b, text, bytes); } finally { asking = was; }
+          s.exit(app.__wacStatus(run));
         };
         // A page cannot wait: `HOST_CANNOT_WAIT`, and an `async` program yields.
         const waitAny = (ids, millis) => -2;
         const exitWith = (code) => {
           finished = true;
-          server.exit(code);
+          s.exit(code);
           throw new Error("exited");
         };
         const interrupted = () => false;
         try {
-          host = app.__wacHost(request, waitAny, exitWith, interrupted);
+          // **A program that takes nothing has no host**: its `main` has no parameter and the module exports no
+          // `__wacHost`, so there is nothing to make and nothing it will ask.
+          if (typeof app.__wacHost === "function") host = app.__wacHost(s.request, waitAny, exitWith, interrupted);
           if (typeof app.__wacStart === "function") {
             run = app.__wacStart(host);
             settle();
@@ -828,13 +959,13 @@ export string moduleSide() {
             if (sig === undefined) throw new Error("the module has no main");
             const code = app.main(...(sig.params.length > 0 ? [host] : []));
             finished = true;
-            server.exit(code ?? 0);
+            s.exit(code ?? 0);
           }
         } catch (e) {
           if (!finished) {
             said(String(e?.message ?? e));
             finished = true;
-            server.exit(134);
+            s.exit(134);
           }
         }
         return (m) => {
