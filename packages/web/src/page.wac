@@ -279,12 +279,13 @@ export struct Runner {
 
 /**
  * An event on an element the program holds: `kind` on handle `target`, heard by the listener on handle
- * `listener`, numbered `seq` (`element.wac`). Then the program runs on, and every view renders.
+ * `listener`, numbered `seq` (`element.wac`), with the caret of the text field it happened in or -1s
+ * (`ElementEvent.selStart`). Then the program runs on, and every view renders.
  */
 export void elementEvent(Page page, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y,
-                         i32 mods) {
+                         i32 mods, i32 selStart, i32 selEnd) {
   schedule page.take;
-  page.es.deliver(seq, kind, target, listener, value, x, y, mods);
+  page.es.deliver(seq, kind, target, listener, value, x, y, mods, selStart, selEnd);
   page.drain();
   page.turn();
 }

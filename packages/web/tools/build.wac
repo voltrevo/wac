@@ -216,8 +216,8 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
   return w + """
 
            void element(this, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y,
-                        i32 mods) {
-             elementEvent(this.page, seq, kind, target, listener, value, x, y, mods);
+                        i32 mods, i32 selStart, i32 selEnd) {
+             elementEvent(this.page, seq, kind, target, listener, value, x, y, mods, selStart, selEnd);
            }
 
            void timer(this, i32 id) { timerFired(this.page, id); }
@@ -278,6 +278,8 @@ export string programSide() {
           (id, w, h, rgba) => send(["pixels", id, w, h, rgba], own(rgba)),
           (id, x, y, w, h, rgba) => send(["pixelsIn", id, x, y, w, h, rgba], own(rgba)),
           (id, named) => send(["scroll", id, named]),
+          (id, start, end, seen) => send(["select", id, start, end, seen]),
+          (id, text, seen) => send(["typeText", id, text, seen]),
         );
         const dom = Dom.of(
           elements,
@@ -296,7 +298,7 @@ export string programSide() {
             case "timer": host.timer(m[1]); break;
             case "file": host.file(m[1], m[2], m[3], m[4]); break;
             case "value": host.value(m[1], m[2]); break;
-            case "el": host.element(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); break;
+            case "el": host.element(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10]); break;
             case "where": host.located(m[1]); break;
           }
         };
@@ -1058,6 +1060,23 @@ export string documentSide() {
               if (n.value !== value) n.value = value;
             } else n[name] = value === "true";
           },
+          select: (id, start, end, seen) => {
+            const n = nodes.get(id);
+            if (!n || !n.setSelectionRange || (n.__wacTyped ?? 0) > seen) return;
+            n.setSelectionRange(start, end);
+          },
+          // **As if typed**, so the edit is undoable and an `input` event follows: `execCommand` acts on the
+          // focused field, so focus it first; `setRangeText`, which is not undoable, where a browser has
+          // dropped `execCommand`.
+          typeText: (id, text, seen) => {
+            const n = nodes.get(id);
+            if (!n || (n.__wacTyped ?? 0) > seen) return;
+            if (n !== document.activeElement && n.focus) n.focus();
+            if (document.execCommand && document.execCommand("insertText", false, text)) return;
+            if (!n.setRangeText) return;
+            n.setRangeText(text, n.selectionStart, n.selectionEnd, "end");
+            n.dispatchEvent(new Event("input", { bubbles: true }));
+          },
           move: (id, before) => {
             const n = nodes.get(id);
             if (n && n.parentNode) n.parentNode.insertBefore(n, before < 0 ? null : (nodes.get(before) ?? null));
@@ -1099,7 +1118,10 @@ export string documentSide() {
               // handler gets the bar's coordinates over its title, and a desktop's the desktop's over a window.
               const [x, y] = within(n, ev);
               const mods = (ev.shiftKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 4 : 0) | (ev.metaKey ? 8 : 0);
-              emit(["el", numbered(ev), kind, handleOf.get(t), id, value, x, y, mods]);
+              // The caret of the text field it happened in; -1 where there is none.
+              const caret = el && typeof el.selectionStart === "number";
+              emit(["el", numbered(ev), kind, handleOf.get(t), id, value, x, y, mods,
+                    caret ? el.selectionStart : -1, caret ? el.selectionEnd : -1]);
             });
           },
           focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },

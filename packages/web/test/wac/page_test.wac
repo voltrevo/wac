@@ -65,11 +65,11 @@ export string test_the_program_runs_until_it_waits_and_each_event_runs_it_on() {
   t.eqStr(seen.log, "make 1 button\nmake 2 button\nmake 3 b\nlisten 0 click\n", "it ran to its first wait");
   t.isFalse(done.settled(), "and is waiting");
   seen.log = "";
-  elementEvent(page, 1, "click", UP(), 0, "", 0, 0, 0);
-  elementEvent(page, 2, "click", SHOWN(), 0, "", 0, 0, 0);
-  elementEvent(page, 3, "click", UP(), 0, "", 0, 0, 0);
+  elementEvent(page, 1, "click", UP(), 0, "", 0, 0, 0, 0 - 1, 0 - 1);
+  elementEvent(page, 2, "click", SHOWN(), 0, "", 0, 0, 0, 0 - 1, 0 - 1);
+  elementEvent(page, 3, "click", UP(), 0, "", 0, 0, 0, 0 - 1, 0 - 1);
   t.eqStr(seen.log, "text 3 1\ntext 3 2\n", "each click ran it on, there and then");
-  elementEvent(page, 4, "click", QUIT(), 0, "", 0, 0, 0);
+  elementEvent(page, 4, "click", QUIT(), 0, "", 0, 0, 0, 0 - 1, 0 - 1);
   t.isTrue(done.settled(), "quit finished it");
   t.eqI32(done.value(), 2, "with the count");
   return t.report();
@@ -87,8 +87,8 @@ export string test_events_that_arrive_before_a_wait_are_kept_in_order() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   page.root().listen("input", Listen.none());
-  elementEvent(page, 1, "input", 0, 0, "abc", 0, 0, 0);
-  elementEvent(page, 2, "input", 0, 0, "de", 0, 0, 0);
+  elementEvent(page, 1, "input", 0, 0, "abc", 0, 0, 0, 0 - 1, 0 - 1);
+  elementEvent(page, 2, "input", 0, 0, "de", 0, 0, 0, 0 - 1, 0 - 1);
   Ticket<i32> done = early(page.root());
   // Nothing was scheduled for these: both tickets were already settled.
   page.drain();
@@ -153,9 +153,9 @@ export string test_a_wait_on_a_wait_runs_on_through_both() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startNested(page);
-  elementEvent(page, 1, "input", 0, 0, "abcd", 0, 0, 0);
+  elementEvent(page, 1, "input", 0, 0, "abcd", 0, 0, 0, 0 - 1, 0 - 1);
   t.isFalse(done.settled(), "one event in, one to go");
-  elementEvent(page, 2, "input", 0, 0, "xy", 0, 0, 0);
+  elementEvent(page, 2, "input", 0, 0, "xy", 0, 0, 0, 0 - 1, 0 - 1);
   t.isTrue(done.settled(), "the second finished both");
   t.eqI32(done.value(), 42, "4 then 2");
   return t.report();
@@ -195,10 +195,10 @@ export string test_waiting_on_whichever_comes_first() {
   t.eqI32(seen.timers, 1, "one frame asked for");
   timerFired(page, 0);
   t.eqI32(seen.timers, 2, "the frame ran it on, and it asked for the next");
-  elementEvent(page, 1, "click", 0, 0, "", 0, 0, 0);
+  elementEvent(page, 1, "click", 0, 0, "", 0, 0, 0, 0 - 1, 0 - 1);
   t.eqI32(seen.timers, 2, "an event ran it on without a frame");
   timerFired(page, 0);
-  elementEvent(page, 2, "click", 1, 0, "", 0, 0, 0);
+  elementEvent(page, 2, "click", 1, 0, "", 0, 0, 0, 0 - 1, 0 - 1);
   t.isTrue(done.settled(), "quit finished it");
   t.eqI32(done.value(), 2, "after two frames");
   return t.report();
@@ -220,9 +220,9 @@ export string test_waiting_on_all_of_several() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startBoth(page);
-  elementEvent(page, 1, "input", 0, 0, "abc", 0, 0, 0);
+  elementEvent(page, 1, "input", 0, 0, "abc", 0, 0, 0, 0 - 1, 0 - 1);
   t.isFalse(done.settled(), "one of two");
-  elementEvent(page, 2, "input", 0, 0, "de", 0, 0, 0);
+  elementEvent(page, 2, "input", 0, 0, "de", 0, 0, 0, 0 - 1, 0 - 1);
   t.isTrue(done.settled(), "both");
   t.eqI32(done.value(), 32, "in order");
   return t.report();
@@ -274,7 +274,7 @@ export string test_a_checking_page_logs_what_its_view_does_not_show() {
   page.turn();
   t.isTrue(seen.log.indexOf("view check") < 0, "nothing to say at first: " + seen.log);
   // The button is the fourth handle: the root's `p`, its text, then the button.
-  elementEvent(page, 1, "click", 3, 3, "", 0, 0, 0);
+  elementEvent(page, 1, "click", 3, 3, "", 0, 0, 0, 0 - 1, 0 - 1);
   t.isTrue(seen.log.indexOf("log view check: Tally renders the text \"1\" where the page shows \"0\"") >= 0,
            "the page logged the component whose state changed without a set: " + seen.log);
   return t.report();
@@ -320,5 +320,81 @@ export string test_an_element_scrolls_itself_or_a_named_element_under_it_into_vi
   t.eqStr(doc.scrolled, "0 oracles", "the element under the root with that id");
   box.scrollIntoView();
   t.eqStr(doc.scrolled, "1 ", "the element itself");
+  return t.report();
+}
+
+/** A text field the user has typed `text` into, with the caret placed at `start`..`end`. */
+Element typedField(TestDoc doc, Page page, string text, i32 start, i32 end) {
+  Element field = page.root().append("textarea");
+  doc.fire(field.id, "input", text);
+  doc.caret(field.id, start, end);
+  return field;
+}
+
+export string test_an_event_in_a_text_field_says_where_the_caret_is() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  Element field = typedField(doc, page, "abcdef", 2, 4);
+  Element box = page.root().append("div");
+  string heard = "";
+  field.on("keydown", Listen.none(), (ElementEvent e) => { heard = heard + "field \{e.selStart}-\{e.selEnd};"; });
+  box.on("click", Listen.none(), (ElementEvent e) => { heard = heard + "box \{e.selStart}-\{e.selEnd};"; });
+  doc.fire(field.id, "keydown", "x");
+  doc.fire(box.id, "click", "");
+  t.eqStr(heard, "field 2-4;box -1--1;", "a text field's selection, and -1 where there is none");
+  return t.report();
+}
+
+export string test_select_moves_the_caret_unless_the_user_typed_since() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  Element field = typedField(doc, page, "abcdef", 0, 0);
+  field.on("keydown", Listen.none(), (ElementEvent e) => { });
+  doc.fire(field.id, "keydown", "x");
+  field.select(1, 3);
+  t.eqI32(doc.at(field.id).selStart, 1, "the selection's start");
+  t.eqI32(doc.at(field.id).selEnd, 3, "and its end");
+  // Typed after the last event the program saw — it does not listen for input — so a caret placed now would put
+  // the next key in the wrong place.
+  doc.fire(field.id, "input", "abcdefg");
+  field.select(0, 0);
+  t.eqI32(doc.at(field.id).selStart, 7, "a select behind the typing does not land");
+  return t.report();
+}
+
+export string test_typed_text_lands_at_the_caret_and_an_input_follows() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  Element field = typedField(doc, page, "ifx", 2, 2);
+  string heard = "";
+  // An editor's Tab: the key is the program's, and the indent goes in as the user would have typed it.
+  field.on("keydown", Listen.keys("Tab"), (ElementEvent e) => { if (e.value == "Tab") { field.typeText("  "); } });
+  field.on("input", Listen.none(), (ElementEvent e) => { heard = heard + e.value + "@\{e.selStart};"; });
+  doc.fire(field.id, "keydown", "Tab");
+  t.eqStr(doc.valueOf(field.id), "if  x", "typed at the caret");
+  t.eqStr(heard, "if  x@4;", "and an input followed, after the handler, with the caret past what was typed");
+  // Over a selection, which it replaces.
+  doc.caret(field.id, 0, 2);
+  field.typeText("while");
+  t.eqStr(doc.valueOf(field.id), "while  x", "the selection is replaced");
+  t.eqI32(doc.at(field.id).selStart, 5, "and the caret follows what was typed");
+  return t.report();
+}
+
+export string test_typed_text_does_not_land_over_typing_the_program_has_not_seen() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  // Typed into before the program saw any event from it.
+  Element field = typedField(doc, page, "ab", 2, 2);
+  field.typeText("X");
+  t.eqStr(doc.valueOf(field.id), "ab", "lost rather than misplaced");
   return t.report();
 }

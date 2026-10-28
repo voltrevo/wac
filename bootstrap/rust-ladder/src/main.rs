@@ -280,6 +280,10 @@ fn main() {
         let l0 = l5_to_l0(scope, &format!("{waccc}\n{driver}"));
         let refused = l0.lines().filter(|l| l.starts_with("!!")).count();
         if refused > 0 {
+            // What was refused, not only how much: a count alone sends whoever changed wacc hunting for it.
+            for line in l0.lines().filter(|l| l.starts_with("!!")).take(20) {
+                eprintln!("{line}");
+            }
             eprintln!("wac-L5 refused {refused} things in wacc");
             std::process::exit(1);
         }

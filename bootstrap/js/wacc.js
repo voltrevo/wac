@@ -153,6 +153,8 @@ export function wacc(instance) {
 export async function buildWithWacc(o) {
   const l0 = await o.l5ToL0(o.waccSource);
   const refusals = (l0.match(/^!!/gm) ?? []).length;
+  // What was refused, not only how much: a count alone sends whoever changed wacc hunting for it.
+  if (refusals > 0) console.error((l0.match(/^!!.*$/gm) ?? []).slice(0, 20).join("\n"));
   if (refusals > 0) throw new Error(`wac-L5 refused ${refusals} thing(s) in wacc's own source`);
 
   const instance = await WebAssembly.instantiate(

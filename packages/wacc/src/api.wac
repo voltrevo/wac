@@ -18,7 +18,7 @@ import { Method, Param, Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
          warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath,
-         widenAutoContributions, ViewInputs, buildStaticView } from "./check.wac";
+         widenAutoContributions, ViewInputs, buildStaticView, DeclSite } from "./check.wac";
 import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -34,7 +34,7 @@ import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsLexed } from "./files.wac";
-import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
+import { endsWith, isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf, readLexed, readOf, readParsedLexed, readProgram, Reads, readSrc } from "./frontend.wac";
 import { Parsed, Pruned, neededMissing, pruneFor } from "./reach.wac";
 import {
@@ -834,6 +834,61 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
  */
 export string diagnoseGraphTallied(string[] givenPaths, string[] givenSources, const Res res, string entry,
                                    i32[] tally) {
+  Graph g = graphOf(givenPaths, givenSources, res);
+  string[] paths = g.paths;
+  string[] sources = g.sources;
+  Lexed?[] lexes = g.lexes;
+  Program?[] progs = g.progs;
+  string out = "";
+  i32[] seen = i32[].filled(paths.len(), 0);
+  for (i32 i = 0; i < paths.len(); i++) {
+    // **Not the built-ins.** `std` and `core` are read for what a file imports from them, but checking
+    // their own bodies here was more than checking the program that imports them, on every check; what
+    // they say is fixed when the compiler is built, and `lexcost_test.wac` keeps it empty
+    // (`issues/lang/0398b`).
+    if (isBuiltinSpec(paths[i])) { continue; }
+    Closure k = closureOf(g, res, i, seen);
+    out = out + diagnoseFilesWithIn(k.paths, k.sources, k.res, paths[i], k.counts, k.lexes, k.progs, k.fronts, tally);
+  }
+  // **What the build will refuse, `check` says too.** An `async` function the lowering cannot take is
+  // declined by the emitter, which `check` never runs — so a program checked clean and then would not
+  // build, with the reason only in the build's message. The lowering is cheap where there is nothing
+  // to lower, and its reason names the line when the reason has one.
+  u8[][] srcBytes = u8[][].filled(sources.len(), u8[]());
+  for (i32 i = 0; i < sources.len(); i++) { srcBytes[i] = sources[i].toBytes(); }
+  string sigs = ticketSigsOf(progs, srcBytes, lexes);
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (i >= progs.len() || (progs[i] is null) || (lexes[i] is null) || isBuiltinSpec(paths[i])) { continue; }
+    Lowered lo = lowerProgram(progs[i]!, (i < sources.len() ? sources[i] : "").toBytes(), lexes[i]!, sigs);
+    if (lo.why == "") { continue; }
+    string why = lo.why;
+    string line = "1";
+    if (startsWith(why, "line ") && why.indexOf(": ") > 5) {
+      line = why.slice(5, why.indexOf(": "));
+      why = why.slice(why.indexOf(": ") + 2, why.len());
+    }
+    out = out + paths[i] + "\t" + line + "\t1\tcheck\tan `async` function this compiler cannot lower\t"
+        + why + "\t\t0\n";
+  }
+  return out;
+}
+
+/**
+ * **A program's files, read once for every check of any of them**: the paths and their lowered sources, each lexed
+ * and parsed, its declarations counted, and the import edges between them — `std` joined when something may import it.
+ */
+struct Graph {
+  string[] paths;
+  string[] sources;
+  Lexed?[] lexes;
+  Program?[] progs;
+  string[] fronts;
+  i32[] counts;
+  Edges edges;
+  string coreText;
+}
+
+Graph graphOf(string[] givenPaths, string[] givenSources, const Res res) {
   // **`std` joins the graph even when the caller did not supply it** — it is carried, as `pruneFor` and
   // `buildStaticView` already say. Without it std's types were names with nothing declared behind them,
   // and the harness's in-process check refused `"\{e}"` on a `NotFound` that the command accepted.
@@ -856,96 +911,199 @@ export string diagnoseGraphTallied(string[] givenPaths, string[] givenSources, c
   }
   // Namespaces are lowered first, so checking a project reads what a build would (spec ch03).
   string[] sources = lowerSources(paths, rawSources, res);
-  string out = "";
-  // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
-  // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
-  // what this call cost, measured. `issues/lang/0133`.
+  // **Counted once for the whole graph.** Every closure overlaps almost every other, so letting each one size its
+  // own tables parsed a widely-imported file once per importer — 54% of what a graph check cost, measured.
+  // `issues/lang/0133`.
   Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
   Program?[] progs = Program?[].defaulted(paths.len() + 1);
   string[] fronts = string[].filled(paths.len(), "");
   i32[] counts = declCountsAndFronts(paths, sources, lexes, progs, fronts);
-  // **The edges too, once.** Every closure below was computed from the *text*: a file's import list
-  // was re-extracted once per closure that reached it, and each spec resolved by a linear scan of
-  // every path. Over the repository's own 718 files — closures summing to 10,904 — that is around
-  // 11,000 import-list scans and tens of millions of string comparisons, to walk a graph with a few
-  // thousand edges in it. Taken once, a closure is an integer walk and the loop below does no string
-  // work at all.
+  // **The edges too, once.** Every closure was computed from the *text*: a file's import list was re-extracted
+  // once per closure that reached it, and each spec resolved by a linear scan of every path. Over the repository's
+  // own 718 files — closures summing to 10,904 — that is around 11,000 import-list scans and tens of millions of
+  // string comparisons, to walk a graph with a few thousand edges in it. Taken once, a closure is an integer walk.
   Edges edges = edgesOfIn(paths, sources, res, lexes);
-  string coreText = coreSource();
-  i32[] seen = i32[].filled(paths.len(), 0);
-  for (i32 i = 0; i < paths.len(); i++) {
-    // **Not the built-ins.** `std` and `core` are read for what a file imports from them, but checking
-    // their own bodies here was more than checking the program that imports them, on every check; what
-    // they say is fixed when the compiler is built, and `lexcost_test.wac` keeps it empty
-    // (`issues/lang/0398b`).
-    if (isBuiltinSpec(paths[i])) { continue; }
-    // **Each file is checked against its own closure, not against the whole list.** Handing
-    // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
-    // loop costs `n ×` a full parse. Nothing is lost: a file cannot be affected by a file it does
-    // not reach.
-    i32 n = closureFrom(edges, i, seen);
-    string[] subPaths = string[].filled(n, "");
-    // One longer, like the three below: `core`'s text, built once for the whole graph.
-    string[] subSources = string[].filled(n + 1, "");
-    // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
-    i32[] subCounts = i32[].filled(n + 1, 0);
-    Lexed?[] subLexes = Lexed?[].defaulted(n + 1);
-    Program?[] subProgs = Program?[].defaulted(n + 1);
-    string[] subFronts = string[].filled(n, "");
-    for (i32 k = 0; k < n; k++) {
-      i32 at = seen[k];
-      subFronts[k] = fronts[at];
-      subPaths[k] = paths[at];
-      subSources[k] = at < sources.len() ? sources[at] : "";
-      subCounts[k] = at < counts.len() ? counts[at] : 0;
-      subLexes[k] = at < lexes.len() ? lexes[at] : null;
-      subProgs[k] = at < progs.len() ? progs[at] : null;
-    }
-    subCounts[n] = counts[paths.len()];
-    subSources[n] = coreText;
-    subLexes[n] = lexes[paths.len()];
-    subProgs[n] = progs[paths.len()];
-    // **The roots have to be re-indexed with the paths**, because `Res.rootAt` pairs `roots[i]` with
-    // `paths[i]` — a *positional* key. Everything above builds a closure array in `seen` order and
-    // this call handed it the graph's `Res` unchanged, so every file read some other file's project
-    // root, and usually "". `@/` then resolved against nothing, the import landed on a key nobody
-    // supplied, and the names it brings in were declared *unknown* — which this checker is silent
-    // about by design. So a mistake behind a `@/` import in any file but the entry was invisible.
-    //
-    // `issues/lang/0175a` fixed the entry's own case by threading the `Res` this far;
-    // `issues/lang/0267c` is this sibling, which the thread reached and the indexing did not.
-    //
-    // The mappings are keyed by path *string* — `mappedTo` compares `mapFrom[i] == from` — so they
-    // survive the subsetting unchanged and only `roots` needs rebuilding.
-    string[] subRoots = string[].filled(n, "");
-    for (i32 k = 0; k < n; k++) {
-      i32 at = seen[k];
-      subRoots[k] = at < res.roots.len() ? res.roots[at] : "";
-    }
-    Res subRes = Res(subRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base);
-    out = out + diagnoseFilesWithIn(subPaths, subSources, subRes, paths[i], subCounts,
-                                    subLexes, subProgs, subFronts, tally);
+  return Graph(paths, sources, lexes, progs, fronts, counts, edges, coreSource());
+}
+
+/** One file's closure of a `Graph`, as the checker takes it: its files, and `core`'s in the last slot of each table. */
+struct Closure {
+  string[] paths;
+  string[] sources;
+  i32[] counts;
+  Lexed?[] lexes;
+  Program?[] progs;
+  string[] fronts;
+  Res res;
+}
+
+/**
+ * **File `i` is checked against its own closure, not against the whole list.** Handing the checker 179 files to
+ * check one that imports three is the whole of why the naive loop costs `n ×` a full parse. Nothing is lost: a
+ * file cannot be affected by a file it does not reach. `seen` is scratch, as long as the graph.
+ */
+Closure closureOf(Graph g, const Res res, i32 i, i32[] seen) {
+  i32 n = closureFrom(g.edges, i, seen);
+  string[] subPaths = string[].filled(n, "");
+  // One longer, like the three below: `core`'s text, built once for the whole graph.
+  string[] subSources = string[].filled(n + 1, "");
+  // One longer than the closure: the checker keeps `core`'s count in the last slot.
+  i32[] subCounts = i32[].filled(n + 1, 0);
+  Lexed?[] subLexes = Lexed?[].defaulted(n + 1);
+  Program?[] subProgs = Program?[].defaulted(n + 1);
+  string[] subFronts = string[].filled(n, "");
+  for (i32 k = 0; k < n; k++) {
+    i32 at = seen[k];
+    subFronts[k] = g.fronts[at];
+    subPaths[k] = g.paths[at];
+    subSources[k] = at < g.sources.len() ? g.sources[at] : "";
+    subCounts[k] = at < g.counts.len() ? g.counts[at] : 0;
+    subLexes[k] = at < g.lexes.len() ? g.lexes[at] : null;
+    subProgs[k] = at < g.progs.len() ? g.progs[at] : null;
   }
-  // **What the build will refuse, `check` says too.** An `async` function the lowering cannot take is
-  // declined by the emitter, which `check` never runs — so a program checked clean and then would not
-  // build, with the reason only in the build's message. The lowering is cheap where there is nothing
-  // to lower, and its reason names the line when the reason has one.
-  u8[][] srcBytes = u8[][].filled(sources.len(), u8[]());
-  for (i32 i = 0; i < sources.len(); i++) { srcBytes[i] = sources[i].toBytes(); }
-  string sigs = ticketSigsOf(progs, srcBytes, lexes);
-  for (i32 i = 0; i < paths.len(); i++) {
-    if (i >= progs.len() || (progs[i] is null) || (lexes[i] is null) || isBuiltinSpec(paths[i])) { continue; }
-    Lowered lo = lowerProgram(progs[i]!, (i < sources.len() ? sources[i] : "").toBytes(), lexes[i]!, sigs);
-    if (lo.why == "") { continue; }
-    string why = lo.why;
-    string line = "1";
-    if (startsWith(why, "line ") && why.indexOf(": ") > 5) {
-      line = why.slice(5, why.indexOf(": "));
-      why = why.slice(why.indexOf(": ") + 2, why.len());
-    }
-    out = out + paths[i] + "\t" + line + "\t1\tcheck\tan `async` function this compiler cannot lower\t"
-        + why + "\t\t0\n";
+  subCounts[n] = g.counts[g.paths.len()];
+  subSources[n] = g.coreText;
+  subLexes[n] = g.lexes[g.paths.len()];
+  subProgs[n] = g.progs[g.paths.len()];
+  // **The roots have to be re-indexed with the paths**, because `Res.rootAt` pairs `roots[i]` with `paths[i]` — a
+  // *positional* key. Handing a closure the graph's `Res` unchanged made every file read some other file's project
+  // root, and usually "": `@/` then resolved against nothing, the import landed on a key nobody supplied, and the
+  // names it brings in were declared *unknown* — silent by design. `issues/lang/0175a`, `0267c`.
+  //
+  // The mappings are keyed by path *string* — `mappedTo` compares `mapFrom[i] == from` — so they survive the
+  // subsetting unchanged and only `roots` needs rebuilding.
+  string[] subRoots = string[].filled(n, "");
+  for (i32 k = 0; k < n; k++) {
+    i32 at = seen[k];
+    subRoots[k] = at < res.roots.len() ? res.roots[at] : "";
   }
+  return Closure(subPaths, subSources, subCounts, subLexes, subProgs, subFronts,
+                 Res(subRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base));
+}
+
+// ── an editor's questions about one position ────────────────────────────────
+
+/**
+ * **What the checker knows about the token at a position**, for an editor's hover and go-to-definition. Every field
+ * is the checker's own answer, from checking `file` against its closure with that token asked about (`C.probeTok`):
+ * nothing here is worked out again from the text, so an editor cannot be told something the compiler would not do.
+ */
+export struct PositionFacts {
+  /** The token at the offset, as byte offsets into the file; both -1 when there is no token there. */
+  i32 start;
+  i32 end;
+  /** Its type as diagnostics spell types, or `""` where the checker has none. */
+  string type;
+  /** Where the declaration it resolves to is written — file, line and column of the declared name — or `""`. */
+  string defPath;
+  i32 defLine;
+  i32 defCol;
+  /** What that declaration is (`DeclSite.kind`): "local", "parameter", "function", "field", … */
+  string defKind;
+  /** The declaration's line as written, without its indentation. */
+  string signature;
+  /** Its doc comment, a line each, without the comment's markers. */
+  string[] doc;
+}
+
+/**
+ * What the token at byte `offset` of `file` is (`PositionFacts`). A question costs what checking that one file
+ * does — its closure, as a graph check checks it.
+ */
+export PositionFacts factsAt(string[] paths, string[] rawSources, const Res res, string file, i32 offset) {
+  PositionFacts none = PositionFacts(0 - 1, 0 - 1, "", "", 0, 0, "", "", string[]());
+  Graph g = graphOf(paths, rawSources, res);
+  i32 at = indexOfPath(g.paths, file);
+  if (at < 0 || isBuiltinSpec(file) || (g.lexes[at] is null)) { return none; }
+  Lexed lx = g.lexes[at]!;
+  i32 tok = tokenAtOffset(lx, offset);
+  if (tok < 0) { return none; }
+  i32 start = lx.tokens[tok * tokenStride() + 1];
+  PositionFacts out = PositionFacts(start, start + lx.tokens[tok * tokenStride() + 2], "", "", 0, 0, "", "", string[]());
+  if (g.fronts[at] != "") { return out; }
+  i32[] seen = i32[].filled(g.paths.len(), 0);
+  Closure k = closureOf(g, res, at, seen);
+  C c = checkFilesAutoIn(k.paths, k.sources, k.res, file, k.counts, k.lexes, k.progs, "", "", "", tok);
+  string type = c.probeType;
+  if (type != "" && type != "?" && type != "unknown") { out.type = displayTypes(type); }
+  DeclSite? def = c.probeSite;
+  if (def is null) { return out; }
+  out.defPath = def!.path;
+  out.defLine = def!.line;
+  out.defCol = def!.col;
+  out.defKind = def!.kind;
+  i32 di = indexOfPath(g.paths, def!.path);
+  string text = di >= 0 && di < g.sources.len() ? g.sources[di] : "";
+  string[] lines = splitLines(text);
+  if (def!.line >= 1 && def!.line <= lines.len()) {
+    out.signature = trimSpaces(lines[def!.line - 1]);
+    out.doc = docAbove(lines, def!.line);
+  }
+  return out;
+}
+
+/** The token whose text covers byte `offset`, or -1 — a position between tokens or past the end is none. */
+i32 tokenAtOffset(Lexed lx, i32 offset) {
+  for (i32 t = 0; t < lx.tokenCount; t++) {
+    i32 s0 = lx.tokens[t * tokenStride() + 1];
+    i32 len = lx.tokens[t * tokenStride() + 2];
+    if (offset >= s0 && offset < s0 + len) { return t; }
+  }
+  return 0 - 1;
+}
+
+/** `text`'s lines, without their terminators. */
+string[] splitLines(string text) {
+  i32 count = 1;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 10) { count = count + 1; } }
+  string[] out = string[].filled(count, "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 10) {
+      out[n] = text.slice(from, i);
+      n = n + 1;
+      from = i + 1;
+    }
+  }
+  out[n] = text.slice(from, text.len());
+  return out;
+}
+
+/**
+ * The doc comment ending on the line above line `line` (1-based) — a block comment or a run of line comments —
+ * each line without its markers. Empty when the line above is anything else.
+ */
+string[] docAbove(string[] lines, i32 line) {
+  i32 last = line - 2;
+  if (last < 0) { return string[](); }
+  string end = trimSpaces(lines[last]);
+  i32 first = last;
+  if (endsWith(end, "*/")) {
+    while (first > 0 && trimSpaces(lines[first]).indexOf("/*") < 0) { first = first - 1; }
+    if (trimSpaces(lines[first]).indexOf("/*") < 0) { return string[](); }
+  } else if (startsWith(end, "//")) {
+    while (first > 0 && startsWith(trimSpaces(lines[first - 1]), "//")) { first = first - 1; }
+  } else {
+    return string[]();
+  }
+  string[] raw = string[].filled(last - first + 1, "");
+  i32 n = 0;
+  for (i32 i = first; i <= last; i++) {
+    string t = trimSpaces(lines[i]);
+    if (startsWith(t, "/**")) { t = t.slice(3, t.len()); }
+    else if (startsWith(t, "/*")) { t = t.slice(2, t.len()); }
+    else if (startsWith(t, "//")) { t = t.slice(2, t.len()); }
+    else if (startsWith(t, "*") && !startsWith(t, "*/")) { t = t.slice(1, t.len()); }
+    if (endsWith(t, "*/")) { t = t.slice(0, t.len() - 2); }
+    t = trimSpaces(t);
+    if (t == "" && (i == first || i == last)) { continue; }
+    raw[n] = t;
+    n = n + 1;
+  }
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = raw[i]; }
   return out;
 }
 
@@ -1689,7 +1847,7 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
  */
 C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string entry,
                    i32[] counts, Lexed?[] lexes, Program?[] progs) {
-  return checkFilesAutoIn(callerPaths, callerSources, res, entry, counts, lexes, progs, "", "", "");
+  return checkFilesAutoIn(callerPaths, callerSources, res, entry, counts, lexes, progs, "", "", "", 0 - 1);
 }
 
 /**
@@ -1699,7 +1857,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
  */
 C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, string entry,
                    i32[] counts, Lexed?[] lexes, Program?[] progs, string assume, string target,
-                   string placeholder) {
+                   string placeholder, i32 probe) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
   // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
   // what an enum holds went quiet: a `match` missing a variant, an arm naming a variant that does
@@ -1761,6 +1919,11 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     declCap = declCap + (i < counts.len() ? counts[i] : 0);
   }
   C c = C.create(esrc, elexed.tokens, elexed.tokenCount, declCap);
+  c.srcPath = entry;
+  // **An editor's question about one token of the entry**, set before anything is declared so that the type names its
+  // signatures spell are recorded as they are resolved; -1 for none.
+  c.probeTok = probe;
+  c.probePath = entry;
   if (!entryCarried) { c.relexed = c.relexed + 1; }
   if (!coreCarried) { c.coreBuilt = c.coreBuilt + 1; }
 
@@ -2013,6 +2176,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
 
     c.src = isrc;
     c.toks = ilexed.tokens;
+    c.srcPath = paths[i];
     c.renameCount = 0;
     for (i32 k = 0; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
@@ -2235,6 +2399,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
 
   c.src = esrc;
   c.toks = elexed.tokens;
+  c.srcPath = entry;
   // **Every file, for the static evaluator** (spec ch28): up front for an entry that says `static`,
   // `typeref` or `type` itself, and otherwise only if the check meets a type another file declares.
   string etext = string.fromBytes(esrc);
@@ -2375,7 +2540,7 @@ string[] lowerFromNumberLiterals(Reads reads, string[] paths, string[] sources, 
     Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
     Program?[] progs = Program?[].defaulted(paths.len() + 1);
     i32[] counts = declCountsInto(paths, out, lexes, progs);
-    C c = checkFilesAutoIn(paths, out, res, paths[f], counts, lexes, progs, "", "", "@literals");
+    C c = checkFilesAutoIn(paths, out, res, paths[f], counts, lexes, progs, "", "", "@literals", 0 - 1);
     if (c.autoCollect == "") { continue; }
     i32 srcRead = readOf(reads, out[f]);
     u8[] src = readSrc(reads, srcRead);
@@ -3043,7 +3208,7 @@ void placeholderEditsFor(Reads reads, string[] paths, string[] sources, const Re
             Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
             Program?[] progs = Program?[].defaulted(paths.len() + 1);
             i32[] counts = declCountsInto(paths, sources, lexes, progs);
-            C c = checkFilesAutoIn(paths, sources, res, paths[f], counts, lexes, progs, "", fname, spec);
+            C c = checkFilesAutoIn(paths, sources, res, paths[f], counts, lexes, progs, "", fname, spec, 0 - 1);
             ed.starts[ed.n] = lx.tokens[utok * tokenStride() + 1];
             ed.lens[ed.n] = lx.tokens[utok * tokenStride() + 2];
             ed.texts[ed.n] = nameableGathered(reads, paths, sources, f, src, unionOfList(c.autoCollect), ed);
@@ -3888,7 +4053,7 @@ string autoCollect(AutoRun run, i32 k, string path) {
   Program?[] progs = Program?[].defaulted(run.paths.len() + 1);
   i32[] counts = declCountsInto(run.paths, run.sources, lexes, progs);
   C c = checkFilesAutoIn(run.paths, run.sources, run.res, run.paths[run.file], counts, lexes, progs,
-                         assume, run.fns.names[k], "");
+                         assume, run.fns.names[k], "", 0 - 1);
   if (run.memoCount >= run.memoKeys.len()) {
     i32 grown = run.memoKeys.len() * 2 + 8;
     string[] mk = string[].filled(grown, "");
