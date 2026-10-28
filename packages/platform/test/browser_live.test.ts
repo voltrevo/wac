@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // The browser target, in an actual browser. wac-mono issue 0016.
 //
 // `browser.test.ts` drives the handlers over an in-memory Origin Private File System, which is

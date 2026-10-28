@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // Files and folders dropped on a built page, in Chromium: what `page.nextFile()` hands the program.
 //
 // A drop goes through the DevTools protocol (`Input.dispatchDragEvent`), so the browser builds the

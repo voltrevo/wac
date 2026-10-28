@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // The shell in a terminal drawn on pixels, typed into with a real keyboard.
 //
 // `design/system/0004` step 4 asks that "the corpus that drives the DOM terminal drives this one and

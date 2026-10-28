@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // A view in an actual browser: `packages/platform/example/todo.wac` built as a page, typed into and clicked by Chromium.
 //
 // `test/wac/view_test.wac` drives the view against `TestDoc`, a document of records, which is where

@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // The raster desktop on a real canvas, with the pixels read back.
 //
 // Everything else in this package is checked without a screen: a surface read back as numbers, a hit
