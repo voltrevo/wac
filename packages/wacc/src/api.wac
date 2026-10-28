@@ -36,7 +36,7 @@ import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsLexed } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf, readLexed, readOf, readParsedLexed, readProgram, Reads, readSrc } from "./frontend.wac";
-import { Pruned, pruneFor } from "./reach.wac";
+import { Parsed, Pruned, neededMissing, pruneFor } from "./reach.wac";
 import {
   lowerNamespaces, lowerNamespacesForDeclarationsWith, lowerNamespacesWith, relativeSpec,
 } from "./namespaces.wac";
@@ -776,6 +776,30 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  */
 export Pruned pruneForBuild(string[] paths, string[] sources, Res res, string entry) {
   return pruneFor(paths, lowerSources(paths, sources, res), res, entry);
+}
+
+/**
+ * The files a build of `entry` needs that `paths` does not hold. A build reads these and asks again,
+ * until nothing new is answered, and then `pruneForBuild` prunes what it read.
+ *
+ * **Lowered as for checking, not as for building**, because the files are not all here yet: `import {
+ * ns.m } from "./lib.wac"` before `lib.wac` has been read is left as written by the build's lowering,
+ * which does not parse, and the walk would stop at the entry. The checking lowering spells it
+ * `@"ns.m" as m`, which parses and names `lib.wac` — which is what this has to find out.
+ */
+export string[] missingForBuild(string[] paths, string[] sources, Res res, string entry) {
+  return missingForBuildIn(paths, sources, res, entry, Reads.create(), Parsed.create());
+}
+
+/**
+ * `missingForBuild` through the caller's caches, which a build keeps across its rounds: both are keyed by
+ * text, so what a round has already lexed, lowered or parsed is not done again by the next.
+ */
+export string[] missingForBuildIn(string[] paths, string[] sources, Res res, string entry, Reads reads,
+                                  Parsed parsed) {
+  string[] lowered = lowerSourcesIn(paths, lowerNamespacesForDeclarationsWith(paths, sources, res, reads),
+                                    res, reads);
+  return neededMissing(paths, lowered, res, entry, parsed);
 }
 
 /** A build's diagnostics: the pruned graph, every remaining declaration checked in full. */

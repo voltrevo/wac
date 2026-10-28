@@ -1,0 +1,117 @@
+// A build reads only the files a retained declaration needs — spec ch05 and ch04.
+//
+// `§wac-reach-import-lazy-2jhptfk`: *"A file is read only when a retained declaration needs a name it
+// exports."* `§wac-reach-namespace-lazy-pxz4t63` and `§wac-package-selective-un8citz` say the same of a
+// namespace re-export. The spec's own cases for these use a file that **does not exist**, which can only
+// show that absence is tolerated, so they passed against a build that read every file the import syntax
+// could reach and skipped only the ones it could not find. These use files that exist.
+//
+// **What a reader can see** is the count the build reports — `N bytes from K file(s)` — and the 512-file
+// limit on one program: a module behind an unreached namespace that starts a 600-file import chain was
+// refused with *"a program may be at most 512 files"* while the program used none of it. That is the
+// cost that mattered — a whole repository behind one entry of `export * as` lines is the shape a
+// project depending on this one by git sees.
+//
+// **And the canary**: a namespace that *is* reached is read, all the way down its chain, and the
+// program answers what that chain computes — or a build that read nothing would pass the counts.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { Change, Cli, Core, Exec } from "std";
+import { contains } from "../../../wactest/src/strings.wac";
+
+/** Write `text` to `dir/name`, failing `t` if it could not be. */
+bool put(Cli cli, T t, string dir, string name, string text) {
+  Change c = cli.writeFile("\{dir}/\{name}", text.toBytes()).wait();
+  t.isTrue(c.ok(), "wrote \{name} — \{c.message}");
+  return c.ok();
+}
+
+/** A chain `prefix1.wac` → `prefix2.wac` → … → `prefix<n>.wac`, each adding one to the next. */
+bool chain(Cli cli, T t, string dir, string prefix, i32 n) {
+  for (i32 i = 1; i <= n; i++) {
+    string body = i == n
+        ? "export i32 depth() { return 1; }\n"
+        : "import { depth as deeper } from \"./\{prefix}\{i + 1}.wac\";\n" +
+          "export i32 depth() { return deeper() + 1; }\n";
+    if (!put(cli, t, dir, "\{prefix}\{i}.wac", body)) { return false; }
+  }
+  return true;
+}
+
+/**
+ * `wac build` of `entry` in `dir`: what it said, and its status. **Without the cache**, because a hit
+ * reports the files it found unchanged rather than the files a build read.
+ */
+Exec build(Cli cli, string dir, string entry) {
+  return cli.exec("/bin/sh", ["-c", "cd '\{dir}' && '\{binaryPath(cli)}' build --no-cache \{entry} -o out 2>&1"],
+                  u8[]()).wait();
+}
+
+/** The `K` of `… bytes from K file(s)`, or -1 when the build did not say it. */
+i32 filesRead(string said) {
+  i32 at = said.indexOf(" bytes from ");
+  if (at < 0) { return -1; }
+  string rest = said.slice(at + 12, said.len());
+  i32 sp = rest.indexOf(" file");
+  if (sp < 0) { return -1; }
+  if (sp == 0) { return -1; }
+  u8[] digits = rest.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < sp; i++) {
+    i32 v = digits[i] as i32 - 48;
+    if (v < 0 || v > 9) { return -1; }
+    n = n * 10 + v;
+  }
+  return n;
+}
+
+export string test_an_import_only_a_dropped_declaration_uses_is_not_read(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "lazyread-plain");
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+  put(cli, t, dir, "main.wac",
+      "import { helper } from \"./optional.wac\";\n" +
+      "i32 unused() { return helper(); }\n" +
+      "export i32 used() { return 0; }\n");
+  put(cli, t, dir, "optional.wac", "export i32 helper() { return 1; }\n");
+
+  Exec r = build(cli, dir, "main.wac");
+  string said = string.fromBytes(r.stdout);
+  t.eqI32(r.status, 0, "the build: \{said}");
+  t.eqI32(filesRead(said), 1, "only main.wac is read — optional.wac exists, and nothing retained needs it: \{said}");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_an_unreached_namespace_is_not_read_however_much_is_behind_it(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "lazyread-namespace");
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+  put(cli, t, dir, "library.wac",
+      "export * as used from \"./used1.wac\";\n" +
+      "export * as unused from \"./unused1.wac\";\n");
+  put(cli, t, dir, "main.wac",
+      "import { used.depth } from \"./library.wac\";\n" +
+      "export i32 main() { return depth() - 20; }\n");
+  // Twenty reached, and six hundred behind the namespace nothing reaches: past the 512-file limit on
+  // its own, so reading it at all refuses the build.
+  if (!chain(cli, t, dir, "used", 20) || !chain(cli, t, dir, "unused", 600)) { return t.report(); }
+
+  Exec r = build(cli, dir, "main.wac");
+  string said = string.fromBytes(r.stdout);
+  t.isTrue(!contains(said, "at most 512 files"), "the build read the unreached namespace: \{said}");
+  t.eqI32(r.status, 0, "the build: \{said}");
+  // main, library and the twenty-file chain the program reaches.
+  t.eqI32(filesRead(said), 22, "what the build read: \{said}");
+
+  // The canary: the reached chain was read all the way down, or `depth()` would not be 20.
+  Exec ran = cli.exec("/bin/sh", ["-c", "cd '\{dir}' && '\{binaryPath(cli)}' out.wasm 2>&1"], u8[]()).wait();
+  t.eqI32(ran.status, 0, "the program answered depth() - 20: \{string.fromBytes(ran.stdout)}");
+  cli.remove(dir, true).wait();
+  return t.report();
+}

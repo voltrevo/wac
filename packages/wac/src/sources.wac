@@ -1,4 +1,6 @@
-// A program's sources: resolving what a file imports, and reading the whole graph off disk.
+// A program's sources: resolving what a file imports, and reading off disk what the program needs —
+// every file its imports reach for `wac check`, and for a build only those a retained declaration
+// needs (`gatherNeeded`).
 //
 // This is the **I/O half** of module resolution. `packages/wacpkg/src/root.wac` says which
 // directories `@/` could mean and `packages/wacpkg/src/manifest.wac` says what a manifest maps
@@ -28,6 +30,9 @@ import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, packageE
   from "../../wacpkg/src/manifest.wac";
 import { Lock, readLock } from "../../wacpkg/src/lock.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
+import { missingForBuildIn } from "../../wacc/src/api.wac";
+import { Reads } from "../../wacc/src/frontend.wac";
+import { Parsed } from "../../wacc/src/reach.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -431,11 +436,65 @@ export struct ReadCache {
 }
 
 export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
-  return await gatherWith(fs, cli, entry, lazy, ReadCache.create());
+  ReadCache cache = ReadCache.create();
+  return lazy ? await gatherNeeded(fs, cli, entry, cache) : await gatherWith(fs, cli, entry, false, cache);
+}
+
+/**
+ * **What a build reads: the files a retained declaration needs, and no others** — spec ch05
+ * `§wac-reach-import-lazy-2jhptfk`, `§wac-reach-namespace-lazy-pxz4t63`, ch04
+ * `§wac-package-selective-un8citz`.
+ *
+ * This used to read every file the import syntax could reach and leave out only the ones it could not
+ * find. A missing file then looked exactly as the spec says, which is why its cases passed, but a file
+ * that *existed* behind an unreached namespace was read, and so was everything it imported: a library of
+ * `export * as` lines read the whole of every namespace to use one function, and one unused module that
+ * began a 600-file chain refused the build at the 512-file limit.
+ *
+ * So the walk is driven by what is needed. Read the entry; ask reachability (`missingForBuild`, over
+ * the same lowered sources the build prunes) which files a retained declaration needs that are not here
+ * yet; read those; ask again. A round that adds nothing is the answer. Each round reads through `cache`,
+ * so no file is read or lexed twice, and a file that cannot be read is asked for again and stops the
+ * loop rather than repeating it.
+ */
+export async Sources gatherNeeded(Fs fs, Cli cli, string entry, ReadCache cache) {
+  Map<string, bool> want = Map.create(hashString, stringEq);
+  want.set(normalisePath(entry), true);
+  // Kept across the rounds: each is keyed by text, so a file a round has lowered or parsed is not again.
+  Reads reads = Reads.create();
+  Parsed parsed = Parsed.create();
+  while (true) {
+    Sources src = await gatherIn(fs, cli, entry, true, cache, want);
+    if (src.missing != "" || src.why != "") { return src; }
+    string[] more = missingForBuildIn(exactly(src.paths, src.n), exactly(src.texts, src.n), resOf(src),
+                                      src.paths[0], reads, parsed);
+    bool grew = false;
+    for (string m in more) {
+      if (want.get(m) is null) {
+        want.set(m, true);
+        grew = true;
+      }
+    }
+    if (!grew) { return src; }
+  }
 }
 
 /** `gather`, reading through `cache` — see `ReadCache`. */
 export async Sources gatherWith(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache) {
+  return await gatherIn(fs, cli, entry, lazy, cache, null);
+}
+
+/** Whether a file is outside what a demand-driven read wants yet (`gatherNeeded`). Null wants everything. */
+bool deferred(Map<string, bool>? want, string path) {
+  return want is not null && want!.get(path) is null;
+}
+
+/**
+ * The walk itself. With `want`, a file is queued only once it is wanted, and every specifier of a
+ * file read is still resolved, so the mapping table is whole for the files that are here. Without it,
+ * everything the import syntax reaches is read, which is what `wac check` asks for (ch06).
+ */
+async Sources gatherIn(Fs fs, Cli cli, string entry, bool lazy, ReadCache cache, Map<string, bool>? want) {
   RootCache rootCache = cache.roots;
   // **A file that cannot be read is an error when something needs it** — spec ch05
   // `§wac-reach-import-lazy-2jhptfk`. A build (`lazy`) leaves it out and carries on: if a declaration
@@ -559,6 +618,7 @@ export async Sources gatherWith(Fs fs, Cli cli, string entry, bool lazy, ReadCac
             mapTo[mapN] = got.path;
             mapN = mapN + 1;
           }
+          if (deferred(want, got.path)) { continue; }
           bool seenMapped = false;
           for (i32 k = 0; k < n; k++) { if (paths[k] == got.path) { seenMapped = true; } }
           if (!seenMapped && n < maxFiles()) {
@@ -630,6 +690,9 @@ export async Sources gatherWith(Fs fs, Cli cli, string entry, bool lazy, ReadCac
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
                        leavesMapping(spec, path, confine[at]));
       }
+      // **Not queued until it is wanted**, and so not counted against the cap: a file nothing needs is
+      // not part of the program. A built-in is served from memory and is always here.
+      if (!isBuiltinSpec(spec) && deferred(want, next)) { continue; }
       bool seen = false;
       for (i32 k = 0; k < n; k++) { if (paths[k] == next) { seen = true; } }
       // **The cap is reported, not skipped.** This was `if (seen || n >= maxFiles()) { continue; }`,
