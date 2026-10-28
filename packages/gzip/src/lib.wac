@@ -1,0 +1,21 @@
+// `gzip` as the repository's root entry presents it (`lib.wac` at the root) — the names other code
+// in this repository imports from it, gathered from those imports on 2026-10-28.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so
+// a list of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { crc32 } from "./crc32.wac";
+export { crc32Bitwise } from "./crc32.wac";
+export { crc32Finish } from "./crc32.wac";
+export { crc32Start } from "./crc32.wac";
+export { crc32Update } from "./crc32.wac";
+export { crcTable8 } from "./crc32.wac";
+export { deflateDynamic } from "./deflate.wac";
+export { gzipBest } from "./gzip.wac";
+export { gzipStream } from "./gzip.wac";
+export { Inflation } from "./inflate.wac";
+export { gunzipBytes } from "./inflate.wac";
+export { gunzipStream } from "./inflate.wac";
+export { inflate } from "./inflate.wac";
+export { inflateAt } from "./inflate.wac";

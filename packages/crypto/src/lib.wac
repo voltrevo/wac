@@ -1,0 +1,75 @@
+// `crypto` as the repository's root entry presents it (`lib.wac` at the root) — the names other code
+// in this repository imports from it, gathered from those imports on 2026-10-28.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so
+// a list of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { aeadDecrypt } from "./aead.wac";
+export { aeadEncrypt } from "./aead.wac";
+export { aeadTag } from "./aead.wac";
+export { aesEncryptBlock } from "./aes.wac";
+export { aesExpandKey } from "./aes.wac";
+export { aesRounds } from "./aes.wac";
+export { CtrStream } from "./aesctr.wac";
+export { aesCtr } from "./aesctr.wac";
+export { gcmDecrypt } from "./aesgcm.wac";
+export { gcmEncrypt } from "./aesgcm.wac";
+export { gcmTag } from "./aesgcm.wac";
+export { bcryptPbkdf } from "./bcryptpbkdf.wac";
+export { chacha20 } from "./chacha20.wac";
+export { chachaBlock } from "./chacha20.wac";
+export { ctEqual } from "./ct.wac";
+export { ctEqualN } from "./ct.wac";
+export { Point } from "./ed25519.wac";
+export { curve25519ToEd25519Secret } from "./ed25519.wac";
+export { ed25519ExpandedSecret } from "./ed25519.wac";
+export { ed25519FromCurve25519Public } from "./ed25519.wac";
+export { ed25519PublicKey } from "./ed25519.wac";
+export { ed25519PublicKeyExpanded } from "./ed25519.wac";
+export { ed25519Sign } from "./ed25519.wac";
+export { ed25519SignBit } from "./ed25519.wac";
+export { ed25519SignExpanded } from "./ed25519.wac";
+export { ed25519Verify } from "./ed25519.wac";
+export { ptDecode } from "./ed25519.wac";
+export { ptEncode } from "./ed25519.wac";
+export { ptMul } from "./ed25519.wac";
+export { scMulAdd } from "./ed25519.wac";
+export { hkdfExpand } from "./hkdf.wac";
+export { hkdfExtract } from "./hkdf.wac";
+export { hmacSha1 } from "./hmac.wac";
+export { hmacSha256 } from "./hmac.wac";
+export { Sha3_256 } from "./keccak.wac";
+export { keccak256 } from "./keccak.wac";
+export { sha3_256 } from "./keccak.wac";
+export { shake256 } from "./keccak.wac";
+export { mlkemDecaps } from "./mlkem.wac";
+export { mlkemEkValid } from "./mlkem.wac";
+export { mlkemEncaps } from "./mlkem.wac";
+export { mlkemKeyGen } from "./mlkem.wac";
+export { p256Decodes } from "./p256.wac";
+export { p256Ecdh } from "./p256.wac";
+export { p256PublicKey } from "./p256.wac";
+export { p256Sign } from "./p256.wac";
+export { p256Verify } from "./p256.wac";
+export { p256VerifyDigest } from "./p256.wac";
+export { p384VerifyDigest } from "./p384.wac";
+export { poly1305 } from "./poly1305.wac";
+export { rsaRecoverPkcs1 } from "./rsa.wac";
+export { rsaSignPkcs1 } from "./rsa.wac";
+export { rsaSignPss } from "./rsa.wac";
+export { rsaSignRawPkcs1 } from "./rsa.wac";
+export { rsaVerifyPkcs1 } from "./rsa.wac";
+export { rsaVerifyPss } from "./rsa.wac";
+export { RsaKey } from "./rsagen.wac";
+export { generateRsaKey } from "./rsagen.wac";
+export { Sha1 } from "./sha1.wac";
+export { sha1 } from "./sha1.wac";
+export { Sha256 } from "./sha256.wac";
+export { sha256 } from "./sha256.wac";
+export { Sha512 } from "./sha512.wac";
+export { sha384 } from "./sha512.wac";
+export { sha512 } from "./sha512.wac";
+export { x25519 } from "./x25519.wac";
+export { x25519Base } from "./x25519.wac";
+export { x25519Shared } from "./x25519.wac";

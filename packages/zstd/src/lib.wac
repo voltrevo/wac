@@ -1,0 +1,10 @@
+// `zstd` as the repository's root entry presents it (`lib.wac` at the root) — the names other code
+// in this repository imports from it, gathered from those imports on 2026-10-28.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so
+// a list of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { compress } from "./encode.wac";
+export { decompress } from "./frame.wac";
+export { unzstdStream } from "./stream.wac";
