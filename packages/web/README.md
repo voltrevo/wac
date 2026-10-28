@@ -37,7 +37,7 @@ depends on this package by git and builds with nothing but `wac`.
 | `ui.after(ms, f)`, `ui.every(ms, f)` | timers that end with the component, each answering its cancel |
 | `Ref r = ui.ref()`, `ref={r}` | a name for an element the component draws: `r.element()` is its handle once the render that made it is applied — in an effect, or a handler |
 | `key={…}` | which instance or element a node is, among its siblings |
-| `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents |
+| `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents, and `prevent="Ctrl+s"` prevents a key only with exactly those modifiers held |
 
 **Only what changed renders.** A `set` marks the component that made the cell; a child whose attributes
 are unchanged — compared by the snapshots the compiler gives each component tag (`design/lang/0017`) —

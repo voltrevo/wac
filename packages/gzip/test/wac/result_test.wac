@@ -1,0 +1,105 @@
+// The decoder answers a malformed stream rather than trapping: `inflateResult`, `inflateAtResult`,
+// `gunzipBytesResult`.
+//
+// A page cannot catch a trap, so a page decoding what a user dropped on it died on a bad archive. The
+// desktop experiment worked around it with a watchdog. These entries say why instead, and the risk
+// `issues/system/0102` named — a decoder that keeps going after a failure and hands out what it made —
+// is what most of this file checks: **every** prefix of a member, and **every** single-byte change to
+// one, must answer either an error or exactly the original, never something else. The sweep found a
+// real instance while this was written: `gunzipStream` read its trailer from a failed reader, whose
+// zeros matched a small member's length, and accepted a member one byte short.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Result } from "core";
+import { gunzipBytesResult, inflateResult, inflateAtResult, Inflation } from "../../src/inflate.wac";
+import { gzipBest } from "../../src/gzip.wac";
+
+u8[] text(string s, i32 times) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[].filled(b.len() * times, 0);
+  for (i32 i = 0; i < times; i++) { out.copyFrom(b, 0, i * b.len(), b.len()); }
+  return out;
+}
+
+bool same(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+u8[] prefix(u8[] b, i32 n) {
+  u8[] out = u8[].filled(n, 0);
+  out.copyFrom(b, 0, 0, n);
+  return out;
+}
+
+export string test_a_valid_member_decodes() {
+  T t = T.create();
+  u8[] want = text("the quick brown fox jumps over the lazy dog. ", 40);
+  match (gunzipBytesResult(gzipBest(want))) {
+    Ok(got): { t.isTrue(same(got, want), "the bytes it held"); }
+    Err(why): { t.fail("a valid member was refused: " + why); }
+  }
+  return t.report();
+}
+
+export string test_every_prefix_of_a_member_is_refused_not_trapped() {
+  T t = T.create();
+  u8[] want = text("cut me short at every length. ", 30);
+  u8[] gz = gzipBest(want);
+  i32 refused = 0;
+  for (i32 n = 0; n < gz.len(); n++) {
+    match (gunzipBytesResult(prefix(gz, n))) {
+      Ok(got): { t.fail("a member cut to " + itoa(n) + " of " + itoa(gz.len()) + " bytes was accepted"); }
+      Err(why): { refused = refused + 1; }
+    }
+  }
+  t.eqI32(refused, gz.len(), "every prefix refused");
+  return t.report();
+}
+
+export string test_every_single_byte_change_is_refused_or_harmless() {
+  T t = T.create();
+  u8[] want = text("change one byte anywhere. ", 25);
+  u8[] gz = gzipBest(want);
+  i32 refused = 0;
+  for (i32 i = 0; i < gz.len(); i++) {
+    u8[] bad = prefix(gz, gz.len());
+    bad[i] = bad[i] ^ 0x5A;
+    match (gunzipBytesResult(bad)) {
+      // A change to a field nothing checks — the timestamp, the OS byte — leaves a valid member.
+      Ok(got): { t.isTrue(same(got, want), "byte " + itoa(i) + " changed, and a different answer came back"); }
+      Err(why): { refused = refused + 1; }
+    }
+  }
+  // Most of a member is checked: the deflate data by its structure and the checksum, the header by its
+  // magic and method. If almost nothing was refused, the sweep is not reaching the decoder.
+  t.isTrue(refused > gz.len() / 2, "only " + itoa(refused) + " of " + itoa(gz.len()) + " changes refused");
+  return t.report();
+}
+
+export string test_raw_streams_from_noise_answer() {
+  T t = T.create();
+  i32 seed = 12345;
+  i32 answered = 0;
+  for (i32 round = 0; round < 400; round++) {
+    i32 n = 1 + round % 97;
+    u8[] noise = u8[].filled(n, 0);
+    for (i32 i = 0; i < n; i++) {
+      seed = seed * 1103515245 + 12345;
+      noise[i] = ((seed >>> 16) & 255) as~ u8;
+    }
+    // Whatever it answers, it answers: reaching the next line is the assertion.
+    match (inflateResult(noise)) {
+      Ok(_): { answered = answered + 1; }
+      Err(_): { answered = answered + 1; }
+    }
+    match (inflateAtResult(noise, 0)) {
+      Ok(_): { }
+      Err(_): { }
+    }
+  }
+  t.eqI32(answered, 400, "every noise stream answered");
+  return t.report();
+}

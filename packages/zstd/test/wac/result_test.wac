@@ -1,0 +1,142 @@
+// A malformed zstd stream answers rather than trapping: `decompressResult`.
+//
+// The same contract as `packages/gzip/test/wac/result_test.wac`, for the same reason — a page cannot catch
+// a trap — and checked the same way, because the risk is the same: a decoder that keeps going after a
+// failure and hands out what it made. **Every** prefix of a frame, and **every** single-byte change to
+// one, must answer an error or exactly the original. `compress` writes a checksum, so a change that the
+// structure does not catch, the checksum does.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Result } from "core";
+import { decompressResult } from "../../src/frame.wac";
+import { compress } from "../../src/encode.wac";
+import { Block, compressed, firstCompressedBlock, literalsHeader } from "./frames.wac";
+import { Procs, Sys } from "std";
+
+u8[] text(string s, i32 times) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[].filled(b.len() * times, 0);
+  for (i32 i = 0; i < times; i++) { out.copyFrom(b, 0, i * b.len(), b.len()); }
+  return out;
+}
+
+bool same(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+u8[] prefix(u8[] b, i32 n) {
+  u8[] out = u8[].filled(n, 0);
+  out.copyFrom(b, 0, 0, n);
+  return out;
+}
+
+/** Text with enough repetition for matches and enough variety for a Huffman tree. */
+u8[] sample() {
+  return text("the frame holds literals, matches and a tree; every one of them can be wrong. ", 30);
+}
+
+export string test_a_valid_frame_decodes() {
+  T t = T.create();
+  u8[] want = sample();
+  match (decompressResult(compress(want))) {
+    Ok(got): { t.isTrue(same(got, want), "the bytes it held"); }
+    Err(why): { t.fail("a valid frame was refused: " + why); }
+  }
+  return t.report();
+}
+
+export string test_every_prefix_of_a_frame_is_refused_not_trapped() {
+  T t = T.create();
+  u8[] zst = compress(sample());
+  // The empty input is no frames at all, and that is a valid empty answer; every other prefix is a
+  // frame cut short.
+  i32 refused = 0;
+  for (i32 n = 1; n < zst.len(); n++) {
+    match (decompressResult(prefix(zst, n))) {
+      Ok(got): { t.fail("a frame cut to " + itoa(n) + " of " + itoa(zst.len()) + " bytes was accepted"); }
+      Err(why): { refused = refused + 1; }
+    }
+  }
+  t.eqI32(refused, zst.len() - 1, "every prefix refused");
+  return t.report();
+}
+
+export string test_every_single_byte_change_is_refused_or_harmless() {
+  T t = T.create();
+  u8[] want = sample();
+  u8[] zst = compress(want);
+  i32 refused = 0;
+  for (i32 i = 0; i < zst.len(); i++) {
+    u8[] bad = prefix(zst, zst.len());
+    bad[i] = bad[i] ^ 0x5A;
+    match (decompressResult(bad)) {
+      Ok(got): { t.isTrue(same(got, want), "byte " + itoa(i) + " changed, and a different answer came back"); }
+      Err(why): { refused = refused + 1; }
+    }
+  }
+  t.isTrue(refused > zst.len() / 2, "only " + itoa(refused) + " of " + itoa(zst.len()) + " changes refused");
+  return t.report();
+}
+
+export string test_noise_answers() {
+  T t = T.create();
+  i32 seed = 777;
+  i32 answered = 0;
+  u8[] magic = [0x28, 0xB5, 0x2F, 0xFD] as u8[];
+  for (i32 round = 0; round < 400; round++) {
+    i32 n = 4 + round % 120;
+    u8[] noise = u8[].filled(n, 0);
+    // Half start with the magic, so the noise reaches the frame and block decoders, not just the check
+    // of the first four bytes.
+    for (i32 i = 0; i < n; i++) {
+      seed = seed * 1103515245 + 12345;
+      noise[i] = ((seed >>> 16) & 255) as~ u8;
+    }
+    if (round % 2 == 0) { noise.copyFrom(magic, 0, 0, 4); }
+    match (decompressResult(noise)) {
+      Ok(_): { answered = answered + 1; }
+      Err(_): { answered = answered + 1; }
+    }
+  }
+  t.eqI32(answered, 400, "every noise stream answered");
+  return t.report();
+}
+
+/**
+ * The same sweep over a frame from the reference encoder, whose literals are Huffman-coded, so the tree
+ * reader and the four-stream decoder are inside the sweep too. Asserted rather than assumed: a frame
+ * whose literals came out raw would make this test pass while reaching none of that.
+ */
+export string test_a_reference_frame_with_huffman_literals_is_refused_or_harmless(Sys sys) {
+  Procs procs = sys.procs();
+  T t = T.create();
+  u8[] want = text("Huffman literals, then sequences, then a checksum over all of it. 0123456789 ", 40);
+  u8[] zst = compressed(t, procs, want, 3, true);
+  t.isTrue(zst.len() > 0, "the reference encoder answered");
+  if (zst.len() == 0) { return t.report(); }
+  Block blk = firstCompressedBlock(zst);
+  t.isTrue(blk.at >= 0, "the reference frame has a compressed block");
+  if (blk.at < 0) { return t.report(); }
+  t.eqI32(literalsHeader(zst, blk.at).kind, 2, "its literals are Huffman-coded, with a tree");
+
+  i32 refused = 0;
+  for (i32 i = 0; i < zst.len(); i++) {
+    u8[] bad = prefix(zst, zst.len());
+    bad[i] = bad[i] ^ 0x5A;
+    match (decompressResult(bad)) {
+      Ok(got): { t.isTrue(same(got, want), "byte " + itoa(i) + " changed, and a different answer came back"); }
+      Err(why): { refused = refused + 1; }
+    }
+  }
+  for (i32 n = 1; n < zst.len(); n++) {
+    match (decompressResult(prefix(zst, n))) {
+      Ok(got): { t.fail("the reference frame cut to " + itoa(n) + " bytes was accepted"); }
+      Err(why): { }
+    }
+  }
+  t.isTrue(refused > zst.len() / 2, "only " + itoa(refused) + " of " + itoa(zst.len()) + " changes refused");
+  return t.report();
+}

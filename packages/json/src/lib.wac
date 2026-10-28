@@ -1,0 +1,21 @@
+// `json` as the repository's root entry presents it (`lib.wac` at the root) — the names other code
+// in this repository imports from it, gathered from those imports on 2026-10-28.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so
+// a list of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { canonicalize } from "./json.wac";
+export { parse } from "./json.wac";
+export { parseJson5 } from "./json.wac";
+export { parseNumberValue } from "./json.wac";
+export { stringify } from "./json.wac";
+export { JsonError } from "./parse.wac";
+export { JsonFault } from "./parse.wac";
+export { Parser } from "./parse.wac";
+export { parseDocument } from "./parse.wac";
+export { writeValue } from "./stringify.wac";
+export { JsonArray } from "./value.wac";
+export { JsonMember } from "./value.wac";
+export { JsonObject } from "./value.wac";
+export { JsonValue } from "./value.wac";

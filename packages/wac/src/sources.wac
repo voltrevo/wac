@@ -19,7 +19,7 @@
 // cycle-free because nothing in this file knows about the command.
 
 import { Env, Files } from "std";
-import { Map, hashString, stringEq } from "core";
+import { Map, Vec, hashString, stringEq } from "core";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, relativeTo, resolveFromAt } from "../../wacc/src/path.wac";
 import { coreSource, isBuiltinSpec, stdSource }
@@ -428,10 +428,16 @@ export struct ReadCache {
   Map<string, string> texts;
   Map<string, string[]> specs;
   RootCache roots;
+  /**
+   * How many files this cache has read off disk — misses, not lookups. Gathering through one cache
+   * reads each file once however many roots reach it, and this is how a test can say so exactly
+   * (`gatherRoots`, `checkproject_test.wac`) rather than infer it from a timing.
+   */
+  i32 reads;
 
   ReadCache create() {
     return ReadCache(Map.create(hashString, stringEq), Map.create(hashString, stringEq),
-                     Map.create(hashString, stringEq), RootCache.create());
+                     Map.create(hashString, stringEq), RootCache.create(), 0);
   }
 }
 
@@ -477,6 +483,44 @@ export async Sources gatherNeeded(Files fs, Env env, string entry, ReadCache cac
     }
     if (!grew) { return src; }
   }
+}
+
+/** A project's sources gathered from every root: each file once, in the order first reached. */
+export struct Gathered {
+  /** The first root's `Sources`, whose `Res` the graph is checked against. */
+  Sources first;
+  string[] paths;
+  string[] texts;
+  /** Files read off disk to gather them all — one per distinct file when the cache does its job. */
+  i32 reads;
+  /** Why a root could not be gathered, worded for `wacc: …`; "" when every one was. */
+  string error;
+}
+
+/**
+ * Every root of a project, gathered as one graph — `wac check` on a directory.
+ *
+ * **One cache for every root**, whose closures overlap: each root read its whole closure again, so a file
+ * every other one imports was read once per importer (`issues/lang/0398b`). `reads` says how many
+ * reads it took, which is what `checkproject_test.wac` asserts.
+ */
+export async Gathered gatherRoots(Files fs, Env env, string[] roots) {
+  ReadCache cache = ReadCache.create();
+  Sources first = await gatherWith(fs, env, normalisePath(roots[0]), false, cache);
+  Vec<string> ps = Vec.create();
+  Vec<string> ts = Vec.create();
+  for (i32 r = 0; r < roots.len(); r++) {
+    Sources s = r == 0 ? first : (await gatherWith(fs, env, normalisePath(roots[r]), false, cache));
+    if (s.missing != "" || s.why != "") {
+      return Gathered(first, string[](), string[](), cache.reads, s.why != "" ? s.why : "cannot read \{s.missing}");
+    }
+    for (i32 i = 0; i < s.n; i++) {
+      bool have = false;
+      for (i32 k = 0; k < ps.len(); k++) { if (ps.get(k) == s.paths[i]) { have = true; } }
+      if (!have) { ps.push(s.paths[i]); ts.push(s.texts[i]); }
+    }
+  }
+  return Gathered(first, ps.toArray(), ts.toArray(), cache.reads, "");
 }
 
 /** `gather`, reading through `cache` — see `ReadCache`. */
@@ -560,6 +604,7 @@ async Sources gatherIn(Files fs, Env env, string entry, bool lazy, ReadCache cac
     if (builtin == "") {
       u8[]? r = cache.files.get(path);
       if (r is null) {
+        cache.reads = cache.reads + 1;
         r = (await fs.readFile(path)).ok();
         if (r is not null) { cache.files.set(path, r!); }
       }

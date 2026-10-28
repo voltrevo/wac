@@ -1,0 +1,27 @@
+// `fs` as the repository's root entry presents it (`lib.wac` at the root) — the names other code in this
+// repository imports from it, gathered from those imports on 2026-10-28. The filesystem itself is std's
+// `Files` since design/system/0013 step 5; what is here is what a system needs around one.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so a list
+// of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { bootStore } from "./image.wac";
+export { dumpImage } from "./image.wac";
+export { saveStore } from "./image.wac";
+export { User } from "./passwd.wac";
+export { authorizedKeysOf } from "./passwd.wac";
+export { parsePasswd } from "./passwd.wac";
+export { userNamed } from "./passwd.wac";
+export { resolvePath } from "./path.wac";
+export { ProcTable } from "./proc.wac";
+export { binFiles } from "./trees.wac";
+export { bytesInput } from "./trees.wac";
+export { devFiles } from "./trees.wac";
+export { procFiles } from "./trees.wac";
+export { procSelfFiles } from "./trees.wac";
+export { sortNames } from "./trees.wac";
+export { systemFiles } from "./trees.wac";
+export { FilesFault } from "./words.wac";
+export { absent } from "./words.wac";
+export { reason } from "./words.wac";

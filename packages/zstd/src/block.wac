@@ -12,8 +12,9 @@
 // stashed somewhere a second frame could see it.
 
 import { Buf } from "core";
-import { HuffTable, decodeLiterals, readTable } from "./huffman.wac";
-import { SeqTables, decodeAndExecute } from "./sequences.wac";
+import { HuffTable, decodeLiteralsIn, readTableIn } from "./huffman.wac";
+import { SeqTables, decodeAndExecuteIn } from "./sequences.wac";
+import { Fault } from "./fault.wac";
 
 /** What one block leaves behind for the next. Reset for every frame. */
 export struct Decoder {
@@ -46,11 +47,14 @@ struct LitHeader {
  * regenerated size for the uncompressed kinds, 10, 14 or 18 bits plus a compressed size for the
  * others. The stream count is folded into the same two bits as the size format.
  */
-LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
+LitHeader readLitHeader(u8[] src, i32 at, i32 end, Fault f) {
   // Bounded by the *block's* end, not the frame's. A header that runs past its block but stays
   // inside the frame would otherwise be read happily, taking its sizes from whatever the next
   // block begins with.
-  if (at >= end) { trap; }
+  if (at >= end) {
+    f.fail("a literals section header runs past its block");
+    return LitHeader(0, 0, 0, 0, 1);
+  }
   i32 b0 = src[at] as i32;
   i32 kind = b0 & 3;
   i32 fmt = (b0 >>> 2) & 3;
@@ -62,18 +66,27 @@ LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
       return LitHeader(kind, 1, regen, kind == 1 ? 1 : regen, 1);
     }
     if (fmt == 1) {
-      if (at + 1 >= end) { trap; }
+      if (at + 1 >= end) {
+        f.fail("a literals section header runs past its block");
+        return LitHeader(0, 0, 0, 0, 1);
+      }
       i32 regen = (b0 >>> 4) | (src[at + 1] as i32 << 4);
       return LitHeader(kind, 2, regen, kind == 1 ? 1 : regen, 1);
     }
-    if (at + 2 >= end) { trap; }
+    if (at + 2 >= end) {
+      f.fail("a literals section header runs past its block");
+      return LitHeader(0, 0, 0, 0, 1);
+    }
     i32 regen = (b0 >>> 4) | (src[at + 1] as i32 << 4) | (src[at + 2] as i32 << 12);
     return LitHeader(kind, 3, regen, kind == 1 ? 1 : regen, 1);
   }
 
   i32 streams = fmt == 0 ? 1 : 4;
   if (fmt <= 1) {
-    if (at + 2 >= end) { trap; }
+    if (at + 2 >= end) {
+      f.fail("a literals section header runs past its block");
+      return LitHeader(0, 0, 0, 0, 1);
+    }
     i32 b1 = src[at + 1] as i32;
     i32 b2 = src[at + 2] as i32;
     i32 regen = ((b0 >>> 4) | (b1 << 4)) & 1023;
@@ -81,7 +94,10 @@ LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
     return LitHeader(kind, 3, regen, comp, streams);
   }
   if (fmt == 2) {
-    if (at + 3 >= end) { trap; }
+    if (at + 3 >= end) {
+      f.fail("a literals section header runs past its block");
+      return LitHeader(0, 0, 0, 0, 1);
+    }
     i32 b1 = src[at + 1] as i32;
     i32 b2 = src[at + 2] as i32;
     i32 b3 = src[at + 3] as i32;
@@ -89,7 +105,10 @@ LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
     i32 comp = ((b2 >>> 2) | (b3 << 6)) & 16383;
     return LitHeader(kind, 4, regen, comp, streams);
   }
-  if (at + 4 >= end) { trap; }
+  if (at + 4 >= end) {
+    f.fail("a literals section header runs past its block");
+    return LitHeader(0, 0, 0, 0, 1);
+  }
   i32 b1 = src[at + 1] as i32;
   i32 b2 = src[at + 2] as i32;
   i32 b3 = src[at + 3] as i32;
@@ -106,11 +125,25 @@ LitHeader readLitHeader(u8[] src, i32 at, i32 end) {
  * back past the block boundary, which is what the window size in the frame header is about.
  */
 export void decodeCompressed(u8[] src, i32 at, i32 size, Buf out, Decoder d) {
+  Fault f = Fault.create();
+  decodeCompressedIn(src, at, size, out, d, f);
+  if (f.failed()) { trap; }
+}
+
+/**
+ * `decodeCompressed`, recording in `f` why the block is malformed rather than trapping. Whatever it
+ * wrote to `out` first is not an answer: the frame it belongs to fails with the reason.
+ */
+export void decodeCompressedIn(u8[] src, i32 at, i32 size, Buf out, Decoder d, Fault f) {
   // The caller has already checked the block fits in the frame, so `end` is within `src`.
   i32 end = at + size;
-  LitHeader h = readLitHeader(src, at, end);
+  LitHeader h = readLitHeader(src, at, end, f);
+  if (f.failed()) { return; }
   i32 p = at + h.headerSize;
-  if (p + h.compressedSize > end) { trap; }
+  if (p + h.compressedSize > end) {
+    f.fail("a literals section runs past its block");
+    return;
+  }
 
   u8[] literals = u8[]();
   if (h.kind == 0) {
@@ -124,17 +157,25 @@ export void decodeCompressed(u8[] src, i32 at, i32 size, Buf out, Decoder d) {
     literals.fill(v as@ u8, 0, h.regenSize);
   } else if (h.kind == 2) {
     // The tree comes with the block, and is what a later treeless block will reuse.
-    HuffTable t = readTable(src, p);
+    HuffTable t = readTableIn(src, p, f);
+    if (f.failed()) { return; }
     d.huff = t;
     i32 streamsLen = h.compressedSize - t.bytesUsed;
-    if (streamsLen <= 0) { trap; }
-    literals = decodeLiterals(t, src, p + t.bytesUsed, streamsLen, h.regenSize, h.streams);
+    if (streamsLen <= 0) {
+      f.fail("a literals section whose tree leaves no room for its streams");
+      return;
+    }
+    literals = decodeLiteralsIn(t, src, p + t.bytesUsed, streamsLen, h.regenSize, h.streams, f);
+    if (f.failed()) { return; }
   } else {
     // Treeless: the tree must already exist. A frame that opens with one is malformed.
-    if (d.huff is null) { trap; }
-    if (h.compressedSize <= 0) { trap; }
-    literals = decodeLiterals(d.huff!, src, p, h.compressedSize, h.regenSize, h.streams);
+    if (d.huff is null || h.compressedSize <= 0) {
+      f.fail("a literals section reuses a tree before there is one");
+      return;
+    }
+    literals = decodeLiteralsIn(d.huff!, src, p, h.compressedSize, h.regenSize, h.streams, f);
+    if (f.failed()) { return; }
   }
   i32 seqAt = p + h.compressedSize;
-  d.seq = decodeAndExecute(src, seqAt, end - seqAt, literals, out, d.seq, d.reps);
+  d.seq = decodeAndExecuteIn(src, seqAt, end - seqAt, literals, out, d.seq, d.reps, f);
 }

@@ -1307,6 +1307,7 @@ export void buildStaticView(C c, ViewInputs v) {
     Lexed fl = lex(fb);
     alx[i] = fl;
     apg[i] = parseProgram(P.create(fb, fl));
+    c.relexed = c.relexed + 1;
   }
   c.sEv = Ev.create();
   c.sCx = declsOfFiles(paths, sources, alx, apg, v.esrc, v.elexed);
@@ -3957,6 +3958,14 @@ export struct C {
    * its default here.
    */
   string funcTypeDefaults;
+  /**
+   * **What this check redid that its caller should have handed it**, counted rather than timed: files
+   * lexed and parsed here because the caller's tables did not hold them, and `core`'s text built here
+   * because the caller did not pass it. A graph check hands over both, so each stays zero however many
+   * closures reach a file — `lexcost_test.wac` asserts that, where it used to time it (`issues/lang/0398b`).
+   */
+  i32 relexed;
+  i32 coreBuilt;
 
   void noteMarkup(this, Expr e, string k) {
     if (this.markupAtN >= this.markupAtE.len()) {
@@ -4079,7 +4088,7 @@ export struct C {
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
              string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|",
-             Expr[](), string[](), 0, "", 0, "|");
+             Expr[](), string[](), 0, "", 0, "|", 0, 0);
   }
 
   /**

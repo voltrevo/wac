@@ -2,9 +2,18 @@
 //
 // Decoding is the mirror of encoding, with one asymmetry that matters: the
 // decoder is fed bytes it did not produce, so every field is untrusted. Bad
-// input must trap rather than read out of bounds or loop forever.
+// input must not read out of bounds or loop forever.
+//
+// **Bad input fails the reader rather than trapping** (`BitReader.failed`), so a caller can be told
+// — `inflateResult`, `gunzipBytesResult` — and a page that decodes what a user dropped on it can say
+// "not a valid archive" instead of dying. It is sticky: once failed, every read answers zero and every
+// decode loop stops, and the only answer a failed decode can give is an error. That is the condition
+// `issues/system/0102` set for threading a status through the decoder — a decoder that keeps going
+// after a failure *nobody checks* is how silent corruption is written, and here nothing that read
+// after one can reach an `Ok`. The trapping entries (`inflate`, `gunzipBytes`) are the result ones
+// unwrapped, so they trap exactly where they did.
 
-import { Buf } from "core";
+import { Buf, Result } from "core";
 import { Read } from "core";
 import { Tables } from "./tables.wac";
 import { crc32, crc32Start, crc32Finish, crc32Update, crcTable8 } from "./crc32.wac";
@@ -37,14 +46,28 @@ struct BitReader {
   // shape. `drained` remembers that the source said "no more", so it is asked once.
   fn<Read()>? source;
   bool drained;
+  /** Why decoding stopped, or "" — set once, by `fail`, and never cleared. */
+  string failed;
 
   BitReader create(u8[] data, i32 start) {
-    return BitReader(data, start, 0, 0, null, false);
+    return BitReader(data, start, 0, 0, null, false, "");
   }
 
   /** A reader fed by `source`, which says whether it ended or broke. */
   BitReader streaming(fn<Read()> source) {
-    return BitReader(u8[](), 0, 0, 0, source, false);
+    return BitReader(u8[](), 0, 0, 0, source, false, "");
+  }
+
+  /**
+   * Stop decoding, saying why. Every read after this answers zero and every loop above stops, so what
+   * decoded so far is never handed out as the answer. The first reason is the one kept.
+   */
+  void fail(this, string why) {
+    if (this.failed == "") { this.failed = why; }
+    this.drained = true;
+    this.pos = this.data.len();
+    this.bitBuf = 0;
+    this.bitCount = 0;
   }
 
   /** Pull bytes in until at least `need` bits are buffered, or input runs out. */
@@ -76,9 +99,12 @@ struct BitReader {
     return this.bitBuf & ((1 << count) - 1);
   }
 
-  /** Consume `count` bits, which must actually be present. */
+  /** Consume `count` bits, which must actually be present; a stream that runs out fails. */
   void skip(this, i32 count) {
-    if (count > this.bitCount) { trap; }   // ran off the end of the stream
+    if (count > this.bitCount) {
+      this.fail("the stream ends in the middle of a block");
+      return;
+    }
     this.bitBuf >>>= count;
     this.bitCount -= count;
   }
@@ -128,6 +154,7 @@ struct BitReader {
    * Assumes `alignByte` has been called, so what remains in the bit buffer is whole bytes.
    */
   void copyBytes(this, Window out, i32 count) {
+    if (this.failed != "") { return; }
     i32 left = count;
 
     // Whole bytes still sitting in the bit buffer, before touching the array.
@@ -141,13 +168,22 @@ struct BitReader {
     while (left > 0) {
       if (this.pos >= this.data.len()) {
         // Running out here is a truncated block, not a legitimate end of stream.
-        if ((this.source is null) || this.drained) { trap; }
+        if ((this.source is null) || this.drained) {
+          this.fail("a stored block runs past the end of the stream");
+          return;
+        }
         match (this.source!()) {
           Data(bytes): { this.data = bytes; this.pos = 0; }
           // Running out mid-block is a truncated archive; a failed read is a failed read. Both stop,
-          // and nothing yet tells them apart (`issues/system/0102`).
-          End: { this.drained = true; trap; }
-          Failed(why): { this.drained = true; trap; }
+          // and now each says which.
+          End: {
+            this.fail("a stored block runs past the end of the stream");
+            return;
+          }
+          Failed(why): {
+            this.fail("the input could not be read: " + why);
+            return;
+          }
         }
       }
       i32 n = this.data.len() - this.pos;
@@ -458,7 +494,10 @@ struct Decoder {
       first = (first + count) << 1;
       code <<= 1;
     }
-    trap;   // no code matched in 15 bits — corrupt stream
+    // No code matched in 15 bits: a corrupt stream. 256 is end-of-block, which ends the caller's loop
+    // as well as `failed` does.
+    br.fail("a code in the stream matches nothing in its table");
+    return 256;
   }
 }
 
@@ -495,7 +534,12 @@ i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
   i32 hlit = br.readBits(5) + 257;
   i32 hdist = br.readBits(5) + 1;
   i32 hclen = br.readBits(4) + 4;
-  if (hlit > 286 || hdist > 30) { trap; }   // beyond what the format defines
+  if (hlit > 286 || hdist > 30) {            // beyond what the format defines
+    br.fail("a dynamic block declares more codes than the format allows");
+    outSplit[0] = 0;
+    outSplit[1] = 0;
+    return i32[]();
+  }
 
   // The code-length code, sent in a fixed permuted order.
   const i32[] order = CL_ORDER;
@@ -509,31 +553,43 @@ i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
   i32 total = hlit + hdist;
   i32[] lengths = i32[].filled(total, 0);
   i32 i = 0;
-  while (i < total) {
+  while (i < total && br.failed == "") {
     i32 sym = cl.decode(br);
     if (sym < 16) {
       lengths[i] = sym;
       i++;
     } else if (sym == 16) {
-      if (i == 0) { trap; }                 // nothing to repeat
+      if (i == 0) {                         // nothing to repeat
+        br.fail("a dynamic block repeats a length before giving one");
+        break;
+      }
       i32 prev = lengths[i - 1];
       i32 run = br.readBits(2) + 3;
       for (i32 k = 0; k < run; k++) {
-        if (i >= total) { trap; }           // run overflows the table
+        if (i >= total) {                   // run overflows the table
+          br.fail("a run of code lengths overflows its table");
+          break;
+        }
         lengths[i] = prev;
         i++;
       }
     } else if (sym == 17) {
       i32 run = br.readBits(3) + 3;
       for (i32 k = 0; k < run; k++) {
-        if (i >= total) { trap; }
+        if (i >= total) {
+          br.fail("a run of code lengths overflows its table");
+          break;
+        }
         lengths[i] = 0;
         i++;
       }
     } else {
       i32 run = br.readBits(7) + 11;
       for (i32 k = 0; k < run; k++) {
-        if (i >= total) { trap; }
+        if (i >= total) {
+          br.fail("a run of code lengths overflows its table");
+          break;
+        }
         lengths[i] = 0;
         i++;
       }
@@ -550,15 +606,19 @@ i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
 /** Decode one Huffman-coded block into `out`, literal by literal and match by match. */
 void inflateBlock(BitReader br, Window out, Tables t, Decoder lit, Decoder dist) {
   bool endOfBlock = false;
-  while (!endOfBlock) {
+  while (!endOfBlock && br.failed == "") {
     i32 sym = lit.decode(br);
+    if (br.failed != "") { return; }
     if (sym < 256) {
       out.push(sym);
     } else if (sym == 256) {
       endOfBlock = true;
     } else {
       i32 li = sym - 257;
-      if (li >= 29) { trap; }               // 286 and 287 are not valid lengths
+      if (li >= 29) {                       // 286 and 287 are not valid lengths
+        br.fail("a length code the format reserves");
+        return;
+      }
       i32 len = t.lenBase[li] + br.readBits(t.lenExtra[li]);
 
       i32 di = dist.decode(br);
@@ -578,9 +638,17 @@ void inflateBlock(BitReader br, Window out, Tables t, Decoder lit, Decoder dist)
       // Left in because it is one compare, and it stops being dead the moment either
       // of those two facts changes — widening the fixed distance table to the 32
       // patterns a 5-bit code can express is a change some implementations make.
-      if (di >= 30) { trap; }
+      if (br.failed != "") { return; }
+      if (di >= 30) {
+        br.fail("a distance code the format reserves");
+        return;
+      }
       i32 d = t.distBase[di] + br.readBits(t.distExtra[di]);
-      if (d > out.base + out.len) { trap; } // reference before the start of output
+      if (br.failed != "") { return; }
+      if (d > out.base + out.len) {          // reference before the start of output
+        br.fail("a match reaches back before the start of the output");
+        return;
+      }
 
       // Byte at a time, deliberately: when d < len the copy reads bytes this
       // same loop is writing, which is how DEFLATE encodes runs. A bulk copy
@@ -610,7 +678,7 @@ void inflateInto(BitReader br, Window out) {
   Tables t = Tables.create();
 
   bool last = false;
-  while (!last) {
+  while (!last && br.failed == "") {
     last = br.readBit() == 1;
     i32 btype = br.readBits(2);
 
@@ -622,7 +690,10 @@ void inflateInto(BitReader br, Window out) {
       br.alignByte();
       i32 len = br.readBits(16);
       i32 nlen = br.readBits(16);
-      if ((len ^ 0xFFFF) != nlen) { trap; }  // the check the format builds in
+      if ((len ^ 0xFFFF) != nlen) {          // the check the format builds in
+        br.fail("a stored block's length and its complement disagree");
+        return;
+      }
       br.copyBytes(out, len);
     } else if (btype == 1) {
       inflateBlock(br, out, t,
@@ -631,6 +702,7 @@ void inflateInto(BitReader br, Window out) {
     } else if (btype == 2) {
       i32[] split = i32[].filled(2, 0);
       i32[] lengths = readDynamicLengths(br, split);
+      if (br.failed != "") { return; }
       i32 hlit = split[0];
       i32 hdist = split[1];
 
@@ -646,7 +718,8 @@ void inflateInto(BitReader br, Window out) {
         Decoder.build(litLengths, hlit),
         Decoder.build(distLengths, hdist));
     } else {
-      trap;   // BTYPE 11 is reserved
+      br.fail("a block type the format reserves");   // BTYPE 11
+      return;
     }
   }
 }
@@ -658,18 +731,25 @@ void inflateInto(BitReader br, Window out) {
  * which it is for any well-formed gzip member — the output buffer is allocated
  * once at the correct size and handed back without a copy.
  */
-u8[] inflateFrom(u8[] data, i32 start, i32 sizeHint) {
+Result<u8[], string> inflateFrom(u8[] data, i32 start, i32 sizeHint) {
   i32 hint = sizeHint;
   if (hint < 0 || hint > maxSizeHint()) { hint = 0; }
   Window out = Window.create(hint);
-  inflateInto(BitReader.create(data, start), out);
+  BitReader br = BitReader.create(data, start);
+  inflateInto(br, out);
+  if (br.failed != "") { return Result.Err(br.failed); }
   out.finish();          // a no-op for a window with no sink, and says so in one place
-  return out.take();
+  return Result.Ok(out.take());
 }
 
-/** Decompress a raw DEFLATE stream. */
-export u8[] inflate(u8[] data) {
+/** Decompress a raw DEFLATE stream, or say why it is not one. */
+export Result<u8[], string> inflateResult(u8[] data) {
   return inflateFrom(data, 0, 0);
+}
+
+/** Decompress a raw DEFLATE stream. Traps on one that is malformed — `inflateResult` says why instead. */
+export u8[] inflate(u8[] data) {
+  return inflateResult(data).unwrap();
 }
 
 /** The bytes a stream held, and how much of the input it took to hold them. */
@@ -694,28 +774,41 @@ export struct Inflation {
  * `pos - (bitCount >> 3)`, and a caller that used `pos` would skip up to four bytes into the next
  * object.
  */
-export Inflation inflateAt(u8[] data, i32 start) {
+export Result<Inflation, string> inflateAtResult(u8[] data, i32 start) {
   Window out = Window.create(0);
   BitReader r = BitReader.create(data, start);
   inflateInto(r, out);
+  if (r.failed != "") { return Result.Err(r.failed); }
   out.finish();
-  return Inflation(out.take(), r.pos - (r.bitCount >> 3));
+  return Result.Ok(Inflation(out.take(), r.pos - (r.bitCount >> 3)));
+}
+
+/** `inflateAtResult`, trapping on a malformed stream. */
+export Inflation inflateAt(u8[] data, i32 start) {
+  return inflateAtResult(data, start).unwrap();
 }
 
 /**
  * Read a gzip member: validate the header, inflate the payload, and check both
  * trailer fields. A CRC or length mismatch traps — silently returning data that
  * failed its own integrity check would defeat the point of carrying one.
+ * `gunzipBytesResult` says why instead.
  */
 export u8[] gunzipBytes(u8[] gz) {
-  if (gz.len() < 18) { trap; }                    // header + empty body + trailer
-  if (gz[0] != 0x1F || gz[1] != 0x8B) { trap; }   // magic
-  if (gz[2] != 8) { trap; }                       // CM must be deflate
+  return gunzipBytesResult(gz).unwrap();
+}
+
+/** `gunzipBytes`, answering why a member is not valid rather than trapping. */
+export Result<u8[], string> gunzipBytesResult(u8[] gz) {
+  if (gz.len() < 18) { return Result.Err("too short to be a gzip member"); }   // header + empty body + trailer
+  if (gz[0] != 0x1F || gz[1] != 0x8B) { return Result.Err("not gzip: the magic bytes are wrong"); }
+  if (gz[2] != 8) { return Result.Err("a gzip compression method other than deflate"); }
 
   i32 flg = gz[3] as i32;
   i32 pos = 10;                                   // fixed header size
 
   if ((flg & 4) != 0) {                           // FEXTRA
+    if (pos + 1 >= gz.len()) { return Result.Err("a gzip header cut short"); }
     i32 xlen = gz[pos] as i32 | (gz[pos + 1] as i32 << 8);
     pos += 2 + xlen;
   }
@@ -730,7 +823,7 @@ export u8[] gunzipBytes(u8[] gz) {
   if ((flg & 2) != 0) {                           // FHCRC
     pos += 2;
   }
-  if (pos >= gz.len()) { trap; }
+  if (pos >= gz.len()) { return Result.Err("a gzip header longer than the member"); }
 
   // Trailer: CRC-32 then ISIZE, both little-endian, in the last 8 bytes. ISIZE is
   // read before inflating so it can size the output buffer — it is a hint only,
@@ -741,10 +834,14 @@ export u8[] gunzipBytes(u8[] gz) {
   u32 wantCrc = (gz[n - 8] as i32 | (gz[n - 7] as i32 << 8) | (gz[n - 6] as i32 << 16) | (gz[n - 5] as i32 << 24)) as@ u32;
   i32 wantSize = gz[n - 4] as i32 | (gz[n - 3] as i32 << 8) | (gz[n - 2] as i32 << 16) | (gz[n - 1] as i32 << 24);
 
-  u8[] out = inflateFrom(gz, pos, wantSize);
-  if (crc32(out) != wantCrc) { trap; }
-  if (out.len() != wantSize) { trap; }
-  return out;
+  u8[] out = u8[]();
+  match (inflateFrom(gz, pos, wantSize)) {
+    Ok(bytes): { out = bytes; }
+    Err(why): { return Result.Err(why); }
+  }
+  if (crc32(out) != wantCrc) { return Result.Err("the gzip checksum does not match what it holds"); }
+  if (out.len() != wantSize) { return Result.Err("the gzip length does not match what it holds"); }
+  return Result.Ok(out);
 }
 
 // ── Streaming ─────────────────────────────────────────────────────────────────
@@ -795,9 +892,12 @@ export i32 gunzipStream(fn<Read()> read, fn<bool(u8[])> write) {
   if ((flg & 2) != 0) {                           // FHCRC
     br.readBits(16);
   }
+  if (br.failed != "") { trap; }                  // a header cut short
 
   Window out = Window.streaming(write);
   inflateInto(br, out);
+  // The stream entry keeps trapping on a malformed member, as it documents; the reason is the reader's.
+  if (br.failed != "") { trap; }
   out.finish();
 
   // The trailer starts at the next byte boundary after the compressed data.
@@ -806,6 +906,11 @@ export i32 gunzipStream(fn<Read()> read, fn<bool(u8[])> write) {
               | (br.readByte() << 16) | (br.readByte() << 24)) as@ u32;
   i32 wantSize = br.readByte() | (br.readByte() << 8)
               | (br.readByte() << 16) | (br.readByte() << 24);
+  // **Checked before the trailer is believed.** A failed reader answers zero, and a missing high byte
+  // of a small member's length *is* zero — so a member one byte short matched its own trailer and was
+  // accepted (`stream_test.wac`'s `test_traps_truncated_by_one_byte` caught it). Every read after the
+  // decode is a read the decode's own check did not cover.
+  if (br.failed != "") { trap; }
 
   if (crc32Finish(out.crc) != wantCrc) { trap; }
   if (out.total() != wantSize) { trap; }

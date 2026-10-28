@@ -822,7 +822,18 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
  * a copy, it had also missed `issues/lang/0133`, so it walked the graph from the text. One body now.
  * `issues/lang/0175a`.
  */
-export string diagnoseGraphIn(string[] givenPaths, string[] givenSources, const Res res, string entry) {
+export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res, string entry) {
+  return diagnoseGraphTallied(paths, rawSources, res, entry, i32[].filled(2, 0));
+}
+
+/**
+ * `diagnoseGraphIn`, adding to `tally` what the closures redid that this graph should have handed them:
+ * `[0]` files lexed and parsed again, `[1]` builds of `core`'s text (`C.relexed`, `C.coreBuilt`). Both are
+ * zero for any graph — that is the property `issues/lang/0398b` bought, and a count can say it exactly
+ * where a timing on a shared machine could only say it usually.
+ */
+export string diagnoseGraphTallied(string[] givenPaths, string[] givenSources, const Res res, string entry,
+                                   i32[] tally) {
   // **`std` joins the graph even when the caller did not supply it** — it is carried, as `pruneFor` and
   // `buildStaticView` already say. Without it std's types were names with nothing declared behind them,
   // and the harness's in-process check refused `"\{e}"` on a `NotFound` that the command accepted.
@@ -913,7 +924,7 @@ export string diagnoseGraphIn(string[] givenPaths, string[] givenSources, const 
     }
     Res subRes = Res(subRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base);
     out = out + diagnoseFilesWithIn(subPaths, subSources, subRes, paths[i], subCounts,
-                                    subLexes, subProgs, subFronts);
+                                    subLexes, subProgs, subFronts, tally);
   }
   // **What the build will refuse, `check` says too.** An `async` function the lowering cannot take is
   // declined by the emitter, which `check` never runs — so a program checked clean and then would not
@@ -1128,13 +1139,13 @@ export string diagnoseFilesIn(string[] paths, string[] rawSources, Res res, stri
   Program?[] progs = Program?[].defaulted(paths.len() + 1);
   string[] fronts = string[].filled(paths.len(), "");
   i32[] counts = declCountsAndFronts(paths, sources, lexes, progs, fronts);
-  return diagnoseFilesWithIn(paths, sources, res, entry, counts, lexes, progs, fronts);
+  return diagnoseFilesWithIn(paths, sources, res, entry, counts, lexes, progs, fronts, i32[].filled(2, 0));
 }
 
 
 /** The same again with the resolution context — see `checkFilesWithIn` for what it buys. */
 string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string entry, i32[] counts,
-                           Lexed?[] lexes, Program?[] progs, string[] fronts) {
+                           Lexed?[] lexes, Program?[] progs, string[] fronts, i32[] tally) {
   // **Each file's lexical and parse complaints, as `declCountsAndFronts` wrote them** — read once per
   // file, where this used to lex and parse every file again for each closure that reached it.
   string out = "";
@@ -1143,6 +1154,8 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
   if (parseFailed) { return out; }
 
   C c = checkFilesWithIn(paths, sources, res, entry, counts, lexes, progs);
+  tally[0] = tally[0] + c.relexed;
+  tally[1] = tally[1] + c.coreBuilt;
   i32[] terrs = errorsOf(c);
   string[] notes = notesOf(c);
   // **Zero where nothing measured it.** A width of one is a claim — that the diagnostic really is
@@ -1630,6 +1643,31 @@ i32[] declCountsAndFronts(string[] paths, string[] sources, Lexed?[] lexes, Prog
   return counts;
 }
 
+/**
+ * One closure checked with the tables a graph check hands over, or without them, answering
+ * `[relexed, coreBuilt]` (`C`). The canary for `diagnoseGraphTallied`'s zeros: withheld, every file is
+ * lexed again and `core`'s text built, so a count of zero means the tables arrived rather than that
+ * nothing was counted.
+ */
+export i32[] checkTallied(string[] paths, string[] sources, string entry, bool handOver) {
+  Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
+  Program?[] progs = Program?[].defaulted(paths.len() + 1);
+  i32[] counts = i32[].filled(paths.len() + 1, 0);
+  string[] carried = sources;
+  if (handOver) {
+    counts = declCountsInto(paths, sources, lexes, progs);
+    carried = string[].filled(paths.len() + 1, "");
+    for (i32 i = 0; i < paths.len(); i++) { carried[i] = i < sources.len() ? sources[i] : ""; }
+    carried[paths.len()] = coreSource();
+  }
+  C c = checkFilesWithIn(paths, carried, Res.empty(), entry, counts, lexes, progs);
+  // Two slots filled one by one: wac-L5, which builds this file, has no array literal.
+  i32[] out = i32[].filled(2, 0);
+  out[0] = c.relexed;
+  out[1] = c.coreBuilt;
+  return out;
+}
+
 C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
   Lexed?[] lexes = Lexed?[].defaulted(callerPaths.len() + 1);
   Program?[] progs = Program?[].defaulted(callerPaths.len() + 1);
@@ -1684,8 +1722,8 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   paths[callerPaths.len()] = corePath();
   // **Carried by the caller where it has it**, one past its files, as it carries core's count, tokens and
   // tree: building the text is a few hundred microseconds, once per closure (`issues/lang/0398b`).
-  sources[callerPaths.len()] = callerSources.len() > callerPaths.len() && callerSources[callerPaths.len()] != ""
-    ? callerSources[callerPaths.len()] : coreSource();
+  bool coreCarried = callerSources.len() > callerPaths.len() && callerSources[callerPaths.len()] != "";
+  sources[callerPaths.len()] = coreCarried ? callerSources[callerPaths.len()] : coreSource();
 
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   // **The entry, too.** `issues/lang/0133` stopped the loop below re-reading each *imported* file
@@ -1694,6 +1732,8 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // turn as the entry. 180 files re-lexed and re-parsed to produce what `declCountsInto` already put
   // in these tables. Falls back when a caller supplied nothing, exactly as the import loop does.
   i32 eat = indexOfPath(paths, entry);
+  bool entryCarried = eat >= 0 && eat < lexes.len() && (lexes[eat] is not null) && eat < progs.len()
+    && (progs[eat] is not null);
   Lexed elexed = eat >= 0 && eat < lexes.len() && (lexes[eat] is not null) ? lexes[eat]! : lex(esrc);
   Program eprog = eat >= 0 && eat < progs.len() && (progs[eat] is not null)
     ? progs[eat]!
@@ -1721,6 +1761,8 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     declCap = declCap + (i < counts.len() ? counts[i] : 0);
   }
   C c = C.create(esrc, elexed.tokens, elexed.tokenCount, declCap);
+  if (!entryCarried) { c.relexed = c.relexed + 1; }
+  if (!coreCarried) { c.coreBuilt = c.coreBuilt + 1; }
 
   // **Which names, and from which file.** Filtering by name alone is not enough: `rlp.wac` exports a
   // `decode` and so does `codec/src/hex.wac`, and a closure holding both let the wrong one answer —

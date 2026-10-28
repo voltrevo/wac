@@ -1,0 +1,28 @@
+// The repository as a dependency: one namespace per package, each the package's public names.
+//
+//     imports: { wac: { git: 'https://github.com/voltrevo/wac', ref: 'master' } }
+//     import { zstd.decompress, json.parse, crypto.sha256 } from "wac";
+//
+// **A build reads only what a program reaches through this** — spec ch05
+// `§wac-reach-namespace-lazy-pxz4t63`, ch04 `§wac-package-selective-un8citz` — so a namespace nobody
+// uses costs nothing. Each package's names are its `src/lib.wac`, one per statement; a package with its
+// own manifest, like `web`, is entered through that.
+//
+// **Not every package is here yet.** These are the libraries with an entry, and the rest are added as
+// each gets a `src/lib.wac`. A command is here only through its library half — `box` is `Session` and
+// the applet table, not the `box` program — and `wac` and `sh` are not here at all yet.
+
+export * as abi from "./packages/abi/src/abi.wac";
+export * as box from "./packages/box/src/lib.wac";
+export * as crypto from "./packages/crypto/src/lib.wac";
+export * as ens from "./packages/ens/src/ens.wac";
+export * as fmt from "./packages/fmt/src/lib.wac";
+export * as fs from "./packages/fs/src/lib.wac";
+export * as gzip from "./packages/gzip/src/lib.wac";
+export * as json from "./packages/json/src/lib.wac";
+export * as regex from "./packages/regex/src/regex.wac";
+export * as rlp from "./packages/rlp/src/rlp.wac";
+export * as ssh from "./packages/ssh/src/ssh.wac";
+export * as url from "./packages/url/src/url.wac";
+export * as web from "./packages/web";
+export * as zstd from "./packages/zstd/src/lib.wac";

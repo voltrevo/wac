@@ -1,4 +1,4 @@
-// The repository root holds ten files, and every one of them is named here.
+// The repository root holds the files named here, and nothing else.
 //
 //     wac test --allow-read --allow-run tools/
 //
@@ -62,6 +62,8 @@ string[] expected() {
     "WASM-WISHLIST.md",
     "deno.json",
     "deno.lock",
+    "lib.wac",           // the repository as a dependency: a namespace per package
+    "wac.json5",         // its manifest, which names `lib.wac` as the entry
     "tasks.json5"       // the named commands; `wac task` reads it, and `deno.json` held them until 2026-08-27
   ];
 }

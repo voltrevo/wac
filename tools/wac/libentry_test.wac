@@ -1,0 +1,110 @@
+// The repository's root entry, `lib.wac`, and the per-package entries it is made of.
+//
+//     wac test --allow-read --allow-run tools/wac/libentry_test.wac
+//
+// `wac.json5` at the root makes the repository one dependency: a project names it by git and imports
+// `{ zstd.decompress, json.parse }` from it. Three things keep that worth having.
+//
+// **One name per statement in a `src/lib.wac`.** Reachability keeps an `export { … } from` list whole
+// (`packages/wacc/src/reach.wac`), so a list of several names makes a program that uses one read what
+// all of them need — and through a whole-repository entry that is exactly the over-reading the root
+// entry exists to avoid.
+//
+// **Every name it re-exports exists.** `wac check lib.wac` reads the whole tree behind it and refuses a
+// re-export of a name its source does not declare, so a rename in a package that forgot the entry is
+// caught here rather than by the first project that depends on it.
+//
+// **A program reads what it reaches, not the repository.** A probe takes two names from two packages
+// through the entry; the build reads a few files, where checking the entry reads every one.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath } from "../../packages/wactest/src/host.wac";
+import { contains, splitLines, trimmed } from "../../packages/wactest/src/strings.wac";
+import { ChildEnv, Env, Exec, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
+
+/** Every package's `src/lib.wac`, by asking the shell — the set grows as packages gain one. */
+/** `prog args` to the end, both streams kept. */
+Exec run(Procs procs, string prog, string[] args) {
+  return flatten(procs.exec(prog, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
+}
+
+string[] libEntries(Procs procs) {
+  Exec r = run(procs, "/bin/sh", ["-c", "ls packages/*/src/lib.wac"]);
+  return splitLines(string.fromBytes(r.stdout));
+}
+
+export string test_a_package_entry_exports_one_name_per_statement(Sys sys) {
+  Files fs = sys.files();
+  T t = T.create();
+  string[] entries = libEntries(sys.procs());
+  t.isTrue(entries.len() >= 5, "found the package entries: \{entries.len()}");
+  for (string path in entries) {
+    u8[]? f = flatten(fs.readFile(path).wait()).ok();
+    t.isTrue(f is not null, "read \{path}");
+    if (f is null) { continue; }
+    string text = string.fromBytes(f!);
+    i32 at = 0;
+    while (true) {
+      i32 found = text.slice(at, text.len()).indexOf("export {");
+      if (found < 0) { break; }
+      i32 open = at + found;
+      i32 close = text.slice(open, text.len()).indexOf("}");
+      string items = text.slice(open + 8, open + close);
+      t.isTrue(items.indexOf(",") < 0, "\{path}: one name per `export { … } from`, not \{trimmed(items)}");
+      at = open + close;
+    }
+  }
+  return t.report();
+}
+
+export string test_every_name_the_root_entry_offers_exists(Sys sys) {
+  T t = T.create();
+  Exec r = run(sys.procs(), binaryPath(sys.env()), ["check", "lib.wac"]);
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.eqI32(r.status, 0, "wac check lib.wac: \{said}");
+  t.isTrue(contains(said, "no diagnostics"), "and it says so: \{said}");
+  return t.report();
+}
+
+/**
+ * A program that depends on the repository through its root entry, as a project outside it would: two
+ * names from two packages. Written at run time into `.cache/`, inside the repository's project so
+ * `../lib.wac` reaches the entry, and outside the corpus `corpuscheck_test.wac` sweeps, which walks
+ * `packages/` and `tools/` and would not hold the root file this imports.
+ */
+static string PROBE =
+  "import { json.parse, zstd.decompress } from \"../lib.wac\";\n" +
+  "export i32 main() {\n" +
+  "  if (parse(\"[1, 2]\".toBytes()).ok() is null) { return 1; }\n" +
+  "  return decompress(u8[]()).len() == 0 ? 0 : 2;\n" +
+  "}\n";
+
+export string test_a_program_reads_what_it_reaches_through_the_root_entry(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  T t = T.create();
+  i32 cwdLen = flatten(env.cwd().wait()).orElse("").len();
+  string probe = ".cache/libentry_probe-\{cwdLen}.wac";
+  fs.mkdir(".cache", true).wait();
+  t.isTrue(flatten(fs.writeFile(probe, PROBE.toBytes()).wait()).isOk(), "wrote the probe at \{probe}");
+  string out = "/tmp/wac-libentry-\{cwdLen}";
+  Exec built = run(procs, binaryPath(env), ["build", "--no-cache", probe, "-o", out]);
+  string said = string.fromBytes(built.stdout) + string.fromBytes(built.stderr);
+  t.eqI32(built.status, 0, "the probe builds: \{said}");
+  // The entry, the json and zstd files the two names need, and their own imports — twenty is a bound
+  // with room, where reading behind every namespace is a hundred.
+  i32 at = said.indexOf(" bytes from ");
+  i32 files = 0;
+  if (at >= 0) {
+    u8[] b = said.slice(at + 12, said.len()).toBytes();
+    for (i32 i = 0; i < b.len() && b[i] >= 48 && b[i] <= 57; i++) { files = files * 10 + (b[i] as i32 - 48); }
+  }
+  t.isTrue(files > 0 && files <= 20, "files read to build two names through the root entry: \{said}");
+  Exec ran = run(procs, binaryPath(env), ["\{out}.wasm"]);
+  t.eqI32(ran.status, 0, "and it runs: \{string.fromBytes(ran.stderr)}");
+  fs.remove("\{out}.wasm", false).wait();
+  fs.remove(probe, false).wait();
+  return t.report();
+}

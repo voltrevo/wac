@@ -1,0 +1,16 @@
+// `box` as the repository's root entry presents it (`lib.wac` at the root): the half of box a program
+// embeds, as opposed to `box.wac`, which is the command. `Session` is what a page or a terminal runs a
+// shell in; the rest is how other code in this repository reaches box's applets, gathered from those
+// imports on 2026-10-28.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so
+// a list of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { Session } from "./lib/session.wac";
+export { boxApplet } from "./shrun.wac";
+export { boxNames } from "./shrun.wac";
+export { boxRun } from "./shrun.wac";
+export { appletNames } from "./box.wac";
+export { UNKNOWN } from "./box.wac";
+export { acceptedFlags } from "./lib/flags.wac";

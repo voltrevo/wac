@@ -28,6 +28,11 @@ export struct Listen {
    * The keys whose default the document prevents, for a key event — `"Tab ArrowUp ArrowDown"` — or
    * `"*"` for every event of the kind, or `""` for none. A worker learns of an event after the browser
    * has acted on it, so this cannot be decided per event.
+   *
+   * **A key may name its modifiers**: `"Ctrl+s Ctrl+l"` prevents those and not a plain `s` or `l`. A key
+   * with modifiers matches only when exactly those are held, of `Ctrl`, `Alt`, `Shift` and `Meta`; a key
+   * without them matches whatever is held, as it always has. A single letter matches either case. The
+   * handler tells the two apart by `ElementEvent.mods`.
    */
   string prevent;
 
