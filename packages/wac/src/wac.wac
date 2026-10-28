@@ -2409,7 +2409,38 @@ async i32 checkCommand(Output err, Output out, Env env, Files fs, string[] given
   // **It always says what it read** (spec ch45 `§wac-cli-check-4mkq8wp`) — after errors and
   // warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
   string[] roots = given;
-  string label = given.len() == 1 ? given[0] : (given.len() > 1 ? "\{given[0]} and \{given.len() - 1} more" : "");
+  // **A directory stands for the files beneath it** (spec ch06 `§wac-check-dir-r4kq7zm`). It was read as
+  // a file, and `wac check .` answered ": 1 file(s), no diagnostics" having checked nothing at all.
+  if (given.len() > 0) {
+    Vec<string> expanded = Vec.create();
+    string here = flatten(env.cwd().wait()).unwrap();
+    // An index, not `for (string g in given)`: that loop around an `await` in an `async` function is
+    // emitted as a call the engine refuses (`issues/lang/0420c`).
+    for (i32 gi = 0; gi < given.len(); gi++) {
+      string g = given[gi];
+      // Asked of the absolute path: `.` itself did not stat as a directory, so `wac check .` was read as
+      // a file named `.` and answered ": 1 file(s), no diagnostics".
+      string asked = g.len() > 0 && g.slice(0, 1) == "/" ? g : normalisePath("\{here}/\{g}");
+      Stat? st = flatten(fs.stat(asked).wait()).ok();
+      if (st is not null && st!.isDir) {
+        string why = await rootsBeneath(env, fs, g, expanded);
+        if (why != "") {
+          err.line("wac check: " + why);
+          return 1;
+        }
+      } else {
+        expanded.push(g);
+      }
+    }
+    roots = expanded.toArray();
+    if (roots.len() == 0) {
+      out.line("\{given[0] == "" ? "." : given[0]}: 0 file(s), no diagnostics");
+      return 0;
+    }
+  }
+  // `given` is normalised, which spells `.` as "".
+  string first = given.len() > 0 && given[0] == "" ? "." : (given.len() > 0 ? given[0] : "");
+  string label = given.len() == 1 ? first : (given.len() > 1 ? "\{first} and \{given.len() - 1} more" : "");
   if (given.len() == 0) {
     // **The project this is run in**: the nearest `wac.json5` at or above the working directory.
     string dir = ".";
@@ -2446,7 +2477,7 @@ async i32 checkCommand(Output err, Output out, Env env, Files fs, string[] given
   string[] paths = g.paths;
   string[] texts = g.texts;
   Sources first = g.first;
-  Res res = resOf(first);
+  Res res = g.res;
   string wire = diagnoseGraphIn(paths, texts, res, normalisePath(roots[0]));
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { err.line(diags); }
@@ -2460,6 +2491,47 @@ async i32 checkCommand(Output err, Output out, Env env, Files fs, string[] given
  * exclusion. `rel` is the path below the project directory, which is what an exclusion is matched
  * against.
  */
+/**
+ * The `.wac` files beneath directory `arg`, as project discovery finds them — spec ch06
+ * `§wac-check-dir-r4kq7zm` — into `out`, spelled relative to the working directory where they are under
+ * it. The project's exclusions apply, matched from the project's directory, so the nearest `wac.json5` at
+ * or above `arg` is found first; with none, `arg` is the project. Answers why it could not, or "".
+ */
+async string rootsBeneath(Env env, Files fs, string arg, Vec<string> out) {
+  string cwd = flatten(env.cwd().wait()).unwrap();
+  string abs = normalisePath(arg.len() > 0 && arg.slice(0, 1) == "/" ? arg : "\{cwd}/\{arg}");
+  string proj = abs;
+  bool found = false;
+  for (i32 up = 0; up < 64 && !found; up++) {
+    if ((await fs.stat("\{proj}/\{MANIFEST_NAME()}")).isOk()) { found = true; }
+    else {
+      i32 cut = 0 - 1;
+      for (i32 k = 0; k < proj.len(); k++) { if (proj.slice(k, k + 1) == "/") { cut = k; } }
+      if (cut <= 0) { break; }
+      proj = proj.slice(0, cut);
+    }
+  }
+  string[] exclude = string[]();
+  if (found) {
+    u8[]? mf = flatten(fs.readFile("\{proj}/\{MANIFEST_NAME()}").wait()).ok();
+    Manifest m = readManifest(mf is not null ? mf! : "{}".toBytes());
+    if (!m.ok) {
+      return proj + "/" + MANIFEST_NAME() + " — " + manifestWhy(m.code) + (m.detail == "" ? "" : " (\{m.detail})");
+    }
+    exclude = m.checkExclude;
+  } else {
+    proj = abs;
+  }
+  string rel = abs == proj ? "" : abs.slice(proj.len() + 1, abs.len());
+  Vec<string> found2 = Vec.create();
+  discoverWac(fs, proj, rel, exclude, found2);
+  for (i32 i = 0; i < found2.len(); i++) {
+    string p = found2.get(i);
+    out.push(p.len() > cwd.len() + 1 && p.slice(0, cwd.len() + 1) == "\{cwd}/" ? p.slice(cwd.len() + 1, p.len()) : p);
+  }
+  return "";
+}
+
 void discoverWac(Files fs, string dir, string rel, string[] exclude, Vec<string> out) {
   string here = rel == "" ? dir : "\{dir}/\{rel}";
   string[]? names = flatten(fs.readDir(here).wait()).ok();

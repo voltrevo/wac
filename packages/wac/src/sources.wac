@@ -166,7 +166,11 @@ async string projectRootIn(Files fs, string path, string boundary) {
  */
 export string wacHomeOf(Env env) {
   u8[]? set = flatten(env.get("WAC_HOME").wait()).orElse(null);
-  if (!(set is null) && set!.len() > 0) { return string.fromBytes(set!); }
+  // **Normalised**, because the cache path built from it is compared as a string: a mapped dependency is
+  // confined to its subdirectory, and `WAC_HOME=/a/app/../home` put a `..` in that subdirectory and in
+  // nothing it was compared with — every relative import in every dependency "left" it
+  // (`packages/wac/test/wac/wachome_test.wac`).
+  if (!(set is null) && set!.len() > 0) { return normalisePath(string.fromBytes(set!)); }
   u8[]? home = flatten(env.get("HOME").wait()).orElse(null);
   if ((home is null) || home!.len() == 0) { return ""; }
   return "\{string.fromBytes(home!)}/.wac";
@@ -487,10 +491,18 @@ export async Sources gatherNeeded(Files fs, Env env, string entry, ReadCache cac
 
 /** A project's sources gathered from every root: each file once, in the order first reached. */
 export struct Gathered {
-  /** The first root's `Sources`, whose `Res` the graph is checked against. */
+  /** The first root's `Sources`. */
   Sources first;
   string[] paths;
   string[] texts;
+  /**
+   * What the whole graph resolves against: each file's project root beside it, and **every** root's
+   * mappings. This was the first root's `Res`, so a nested project or a package that only a later root
+   * imported was found for nobody — its namespaced items stayed as written and did not parse, 950 times
+   * over in this repository's own pages — and the positional roots table belonged to the first root's
+   * files only.
+   */
+  Res res;
   /** Files read off disk to gather them all — one per distinct file when the cache does its job. */
   i32 reads;
   /** Why a root could not be gathered, worded for `wacc: …`; "" when every one was. */
@@ -509,18 +521,33 @@ export async Gathered gatherRoots(Files fs, Env env, string[] roots) {
   Sources first = await gatherWith(fs, env, normalisePath(roots[0]), false, cache);
   Vec<string> ps = Vec.create();
   Vec<string> ts = Vec.create();
+  Vec<string> rs = Vec.create();
+  Vec<string> from = Vec.create();
+  Vec<string> spec = Vec.create();
+  Vec<string> to = Vec.create();
   for (i32 r = 0; r < roots.len(); r++) {
     Sources s = r == 0 ? first : (await gatherWith(fs, env, normalisePath(roots[r]), false, cache));
     if (s.missing != "" || s.why != "") {
-      return Gathered(first, string[](), string[](), cache.reads, s.why != "" ? s.why : "cannot read \{s.missing}");
+      return Gathered(first, string[](), string[](), resOf(first), cache.reads,
+                      s.why != "" ? s.why : "cannot read \{s.missing}");
     }
     for (i32 i = 0; i < s.n; i++) {
       bool have = false;
       for (i32 k = 0; k < ps.len(); k++) { if (ps.get(k) == s.paths[i]) { have = true; } }
-      if (!have) { ps.push(s.paths[i]); ts.push(s.texts[i]); }
+      if (!have) { ps.push(s.paths[i]); ts.push(s.texts[i]); rs.push(s.roots[i]); }
+    }
+    // A mapping is keyed by the importing file and its specifier, so the same pair from two roots is
+    // the same answer: kept once.
+    for (i32 m = 0; m < s.mapN; m++) {
+      bool seen = false;
+      for (i32 k = 0; k < from.len(); k++) {
+        if (from.get(k) == s.mapFrom[m] && spec.get(k) == s.mapSpec[m]) { seen = true; }
+      }
+      if (!seen) { from.push(s.mapFrom[m]); spec.push(s.mapSpec[m]); to.push(s.mapTo[m]); }
     }
   }
-  return Gathered(first, ps.toArray(), ts.toArray(), cache.reads, "");
+  Res res = Res(rs.toArray(), from.toArray(), spec.toArray(), to.toArray(), first.base);
+  return Gathered(first, ps.toArray(), ts.toArray(), res, cache.reads, "");
 }
 
 /** `gather`, reading through `cache` — see `ReadCache`. */

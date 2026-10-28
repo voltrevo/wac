@@ -32,3 +32,9 @@ Either way it is a wrong answer from the bridge rather than a slow one.
 
 Not caused by the change being gated when it appeared (bindgen's generated classes: `ref`, `of`,
 `toObject`); the ring and its host do not go through bindgen's glue.
+
+**Seen again 2026-10-28** (agent-c, in a `--deno-only` pass, about 600 tests in parallel), this time
+in the `seeded` mode and with the diagnosis the fuzz now prints: `seed 1009 (seeded): answer for 247 is
+1812 bytes, wanted 155006 — the nonce belongs to cancelled call 241 - a recycled slot; handler read size
+1812 - not the 155006 asked, so the request path corrupted it`. So it is the recycled-slot window, and
+it was entered on the request path rather than on the answer path. The same seed passed four runs alone.

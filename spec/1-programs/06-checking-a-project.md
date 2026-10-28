@@ -69,6 +69,36 @@ i32 broken() { return nonexistent(); }    // not reached from src/lib.wac: dropp
 `[§wac-check-files-no-discovery-km2e8t2]` Supplying files turns off discovery: a project file that the
 supplied files do not reach is not checked.
 
+A directory may be supplied in place of a file. It stands for the `.wac` files beneath it, found the way
+a project finds its own — a nested project's files are not among them, and the project's `check.exclude`
+still applies, matched from the project's directory — and each is a root. So `wac check .` checks the
+working directory, and `wac check` alone the whole project it belongs to.
+
+```wac
+// expect (wac check src): emits
+// ---- wac.json5 ----
+{}
+// ---- src/lib.wac ----
+export i32 answer() { return 42; }
+// ---- src/more/also.wac ----
+export i32 more() { return 1; }
+// ---- elsewhere.wac ----
+i32 broken() { return nonexistent(); }    // not beneath src: not checked
+```
+
+```wac
+// expect (wac check src): refused
+// ---- wac.json5 ----
+{}
+// ---- src/lib.wac ----
+export i32 answer() { return 42; }
+// ---- src/more/broken.wac ----
+i32 broken() { return nonexistent(); }    // beneath src, though nothing imports it: checked
+```
+
+`[§wac-check-dir-r4kq7zm]` A directory supplied to `wac check` stands for the `.wac` files beneath it that
+project discovery would find, less the project's exclusions, each a root.
+
 ## Project membership
 
 Discover `.wac` files recursively beneath the directory containing `wac.json5`. Explicit exclusions can
