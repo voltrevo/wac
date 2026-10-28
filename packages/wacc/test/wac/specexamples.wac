@@ -427,6 +427,13 @@ string meetsCheck(Env env, Files fs, Procs procs, string scratch, ExFence fence,
     if (cut > 0) { fs.mkdir(full.slice(0, cut), true).wait(); }
     fs.writeFile(full, sources[i].toBytes()).wait();
   }
+  // **The fence is the whole project**, as it is for a reader who types it into an empty directory.
+  // Written here it sits inside this repository, so a bare `wac check` climbed to the repository's
+  // manifest, skipped `.cache/` as hidden, and checked the repository instead: every `refused`
+  // example was met for as long as the repository had an error somewhere, and none once it had none.
+  bool hasManifest = false;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "wac.json5") { hasManifest = true; } }
+  if (!hasManifest) { fs.writeFile(dir + "/wac.json5", "{}\n".toBytes()).wait(); }
   string[] words = wordsOfCmd(x.command);
   string line = "cd " + dir + " && exec " + flatten(env.cwd().wait()).unwrap() + "/native/v8/target/release/wac check";
   for (i32 w = 2; w < words.len(); w++) { line = line + " " + words[w]; }
