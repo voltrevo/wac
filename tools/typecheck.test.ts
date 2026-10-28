@@ -56,7 +56,12 @@ Deno.test("every TypeScript file in the repo type-checks", async () => {
   const files = await typescriptFiles();
   // A floor, so this cannot pass by checking nothing — the failure mode of every "run a tool over the
   // repo" test, and invisible because an empty run is also a green one.
-  assertEquals(files.length > 200, true, `only ${files.length} files found; the walk is broken`);
+  //
+  // **50, not 200, since 2026-10-27.** The TypeScript is shrinking on purpose: the operator's rule
+  // keeps Deno for the hosts, the bootstrap and oracles. The day's deletions took the walk to 199 and
+  // tripped the old floor on correct code. The floor only has to tell a broken walk, which finds
+  // almost nothing, from a working one.
+  assertEquals(files.length > 50, true, `only ${files.length} files found; the walk is broken`);
 
   const r = await new Deno.Command(Deno.execPath(), {
     args: ["check", ...files],

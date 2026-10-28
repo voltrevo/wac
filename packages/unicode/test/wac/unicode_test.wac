@@ -17,31 +17,88 @@
 //
 // Every code point means every code point: 0 to 0x10FFFF, surrogates excluded, on each run.
 //
-// ## What the move changed
+// ## Where the oracle lives
 //
 // The oracle stays in JavaScript — `toLowerCase`, a `u`-mode `RegExp` for simple case folding, and
 // `\p{…}` for the categories are not all available anywhere else, and taking half of them from a
-// second source would make disagreements harder to read. What moved is the direction: this file
-// computes the answers and `test/oracle.ts` checks them, one process per sweep.
+// second source would make disagreements harder to read.
 //
-// Three of the four sweeps are sent **sparsely** — the places where the answer is not the identity —
-// and the oracle rebuilds the whole function from that before sweeping it itself. That is a few
-// thousand lines instead of a few million, and it makes a missing entry and a wrong entry the same
-// kind of failure. UTF-8 encoding differs from the identity everywhere, so that one goes in full and
-// the oracle counts what it was sent.
+// **`UNICODE` below is the whole oracle, and it only answers.** It was a TypeScript file beside the
+// tests, which took this file's answers and did the comparing; since 2026-10-27 the script says what
+// JavaScript says for each question and `agree` compares in wac (`packages/wactest/src/inline.wac`).
+// Still one process per sweep.
+//
+// The whole-range sweeps are asked **a block of 64 code points at a time**, and the answer is the
+// block's exceptions — the code points a mapping moves, or the places printability flips. That is a
+// few thousand lines instead of a few million, and a code point missing from this side's table and
+// one that is wrong in it are the same kind of disagreement. UTF-8 encoding differs from the
+// identity everywhere, so that one is asked a code point at a time.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
 import { toLower, toUpper, fold, lowerAll, upperAll, foldAll, foldEqual } from "../../src/case.wac";
 import { isPrintable } from "../../src/printable.wac";
 import { Scalar, decode, encodedLength, encode, isValid, count } from "../../src/utf8.wac";
 
-static string ORACLE = "packages/unicode/test/oracle.ts";
+/**
+ * What JavaScript says, one line for each question; code points and strings travel as hex. `case B`
+ * is every `cp:lower:upper` in the 64 from B that a simple mapping moves — a mapping to several code
+ * points is no simple mapping — and `print B` is printability at B then each code point where it
+ * flips. `utf8 cp` is the encoding; `lower`/`upper s` the mapped string; `eqf a b` 1 when every code
+ * point pair is the same letter to a `u`-mode `RegExp`; `valid s` 1 or 0; `count s` scalars, or -1.
+ */
+static string UNICODE =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const B = String.fromCharCode(92), h = (n) => n.toString(16), cp = (s) => String.fromCodePoint(s);\n" +
+  "const dec = new TextDecoder('utf-8', { fatal: true }), enc = new TextEncoder();\n" +
+  "const str = (x) => dec.decode(Uint8Array.from(x.match(/../g) || [], (y) => parseInt(y, 16)));\n" +
+  "const hex = (s) => [...enc.encode(s)].map((x) => x.toString(16).padStart(2, '0')).join('');\n" +
+  "const ok = (f) => { try { return f(); } catch { return null; } };\n" +
+  "const sur = (c) => c >= 0xd800 && c <= 0xdfff;\n" +
+  "const sim = (c, m) => { const p = [...m(cp(c))]; return p.length === 1 ? p[0].codePointAt(0) : c; };\n" +
+  "const same = (a, b) => new RegExp(B + 'u{' + h(a) + '}', 'iu').test(cp(b));\n" +
+  "const np = new RegExp(['Cc', 'Cn', 'Cs', 'Zl', 'Zp'].map((k) => B + 'p{' + k + '}').join('|'), 'u');\n" +
+  "const pr = (c) => !sur(c) && !np.test(cp(c));\n" +
+  "const say = (k, a) => {\n" +
+  "  const s = parseInt(a[0], 16), o = [];\n" +
+  "  if (k === 'case') { for (let c = s; c < s + 64; c++) { if (sur(c)) continue;\n" +
+  "    const lo = sim(c, (x) => x.toLowerCase()), up = sim(c, (x) => x.toUpperCase());\n" +
+  "    if (lo !== c || up !== c) o.push([c, lo, up].map(h).join(':')); } return o.join(' '); }\n" +
+  "  if (k === 'print') { o.push(pr(s) ? '1' : '0'); for (let c = s + 1; c < s + 64; c++) if (pr(c) !== pr(c - 1)) o.push(h(c)); return o.join(' '); }\n" +
+  "  if (k === 'utf8') return hex(cp(s));\n" +
+  "  if (k === 'lower') return hex(str(a[0]).toLowerCase());\n" +
+  "  if (k === 'upper') return hex(str(a[0]).toUpperCase());\n" +
+  "  if (k === 'eqf') { const x = [...str(a[0])], y = [...str(a[1])];\n" +
+  "    return x.length === y.length && x.every((c, i) => same(c.codePointAt(0), y[i].codePointAt(0))) ? '1' : '0'; }\n" +
+  "  if (k === 'valid') return ok(() => str(a[0])) === null ? '0' : '1';\n" +
+  "  if (k === 'count') { const t = ok(() => str(a[0])); return t === null ? '-1' : String([...t].length); }\n" +
+  "  return 'no such question: ' + k;\n" +
+  "};\n" +
+  "console.log(L.map((l) => { const [k, ...a] = l.split(' '); return say(k, a); }).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
+
 static i32 MAX = 0x10FFFF;
+
+/** A code point, or anything non-negative, as lowercase hex without leading zeros. */
+string hx(i32 n) {
+  u8[] digits = "0123456789abcdef".toBytes();
+  u8[] out = u8[].filled(8, 0);
+  i32 at = 8;
+  i32 v = n;
+  while (true) {
+    at = at - 1;
+    out[at] = digits[v % 16];
+    v = v / 16;
+    if (v == 0) { break; }
+  }
+  u8[] exact = u8[].filled(8 - at, 0);
+  for (i32 i = at; i < 8; i++) { exact[i - at] = out[i]; }
+  return string.fromBytes(exact);
+}
 
 bool isSurrogate(i32 cp) { return cp >= 0xD800 && cp <= 0xDFFF; }
 
@@ -60,25 +117,31 @@ u8[] b(string s) { return s.toBytes(); }
 /**
  * Simple case mapping at every code point, and the simple/full boundary with it.
  *
- * Sent sparsely: every code point either mapping moves. The oracle sweeps all 1 114 112 itself and
- * diffs both ways, so a code point missing from this list is checked as thoroughly as one that is
- * wrong — which is what makes the *boundary* case fall out of the same batch. Where the host maps one
- * code point to several, simple mapping must leave it alone, so it must be absent here.
+ * Asked a block at a time, and both sides answer with every code point either mapping moves — so a
+ * code point missing from this table is checked as thoroughly as one that is wrong, which is what
+ * makes the *boundary* case fall out of the same batch. Where the host maps one code point to
+ * several, simple mapping must leave it alone, so it must be absent from both answers.
  */
-export string test_simple_case_mapping_agrees_with_the_host(Core core, Cli cli) {
+export async string test_simple_case_mapping_agrees_with_the_host(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
-  for (i32 cp = 0; cp <= MAX; cp++) {
-    if (isSurrogate(cp)) { continue; }
-    i32 lo = toLower(cp);
-    i32 up = toUpper(cp);
-    if (lo != cp || up != cp) {
-      lines.add("case \{cp} \{lo} \{up}");
+  Asked asked = Asked.create();
+  i32 moved = 0;
+  for (i32 start = 0; start <= MAX; start = start + 64) {
+    string ours = "";
+    for (i32 cp = start; cp < start + 64; cp++) {
+      if (isSurrogate(cp)) { continue; }
+      i32 lo = toLower(cp);
+      i32 up = toUpper(cp);
+      if (lo == cp && up == cp) { continue; }
+      ours = ours + (ours == "" ? "" : " ") + "\{hx(cp)}:\{hx(lo)}:\{hx(up)}";
+      moved = moved + 1;
     }
+    asked.add("case \{hx(start)}", ours);
   }
-  t.isTrue(lines.n > 2000, "the mapping moves a few thousand code points — \{lines.n}");
-  lines.add("sweep case");
-  checkDeno(t, cli, ORACLE, lines, "case mapping");
+  t.isTrue(moved > 2000, "the mapping moves a few thousand code points — \{moved}");
+  // The boundary proves nothing unless the host does map something to several code points: ß to SS.
+  asked.add("upper c39f", "5353");
+  await agree(t, sys.procs(), UNICODE, asked, "case mapping");
   return t.report();
 }
 
@@ -111,30 +174,30 @@ export string test_sharp_s_under_simple_uppercase() {
  * ever confirm the generator, and it is also false: `ı` and `i` both uppercase to `I` and are not the
  * same letter.
  */
-export string test_fold_is_an_equivalence(Core core, Cli cli) {
+export async string test_fold_is_an_equivalence(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32 moved = 0;
   for (i32 cp = 0; cp <= MAX; cp++) {
     if (isSurrogate(cp)) { continue; }
     i32 f = fold(cp);
-    if (f == cp) { continue; }
-    moved = moved + 1;
-    // Idempotent: folding a folded code point changes nothing. A table with a two-step chain in it —
-    // x to y to z — would break this and nothing else here would notice.
-    t.eqI32(fold(f), f, "U+\{cp} folds to \{f}, which folds again");
-    lines.add("fold \{cp} \{f}");
-    // The case mappings too, so the oracle can check that a code point and its case mapping fold
-    // together exactly when the host says they are the same letter.
-    i32 lo = toLower(cp);
-    i32 up = toUpper(cp);
-    if (lo != cp || up != cp) { lines.add("case \{cp} \{lo} \{up}"); }
+    if (f != cp) {
+      moved = moved + 1;
+      // Idempotent: folding a folded code point changes nothing. A table with a two-step chain in it —
+      // x to y to z — would break this and nothing else here would notice.
+      t.eqI32(fold(f), f, "U+\{cp} folds to \{f}, which folds again");
+    }
+    // A code point and what it folds to, and its case mappings, fold together exactly when the host
+    // says they are the same letter.
+    i32[] others = [f, toLower(cp), toUpper(cp)];
+    for (i32 i = 0; i < others.len(); i++) {
+      i32 o = others[i];
+      if (o == cp || (i > 0 && o == others[0]) || (i > 1 && o == others[1])) { continue; }
+      asked.add("eqf \{hex(encodeOne(cp))} \{hex(encodeOne(o))}", fold(o) == f ? "1" : "0");
+    }
   }
   t.isTrue(moved >= 1000, "only \{moved} code points fold to anything, which is too few");
-  // The case lines above are context, not a second case sweep: the fold rules ask whether a code
-  // point folds with its own case mapping, and they need the mapping to do it.
-  lines.add("sweep fold");
-  checkDeno(t, cli, ORACLE, lines, "fold");
+  await agree(t, sys.procs(), UNICODE, asked, "fold");
   return t.report();
 }
 
@@ -251,9 +314,9 @@ i32[] casedPoints(i32 from, i32 to, i32 limit, bool upper) {
  * anywhere and a disagreement is a disagreement about the *string* operation rather than about a
  * boundary the first test already covers.
  */
-export string test_mapping_whole_strings_agrees_with_the_host(Core core, Cli cli) {
+export async string test_mapping_whole_strings_agrees_with_the_host(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] lowerPoints = casedPoints(0x20, 0x2FFFF, 200000, false);
   i32[] upperPoints = casedPoints(0x20, 0x2FFFF, 200000, true);
   t.isTrue(lowerPoints.len() > 1000 && upperPoints.len() > 1000,
@@ -271,11 +334,11 @@ export string test_mapping_whole_strings_agrees_with_the_host(Core core, Cli cli
     u8[]? got = up ? upperAll(s) : lowerAll(s);
     t.isTrue(!(got is null), "a generated string is valid UTF-8");
     if (got is null) { continue; }
-    lines.add("str " + (up ? "upper " : "lower ") + hex(s) + " " + hex(got!));
+    asked.add((up ? "upper " : "lower ") + hex(s), hex(got!));
     sent = sent + 1;
   }
   t.eqI32(sent, 3000, "every generated string was checked");
-  checkDeno(t, cli, ORACLE, lines, "whole strings");
+  await agree(t, sys.procs(), UNICODE, asked, "whole strings");
   return t.report();
 }
 
@@ -304,13 +367,13 @@ export string test_fold_equal_on_named_pairs() {
 /**
  * `foldEqual` over random strings, against the host.
  *
- * The oracle is a `u`-mode `RegExp` built from one string and matched against the other, which
- * canonicalizes by simple case folding — the definition — rather than uppercase equality, which is
- * what the generator already assumed and so could not check.
+ * The oracle is a `u`-mode `RegExp` built from each code point of one string and matched against the
+ * other's, which canonicalizes by simple case folding — the definition — rather than uppercase
+ * equality, which is what the generator already assumed and so could not check.
  */
-export string test_fold_equal_over_random_strings(Core core, Cli cli) {
+export async string test_fold_equal_over_random_strings(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] points = casedPoints(0x20, 0x1FFF, 8192, false);
   Rng rng = Rng(0x5150CAFE);
   for (i32 trial = 0; trial < 4000; trial++) {
@@ -332,10 +395,9 @@ export string test_fold_equal_over_random_strings(Core core, Cli cli) {
       for (i32 i = 0; i < n; i++) { longer[i + 1] = cps[i]; }
       second = fromCodePoints(longer);
     }
-    lines.add("eqf " + hex(first) + " " + hex(second) + " " +
-              (foldEqual(first, second) ? "1" : "0"));
+    asked.add("eqf " + hex(first) + " " + hex(second), foldEqual(first, second) ? "1" : "0");
   }
-  checkDeno(t, cli, ORACLE, lines, "foldEqual over random strings");
+  await agree(t, sys.procs(), UNICODE, asked, "foldEqual over random strings");
   return t.report();
 }
 
@@ -351,19 +413,19 @@ u8[] fromCodePoints(i32[] cps) {
 /**
  * UTF-8 encoding matches `TextEncoder` at every code point, and decoding inverts it.
  *
- * The only sweep sent in full, because encoding differs from the identity everywhere — and the oracle
- * counts what arrives, so a sweep that quietly became a sample says so. Decoding is checked here
- * rather than there: with the encoder pinned to `TextEncoder` at every code point, `decode(encode(cp))
- * == cp` for every cp establishes the decoder on every well-formed sequence there is.
+ * The only sweep asked a code point at a time, because encoding differs from the identity
+ * everywhere — and the count of what was asked is checked, so a sweep that quietly became a sample
+ * says so. Decoding is checked here rather than there: with the encoder pinned to `TextEncoder` at
+ * every code point, `decode(encode(cp)) == cp` for every cp establishes the decoder on every
+ * well-formed sequence there is.
  */
-export string test_utf8_encoding_matches_the_host_at_every_code_point(Core core, Cli cli) {
+export async string test_utf8_encoding_matches_the_host_at_every_code_point(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
-  i32 checked = 0;
+  Asked asked = Asked.create();
   for (i32 cp = 0; cp <= MAX; cp++) {
     if (isSurrogate(cp)) { continue; }
     u8[] bytes = encodeOne(cp);
-    lines.add("utf8 \{cp} \{hex(bytes)}");
+    asked.add("utf8 \{hx(cp)}", hex(bytes));
     Scalar got = decode(bytes, 0);
     if (got.code != cp || got.size != bytes.len() || bytes.len() != encodedLength(cp)) {
       t.fail("U+\{cp}: encoded \{bytes.len()} bytes, decoded " +
@@ -371,10 +433,9 @@ export string test_utf8_encoding_matches_the_host_at_every_code_point(Core core,
              "\{encodedLength(cp)}");
       return t.report();
     }
-    checked = checked + 1;
   }
-  t.isTrue(checked >= 1000000, "only checked \{checked} code points");
-  checkDeno(t, cli, ORACLE, lines, "utf8");
+  t.eqI32(asked.count(), MAX + 1 - 2048, "every code point but the surrogates was asked");
+  await agree(t, sys.procs(), UNICODE, asked, "utf8");
   return t.report();
 }
 
@@ -384,9 +445,9 @@ export string test_utf8_encoding_matches_the_host_at_every_code_point(Core core,
  * A strict decoder, judged against a strict `TextDecoder`. Where the platform's default decoder
  * substitutes U+FFFD, `fatal: true` throws — and that is the behaviour being matched.
  */
-export string test_invalid_utf8_is_rejected(Core core, Cli cli) {
+export async string test_invalid_utf8_is_rejected(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   u8[][] cases = u8[][].filled(20, u8[]());
   cases[0] = [0x80] as u8[];
   cases[1] = [0xBF] as u8[];
@@ -410,30 +471,30 @@ export string test_invalid_utf8_is_rejected(Core core, Cli cli) {
   cases[19] = [0x61, 0x80, 0x62] as u8[];             // a stray continuation inside text
   for (i32 i = 0; i < cases.len(); i++) {
     t.isFalse(isValid(cases[i]), "accepted an invalid sequence at index \{i}");
-    lines.add("valid " + hex(cases[i]) + " " + (isValid(cases[i]) ? "1" : "0"));
+    asked.add("valid " + hex(cases[i]), isValid(cases[i]) ? "1" : "0");
   }
   string[] good = ["", "a", "café", "日本", "😀", "a b"];
   for (i32 i = 0; i < good.len(); i++) {
     t.isTrue(isValid(b(good[i])), "rejected valid \"\{good[i]}\"");
-    lines.add("valid " + hex(b(good[i])) + " " + (isValid(b(good[i])) ? "1" : "0"));
+    asked.add("valid " + hex(b(good[i])), isValid(b(good[i])) ? "1" : "0");
   }
-  checkDeno(t, cli, ORACLE, lines, "validity");
+  await agree(t, sys.procs(), UNICODE, asked, "validity");
   return t.report();
 }
 
-export string test_scalar_counting_matches_the_host(Core core, Cli cli) {
+export async string test_scalar_counting_matches_the_host(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] strings = [
                               "", "a", "abc", "café", "日本語", "😀😁",
                               "a😀b"
   ];
   for (i32 i = 0; i < strings.len(); i++) {
-    lines.add("count \{hex(b(strings[i]))} \{count(b(strings[i]))}");
+    asked.add("count \{hex(b(strings[i]))}", "\{count(b(strings[i]))}");
   }
   t.eqI32(count([0xFF] as u8[]), -1, "invalid input counts as -1");
-  lines.add("count ff \{count([0xFF] as u8[])}");
-  checkDeno(t, cli, ORACLE, lines, "scalar count");
+  asked.add("count ff", "\{count([0xFF] as u8[])}");
+  await agree(t, sys.procs(), UNICODE, asked, "scalar count");
   return t.report();
 }
 
@@ -443,17 +504,17 @@ export string test_scalar_counting_matches_the_host(Core core, Cli cli) {
  * The decoder is fed bytes from the network by anything that uses it, so "returns an answer for every
  * input" is a property worth asserting directly.
  */
-export string test_random_byte_strings_never_crash_the_decoder(Core core, Cli cli) {
+export async string test_random_byte_strings_never_crash_the_decoder(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   Rng rng = Rng(0x0BADC0DE);
   for (i32 trial = 0; trial < 5000; trial++) {
     i32 n = rng.upto(12);
     u8[] bytes = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { bytes[i] = ((rng.next() & (0xFF as@ u32)) as@ i32) as@ u8; }
-    lines.add("valid " + hex(bytes) + " " + (isValid(bytes) ? "1" : "0"));
+    asked.add("valid " + hex(bytes), isValid(bytes) ? "1" : "0");
   }
-  checkDeno(t, cli, ORACLE, lines, "random bytes");
+  await agree(t, sys.procs(), UNICODE, asked, "random bytes");
   return t.report();
 }
 
@@ -462,24 +523,25 @@ export string test_random_byte_strings_never_crash_the_decoder(Core core, Cli cl
  *
  * The table is 733 ranges, so the failure mode is not a wrong value but a wrong *boundary*: the first
  * and last code point of every range, and the code point either side of each, are what a binary
- * search for "the last range starting at or before this" gets wrong. Sent as the transitions, which
- * *are* those boundaries — so a disagreement names the one that moved rather than counting how many
- * code points it took with it.
+ * search for "the last range starting at or before this" gets wrong. Answered as the transitions,
+ * which *are* those boundaries — so a disagreement names the one that moved rather than counting how
+ * many code points it took with it.
  */
-export string test_is_printable_agrees_with_the_host(Core core, Cli cli) {
+export async string test_is_printable_agrees_with_the_host(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
-  bool previous = false;
-  for (i32 cp = 0; cp <= MAX; cp++) {
-    bool here = isPrintable(cp);
-    if (cp == 0 ? here : here != previous) {
-      lines.add("print \{cp} " + (here ? "1" : "0"));
+  Asked asked = Asked.create();
+  i32 transitions = 0;
+  for (i32 start = 0; start <= MAX; start = start + 64) {
+    string ours = isPrintable(start) ? "1" : "0";
+    for (i32 cp = start + 1; cp < start + 64; cp++) {
+      if (isPrintable(cp) == isPrintable(cp - 1)) { continue; }
+      ours = ours + " " + hx(cp);
+      transitions = transitions + 1;
     }
-    previous = here;
+    asked.add("print \{hx(start)}", ours);
   }
-  t.isTrue(lines.n > 100, "the table has hundreds of ranges — \{lines.n} transitions");
-  lines.add("sweep print");
-  checkDeno(t, cli, ORACLE, lines, "printability");
+  t.isTrue(transitions > 100, "the table has hundreds of ranges — \{transitions} transitions");
+  await agree(t, sys.procs(), UNICODE, asked, "printability");
 
   // Below and above the table, where a range search has nothing to find. A negative code point is
   // what `decode` answers with on an invalid sequence, and `box`'s `wc` passes it straight in.

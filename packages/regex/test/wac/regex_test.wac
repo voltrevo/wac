@@ -18,9 +18,11 @@
 //
 // The oracle stays JavaScript because capture *positions* need the `d` flag and nothing else has it:
 // python's `re` has different backtracking semantics in places, and swapping the reference would
-// change what is being claimed rather than where it runs. `test/oracle.ts` is that reference, and
-// this file computes the answers and hands them over — one process per test rather than one call per
-// pair, which for the fuzz is eight thousand comparisons in a single spawn.
+// change what is being claimed rather than where it runs. **`RE` below is that reference, and it only
+// answers**: it was a TypeScript file beside the tests that took this file's answers and compared
+// them, and since 2026-10-27 it says what `RegExp` says and the comparing happens here
+// (`packages/wactest/src/inline.wac`). Still one process per batch rather than one call per pair, so
+// the fuzz is thousands of comparisons in a single spawn.
 //
 // Patterns and subjects travel as hex and are decoded one byte to one code unit, so a JavaScript
 // index *is* a byte offset. `TextDecoder` would fold a stray high byte into a replacement character
@@ -30,13 +32,34 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, Exec } from "std";
+import { Lines, hex } from "../../../wactest/src/oracle.wac";
+import { Asked, agree, askScript } from "../../../wactest/src/inline.wac";
+import { Sys, Procs, Exec } from "std";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../../src/regex.wac";
 import { compileFlags } from "../../src/compile.wac";
 
-static string ORACLE = "packages/regex/test/oracle.ts";
+/**
+ * What `RegExp` says, one line for each question; the pattern and subject travel as hex.
+ *
+ * `m <pat> <subject>` and `mi …` (the `i` flag) are the match: `null`, or the groups separated by `;`,
+ * each `start,end` or `-` for one that did not participate — from the `d` flag, which is what gives
+ * positions rather than text. `accept <pat>` is `1` when JavaScript compiles it and `0` when not.
+ *
+ * The hex is decoded one byte to one code unit, so an index is a byte offset: `TextDecoder` would fold
+ * a stray high byte into one replacement character and shift every index after it.
+ */
+static string RE =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const s = (h) => (h ?? '').replace(/../g, (x) => String.fromCharCode(parseInt(x, 16)));\n" +
+  "const say = (k, p, x) => {\n" +
+  "  if (k === 'accept') { try { new RegExp(p, 'd'); return '1'; } catch { return '0'; } }\n" +
+  "  if (k !== 'm' && k !== 'mi') { return 'no such question: ' + k; }\n" +
+  "  let m;\n" +
+  "  try { m = new RegExp(p, k === 'mi' ? 'di' : 'd').exec(x); } catch (e) { return 'refused: ' + e.message; }\n" +
+  "  return m === null ? 'null' : m.indices.map((g) => g === undefined ? '-' : g[0] + ',' + g[1]).join(';');\n" +
+  "};\n" +
+  "console.log(L.map((l) => { const [k, p, x] = l.split(' '); return say(k, s(p), s(x)); }).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 static i32 STEPS = 1000000;
 
 /** `null`, or groups separated by `;` — `start,end` or `-` for one that did not participate. */
@@ -65,6 +88,12 @@ Answer matched(string pattern, u8[] input, bool ignoreCase) {
 }
 
 bool accepts(string pattern) { return !(compile(pattern.toBytes()) is null); }
+
+bool[] acceptance(string[] patterns) {
+  bool[] out = bool[].filled(patterns.len(), false);
+  for (i32 i = 0; i < patterns.len(); i++) { out[i] = accepts(patterns[i]); }
+  return out;
+}
 
 /**
  * The subjects every hand-written sweep runs against.
@@ -97,8 +126,8 @@ u8[][] subjects() {
  * A pattern this engine refuses is a *failure* here rather than a skip: every list below is inside
  * the documented subset, so a refusal means the subset shrank.
  */
-void checkAll(T t, Cli cli, string[] patterns, u8[][] inputs, string what) {
-  Lines lines = Lines.create();
+async void checkAll(T t, Procs procs, string[] patterns, u8[][] inputs, string what) {
+  Asked asked = Asked.create();
   i32 compared = 0;
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 i = 0; i < inputs.len(); i++) {
@@ -106,26 +135,51 @@ void checkAll(T t, Cli cli, string[] patterns, u8[][] inputs, string what) {
       t.isFalse(a.rejected, "/\{patterns[p]}/ was rejected by the compiler");
       t.isFalse(a.gaveUp, "/\{patterns[p]}/ on subject \{i} ran out of steps");
       if (a.rejected || a.gaveUp) { continue; }
-      lines.add("m \{hex(patterns[p].toBytes())} \{hex(inputs[i])} \{a.text}");
+      asked.add("m \{hex(patterns[p].toBytes())} \{hex(inputs[i])}", a.text);
       compared = compared + 1;
     }
   }
   t.isTrue(compared > 0, "\{what}: nothing was compared");
-  checkDeno(t, cli, ORACLE, lines, what);
+  await agree(t, procs, RE, asked, what);
 }
 
-export string test_literals_dot_and_anchors(Core core, Cli cli) {
+/**
+ * Ask `RE` whether JavaScript compiles each of `patterns`, and fail for every one it refuses that this
+ * engine accepted (`ours[i]`) — that is a pattern parsed as something else.
+ *
+ * One direction only. A pattern JavaScript compiles may still be outside this engine's subset —
+ * lookaround, backreferences — and refusing it is the honest answer, so those are only counted:
+ * answers how many patterns JavaScript compiles were refused here.
+ */
+async i32 refusedOfJavaScripts(T t, Procs procs, string[] patterns, bool[] ours, i32 n, string what) {
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < n; i++) { lines.add("accept " + hex(patterns[i].toBytes())); }
+  string[] theirs = await askScript(t, procs, RE, lines, what);
+  if (theirs.len() != n) { return 0; }
+  i32 refused = 0;
+  i32 shown = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (theirs[i] == "0" && ours[i] && shown < 10) {
+      t.fail("\{what}: /\{patterns[i]}/ is not a valid JavaScript regex but was accepted");
+      shown = shown + 1;
+    }
+    if (theirs[i] == "1" && !ours[i]) { refused = refused + 1; }
+  }
+  return refused;
+}
+
+export async string test_literals_dot_and_anchors(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "a", "abc", "", "b", ".", "..", "a.c", ".*", "^a", "a$", "^a$", "^$", "^", "$",
     "^abc$", "a.b", "^.", ".$"
   ], subjects(), "literals, dot and anchors");
   return t.report();
 }
 
-export string test_character_classes(Core core, Cli cli) {
+export async string test_character_classes(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "[abc]", "[^abc]", "[a-c]", "[^a-c]", "[a-cx-z]", "[-a]", "[a-]", "[]]", "[^]]",
     "[0-9]", "[^0-9]", "[a-zA-Z]", "[\\n]", "[\\t]", "[.]", "[*]", "[a\\-c]",
     "[abc]+", "[^a]*", "[a-c][x-z]"
@@ -133,18 +187,18 @@ export string test_character_classes(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_shorthand_classes(Core core, Cli cli) {
+export async string test_shorthand_classes(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "\\d", "\\D", "\\w", "\\W", "\\s", "\\S", "\\d+", "\\w+", "\\s+", "\\W\\w",
     "[\\d]", "[\\w]", "[\\d\\w]", "[\\da-f]", "\\d\\d\\d"
   ], subjects(), "shorthand classes");
   return t.report();
 }
 
-export string test_greedy_quantifiers(Core core, Cli cli) {
+export async string test_greedy_quantifiers(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "a*", "a+", "a?", "ab*", "ab+", "ab?", "a*b", "a+b", "a?b", ".*b", ".+b",
     "a{2}", "a{2,}", "a{2,3}", "a{0,2}", "a{0}", "a{1}", "a{3,3}", "(ab){2}", "(a|b){2,3}"
   ],
@@ -152,18 +206,18 @@ export string test_greedy_quantifiers(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_lazy_quantifiers(Core core, Cli cli) {
+export async string test_lazy_quantifiers(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "a*?", "a+?", "a??", "a*?b", "a+?b", ".*?b", ".+?b", "a{2,3}?", "a{0,2}?", "a{2,}?",
     "(ab)+?", "[abc]+?"
   ], subjects(), "lazy quantifiers");
   return t.report();
 }
 
-export string test_groups_and_alternation(Core core, Cli cli) {
+export async string test_groups_and_alternation(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "(a)", "(a)(b)", "(ab)", "(a|b)", "a|b", "a|b|c", "(a|ab)c", "(ab|a)c", "|a", "a|",
     "(?:a)", "(?:a|b)c", "((a))", "(a(b))", "(a)|(b)", "(a*)", "(a+)b", "(a|b)*",
     "(a)(b)?", "((a)|(b))c"
@@ -171,9 +225,9 @@ export string test_groups_and_alternation(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_word_boundaries(Core core, Cli cli) {
+export async string test_word_boundaries(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "\\ba", "a\\b", "\\ba\\b", "\\Ba", "a\\B", "\\babc\\b", "\\b", "\\B",
     "\\w+\\b", "\\b\\w"
   ], subjects(), "word boundaries");
@@ -186,9 +240,9 @@ export string test_word_boundaries(Core core, Cli cli) {
  * A leftmost-longest engine gives different answers to every one of these, so agreeing here is
  * evidence about the search order and not merely about the language accepted.
  */
-export string test_backtracking_order_is_the_whole_answer(Core core, Cli cli) {
+export async string test_backtracking_order_is_the_whole_answer(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "(a|ab)", "(a|ab)c", "(ab|a)", "(ab|a)b", "a*a", "(a*)(a*)", "(a+)(a*)",
     "(a?)(a?)a", ".*(b)", ".*?(b)", "(a*)*", "(a*)+", "(a|)*", "(|a)*"
   ],
@@ -202,12 +256,12 @@ export string test_backtracking_order_is_the_whole_answer(Core core, Cli cli) {
  * The reason for the MARK/PROGRESS guard in the machine. Without it these do not terminate; with a
  * guard that is too eager they terminate with the wrong captures.
  */
-export string test_empty_matching_loops_terminate_and_agree(Core core, Cli cli) {
+export async string test_empty_matching_loops_terminate_and_agree(Sys sys) {
   T t = T.create();
   string[] small = ["", "a", "aa", "b", "ab", "aab"];
   u8[][] inputs = u8[][].filled(small.len(), u8[]());
   for (i32 i = 0; i < small.len(); i++) { inputs[i] = small[i].toBytes(); }
-  checkAll(t, cli, ["(a*)*", "(a*)*b", "()*", "(){2,}", "(a?)*", "(a?)+", "()+", "(|a)+", "(a|)+b"],
+  await checkAll(t, sys.procs(), ["(a*)*", "(a*)*b", "()*", "(){2,}", "(a?)*", "(a?)+", "()+", "(|a)+", "(a|)+b"],
     inputs, "empty-matching loops");
   return t.report();
 }
@@ -218,9 +272,8 @@ export string test_empty_matching_loops_terminate_and_agree(Core core, Cli cli) 
  * Each of these is valid JavaScript and unimplemented here. Rejecting is the honest answer; the
  * dangerous one is parsing it as something else — `(?=a)` as a group containing `?=a`.
  */
-export string test_patterns_outside_the_subset_are_rejected(Core core, Cli cli) {
+export async string test_patterns_outside_the_subset_are_rejected(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
   string[] bad = [
     "(?=a)", "(?!a)", "(?<=a)", "(?<!a)", "(?<name>a)", "\\1", "(a)\\1",
     "*a", "+a", "?a", "(a", "a)", "[a", "[z-a]", "a{2,1}", "\\",
@@ -228,22 +281,23 @@ export string test_patterns_outside_the_subset_are_rejected(Core core, Cli cli) 
   ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(accepts(bad[i]), "/\{bad[i]}/ was accepted and should not be");
-    lines.add("accept " + hex(bad[i].toBytes()) + " " + (accepts(bad[i]) ? "1" : "0"));
   }
+  await refusedOfJavaScripts(t, sys.procs(), bad, acceptance(bad), bad.len(),
+                             "the subset boundary");
   // And things that look similar but are in the subset. `{2}` is not among them any more — see
   // `test_a_leading_brace_is_a_known_divergence` below.
   string[] good = ["(?:a)", "a{2,3}", "[a-z]", "\\d", "\\.", "\\\\", "a{,2}"];
   for (i32 i = 0; i < good.len(); i++) {
     t.isTrue(accepts(good[i]), "/\{good[i]}/ was rejected and should not be");
-    lines.add("accept " + hex(good[i].toBytes()) + " " + (accepts(good[i]) ? "1" : "0"));
   }
-  checkDeno(t, cli, ORACLE, lines, "the subset boundary");
+  await refusedOfJavaScripts(t, sys.procs(), good, acceptance(good), good.len(),
+                             "the subset boundary");
   return t.report();
 }
 
-export string test_escapes_of_metacharacters(Core core, Cli cli) {
+export async string test_escapes_of_metacharacters(Sys sys) {
   T t = T.create();
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "\\.", "\\*", "\\+", "\\?", "\\(", "\\)", "\\[", "\\]", "\\|", "\\^", "\\$",
     "\\\\", "\\n", "\\t", "a\\.b", "\\.\\*"
   ], subjects(), "escapes");
@@ -291,10 +345,12 @@ string piece(Rng rng, bool nested, i32 depth) {
  * most generated patterns, every remaining comparison could pass while the test compared almost
  * nothing.
  */
-void fuzz(T t, Cli cli, i32 seed, i32 rounds, bool nested, string what) {
+async void fuzz(T t, Procs procs, i32 seed, i32 rounds, bool nested, string what) {
   Rng rng = Rng(seed);
   u8[][] subs = subjects();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
+  string[] generated = string[].filled(rounds, "");
+  bool[] accepted = bool[].filled(rounds, false);
   i32 compared = 0;
   i32 gaveUp = 0;
   for (i32 round = 0; round < rounds; round++) {
@@ -305,9 +361,10 @@ void fuzz(T t, Cli cli, i32 seed, i32 rounds, bool nested, string what) {
       if (rng.upto(6) == 0) { pattern = pattern + "|"; }
     }
     bool ok = accepts(pattern);
-    // Sent whichever way it went: this is the direction that matters, and the oracle only complains
-    // when JavaScript refuses a pattern this accepted.
-    lines.add("accept " + hex(pattern.toBytes()) + " " + (ok ? "1" : "0"));
+    // Asked about whichever way it went: this is the direction that matters, and only a pattern
+    // JavaScript refuses that this accepted is a failure.
+    generated[round] = pattern;
+    accepted[round] = ok;
     if (!ok) { continue; }
     u8[] subject = subs[rng.upto(subs.len())];
     Answer a = matched(pattern, subject, false);
@@ -318,25 +375,27 @@ void fuzz(T t, Cli cli, i32 seed, i32 rounds, bool nested, string what) {
       gaveUp = gaveUp + 1;
       continue;
     }
-    lines.add("m \{hex(pattern.toBytes())} \{hex(subject)} \{a.text}");
+    asked.add("m \{hex(pattern.toBytes())} \{hex(subject)}", a.text);
     compared = compared + 1;
   }
-  // The refusal *ratio* is checked by the oracle rather than here, because the question is how many
-  // patterns **JavaScript compiles** were refused — a pattern JavaScript itself rejects is not a
-  // comparison this engine declined to make. Counting them here would count both, which is what
+  // The refusal *ratio* counts only patterns **JavaScript compiles** that were refused — a pattern
+  // JavaScript itself rejects is not a comparison this engine declined to make. Counting both is what
   // turned a 15% bound into a third of the corpus on the first run of this port.
-  lines.add("refusals \{rounds} 15");
+  i32 refused = await refusedOfJavaScripts(t, procs, generated, accepted, rounds, what);
+  t.isTrue(refused * 100 <= rounds * 15,
+           "\{what}: the compiler refused \{refused}/\{rounds} patterns JavaScript compiles, " +
+           "over the 15% this calls a comparison");
   t.isTrue(gaveUp * 100 <= rounds * 2,
            "\{what}: \{gaveUp}/\{rounds}" +
            " patterns exhausted the step budget, which is more than a pathological handful");
   t.isTrue(compared > rounds / 2, "\{what}: only \{compared} were compared");
-  checkDeno(t, cli, ORACLE, lines, what);
+  await agree(t, procs, RE, asked, what);
 }
 
-export string test_fuzz_flat_patterns_agree_with_regexp(Core core, Cli cli) {
+export async string test_fuzz_flat_patterns_agree_with_regexp(Sys sys) {
   T t = T.create();
-  fuzz(t, cli, 0x2F6A1B3C, 2000, false, "flat, seed 0x2f6a1b3c");
-  fuzz(t, cli, 0x51D0C0DE, 2000, false, "flat, seed 0x51d0c0de");
+  await fuzz(t, sys.procs(), 0x2F6A1B3C, 2000, false, "flat, seed 0x2f6a1b3c");
+  await fuzz(t, sys.procs(), 0x51D0C0DE, 2000, false, "flat, seed 0x51d0c0de");
   return t.report();
 }
 
@@ -344,16 +403,16 @@ export string test_fuzz_flat_patterns_agree_with_regexp(Core core, Cli cli) {
  * Nested groups and alternations, which is where the interesting bugs were: an alternation inside a
  * quantified group, so the code that gets wrapped already contains jumps of its own.
  */
-export string test_fuzz_nested_groups_agree_with_regexp(Core core, Cli cli) {
+export async string test_fuzz_nested_groups_agree_with_regexp(Sys sys) {
   T t = T.create();
-  fuzz(t, cli, 0x0BADC0DE, 2000, true, "nested, seed 0x0badc0de");
-  fuzz(t, cli, 0x7E577E57, 2000, true, "nested, seed 0x7e577e57");
+  await fuzz(t, sys.procs(), 0x0BADC0DE, 2000, true, "nested, seed 0x0badc0de");
+  await fuzz(t, sys.procs(), 0x7E577E57, 2000, true, "nested, seed 0x7e577e57");
   return t.report();
 }
 
-export string test_the_i_flag_agrees_with_regexp_over_ascii(Core core, Cli cli) {
+export async string test_the_i_flag_agrees_with_regexp_over_ascii(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] patterns = [
     "a", "abc", "A", "ABC", "aBc", "[a-z]", "[A-Z]", "[a-cX-Z]", "[^a-z]", "[^A]",
     "a+", "A*", "(a|B)", "(?:ab)+", "a{2,3}", "\\ba\\b", "^abc$", "[a-z0-9_]+",
@@ -369,11 +428,10 @@ export string test_the_i_flag_agrees_with_regexp_over_ascii(Core core, Cli cli) 
       t.isFalse(a.rejected, "/\{patterns[p]}/i was rejected");
       t.isFalse(a.gaveUp, "/\{patterns[p]}/i on \"\{subjects[i]}\" ran out of steps");
       if (a.rejected || a.gaveUp) { continue; }
-      lines.add("mi \{hex(patterns[p].toBytes())} \{hex(subjects[i].toBytes())} " +
-                a.text);
+      asked.add("mi \{hex(patterns[p].toBytes())} \{hex(subjects[i].toBytes())}", a.text);
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "the i flag");
+  await agree(t, sys.procs(), RE, asked, "the i flag");
   return t.report();
 }
 
@@ -446,7 +504,7 @@ export string test_a_capture_heavy_quantifier_runs_out_of_room() {
  * dialects, where a leading brace *is* a literal, and tightening the JavaScript entry point is a
  * change to what several callers accept. `issues/lang/0146`.
  */
-export string test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(Core core, Cli cli) {
+export async string test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(Sys sys) {
   T t = T.create();
   // Was `test_a_leading_brace_is_a_known_divergence`, which asserted that this engine accepted `/{2}/`
   // as three literal characters while the oracle refused it, and said in as many words that the day one
@@ -462,13 +520,12 @@ export string test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(Co
 
   // And the oracle agrees on every one of them, which is the half that makes this a check rather than
   // a claim about what JavaScript does.
-  Lines lines = Lines.create();
-  lines.add("accept " + hex("{2}".toBytes()) + " 0");
-  lines.add("accept " + hex("a{,2}".toBytes()) + " 1");
-  lines.add("accept " + hex("{,2}".toBytes()) + " 1");
-  lines.add("accept " + hex("{a}".toBytes()) + " 1");
-  lines.add("accept " + hex("a{2}".toBytes()) + " 1");
-  checkDeno(t, cli, ORACLE, lines, "a leading brace against JavaScript");
+  Asked asked = Asked.create();
+  string[] braces = ["{2}", "a{,2}", "{,2}", "{a}", "a{2}"];
+  for (i32 i = 0; i < braces.len(); i++) {
+    asked.add("accept " + hex(braces[i].toBytes()), accepts(braces[i]) ? "1" : "0");
+  }
+  await agree(t, sys.procs(), RE, asked, "a leading brace against JavaScript");
   return t.report();
 }
 
@@ -491,7 +548,7 @@ export string test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(Co
  * eight classes in a pattern, reached once by luck out of 3,000 draws and then written down, because a
  * branch reached by chance is one a reordered corpus loses again.
  */
-export string test_the_compilers_tables_grow_and_keep_what_was_in_them(Core core, Cli cli) {
+export async string test_the_compilers_tables_grow_and_keep_what_was_in_them(Sys sys) {
   T t = T.create();
 
   // **Nine branches, because `splits` and `jmps` hold eight.** The tenth `|` is what makes the copy
@@ -521,11 +578,11 @@ export string test_the_compilers_tables_grow_and_keep_what_was_in_them(Core core
     // The two tables at once: an alternation of many branches, each with a wide class.
     "(\{thirteen}|\{thirteen}|\{thirteen}|a|b|c|d|e|f|g)"
   ];
-  checkAll(t, cli, patterns, subjects(), "grown tables");
+  await checkAll(t, sys.procs(), patterns, subjects(), "grown tables");
 
   // **A named escape as the high end of a range**, which is the one arm of the range parser that reads
   // a second escape — `[\0-\n]` is bytes 0 through 10, and JavaScript reads it the same way.
-  checkAll(t, cli, ["[\\0-\\n]", "[\\t-\\r]", "[\\0-\\n]+"], subjects(), "escaped range ends");
+  await checkAll(t, sys.procs(), ["[\\0-\\n]", "[\\t-\\r]", "[\\0-\\n]+"], subjects(), "escaped range ends");
 
   // And a shorthand there is refused rather than read as a byte, which `RegExp` is not the oracle for:
   // JavaScript without the `u` flag accepts `[a-\d]` and reads the `\d` as a literal `d`. This engine
@@ -549,7 +606,7 @@ export string test_the_compilers_tables_grow_and_keep_what_was_in_them(Core core
  * refuses it. Those are asserted against what the README claims instead, which is the only honest
  * oracle for a deliberate difference.
  */
-export string test_the_parser_corners_a_generated_corpus_misses(Core core, Cli cli) {
+export async string test_the_parser_corners_a_generated_corpus_misses(Sys sys) {
   T t = T.create();
 
   // Accepted, and JavaScript agrees about all of them.
@@ -559,7 +616,7 @@ export string test_the_parser_corners_a_generated_corpus_misses(Core core, Cli c
   //              arm of the expansion that wraps a star rather than a plus
   //   `[a-\z]`   an escape as a range end that is not one of the named ones, so it is the byte itself
   //   `a{2,1}`   a maximum below the minimum, which JavaScript refuses — see below
-  checkAll(t, cli, [
+  await checkAll(t, sys.procs(), [
     "a{2", "a{2,3", "a{,2", "a{0,}", "(a|b){0,}", "(a*){0,}", "x{0,}y",
     "[a-\\z]", "[\\0-\\n]", "[a-\\z]+", "(a{2)"
   ], subjects(), "parser corners");

@@ -20,12 +20,11 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import { canonicalize } from "../../src/json.wac";
 import { JsonError } from "../../src/parse.wac";
+import { Trees, sameTrees } from "./questions.wac";
 
-static string ORACLE = "packages/json/test/oracle.ts";
 static string DIR = "packages/json/test/jsontestsuite";
 
 /** One document: its name, its bytes, and what the name says the answer is. */
@@ -135,20 +134,20 @@ export string test_every_invalid_document_is_rejected(Core core, Cli cli) {
  *
  * Accepting is only half of it — the value has to be right. Compared as parsed trees rather than as
  * text, since numbers are emitted from their source span and JavaScript reorders integer-like object
- * keys, so the oracle does the comparison rather than this side.
+ * keys — so the host spells both trees one way and the spellings are compared here.
  */
-export string test_accepted_documents_re_serialize_to_the_same_tree(Core core, Cli cli) {
+export async string test_accepted_documents_re_serialize_to_the_same_tree(Sys sys) {
   T t = T.create();
-  Case[] cases = load(core, cli);
-  Lines lines = Lines.create();
+  Case[] cases = load(sys.core, sys.cli);
+  Trees trees = Trees.create();
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "accept") { continue; }
     u8[]? out = canonicalize(cases[i].bytes).ok();
     if (out is null) { continue; }         // covered by the test above
-    lines.add("sametree \{hex(out!)} \{hex(cases[i].bytes)}");
+    trees.add(out!, cases[i].bytes);
   }
-  t.isTrue(lines.n > 90, "only \{lines.n} trees were compared");
-  checkDeno(t, cli, ORACLE, lines, "the accepted trees");
+  t.isTrue(trees.count() > 90, "only \{trees.count()} trees were compared");
+  await sameTrees(t, sys.procs(), trees, "the accepted trees");
   return t.report();
 }
 

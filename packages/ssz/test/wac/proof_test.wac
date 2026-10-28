@@ -19,25 +19,45 @@
 // It has to be somewhere other than `packages/ssz`, or the root wac verifies against is the same code
 // answering twice. The host-side version folded with Web Crypto and handed the root in.
 //
-// Here the fold is written in this file and then **sent** to `test/oracle.ts`, which folds it again
-// from the leaf with Web Crypto and reports any disagreement. That is stronger than certifying each
-// hash: a `fold` line carries the leaf, the gindex and the branch, so the oracle also decides which
-// side each sibling goes on. A fold with the side bits reversed would send `hashpair sib node …` and
-// pass a per-node check; it cannot pass this one.
+// Here the fold is written in this file and then **asked of** `FOLD`, an inline script that folds it
+// again from the leaf with Web Crypto and only answers the root; `agree` reports any disagreement.
+// That is stronger than certifying each hash: a `fold` question carries the leaf, the gindex and the
+// branch, so the oracle also decides which side each sibling goes on. A fold with the side bits
+// reversed would hash `sib ‖ node` and pass a per-node check; it cannot pass this one.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
 import { Loaded, json, memberI32 } from "../../../wactest/src/fixtures.wac";
-import { Core, Cli } from "std";
+import { Sys } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashPair, floorLog2, subtreeIndex, isValidMerkleBranch,
          isValidNormalizedMerkleBranch } from "../../src/merkle.wac";
 
 static string MANIFEST = "packages/ssz/test/fixtures.json";
-static string ORACLE = "packages/ssz/test/oracle.ts";
+/**
+ * What Web Crypto says, one line for each question: `fold <leaf> <gindex> <branch>` is the root the
+ * branch folds to from the leaf, in hex — the sibling on the left where the gindex's bit is 1.
+ */
+static string FOLD =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const b = (h) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));\n" +
+  "const sha = async (x, y) => new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array([...x, ...y])));\n" +
+  "const out = [];\n" +
+  "for (const l of L) {\n" +
+  "  const [k, leaf, g, branch] = l.split(' ');\n" +
+  "  if (k !== 'fold') { out.push('no such question: ' + k); continue; }\n" +
+  "  let node = b(leaf), idx = Number(g);\n" +
+  "  for (let at = 0; at < branch.length; at += 64, idx >>= 1) {\n" +
+  "    const sib = b(branch.slice(at, at + 64));\n" +
+  "    node = idx & 1 ? await sha(sib, node) : await sha(node, sib);\n" +
+  "  }\n" +
+  "  out.push(Array.from(node).map((x) => x.toString(16).padStart(2, '0')).join(''));\n" +
+  "}\n" +
+  "console.log(out.concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 /** One vector, read out of the fixture. */
 struct Proof {
@@ -51,8 +71,8 @@ struct Proof {
 }
 
 /** Every proof in the fixture, or an empty list when it could not be loaded. */
-Proof[] proofs(T t, Core core, Cli cli) {
-  Loaded f = json(core, cli, "ssz", "light_client_proofs", MANIFEST);
+Proof[] proofs(T t, Sys sys) {
+  Loaded f = json(sys.core, sys.cli, "ssz", "light_client_proofs", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return Proof[].filled(0, Proof("", "", u8[](), 0, u8[](), 0)); }
   JsonArray? cases = f.doc.member("cases")?.array();
@@ -81,12 +101,12 @@ Proof[] proofs(T t, Core core, Cli cli) {
 }
 
 /**
- * Fold a branch up to the root, the way the spec defines it, and offer the whole fold to `lines`.
+ * Fold a branch up to the root, the way the spec defines it, and put the whole fold to `asked`.
  *
  * Written here rather than taken from `packages/ssz` on purpose: this is the reference the verifier
  * is measured against, and `isValidMerkleBranch` folding its own way and agreeing would prove nothing.
  */
-u8[] fold(Proof p, Lines lines) {
+u8[] fold(Proof p, Asked asked) {
   u8[] node = p.leaf;
   i32 idx = p.gindex;
   for (i32 i = 0; i < p.nodes; i++) {
@@ -94,7 +114,7 @@ u8[] fold(Proof p, Lines lines) {
     node = (idx & 1) != 0 ? hashPair(sib, node) : hashPair(node, sib);
     idx = idx / 2;
   }
-  lines.add("fold \{hex(p.leaf)} \{p.gindex} \{hex(p.branch)} \{hex(node)}");
+  asked.add("fold \{hex(p.leaf)} \{p.gindex} \{hex(p.branch)}", hex(node));
   return node;
 }
 
@@ -106,11 +126,11 @@ u8[] nodeAt(u8[] branch, i32 i) {
 
 string[] forks() { return ["altair", "deneb", "electra"]; }
 
-export string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Core core, Cli cli) {
+export async string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Sys sys) {
   T t = T.create();
-  Proof[] all = proofs(t, core, cli);
+  Proof[] all = proofs(t, sys);
   if (all.len() == 0) { return t.report(); }
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] names = forks();
   for (i32 f = 0; f < names.len(); f++) {
     i32 count = 0;
@@ -119,7 +139,7 @@ export string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Core co
     for (i32 i = 0; i < all.len(); i++) {
       if (all[i].fork != names[f]) { continue; }
       count = count + 1;
-      string root = hex(fold(all[i], lines));
+      string root = hex(fold(all[i], asked));
       if (first.len() == 0) { first = root; }
       else if (root != first) { disagreed = true; }
     }
@@ -129,20 +149,20 @@ export string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Core co
               "side-bit rule is wrong for at least one path");
   }
   t.eqI32(all.len(), 9, "proofs in the fixture, across three forks");
-  checkDeno(t, cli, ORACLE, lines, "the folds the roots came from");
+  await agree(t, sys.procs(), FOLD, asked, "the folds the roots came from");
   return t.report();
 }
 
-export string test_wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one(
-    Core core, Cli cli) {
+export async string test_wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one(
+    Sys sys) {
   T t = T.create();
-  Proof[] all = proofs(t, core, cli);
+  Proof[] all = proofs(t, sys);
   if (all.len() == 0) { return t.report(); }
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32 checked = 0;
   for (i32 i = 0; i < all.len(); i++) {
     Proof p = all[i];
-    u8[] root = fold(p, lines);
+    u8[] root = fold(p, asked);
     i32 depth = p.nodes;
     i32 index = p.gindex - (1 << depth);
     string where = "\{p.fork}/\{p.name}";
@@ -182,12 +202,12 @@ export string test_wac_verifies_every_real_branch_and_rejects_every_perturbation
     checked = checked + 1;
   }
   t.eqI32(checked, 9, "proofs checked");
-  checkDeno(t, cli, ORACLE, lines, "the folds the roots came from");
+  await agree(t, sys.procs(), FOLD, asked, "the folds the roots came from");
   return t.report();
 }
 
 export string test_the_generalized_indices_are_fork_dependent_which_is_why_normalized_branches_exist(
-    Core core, Cli cli) {
+    Sys sys) {
   T t = T.create();
   // Altair and Deneb put the sync committees at 54/55 and the finalized root at 105. **Electra moved
   // them** to 86/87 and 169, one level deeper. So the same logical proof is a 5-node branch under one
@@ -201,7 +221,7 @@ export string test_the_generalized_indices_are_fork_dependent_which_is_why_norma
   // `src/beacon.wac` declares the Altair depths, and that is correct for the fork it names — but a
   // light client extended past Deneb has to make them fork-dependent, and this test is where that
   // will fail first.
-  Proof[] all = proofs(t, core, cli);
+  Proof[] all = proofs(t, sys);
   if (all.len() == 0) { return t.report(); }
   string[] names = forks();
   i32[] want = [

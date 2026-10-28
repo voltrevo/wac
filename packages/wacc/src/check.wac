@@ -12014,7 +12014,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         // component's field, a JSX attribute and a JSX child. `copyFrom` and a builtin's argument
         // against its receiver already reported, and the `is`-test pair is a warning about unrelated
         // types rather than a slot a value passes through. Recall on the generated sweep never moved
-        // through any of it, because `generate.ts` builds none of these shapes — which is the whole
+        // through any of it, because the generator behind it built none of these shapes — which is the whole
         // argument for enumerating the *sites* and not the programs.
         if (nullableIntoNonNull(c, vwant, vgot)) {
           c.report(errNullableToNonNull(), args[i].line, args[i].col);

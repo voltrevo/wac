@@ -1,6 +1,7 @@
 # 0267c — the instrument that measures priority 3 cannot see 32 of the 38 packages
 
-- **Status:** open
+- **Status:** closed 2026-10-27 — the operator's answer was to delete the instrument
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
@@ -144,3 +145,10 @@ example: **a classifier whose strongest verdict is reachable by an environment p
 means less than it says.** That is a property of the classifier, and `--unstable-net` was a real
 instance of it. This was not.
 
+
+## Resolution — 2026-10-27
+
+**The operator's ruling: delete the tool.** `runOnWacc.ts` is gone, along with the figure it printed in
+`packages/wacc/README.md`. That section now explains why there is no separate count: a `*_test.wac` is
+compiled by wacc by construction, so the suite already runs those packages on wacc's code. This ended
+a `deno test` use that had no role left under the operator's rule for Deno: host, bootstrap and oracle.

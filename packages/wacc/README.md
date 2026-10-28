@@ -201,8 +201,7 @@ have never appeared in a status line: they are invisible to every rung.
 
 Priority 3 is the number this README has been quoting — packages passing their own suites on
 wacc-emitted code — and it is the *last* of the three. It flattered while it was measured with the
-reference's bindgen standing behind it; it is not any more, and the number below is the whole
-boundary rather than the emitter alone.
+reference's bindgen standing behind it. There is no separate count of it now; see rung 4 below.
 
 ## The spec targets this compiler now
 
@@ -268,34 +267,14 @@ and `packages/sh` compiled nothing — and the last one was a variant resolved t
 table instead of through its own enum: `Kind.Tree` found `tree.wac`'s `struct Tree` and stopped being
 a variant construction at all.
 
-**Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
-`harness/wacBind.ts` takes the wasm from wacc, and did so behind `WAC_WASM_FROM=wacc` while there
-was a reference whose bindgen metadata could be kept instead — which is what made the emitter the
-only thing under test. There is one compiler since 2026-08-28, so there is nothing to select and the
-switch is gone.
-`packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
-
-    6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
-
-**That figure read `34 of 34 … (1,663 tests)` until 2026-08-25, and the packages did not regress.**
-`runOnWacc.ts` runs `deno test`, which finds `*.test.ts`; `issues/system/0161` has been moving the
-suite to `*_test.wac`, and **32 of 38 packages now have no `.test.ts` at all**, so the sweep cannot
-see them. None of the 32 is reported wrong — each is `0 passed` with no cause but an empty search.
-The number above is what this tool can still measure, and it shrinks as the migration finishes.
-`issues/system/0267c` holds the decision about what should replace it, because a `*_test.wac` is
-compiled by wacc by construction: for those packages "passes on wacc-emitted code" is not a claim
-that can fail.
-
-**And the rest is wacc's too** — `exportSigsFiles` and `bindTypesFiles` for the description of the
-interface, `packages/wacc/tools/waccBindgen.ts` for the generator. That was `WAC_BIND_FROM=wacc`,
-and it defaulted to wacc long before the switch went. The same sweep reads the same:
-
-    6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
-
-**That is priority 3 met without the reference in the room** — over the six packages this sweep can
-still reach, which is the caveat the paragraph above is about rather than a change in what passes. Every package in the repository stands
-up on wacc's code, called through glue wacc described and wacc generated. The reference compiles
-wacc, and nothing else here.
+**Rung 4's other half, the repository's own tests against code wacc emitted, has no separate
+instrument any more.** `runOnWacc.ts` ran each package's `deno test` on wacc's modules and counted
+them. It read `34 of 34 … (1,663 tests)` until 2026-08-25, then `6 of 38`, because 32 packages now
+have only `*_test.wac`, which it could not see. A `*_test.wac` is compiled by wacc by construction,
+so the suite already runs those packages on wacc's code. The tool was deleted on 2026-10-27, and
+`issues/system/0267c` holds whether anything should replace it. The glue is wacc's too:
+`exportSigsFiles` and `bindTypesFiles` describe the interface, and
+`packages/wacc/tools/waccBindgen.ts` generates it.
 
 Getting there was eight defects and not one of them was in the emitter — `issues/lang/0102` lists
 them, and the shape they share is worth reading: every one was about the half a compiler has to

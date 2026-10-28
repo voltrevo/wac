@@ -11,19 +11,22 @@
 // The host-side version needed `errorOfBytes` beside `errorOf`, because "passing such bytes through a
 // JS string and back re-encodes them (0xC3 becomes C3 83), so the parser would never see the sequence
 // under test". Here every document is a `u8[]` and there is one entry point. The two spellings, and
-// the paragraph explaining which to reach for, are gone.
+// the paragraph explaining which to reach for, are gone. The host's half is `UTF8` below, a script
+// that only answers; since 2026-10-27 `agree` compares in wac (`packages/wactest/src/inline.wac`).
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
 import { canonicalize, stringify } from "../../src/json.wac";
 import { JsonValue } from "../../src/value.wac";
 import { faultOf } from "./faults.wac";
 import { JsonError } from "../../src/parse.wac";
 import { Result } from "core";
+import { question } from "./questions.wac";
 
 /**
  * One byte from a distribution that lands in each interesting UTF-8 range often enough.
@@ -39,7 +42,18 @@ i32 pick(Rng rng) {
   return rng.upto(0x100);                          // anything
 }
 
-static string ORACLE = "packages/json/test/oracle.ts";
+/**
+ * What a *strict* `TextDecoder` says of the bytes in each question's last word, 1 or 0 — the bytes on
+ * their own, not wrapped in a document, since that is the UTF-8 question rather than the JSON one, and
+ * `fatal: true` is the whole of it. A question starting `again` is a document instead, answered with
+ * `JSON.stringify(JSON.parse(doc))`.
+ */
+static string UTF8 =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const text = (h) => new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16)));\n" +
+  "const valid = (h) => { try { text(h); return '1'; } catch { return '0'; } };\n" +
+  "const again = (h) => { try { return JSON.stringify(JSON.parse(text(h))); } catch { return 'refused'; } };\n" +
+  "console.log(L.map((l) => (l.startsWith('again ') ? again : valid)(l.split(' ').pop())).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 /** A one-string document containing exactly these bytes. */
 u8[] doc(u8[] body) {
@@ -50,7 +64,7 @@ u8[] doc(u8[] body) {
   return out;
 }
 
-export string test_utf8_malformed_sequences_are_rejected(Core core, Cli cli) {
+export async string test_utf8_malformed_sequences_are_rejected(Sys sys) {
   T t = T.create();
   string[] labels = [
     "lone continuation byte", "continuation after ASCII", "truncated two-byte lead",
@@ -77,14 +91,14 @@ export string test_utf8_malformed_sequences_are_rejected(Core core, Cli cli) {
   bodies[15] = [0xFF] as u8[];
   bodies[16] = [0xF8, 0x88, 0x80, 0x80, 0x80] as u8[];
 
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqStr(faultOf(canonicalize(doc(bodies[i]))), "bad utf-8",
             "\{labels[i]}: not rejected as UTF-8");
     // And the oracle agrees these are invalid, so the corpus cannot rot.
-    lines.add("utf8valid \{hex(bodies[i])} 0");
+    asked.add("\{labels[i]} \{hex(bodies[i])}", "0");
   }
-  checkDeno(t, cli, ORACLE, lines, "the malformed corpus really is malformed");
+  await agree(t, sys.procs(), UTF8, asked, "the malformed corpus really is malformed");
   return t.report();
 }
 
@@ -123,7 +137,7 @@ export string test_utf8_a_sequence_cut_off_by_the_end_of_input() {
  * The loop that checks continuation bytes after the first. A sequence whose first continuation is in
  * range but whose second is not only reaches it here.
  */
-export string test_utf8_a_valid_lead_with_a_bad_later_continuation(Core core, Cli cli) {
+export async string test_utf8_a_valid_lead_with_a_bad_later_continuation(Sys sys) {
   T t = T.create();
   string[] labels = [
                              "three-byte, second continuation bad",
@@ -134,16 +148,16 @@ export string test_utf8_a_valid_lead_with_a_bad_later_continuation(Core core, Cl
   bodies[0] = [0xE6, 0x97, 0x41] as u8[];
   bodies[1] = [0xF0, 0x9F, 0x41, 0x80] as u8[];
   bodies[2] = [0xF0, 0x9F, 0x98, 0x41] as u8[];
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqStr(faultOf(canonicalize(doc(bodies[i]))), "bad utf-8", labels[i]);
-    lines.add("utf8valid \{hex(bodies[i])} 0");
+    asked.add("\{labels[i]} \{hex(bodies[i])}", "0");
   }
-  checkDeno(t, cli, ORACLE, lines, "the host agrees these are malformed");
+  await agree(t, sys.procs(), UTF8, asked, "the host agrees these are malformed");
   return t.report();
 }
 
-export string test_utf8_well_formed_sequences_at_every_width(Core core, Cli cli) {
+export async string test_utf8_well_formed_sequences_at_every_width(Sys sys) {
   T t = T.create();
   string[] labels = [
     "two-byte, lowest", "two-byte é", "two-byte, highest", "three-byte, lowest", "three-byte 日",
@@ -162,33 +176,33 @@ export string test_utf8_well_formed_sequences_at_every_width(Core core, Cli cli)
   bodies[8] = [0xF0, 0x90, 0x80, 0x80] as u8[];
   bodies[9] = [0xF0, 0x9F, 0x98, 0x80] as u8[];
   bodies[10] = [0xF4, 0x8F, 0xBF, 0xBF] as u8[];
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqStr(faultOf(canonicalize(doc(bodies[i]))), "", "\{labels[i]}: rejected");
-    lines.add("utf8valid \{hex(bodies[i])} 1");
+    asked.add("\{labels[i]} \{hex(bodies[i])}", "1");
   }
-  checkDeno(t, cli, ORACLE, lines, "the host agrees these are well-formed");
+  await agree(t, sys.procs(), UTF8, asked, "the host agrees these are well-formed");
   return t.report();
 }
 
 /** Multi-byte content survives the round trip intact — validation must not disturb what it passes. */
-export string test_utf8_multi_byte_content_survives_the_round_trip(Core core, Cli cli) {
+export async string test_utf8_multi_byte_content_survives_the_round_trip(Sys sys) {
   T t = T.create();
   string src = "{\"日本\":\"café 😀\",\"k\":\"ÿĀ\"}";
   Result<u8[], JsonError> got = canonicalize(src.toBytes());
   t.eqStr(faultOf(got), "", "the document parses");
   if (!got.isOk()) { return t.report(); }
-  Lines lines = Lines.create();
-  lines.add("restringify \{hex(src.toBytes())} \{hex(got.orElse(u8[]()))}");
-  checkDeno(t, cli, ORACLE, lines, "the round trip");
+  Asked asked = Asked.create();
+  asked.add("again " + question(src.toBytes()), string.fromBytes(got.orElse(u8[]())));
+  await agree(t, sys.procs(), UTF8, asked, "the round trip");
   return t.report();
 }
 
 
-export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core core, Cli cli) {
+export async string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x6D2B79F5);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32 checked = 0;
   for (i32 i = 0; i < 4000; i++) {
     i32 len = 1 + rng.upto(5);
@@ -202,12 +216,11 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
     }
     if (!usable) { continue; }
     checked = checked + 1;
-    lines.add("utf8valid " + hex(body) + " " +
-              (canonicalize(doc(body)).isOk() ? "1" : "0"));
+    asked.add(hex(body), canonicalize(doc(body)).isOk() ? "1" : "0");
   }
   t.isTrue(checked > 1000, "only \{checked} sequences were usable");
-  core.log("  \{checked} random sequences compared with the host decoder");
-  checkDeno(t, cli, ORACLE, lines, "\{checked} random sequences");
+  sys.log("  \{checked} random sequences compared with the host decoder");
+  await agree(t, sys.procs(), UTF8, asked, "\{checked} random sequences");
   return t.report();
 }
 

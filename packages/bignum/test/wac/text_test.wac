@@ -11,17 +11,22 @@
 // text** — which is pure string work — and `fromHex` turns it into the decimal everything else uses.
 // That would make the corpus whatever `fromHex` produced, and every later check would agree with it.
 //
-// So each generated value is sent to the oracle as `text fromhex` first: the hex string and the
-// decimal we read it as, checked against `BigInt`. One line, and it is what lets the rest of the
-// corpus be trusted. The host-side version had no equivalent because `BigInt` built its corpus
+// So each generated value is put to the oracle as `fromhex` first: the hex string, with the decimal
+// we read it as kept beside it, checked against `BigInt`. One line, and it is what lets the rest of
+// the corpus be trusted. The host-side version had no equivalent because `BigInt` built its corpus
 // directly.
+//
+// **`BIGINT` below is the whole oracle, and it only answers.** It was a TypeScript file shared with
+// the other two tests, which took this file's answers and did the comparing; since 2026-10-27 the
+// script says what `BigInt` makes of each question and `agree` compares in wac
+// (`packages/wactest/src/inline.wac`).
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
 import { roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64, fromU64, opBitLen,
          opIsZero } from "../probe.wac";
 
@@ -33,7 +38,18 @@ import { roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64, fromU64
  */
 i32 bit(Rng rng) { return (rng.next() & 1) as@ i32; }
 
-static string ORACLE = "packages/bignum/test/oracle.ts";
+/**
+ * What `BigInt` says, one line for each question: `dec <v>` the canonical decimal; `fromhex <hex>`
+ * the decimal a bare hex magnitude names; `tohex <v>` the sign and hex digits, no `0x`, which is what
+ * `formatHex` writes; `bitlen <v>` the bit length of the magnitude.
+ */
+static string BIGINT =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const abs = (v) => (v < 0n ? -v : v);\n" +
+  "const O = { dec: (v) => String(v), tohex: (v) => (v < 0n ? '-' : '') + abs(v).toString(16),\n" +
+  "  bitlen: (v) => String(v === 0n ? 0 : abs(v).toString(2).length) };\n" +
+  "const say = ([op, x]) => (op === 'fromhex' ? String(BigInt('0x' + x)) : O[op](BigInt(x)));\n" +
+  "console.log(L.map((l) => say(l.split(' '))).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 string text(u8[] b) { return string.fromBytes(b); }
 u8[] b(string s) { return s.toBytes(); }
@@ -69,20 +85,20 @@ string randomHex(Rng rng, i32 bits) {
 }
 
 /** The decimal a hex string names, with the oracle asked to confirm the two spell one number. */
-string decimalOf(Lines lines, string hexText) {
+string decimalOf(Asked asked, string hexText) {
   string d = text(fromHex(b(hexText)));
-  lines.add("text fromhex \{hexText} \{d}");
+  asked.add("fromhex \{hexText}", d);
   return d;
 }
 
-export string test_decimal_small_values_round_trip(Core core, Cli cli) {
+export async string test_decimal_small_values_round_trip(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = -1000; i <= 1000; i++) {
     string v = "\{i}";
-    lines.add("text roundtrip \{v} \{text(roundTrip(b(v)))}");
+    asked.add("dec \{v}", text(roundTrip(b(v))));
   }
-  checkDeno(t, cli, ORACLE, lines, "small values");
+  await agree(t, sys.procs(), BIGINT, asked, "small values");
   return t.report();
 }
 
@@ -92,14 +108,14 @@ export string test_decimal_small_values_round_trip(Core core, Cli cli) {
  * Around every power of two that lands on or near a limb edge, and around the 10^9 chunk base the
  * conversions use, which is the other place a boundary can hide.
  */
-export string test_decimal_limb_boundaries_round_trip(Core core, Cli cli) {
+export async string test_decimal_limb_boundaries_round_trip(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] powers = [31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 191, 192, 255, 256];
   string[] anchors = string[].filled(powers.len() + 4, "");
   for (i32 i = 0; i < powers.len(); i++) {
     // 2^p as hex is a 1 followed by p/4 zeros, adjusted for the remainder.
-    anchors[i] = decimalOf(lines, powerOfTwoHex(powers[i]));
+    anchors[i] = decimalOf(asked, powerOfTwoHex(powers[i]));
   }
   // 10^9, 10^18, 10^27, 10^36 — the chunk base and its powers.
   string ten9 = "1000000000";
@@ -111,11 +127,11 @@ export string test_decimal_limb_boundaries_round_trip(Core core, Cli cli) {
   for (i32 a = 0; a < anchors.len(); a++) {
     for (i32 d = -2; d <= 2; d++) {
       string v = addSmall(anchors[a], d);
-      lines.add("text roundtrip \{v} \{text(roundTrip(b(v)))}");
-      lines.add("text roundtrip -" + v + " " + text(roundTrip(b("-\{v}"))));
+      asked.add("dec \{v}", text(roundTrip(b(v))));
+      asked.add("dec -\{v}", text(roundTrip(b("-\{v}"))));
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "limb boundaries");
+  await agree(t, sys.procs(), BIGINT, asked, "limb boundaries");
   return t.report();
 }
 
@@ -160,18 +176,18 @@ string addSmall(string d, i32 n) {
   return out == "" ? "0" : out;
 }
 
-export string test_decimal_random_values_round_trip_across_sizes(Core core, Cli cli) {
+export async string test_decimal_random_values_round_trip_across_sizes(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x1F2E3D4C);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 bits = 1; bits <= 600; bits++) {
     for (i32 trial = 0; trial < 3; trial++) {
-      string mag = decimalOf(lines, randomHex(rng, bits));
+      string mag = decimalOf(asked, randomHex(rng, bits));
       string v = bit(rng) == 1 ? "-\{mag}" : mag;
-      lines.add("text roundtrip \{v} \{text(roundTrip(b(v)))}");
+      asked.add("dec \{v}", text(roundTrip(b(v))));
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "random values across sizes");
+  await agree(t, sys.procs(), BIGINT, asked, "random values across sizes");
   return t.report();
 }
 
@@ -225,28 +241,28 @@ export string test_decimal_a_non_digit_in_a_later_chunk_is_rejected() {
   return t.report();
 }
 
-export string test_hex_matches_bigints_to_string(Core core, Cli cli) {
+export async string test_hex_matches_bigints_to_string(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x77AA55CC);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] fixed = ["0", "1", "f", "10", "ff", "100", "ffffffff", "100000000"];
   for (i32 i = 0; i < fixed.len(); i++) {
-    string mag = decimalOf(lines, fixed[i]);
-    hexBothWays(t, lines, mag);
+    string mag = decimalOf(asked, fixed[i]);
+    hexBothWays(t, asked, mag);
   }
   for (i32 bits = 1; bits <= 300; bits = bits + 7) {
-    hexBothWays(t, lines, decimalOf(lines, randomHex(rng, bits)));
+    hexBothWays(t, asked, decimalOf(asked, randomHex(rng, bits)));
   }
-  checkDeno(t, cli, ORACLE, lines, "hex against BigInt");
+  await agree(t, sys.procs(), BIGINT, asked, "hex against BigInt");
   return t.report();
 }
 
-void hexBothWays(T t, Lines lines, string mag) {
+void hexBothWays(T t, Asked asked, string mag) {
   string[] signs = ["", "-"];
   for (i32 s = 0; s < signs.len(); s++) {
     string v = mag == "0" ? "0" : signs[s] + mag;
     string got = text(toHex(b(v)));
-    lines.add("text tohex \{v} \{got}");
+    asked.add("tohex \{v}", got);
     // And back, which is the direction that must undo the first exactly. Checked here rather than by
     // the oracle because it is a statement about this package composing with itself.
     t.eqStr(text(fromHex(b(got))), v, "hex round trip of \{v}");
@@ -274,9 +290,9 @@ export string test_hex_prefix_case_and_malformed_input() {
  * i64 counterpart. `fromU64` no longer travels through an i64 parameter — that was bindgen's
  * constraint, and the host-side version had to reinterpret the bit pattern on both sides.
  */
-export string test_from_i64_and_from_u64_cover_the_extremes(Core core, Cli cli) {
+export async string test_from_i64_and_from_u64_cover_the_extremes(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i64[] signed = [
     0, 1, -1, 2, -2, 1000, -1000,
     2147483647, 2147483648, -2147483648,
@@ -287,7 +303,7 @@ export string test_from_i64_and_from_u64_cover_the_extremes(Core core, Cli cli) 
   ];
   for (i32 i = 0; i < signed.len(); i++) {
     string got = text(fromI64(signed[i]));
-    lines.add("text roundtrip \{got} \{got}");
+    asked.add("dec \{got}", got);
     t.eqStr(got, "\{signed[i]}", "fromI64 of a value this file can also spell");
   }
   u64[] unsigned = [0, 1, 0xFFFFFFFF, 0x100000000, 0x8000000000000000, 0xFFFFFFFFFFFFFFFF];
@@ -298,26 +314,26 @@ export string test_from_i64_and_from_u64_cover_the_extremes(Core core, Cli cli) 
   for (i32 i = 0; i < unsigned.len(); i++) {
     t.eqStr(text(fromU64(unsigned[i])), wanted[i], "fromU64 of an extreme");
   }
-  checkDeno(t, cli, ORACLE, lines, "the i64 constructor");
+  await agree(t, sys.procs(), BIGINT, asked, "the i64 constructor");
   return t.report();
 }
 
-export string test_bit_len_matches_bigint(Core core, Cli cli) {
+export async string test_bit_len_matches_bigint(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x5150CAFE);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] fixed = ["0", "1", "2", "3", "255", "256"];
-  for (i32 i = 0; i < fixed.len(); i++) { bitLenBothWays(lines, fixed[i]); }
+  for (i32 i = 0; i < fixed.len(); i++) { bitLenBothWays(asked, fixed[i]); }
   for (i32 bits = 1; bits <= 400; bits = bits + 3) {
-    bitLenBothWays(lines, decimalOf(lines, randomHex(rng, bits)));
+    bitLenBothWays(asked, decimalOf(asked, randomHex(rng, bits)));
   }
-  checkDeno(t, cli, ORACLE, lines, "bit length");
+  await agree(t, sys.procs(), BIGINT, asked, "bit length");
   return t.report();
 }
 
-void bitLenBothWays(Lines lines, string mag) {
-  lines.add("text bitlen \{mag} \{opBitLen(mag.toBytes())}");
+void bitLenBothWays(Asked asked, string mag) {
+  asked.add("bitlen \{mag}", "\{opBitLen(mag.toBytes())}");
   if (mag != "0") {
-    lines.add("text bitlen -\{mag} \{opBitLen("-\{mag}".toBytes())}");
+    asked.add("bitlen -\{mag}", "\{opBitLen("-\{mag}".toBytes())}");
   }
 }

@@ -5,8 +5,8 @@
 // not free — a process is milliseconds — so the shape that works is the opposite one: compute
 // everything, hand it over once, and let the oracle report only what it rejects.
 //
-// That is what `packages/gzip/test/fuzz/oracle.py` does for gzip and what
-// `packages/datetime/test/oracle.ts` does for `Date`. This is the caller's half of it, here rather
+// That is what `packages/gzip/test/fuzz/oracle.py` does for gzip. A JavaScript reference is now an
+// inline script that only answers, in `inline.wac`. This is the caller's half of it, here rather
 // than copied into each package, because the two things that make it correct are easy to leave out:
 //
 //   - **the count.** An oracle that read half the batch and stopped reports no failures, which is

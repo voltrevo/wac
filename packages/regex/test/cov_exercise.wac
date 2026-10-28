@@ -124,7 +124,7 @@ string piece(Rng r, string[] ats, string[] qs, i32 depth) {
   return ats[r.upto(ats.len())] + qs[r.upto(qs.len())];
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 seen = 0;
@@ -235,59 +235,59 @@ export i32 main(Sys sys) {
   //
   // None of them expects a trap, so there is no `trapCase` sweep here.
   i32 bad = 0;
-  if (rx__literals_dot_and_anchors(core, cli).len() > 0) {
+  if ((await rx__literals_dot_and_anchors(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_literals_dot_and_anchors");
     bad = bad + 1;
   }
-  if (rx__character_classes(core, cli).len() > 0) {
+  if ((await rx__character_classes(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_character_classes");
     bad = bad + 1;
   }
-  if (rx__shorthand_classes(core, cli).len() > 0) {
+  if ((await rx__shorthand_classes(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_shorthand_classes");
     bad = bad + 1;
   }
-  if (rx__greedy_quantifiers(core, cli).len() > 0) {
+  if ((await rx__greedy_quantifiers(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_greedy_quantifiers");
     bad = bad + 1;
   }
-  if (rx__lazy_quantifiers(core, cli).len() > 0) {
+  if ((await rx__lazy_quantifiers(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_lazy_quantifiers");
     bad = bad + 1;
   }
-  if (rx__groups_and_alternation(core, cli).len() > 0) {
+  if ((await rx__groups_and_alternation(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_groups_and_alternation");
     bad = bad + 1;
   }
-  if (rx__word_boundaries(core, cli).len() > 0) {
+  if ((await rx__word_boundaries(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_word_boundaries");
     bad = bad + 1;
   }
-  if (rx__backtracking_order_is_the_whole_answer(core, cli).len() > 0) {
+  if ((await rx__backtracking_order_is_the_whole_answer(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_backtracking_order_is_the_whole_answer");
     bad = bad + 1;
   }
-  if (rx__empty_matching_loops_terminate_and_agree(core, cli).len() > 0) {
+  if ((await rx__empty_matching_loops_terminate_and_agree(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_empty_matching_loops_terminate_and_agree");
     bad = bad + 1;
   }
-  if (rx__patterns_outside_the_subset_are_rejected(core, cli).len() > 0) {
+  if ((await rx__patterns_outside_the_subset_are_rejected(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_patterns_outside_the_subset_are_rejected");
     bad = bad + 1;
   }
-  if (rx__escapes_of_metacharacters(core, cli).len() > 0) {
+  if ((await rx__escapes_of_metacharacters(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_escapes_of_metacharacters");
     bad = bad + 1;
   }
-  if (rx__fuzz_flat_patterns_agree_with_regexp(core, cli).len() > 0) {
+  if ((await rx__fuzz_flat_patterns_agree_with_regexp(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_fuzz_flat_patterns_agree_with_regexp");
     bad = bad + 1;
   }
-  if (rx__fuzz_nested_groups_agree_with_regexp(core, cli).len() > 0) {
+  if ((await rx__fuzz_nested_groups_agree_with_regexp(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_fuzz_nested_groups_agree_with_regexp");
     bad = bad + 1;
   }
-  if (rx__the_i_flag_agrees_with_regexp_over_ascii(core, cli).len() > 0) {
+  if ((await rx__the_i_flag_agrees_with_regexp_over_ascii(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_the_i_flag_agrees_with_regexp_over_ascii");
     bad = bad + 1;
   }
@@ -299,15 +299,15 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED regex_test test_a_capture_heavy_quantifier_runs_out_of_room");
     bad = bad + 1;
   }
-  if (rx__the_parser_corners_a_generated_corpus_misses(core, cli).len() > 0) {
+  if ((await rx__the_parser_corners_a_generated_corpus_misses(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_the_parser_corners_a_generated_corpus_misses");
     bad = bad + 1;
   }
-  if (rx__the_compilers_tables_grow_and_keep_what_was_in_them(core, cli).len() > 0) {
+  if ((await rx__the_compilers_tables_grow_and_keep_what_was_in_them(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_the_compilers_tables_grow_and_keep_what_was_in_them");
     bad = bad + 1;
   }
-  if (rx__a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(core, cli).len() > 0) {
+  if ((await rx__a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(sys)).len() > 0) {
     core.warn("error: FAILED regex_test test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript");
     bad = bad + 1;
   }
