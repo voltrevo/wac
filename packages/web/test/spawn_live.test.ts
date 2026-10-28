@@ -53,7 +53,7 @@ function serve(dir: string): { port: number; stop: () => Promise<void> } {
 }
 
 Deno.test({
-  name: "a page runs a module from its own disk, and hears its output, its errors and its status",
+  name: "a page runs modules from its own disk, and hears their output, their errors and their status",
   ignore: cannotBecause !== "",
   sanitizeResources: false,
   sanitizeOps: false,
@@ -64,20 +64,30 @@ Deno.test({
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
       await buildPage("packages/platform/example/spawnpage.wac", dir, ["--grant", "read,write"]);
-      const built = await new Deno.Command(`${ROOT}/native/v8/target/release/wac`, {
-        args: ["build", "packages/platform/example/spawnchild.wac", "-o", `${dir}/child`],
-        cwd: ROOT,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      if (!built.success) throw new Error(`building child.wac failed:\n${new TextDecoder().decode(built.stderr)}`);
+      // Three modules: one that uses its host, one whose `main` takes nothing and so has no host to be given, and one
+      // that loads the second and calls it.
+      for (const [entry, stem] of [["spawnchild", "child"], ["spawnplain", "plain"], ["spawnload", "load"]]) {
+        const built = await new Deno.Command(`${ROOT}/native/v8/target/release/wac`, {
+          args: ["build", `packages/platform/example/${entry}.wac`, "-o", `${dir}/${stem}`],
+          cwd: ROOT,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        if (!built.success) throw new Error(`building ${entry}.wac failed:\n${new TextDecoder().decode(built.stderr)}`);
+      }
       const module = await Deno.readFile(`${dir}/child.wasm`);
+      const plain = await Deno.readFile(`${dir}/plain.wasm`);
+      const load = await Deno.readFile(`${dir}/load.wasm`);
       const port = (http = serve(dir)).port;
       browser = await chromium.launch({ args: ["--no-proxy-server"] });
       const page = await browser.newPage();
       const failures: string[] = [];
       page.on("pageerror", (e: Error) => failures.push(String(e)));
-      page.on("console", (m: { type(): string; text(): string }) => { if (m.type() === "error") failures.push(m.text()); });
+      const logged: string[] = [];
+      page.on("console", (m: { type(): string; text(): string }) => {
+        if (m.type() === "error") failures.push(m.text());
+        else logged.push(`${m.type()}: ${m.text().trim()}`);
+      });
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
 
       // The module and a note it reads, put where the page's program looks — its storage — and then the page
@@ -90,17 +100,27 @@ Deno.test({
           await w.close();
         };
         await put("child.wasm", new Uint8Array(${JSON.stringify([...module])}));
+        await put("plain.wasm", new Uint8Array(${JSON.stringify([...plain])}));
+        await put("load.wasm", new Uint8Array(${JSON.stringify([...load])}));
         await put("note.txt", new TextEncoder().encode("from the disk"));
       })()`);
       await page.reload({ waitUntil: "load" });
 
       const out = async (): Promise<string> =>
         await page.evaluate("(() => { const e = document.getElementById('out'); return e ? e.textContent : ''; })()") as string;
-      await waitInPage(page, "(() => { const e = document.getElementById('out'); return e !== null && e.textContent.includes('exit'); })()", null, { timeout: 30_000 })
+      await waitInPage(page, "(() => { const e = document.getElementById('out'); return e !== null && (e.textContent.match(/exit|start/g) ?? []).length >= 5; })()", null, { timeout: 30_000 })
         .catch(async (e: Error) => {
           throw new Error(`${e.message}\nthe page shows: ${JSON.stringify(await out())}\nerrors: ${failures.join(" | ")}`);
         });
-      assertEquals(await out(), "args: one two\nnote: from the disk\nerr: to standard error\nexit: 7", "what the module did");
+      assertEquals(await out(), "args: one two\nnote: from the disk\nerr: to standard error\nexit: 7\nerr: exit: 3\nerr: exit: 7\n" +
+                   "args: one two\nnote: Not granted to this application: the program that started it did not hand it `read`\n" +
+                   "err: to standard error\nexit: 7\n" +
+                   "called: status 0, value 3\nabsent: status 2, no export named absent\nerr: exit: 0",
+                   "what each module did — the fourth handed no files, so refused its read; the fifth loading the second");
+      // The third run inherited the page's streams: what it wrote is on the page's console, in the order it wrote it.
+      assertEquals(logged.filter((l) => l.includes("one two") || l.includes("disk") || l.includes("standard error")),
+                   ["log: args: one two", "log: note: from the disk", "warning: to standard error"],
+                   "what the module wrote to the page's own streams");
       assertEquals(failures, [], "the page reported an error");
     } finally {
       await browser?.close();

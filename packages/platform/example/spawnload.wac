@@ -1,0 +1,27 @@
+// A program the page in `spawnpage.wac` runs, which itself loads a module — `plain.wasm` — and calls its `main` by
+// name: how `wac test` runs tests, here inside a module a page started.
+
+import { Authority, Sys } from "std";
+
+export async i32 main(Sys sys) {
+  match (await sys.files().readFile("plain.wasm")) {
+    Ok(bytes): {
+      match (sys.modules().load(bytes, Authority.none())) {
+        Ok(m): {
+          match (m.call("main", 0)) {
+            Ok(c): { sys.stdout().line("called: status \{c.status}, value \{c.value}"); }
+            Err(e): { sys.stdout().line("call: \{e}"); }
+          }
+          match (m.call("absent", 0)) {
+            Ok(c): { sys.stdout().line("absent: status \{c.status}, \{c.text}"); }
+            Err(e): { sys.stdout().line("absent: \{e}"); }
+          }
+          m.unload();
+        }
+        Err(e): { sys.stdout().line("load: \{e}"); }
+      }
+    }
+    Err(e): { sys.stdout().line("read: \{e}"); }
+  }
+  return 0;
+}

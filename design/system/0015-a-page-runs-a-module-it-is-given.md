@@ -104,7 +104,9 @@ answer that has not arrived is still a block, and in a page it aborts.
    conversions of `packages/platform/host/marshal.ts`), and the worker serves the module with the same request
    switch as the page's own program. Live test: `packages/web/test/spawn_live.test.ts`.
 3. `load` and `call` through the same wiring, with `wac test`'s shape as the live test: load a module, call
-   an export by name.
+   an export by name. **Done 2026-10-28 (agent-b) for a module the page started**: `wacLoad` in the
+   page builder, the native host's `call_loaded` rules, with the same live test loading one module from another.
+   The page's own program still answers `load` with `Unsupported`; nothing has needed it.
 4. The main-thread broker for every child, with a live test that opens the page from `file://` and stops a
    looping child with `^C`.
 
