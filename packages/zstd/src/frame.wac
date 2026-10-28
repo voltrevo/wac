@@ -11,8 +11,9 @@
 // real encoder emits raw blocks for incompressible input and RLE blocks for runs, so the
 // tests are against zstd's own output rather than against a reading of the specification.
 
-import { Buf } from "core";
-import { Decoder, decodeCompressed } from "./block.wac";
+import { Buf, Result } from "core";
+import { Decoder, decodeCompressedIn } from "./block.wac";
+import { Fault } from "./fault.wac";
 import { xxh64Low } from "./xxh64.wac";
 
 /** `0xFD2FB528`, little-endian, at the start of every zstd frame. */
@@ -34,13 +35,19 @@ export i32 blockMaxSize() { return 131072; }
 export struct Reader {
   u8[] src;
   i32 pos;
+  /** Why this frame is malformed, once something found out — every step below records here. */
+  Fault fault;
 
-  Reader create(u8[] src) { return Reader(src, 0); }
+  Reader create(u8[] src) { return Reader(src, 0, Fault.create()); }
 
   i32 left(const this) { return this.src.len() - this.pos; }
 
+  /** The next byte; past the end, the frame fails and this answers zero. */
   i32 byte(this) {
-    if (this.pos >= this.src.len()) { trap; }
+    if (this.pos >= this.src.len()) {
+      this.fault.fail("the frame ends early");
+      return 0;
+    }
     i32 v = this.src[this.pos] as i32;
     this.pos++;
     return v;
@@ -65,7 +72,11 @@ export struct Reader {
   }
 
   void skip(this, i32 n) {
-    if (n < 0 || n > this.left()) { trap; }
+    if (n < 0 || n > this.left()) {
+      this.fault.fail("the frame ends early");
+      this.pos = this.src.len();
+      return;
+    }
     this.pos += n;
   }
 }
@@ -116,6 +127,13 @@ export i32 headerLength(i32 fhd) {
  * is read strictly in order: get one wrong and every later field is misaligned.
  */
 export FrameHeader readHeader(Reader r) {
+  FrameHeader h = readHeaderIn(r);
+  if (r.fault.failed()) { trap; }
+  return h;
+}
+
+/** `readHeader`, recording in `r.fault` why the header is malformed rather than trapping. */
+export FrameHeader readHeaderIn(Reader r) {
   i32 fhd = r.byte();
   i32 fcsFlag = (fhd >>> 6) & 3;
   bool singleSegment = ((fhd >>> 5) & 1) == 1;
@@ -124,7 +142,10 @@ export FrameHeader readHeader(Reader r) {
 
   // Bit 3 is reserved and bit 4 is unused; both must be zero. A decoder that ignores them
   // would accept frames a later version of the format may define differently.
-  if (((fhd >>> 3) & 1) != 0) { trap; }
+  if (((fhd >>> 3) & 1) != 0) {
+    r.fault.fail("a frame header sets a bit the format reserves");
+    return FrameHeader(0 - 1, 0, false, 0);
+  }
 
   i32 windowSize = 0;
   if (!singleSegment) {
@@ -133,7 +154,10 @@ export FrameHeader readHeader(Reader r) {
     i32 exponent = (wd >>> 3) & 31;
     i32 mantissa = wd & 7;
     i32 windowLog = 10 + exponent;
-    if (windowLog > 30) { trap; }          // beyond what an i32 window can address here
+    if (windowLog > 30) {                  // beyond what an i32 window can address here
+      r.fault.fail("a frame's window is larger than this decoder can address");
+      return FrameHeader(0 - 1, 0, false, 0);
+    }
     i32 windowBase = 1 << windowLog;
     windowSize = windowBase + (windowBase / 8) * mantissa;
   }
@@ -167,7 +191,10 @@ export FrameHeader readHeader(Reader r) {
 
   // A single-segment frame has no window descriptor because the content size *is* the window.
   if (singleSegment) {
-    if (contentSize < 0) { trap; }
+    if (contentSize < 0) {
+      r.fault.fail("a single-segment frame with no content size");
+      return FrameHeader(0 - 1, 0, false, 0);
+    }
     windowSize = contentSize as~ i32;
   }
 
@@ -185,23 +212,33 @@ export FrameHeader readHeader(Reader r) {
  * would defeat the point of carrying one.
  */
 export u8[] decompress(u8[] src) {
+  return decompressResult(src).unwrap();
+}
+
+/**
+ * `decompress`, answering why the input is not valid zstd rather than trapping — `fault.wac` has the
+ * rule that makes that safe: nothing that ran after a failure can reach the `Ok`.
+ */
+export Result<u8[], string> decompressResult(u8[] src) {
   Reader r = Reader.create(src);
   Buf out = Buf.create();
 
   while (r.left() > 0) {
-    if (r.left() < 4) { trap; }
+    if (r.left() < 4) { return Result.Err("trailing bytes too short to be a frame"); }
     i32 m = r.num(4);
 
     // Skippable frames: a magic in a 16-value range, a length, and content nobody decodes.
     if ((m & 0xFFFFFFF0) == skippableBase()) {
       i32 size = r.num(4);
-      if (size < 0) { trap; }
+      if (size < 0) { return Result.Err("a skippable frame of negative length"); }
       r.skip(size);
+      if (r.fault.failed()) { return Result.Err(r.fault.why); }
       continue;
     }
-    if (m != magic()) { trap; }
+    if (m != magic()) { return Result.Err("not zstd: the magic number is wrong"); }
 
-    FrameHeader h = readHeader(r);
+    FrameHeader h = readHeaderIn(r);
+    if (r.fault.failed()) { return Result.Err(r.fault.why); }
 
     // A frame that names a dictionary cannot be decoded without it: the dictionary supplies the
     // starting entropy tables, the starting repeat offsets, and a window of history the first
@@ -214,13 +251,16 @@ export u8[] decompress(u8[] src) {
     // in `sequences.wac` refuses. That refusal is real but incidental, and a frame whose matches
     // happen never to reach into the dictionary would decode correctly, which is only to say the
     // dictionary was not doing anything.
-    if (h.dictId != 0) { trap; }
+    if (h.dictId != 0) { return Result.Err("a frame that needs a dictionary"); }
 
     i32 startLen = out.len;
     // Per frame, not per file: a second frame starts with no tables and the initial offsets.
     decodeBlocks(r, out, Decoder.create());
+    if (r.fault.failed()) { return Result.Err(r.fault.why); }
 
-    if (h.contentSize >= 0 && ((out.len - startLen) as i64) != h.contentSize) { trap; }
+    if (h.contentSize >= 0 && ((out.len - startLen) as i64) != h.contentSize) {
+      return Result.Err("a frame's content is not the size its header declares");
+    }
 
     if (h.hasChecksum) {
       // The low four bytes of XXH64 over this frame's content, little-endian.
@@ -229,42 +269,55 @@ export u8[] decompress(u8[] src) {
       // frame which decoded without complaint into the wrong bytes. Everything else here
       // verifies that the *encoding* made sense.
       u32 want = r.num(4) as@ u32;   // raw: a checksum with the top bit set is negative as an i32
+      if (r.fault.failed()) { return Result.Err(r.fault.why); }
       u32 got = xxh64Low(out.data, startLen, out.len - startLen);
-      if (got != want) { trap; }
+      if (got != want) { return Result.Err("a frame's checksum does not match what it holds"); }
     }
   }
 
-  return out.take();
+  return Result.Ok(out.take());
 }
 
 /** The block loop: header, content, repeat until the one flagged last. */
 void decodeBlocks(Reader r, Buf out, Decoder d) {
   bool last = false;
-  while (!last) {
+  while (!last && !r.fault.failed()) {
     i32 header = r.num(3);
+    if (r.fault.failed()) { return; }
     last = (header & 1) == 1;
     i32 blockType = (header >>> 1) & 3;
     i32 size = header >>> 3;
 
     if (blockType == 0) {
       // Raw: the bytes are the content.
-      if (size > blockMaxSize()) { trap; }
-      if (size > r.left()) { trap; }
+      if (size > blockMaxSize() || size > r.left()) {
+        r.fault.fail("a raw block larger than the format allows or than the frame holds");
+        return;
+      }
       out.pushBytes(r.src, r.pos, size);
       r.skip(size);
     } else if (blockType == 1) {
       // RLE: one byte, repeated. `size` is the *decoded* length here, not the stored one.
-      if (size > blockMaxSize()) { trap; }
+      if (size > blockMaxSize()) {
+        r.fault.fail("an RLE block larger than the format allows");
+        return;
+      }
       i32 v = r.byte();
+      if (r.fault.failed()) { return; }
       for (i32 i = 0; i < size; i++) {
         out.push(v as@ u8);
       }
     } else if (blockType == 2) {
-      if (size > r.left()) { trap; }
-      decodeCompressed(r.src, r.pos, size, out, d);
+      if (size > r.left()) {
+        r.fault.fail("a compressed block larger than the frame holds");
+        return;
+      }
+      decodeCompressedIn(r.src, r.pos, size, out, d, r.fault);
+      if (r.fault.failed()) { return; }
       r.skip(size);
     } else {
-      trap;   // block type 3 is reserved
+      r.fault.fail("a block type the format reserves");   // type 3
+      return;
     }
   }
 }

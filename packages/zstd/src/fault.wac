@@ -1,0 +1,22 @@
+// Why a decode stopped — one per frame, handed to every step that can find the input malformed.
+//
+// **A malformed frame answers rather than trapping** (`decompressResult`), because a page cannot catch
+// a trap and a page decoding what a user dropped on it died on a bad archive. The rule is the one
+// `packages/gzip/src/inflate.wac` follows, for the reason `issues/system/0102` gives: a decoder that
+// keeps going after a failure nobody checks writes silent corruption. So a step that finds the input
+// malformed records why here and returns an empty answer, and **every caller checks before it uses
+// what it was handed** — the only way out of a frame with a reason recorded is an error.
+
+/** The first reason a decode found its input malformed, or "". */
+export struct Fault {
+  string why;
+
+  Fault create() { return Fault(""); }
+
+  /** Record `reason` unless one is recorded already: the first is the cause, the rest consequences. */
+  void fail(this, string reason) {
+    if (this.why == "") { this.why = reason; }
+  }
+
+  bool failed(const this) { return this.why != ""; }
+}

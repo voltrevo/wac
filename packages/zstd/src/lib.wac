@@ -7,4 +7,5 @@
 
 export { compress } from "./encode.wac";
 export { decompress } from "./frame.wac";
+export { decompressResult } from "./frame.wac";
 export { unzstdStream } from "./stream.wac";

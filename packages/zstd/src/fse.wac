@@ -17,6 +17,8 @@
 // decoder must start at the last byte and walk down. The final byte carries a marker: its
 // highest set bit is padding, not data, and everything below it is the stream.
 
+import { Fault } from "./fault.wac";
+
 /** The position of the highest set bit, or -1 for zero. */
 i32 highBit(i32 v) {
   // **One instruction, not a loop.** `31 - clz` is the position of the highest set bit, and `clz` of
@@ -83,11 +85,22 @@ struct FwdBits {
  * Traps on a description that overruns its budget or names more symbols than the caller allows.
  */
 export FseTable readTable(u8[] src, i32 at, i32 maxSymbol, i32 maxLog) {
+  Fault f = Fault.create();
+  FseTable t = readTableIn(src, at, maxSymbol, maxLog, f);
+  if (f.failed()) { trap; }
+  return t;
+}
+
+/** `readTable`, recording in `f` why a description is malformed rather than trapping. */
+export FseTable readTableIn(u8[] src, i32 at, i32 maxSymbol, i32 maxLog, Fault f) {
   FwdBits b = FwdBits.create(src, at);
 
   i32 log = (b.peek(4) & 15) + 5;
   b.skip(4);
-  if (log > maxLog) { trap; }
+  if (log > maxLog) {
+    f.fail("an FSE table's accuracy is past what this table allows");
+    return rleTable(0);
+  }
 
   i32 size = 1 << log;
   i32[] counts = i32[].filled(maxSymbol + 1, 0);
@@ -110,7 +123,10 @@ export FseTable readTable(u8[] src, i32 at, i32 maxSymbol, i32 maxLog) {
       zeros += b.peek(2);
       b.skip(2);
       for (i32 i = 0; i < zeros; i++) {
-        if (symbol > maxSymbol) { trap; }
+        if (symbol > maxSymbol) {
+          f.fail("an FSE table names more symbols than it may");
+          return rleTable(0);
+        }
         counts[symbol] = 0;
         symbol++;
       }
@@ -141,7 +157,10 @@ export FseTable readTable(u8[] src, i32 at, i32 maxSymbol, i32 maxLog) {
     // together put the count in `[0, remaining]`. Kept because what it guards is not an
     // out-of-bounds write but a runaway — a negative `remaining` would drive `nbBits` below
     // zero in the narrowing loop below, and a zero-width read never advances.
-    if (remaining < 0) { trap; }
+    if (remaining < 0) {
+      f.fail("an FSE table's counts exceed its size");
+      return rleTable(0);
+    }
 
     // No bound check on `symbol` here: the loop condition above is `symbol <= maxSymbol` and
     // nothing has moved it since. The zero-run branch needs its own check because the run
@@ -156,9 +175,13 @@ export FseTable readTable(u8[] src, i32 at, i32 maxSymbol, i32 maxLog) {
       threshold = threshold >>> 1;
     }
   }
-  if (remaining != 1) { trap; }        // the distribution must account for the whole table
+  if (remaining != 1) {                // the distribution must account for the whole table
+    f.fail("an FSE table's counts do not fill it");
+    return rleTable(0);
+  }
 
-  FseTable t = build(counts, symbol - 1, log);
+  FseTable t = build(counts, symbol - 1, log, f);
+  if (f.failed()) { return rleTable(0); }
   t.bytesUsed = b.bytesUsed();
   return t;
 }
@@ -179,10 +202,14 @@ export FseTable readTable(u8[] src, i32 at, i32 maxSymbol, i32 maxLog) {
  * constants, so they arrive here rather than through `readTable`.
  */
 export FseTable buildFromCounts(const i32[] counts, i32 maxSymbol, i32 log) {
-  return build(counts, maxSymbol, log);
+  // The defaults are constants that build, so a failure here is a fault in this file: trap.
+  Fault f = Fault.create();
+  FseTable t = build(counts, maxSymbol, log, f);
+  if (f.failed()) { trap; }
+  return t;
 }
 
-FseTable build(const i32[] counts, i32 maxSymbol, i32 log) {
+FseTable build(const i32[] counts, i32 maxSymbol, i32 log, Fault f) {
   i32 size = 1 << log;
   i32 mask = size - 1;
   i32[] symbol = i32[].filled(size, 0);
@@ -214,7 +241,10 @@ FseTable build(const i32[] counts, i32 maxSymbol, i32 log) {
       }
     }
   }
-  if (pos != 0) { trap; }              // the walk must return to where it started
+  if (pos != 0) {                      // the walk must return to where it started
+    f.fail("an FSE table's spread does not close");
+    return rleTable(0);
+  }
 
   for (i32 u = 0; u < size; u++) {
     i32 s = symbol[u];
@@ -262,9 +292,23 @@ export struct BackBits {
 
   /** Position on `src[start, start+len)`, and find the padding marker. */
   BackBits create(u8[] src, i32 start, i32 len) {
-    if (len <= 0) { trap; }
+    Fault f = Fault.create();
+    BackBits b = BackBits.within(src, start, len, f);
+    if (f.failed()) { trap; }
+    return b;
+  }
+
+  /** `create`, recording why in `f` rather than trapping; a failed one has nothing to read. */
+  BackBits within(u8[] src, i32 start, i32 len, Fault f) {
+    if (len <= 0) {
+      f.fail("an empty bitstream");
+      return BackBits(src, start, 0 - 1, 0, 0, 0 - 1);
+    }
     i32 last = src[start + len - 1] as i32;
-    if (last == 0) { trap; }           // the marker bit must be somewhere in the last byte
+    if (last == 0) {                   // the marker bit must be somewhere in the last byte
+      f.fail("a bitstream with no end marker");
+      return BackBits(src, start, 0 - 1, 0, 0, 0 - 1);
+    }
     i32 marker = highBit(last);
     // The bits below the marker are the first data; everything above it is padding.
     return BackBits(src, start, (len - 1) * 8 + marker,
@@ -370,33 +414,51 @@ export i32 nextState(FseTable t, i32 state, BackBits b) {
  * This is what Huffman weights are coded with, which is where it gets used first.
  */
 export i32[] decompress(u8[] src, i32 maxSymbol, i32 maxLog, i32 maxOut) {
-  FseTable t = readTable(src, 0, maxSymbol, maxLog);
-  i32 at = t.bytesUsed;
-  if (at >= src.len()) { trap; }       // a description with no stream after it
+  Fault f = Fault.create();
+  i32[] got = decompressIn(src, maxSymbol, maxLog, maxOut, f);
+  if (f.failed()) { trap; }
+  return got;
+}
 
-  BackBits b = BackBits.create(src, at, src.len() - at);
+/** `decompress`, recording in `f` why a blob is malformed rather than trapping. */
+export i32[] decompressIn(u8[] src, i32 maxSymbol, i32 maxLog, i32 maxOut, Fault f) {
+  FseTable t = readTableIn(src, 0, maxSymbol, maxLog, f);
+  if (f.failed()) { return i32[](); }
+  i32 at = t.bytesUsed;
+  if (at >= src.len()) {               // a description with no stream after it
+    f.fail("an FSE description with no stream after it");
+    return i32[]();
+  }
+
+  BackBits b = BackBits.within(src, at, src.len() - at, f);
+  if (f.failed()) { return i32[](); }
   i32 s1 = initState(b, t);
   i32 s2 = initState(b, t);
 
-  // Writing past `maxOut` traps on the array's own bounds check, so there is nothing to test
-  // for here. A corrupt stream that would decode for as long as it is fed zeros stops the same
-  // way a genuinely oversized one does, which is the right outcome for both.
+  // **Checked before every write, explicitly.** This relied on the array's own bounds check to stop a
+  // stream past `maxOut` — a trap with no message — and a corrupt stream that decodes for as long as it
+  // is fed zeros reaches it. Now it is a reason, like every other way the input can be wrong.
   i32[] out = i32[].filled(maxOut, 0);
+  string tooMany = "an FSE stream decodes to more symbols than it may";
   i32 n = 0;
   while (true) {
+    if (n >= maxOut) { f.fail(tooMany); return i32[](); }
     out[n] = symbolAt(t, s1);
     n++;
     s1 = nextState(t, s1, b);
     if (b.left < 0) {
+      if (n >= maxOut) { f.fail(tooMany); return i32[](); }
       out[n] = symbolAt(t, s2);
       n++;
       break;
     }
 
+    if (n >= maxOut) { f.fail(tooMany); return i32[](); }
     out[n] = symbolAt(t, s2);
     n++;
     s2 = nextState(t, s2, b);
     if (b.left < 0) {
+      if (n >= maxOut) { f.fail(tooMany); return i32[](); }
       out[n] = symbolAt(t, s1);
       n++;
       break;

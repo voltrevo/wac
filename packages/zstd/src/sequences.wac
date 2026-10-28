@@ -22,7 +22,8 @@
 // bytes later.
 
 import { Buf } from "core";
-import { BackBits, FseTable, initState, nextState, readTable, rleTable, symbolAt, buildFromCounts } from "./fse.wac";
+import { BackBits, FseTable, initState, nextState, readTableIn, rleTable, symbolAt, buildFromCounts } from "./fse.wac";
+import { Fault } from "./fault.wac";
 
 // ── The code tables ───────────────────────────────────────────────────────────
 //
@@ -80,7 +81,7 @@ struct Fused {
   i32[] info;          // (extraBits << 24) | (nbBits << 16) | newState
   i32[] base;          // the value baseline for the symbol this state stands for
 
-  Fused build(FseTable t, const i32[] codeBase, const i32[] codeBits, i32 maxSymbol) {
+  Fused build(FseTable t, const i32[] codeBase, const i32[] codeBits, i32 maxSymbol, Fault f) {
     i32 size = t.symbol.len();
     i32[] info = i32[].filled(size, 0);
     i32[] base = i32[].filled(size, 0);
@@ -88,7 +89,10 @@ struct Fused {
       i32 c = t.symbol[s];
       // Checked here rather than per sequence. A table naming a code with no baseline is
       // malformed, and rejecting it on sight beats reaching past the end of `codeBase` later.
-      if (c < 0 || c > maxSymbol) { trap; }
+      if (c < 0 || c > maxSymbol) {
+        f.fail("a sequence table names a code with no baseline");
+        return Fused(i32[](), i32[]());
+      }
       info[s] = (codeBits[c] << 24) | (t.nbBits[s] << 16) | t.newState[s];
       base[s] = codeBase[c];
     }
@@ -96,13 +100,16 @@ struct Fused {
   }
 
   /** Offsets have no baseline table: code `n` means baseline `1 << n` with `n` extra bits. */
-  Fused buildOffset(FseTable t, i32 maxSymbol) {
+  Fused buildOffset(FseTable t, i32 maxSymbol, Fault f) {
     i32 size = t.symbol.len();
     i32[] info = i32[].filled(size, 0);
     i32[] base = i32[].filled(size, 0);
     for (i32 s = 0; s < size; s++) {
       i32 c = t.symbol[s];
-      if (c < 0 || c > maxSymbol) { trap; }
+      if (c < 0 || c > maxSymbol) {
+        f.fail("an offset table names a code past the largest");
+        return Fused(i32[](), i32[]());
+      }
       info[s] = (c << 24) | (t.nbBits[s] << 16) | t.newState[s];
       base[s] = 1 << c;
     }
@@ -167,22 +174,31 @@ struct SeqCount {
  * Zero is a real answer and means the block is all literals — and then the section stops, with
  * no compression modes byte and no tables at all.
  */
-SeqCount readCount(u8[] src, i32 at, i32 end) {
-  if (at >= end) { trap; }
+SeqCount readCount(u8[] src, i32 at, i32 end, Fault f) {
+  if (at >= end) {
+    f.fail("a block with no sequences section");
+    return SeqCount(0, 0);
+  }
   i32 b0 = src[at] as i32;
   if (b0 < 128) { return SeqCount(b0, 1); }
   if (b0 < 255) {
-    if (at + 1 >= end) { trap; }
+    if (at + 1 >= end) {
+      f.fail("a sequence count cut short");
+      return SeqCount(0, 0);
+    }
     return SeqCount(((b0 - 128) << 8) + src[at + 1] as i32, 2);
   }
-  if (at + 2 >= end) { trap; }
+  if (at + 2 >= end) {
+    f.fail("a sequence count cut short");
+    return SeqCount(0, 0);
+  }
   return SeqCount(src[at + 1] as i32 + (src[at + 2] as i32 << 8) + 32512, 3);
 }
 
 /** Build one of the three tables according to its two-bit mode. */
 FseTable tableFor(
   i32 mode, u8[] src, i32 at, i32 end, i32 maxSymbol, i32 maxLog,
-  const i32[] defaults, i32 defaultLog, FseTable previous, bool hasPrevious, i32[] used
+  const i32[] defaults, i32 defaultLog, FseTable previous, bool hasPrevious, i32[] used, Fault f
 ) {
   if (mode == 0) {
     // The distribution's own length, not the code's maximum symbol: the offset default stops
@@ -193,17 +209,23 @@ FseTable tableFor(
   }
   if (mode == 1) {
     // One symbol, given as the next byte, and no table.
-    if (at >= end) { trap; }
+    if (at >= end) {
+      f.fail("an RLE sequence table with no symbol");
+      return rleTable(0);
+    }
     used[0] = 1;
     return rleTable(src[at] as i32);
   }
   if (mode == 2) {
-    FseTable t = readTable(src, at, maxSymbol, maxLog);
+    FseTable t = readTableIn(src, at, maxSymbol, maxLog, f);
     used[0] = t.bytesUsed;
     return t;
   }
   // Repeat: whatever the last block used. A block that asks before there is one is malformed.
-  if (!hasPrevious) { trap; }
+  if (!hasPrevious) {
+    f.fail("a block repeats sequence tables before there are any");
+    return rleTable(0);
+  }
   used[0] = 0;
   return previous;
 }
@@ -227,22 +249,45 @@ export struct Sequences {
 export SeqTables decodeAndExecute(
   u8[] src, i32 at, i32 len, u8[] literals, Buf out, SeqTables previous, i32[] reps
 ) {
+  Fault f = Fault.create();
+  SeqTables got = decodeAndExecuteIn(src, at, len, literals, out, previous, reps, f);
+  if (f.failed()) { trap; }
+  return got;
+}
+
+/**
+ * `decodeAndExecute`, recording in `f` why the section is malformed rather than trapping. What it
+ * wrote to `out` before finding that out is not an answer: the caller's frame fails with it.
+ */
+export SeqTables decodeAndExecuteIn(
+  u8[] src, i32 at, i32 len, u8[] literals, Buf out, SeqTables previous, i32[] reps, Fault f
+) {
   // Bounded by the caller, which has already checked the block fits in the frame.
   i32 end = at + len;
-  SeqCount n = readCount(src, at, end);
+  SeqCount n = readCount(src, at, end, f);
+  if (f.failed()) { return previous; }
   i32 p = at + n.bytesUsed;
 
   if (n.count == 0) {
     // All literals. The section is over, and anything left in it is a malformed block.
-    if (p != end) { trap; }
+    if (p != end) {
+      f.fail("a block of literals only, with more after its sequence count");
+      return previous;
+    }
     out.pushBytes(literals, 0, literals.len());
     return previous;
   }
 
-  if (p >= end) { trap; }
+  if (p >= end) {
+    f.fail("a sequences section with no compression modes");
+    return previous;
+  }
   i32 modes = src[p] as i32;
   p++;
-  if ((modes & 3) != 0) { trap; }              // the low two bits are reserved
+  if ((modes & 3) != 0) {                      // the low two bits are reserved
+    f.fail("a sequences section sets bits the format reserves");
+    return previous;
+  }
   i32 llMode = (modes >>> 6) & 3;
   i32 ofMode = (modes >>> 4) & 3;
   i32 mlMode = (modes >>> 2) & 3;
@@ -250,22 +295,30 @@ export SeqTables decodeAndExecute(
   // The tables come in this order, which is not the order the modes byte lists them in.
   i32[] used = i32[].filled(1, 0);
   FseTable ll = tableFor(llMode, src, p, end, llMaxSymbol(), llMaxLog(), LL_DEFAULT, 6,
-                         previous.ll, previous.ready, used);
+                         previous.ll, previous.ready, used, f);
+  if (f.failed()) { return previous; }
   p += used[0];
   FseTable of = tableFor(ofMode, src, p, end, ofMaxSymbol(), ofMaxLog(), OF_DEFAULT, 5,
-                         previous.of, previous.ready, used);
+                         previous.of, previous.ready, used, f);
+  if (f.failed()) { return previous; }
   p += used[0];
   FseTable ml = tableFor(mlMode, src, p, end, mlMaxSymbol(), mlMaxLog(), ML_DEFAULT, 6,
-                         previous.ml, previous.ready, used);
+                         previous.ml, previous.ready, used, f);
+  if (f.failed()) { return previous; }
   p += used[0];
 
-  if (p >= end) { trap; }
-  BackBits b = BackBits.create(src, p, end - p);
+  if (p >= end) {
+    f.fail("a sequences section with no bitstream");
+    return previous;
+  }
+  BackBits b = BackBits.within(src, p, end - p, f);
+  if (f.failed()) { return previous; }
 
   // Fuse the tables before decoding: see `Fused`. Built once per block, read once per sequence.
-  Fused fLL = Fused.build(ll, LL_BASE, LL_BITS, llMaxSymbol());
-  Fused fML = Fused.build(ml, ML_BASE, ML_BITS, mlMaxSymbol());
-  Fused fOF = Fused.buildOffset(of, ofMaxSymbol());
+  Fused fLL = Fused.build(ll, LL_BASE, LL_BITS, llMaxSymbol(), f);
+  Fused fML = Fused.build(ml, ML_BASE, ML_BITS, mlMaxSymbol(), f);
+  Fused fOF = Fused.buildOffset(of, ofMaxSymbol(), f);
+  if (f.failed()) { return previous; }
   i32[] llInfo = fLL.info; i32[] llBase = fLL.base;
   i32[] mlInfo = fML.info; i32[] mlBase = fML.base;
   i32[] ofInfo = fOF.info; i32[] ofBase = fOF.base;
@@ -289,16 +342,26 @@ export SeqTables decodeAndExecute(
     i32 offsetValue = ofBase[sOF] + b.read(iOF >>> 24);
     i32 matchLength = mlBase[sML] + b.read(iML >>> 24);
     i32 literalLength = llBase[sLL] + b.read(iLL >>> 24);
-    if (b.left < 0) { trap; }
+    if (b.left < 0) {
+      f.fail("a sequences bitstream ends before its sequences do");
+      return previous;
+    }
 
-    i32 offset = resolveOffset(offsetValue, literalLength, reps);
+    i32 offset = resolveOffset(offsetValue, literalLength, reps, f);
+    if (f.failed()) { return previous; }
 
     // Execute: literals first, then the match.
-    if (litAt + literalLength > literals.len()) { trap; }
+    if (litAt + literalLength > literals.len()) {
+      f.fail("a sequence takes more literals than the block has");
+      return previous;
+    }
     out.pushBytes(literals, litAt, literalLength);
     litAt += literalLength;
 
-    if (offset <= 0 || offset > out.len) { trap; }   // a match reaching before the output
+    if (offset <= 0 || offset > out.len) {          // a match reaching before the output
+      f.fail("a match reaches back before the start of the output");
+      return previous;
+    }
     // `pushRepeat` rather than a `push(get(..))` loop: that spelling costs two calls and two
     // bounds checks per matched byte, and matched bytes are most of the output. It keeps the
     // byte-at-a-time loop for the overlapping case — when the offset is shorter than the match
@@ -311,12 +374,18 @@ export SeqTables decodeAndExecute(
       sLL = (iLL & 0xFFFF) + b.read((iLL >>> 16) & 255);
       sML = (iML & 0xFFFF) + b.read((iML >>> 16) & 255);
       sOF = (iOF & 0xFFFF) + b.read((iOF >>> 16) & 255);
-      if (b.left < 0) { trap; }
+      if (b.left < 0) {
+        f.fail("a sequences bitstream ends before its sequences do");
+        return previous;
+      }
     }
   }
 
   // The bitstream must have been spent exactly.
-  if (b.left != 0) { trap; }
+  if (b.left != 0) {
+    f.fail("a sequences bitstream with bits left over");
+    return previous;
+  }
 
   // Whatever literals the sequences did not take end the block.
   out.pushBytes(literals, litAt, literals.len() - litAt);
@@ -333,7 +402,7 @@ export SeqTables decodeAndExecute(
  * would describe a match that simply continues the previous one, which the encoder would have
  * written as a longer match. That freed slot is spent on "the most recent offset, minus one".
  */
-i32 resolveOffset(i32 value, i32 literalLength, i32[] reps) {
+i32 resolveOffset(i32 value, i32 literalLength, i32[] reps, Fault f) {
   if (value > 3) {
     i32 offset = value - 3;
     reps[2] = reps[1];
@@ -364,7 +433,10 @@ i32 resolveOffset(i32 value, i32 literalLength, i32[] reps) {
   // idx == 4: the most recent offset minus one, which is why zero is an error rather than a
   // distance — there is nothing one before the start.
   i32 offset = reps[0] - 1;
-  if (offset <= 0) { trap; }
+  if (offset <= 0) {
+    f.fail("a repeated offset of zero");
+    return 1;
+  }
   reps[2] = reps[1];
   reps[1] = reps[0];
   reps[0] = offset;
