@@ -99,7 +99,10 @@ answer that has not arrived is still a block, and in a page it aborts.
 1. The page module exports its capabilities through bindgen, and `driver.ts` is something the page builder
    can inline. This is the piece the others need.
 2. A spawned module in its own worker, with a live test: a page that writes a module to its disk, spawns
-   it, and shows its output.
+   it, and shows its output. **Done 2026-10-28 (agent-b)**, over step 6's flat ABI rather than step 1: the
+   page builder carries a small manifest-driven driver (`moduleSide` in `packages/web/tools/build.wac`, the
+   conversions of `packages/platform/host/marshal.ts`), and the worker serves the module with the same request
+   switch as the page's own program. Live test: `packages/web/test/spawn_live.test.ts`.
 3. `load` and `call` through the same wiring, with `wac test`'s shape as the live test: load a module, call
    an export by name.
 4. The main-thread broker for every child, with a live test that opens the page from `file://` and stops a

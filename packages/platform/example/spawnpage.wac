@@ -1,0 +1,52 @@
+// A page that runs a module from its own disk (design/system/0015): `child.wasm`, which is `spawnchild.wac`
+// built and put in the page's storage by the live test in `packages/web/test/spawn_live.test.ts`, started with
+// `procs().spawn` and its output shown as it was written.
+
+import { Sys, Authority, Launch } from "std";
+import { Node, Page, State, Ui, html.pre } from "../../web";
+
+export async i32 main(Page page) {
+  page.mount((Ui ui) => shows(ui, page));
+  return 0;
+}
+
+Node shows(Ui ui, Page page) {
+  auto shown = ui.state("starting");
+  ui.effect("", () => {
+    run(page.sys, shown);
+    return () => { };
+  });
+  return <pre id="out">{shown.get()}</pre>;
+}
+
+async void run(Sys sys, State<string> shown) { shown.set(await ran(sys)); }
+
+/** What `child.wasm` wrote, its errors, and its status — or why it did not run. */
+async string ran(Sys sys) {
+  u8[] module;
+  match (await sys.files().readFile("child.wasm")) {
+    Ok(b): { module = b; }
+    Err(e): { return "no module: \{e}"; }
+  }
+  match (await sys.procs().spawn(module, ["one", "two"], Authority(sys.files(), null, null, null), Launch.plain())) {
+    Ok(child): {
+      string out = "";
+      match (await child.output().readAll()) {
+        Ok(b): { out = string.fromBytes(b); }
+        Err(e): { out = "output: \{e}"; }
+      }
+      string err = "";
+      match (await child.errors().readAll()) {
+        Ok(b): { err = string.fromBytes(b); }
+        Err(e): { err = "errors: \{e}"; }
+      }
+      string code = "";
+      match (await child.exit()) {
+        Ok(c): { code = "\{c}"; }
+        Err(e): { code = "\{e}"; }
+      }
+      return "\{out}err: \{err}exit: \{code}";
+    }
+    Err(e): { return "did not start: \{e}"; }
+  }
+}
