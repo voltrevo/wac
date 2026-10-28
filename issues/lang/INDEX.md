@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0419a](open/0419a-an-await-on-the-right-of-and-can-yield-the-wrong-value-under-load.md) | `bool fromOut = reading && (await Ticket.first(parts)) == 0;` in `sh`'s `drain` loop picked an unsettled ticket in 10 of 30 loaded runs; awaiting on its own line, never. No small reproduction yet | bug | wrong answer |
 | [0418a](open/0418a-a-std-type-used-as-an-expression-needs-no-import.md) | `Launch.plain()` or `Launch(…)` in a file that never imported `Launch` checks clean on the whole graph; a written `Launch l` is refused, and a file checked alone refuses both | bug | accepted program |
 | [0417a](open/0417a-a-std-struct-initialised-from-a-result-is-not-checked.md) | `Datagram d = flatten(s.receive().wait());` checks clean though the right side is a `Result`; the emitter refuses it. The same with a struct the file declares is refused | bug | emit failure |
 | [0416a](open/0416a-a-calls-arguments-are-not-checked-when-it-is-an-awaited-match-subject.md) | `match (await procs.exec(…, string[](), …))` passes the checker where the same call bound with `auto` is refused for its argument type; the module is invalid | bug | invalid wasm |
@@ -139,7 +140,7 @@ has been fixed and why.
 
 ## Closed
 
-334 issues, 261 closed.
+335 issues, 261 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
