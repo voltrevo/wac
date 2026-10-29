@@ -52,10 +52,18 @@ function publish(name: string, value: unknown): void {
 type Stream = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> };
 type Conn = { createBidirectionalStream(): Promise<Stream>; close(): void };
 
+// **The endpoint is bound to 127.0.0.1 too, not left to Deno.** Without one, `connectQuic` binds
+// `[::]` for a dual-stack socket, and on a kernel with no IPv6 that fails with `Address family not
+// supported by protocol` before a byte is sent. In minting mode the error goes nowhere — there is no
+// `--dir` to publish it to — so every quic test that needed a real Initial read "Deno's QUIC client
+// sent no Initial", which is about the client and not about the socket.
+const endpoint = new (Deno as unknown as { QuicEndpoint: new (o: unknown) => unknown })
+  .QuicEndpoint({ hostname: "127.0.0.1" });
 const options: Record<string, unknown> = {
   hostname: "127.0.0.1",
   port,
   alpnProtocols: ["h3"],
+  endpoint,
 };
 if (caPath !== "") options.caCerts = [await Deno.readTextFile(caPath)];
 
