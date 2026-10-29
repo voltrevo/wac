@@ -1464,10 +1464,16 @@ export async i32 main(Sys sys) {
     }
   }
   // **Building a program gives `main` its contract** — spec ch07 — and, for a `main` the hosts
-  // cannot call as written, the adapter they can. `compile` makes a plain module and leaves it alone.
-  // `app` is `build` with a different thing written, so it is adapted here too: the emitter adapts
-  // again, idempotently, but only after this build has chosen what of `std` to keep from the text it
-  // was given — and the adapter names std functions the unadapted entry does not (`__wacHostOf`).
+  // cannot call as written, the adapter they can. `app` is `build` with a different thing written,
+  // so it is adapted here too: the emitter adapts again, idempotently, but only after this build has
+  // chosen what of `std` to keep from the text it was given — and the adapter names std functions the
+  // unadapted entry does not (`__wacHostOf`).
+  //
+  // **And `compile` and `bindgen`, which emit too.** This said `compile` "makes a plain module and leaves
+  // it alone", and has not been true since the emitter began adapting on every route: both pruned the
+  // unadapted entry and then emitted an adapted one, so any `main(Sys)` failed as below — which is
+  // what `./bootstrap.sh --host nodejs` relinks the command with. Only a *program* build refuses a
+  // `main` of the wrong shape; these two keep the text as it is and leave that to whoever runs it.
   //
   // **Lowered first, as the emitter does.** An entry importing a namespace member (`{ json.parse }`)
   // does not parse until its namespaces are lowered, and `programEntry` hands back a text it cannot
@@ -1475,13 +1481,14 @@ export async i32 main(Sys sys) {
   // adapter then called a function that was gone: *"the exported function `__wacHost` is not in the
   // module"*, for any `main(Sys)` importing from the root entry. Lowering is idempotent, so the passes
   // after this one see what they always did. `tools/wac/libentry_test.wac`.
-  if (cmd == "build" || cmd == "run" || cmd == "app") {
+  bool program = cmd == "build" || cmd == "run" || cmd == "app";
+  if (program || cmd == "compile" || cmd == "bindgen") {
     ProgramGraph pg = programGraph(paths, lowerSources(paths, texts, res), entry);
-    if (pg.why != "") {
+    if (pg.why != "" && program) {
       err.line("wacc: cannot build \{entry} as a program — \{pg.why}");
       return 1;
     }
-    texts = pg.sources;
+    if (pg.why == "") { texts = pg.sources; }
   }
 
   // **The artefact this build would write, if it has been written before.** `issues/system/0204`:

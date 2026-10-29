@@ -27,6 +27,8 @@ import { flatten } from "core";
 string MATH() { return "export i32 gcd(i32 a, i32 b) { return b == 0 ? a : gcd(b, a % b); }\n"; }
 string BAD()  { return "export i32 f() { return \"x\"; }\n"; }
 string MAIN() { return "import { f } from \"./lib.wac\";\nexport i32 g() { return f(); }\n"; }
+/** A program as a project writes one: its `main` takes `Sys`, so every emit route adapts it. */
+string PROG() { return "import { Sys } from \"std\";\nexport async i32 main(Sys sys) { sys.log(\"ok\"); return 0; }\n"; }
 // Two structs that share no ancestor, so `a is B` is always false — a warning and not an error.
 string WARN() {
   return "struct A { i32 x; }\nstruct B { i32 y; }\n"
@@ -43,8 +45,8 @@ Dir workspace(Env env, Files fs, string name) {
   string dir = scratch(env, "cli-\{name}");
   auto made = flatten(fs.mkdir(dir, true).wait());
   if (made.isErr()) { return Dir(false, "", "a working directory: \{made.isErr() ? "\{made.err()!}" : ""}"); }
-  string[] names = ["math.wac", "bad.wac", "main.wac", "lib.wac", "warn.wac"];
-  string[] texts = [MATH(), BAD(), MAIN(), BAD(), WARN()];
+  string[] names = ["math.wac", "bad.wac", "main.wac", "lib.wac", "warn.wac", "prog.wac"];
+  string[] texts = [MATH(), BAD(), MAIN(), BAD(), WARN(), PROG()];
   for (i32 i = 0; i < names.len(); i++) {
     auto w = flatten(fs.writeFile("\{dir}/\{names[i]}", texts[i].toBytes()).wait());
     if (w.isErr()) { return Dir(false, "", "\{names[i]}: \{w.isErr() ? "\{w.err()!}" : ""}"); }
@@ -153,6 +155,32 @@ export string test_compile_writes_a_module_and_bindgen_writes_the_glue_9wkn3pq_5
     t.isTrue(contains(string.fromBytes(glue!), "gcd"),
              "and wraps the exported function by name");
   }
+  return t.report();
+}
+
+/**
+ * `compile` and `bindgen` on a `main(Sys)`, which the emitter adapts on every route.
+ *
+ * Both pruned the entry *before* adapting it, as `build` once did, and the adapter's `__wacHostOf` is a
+ * function only it calls — so from 29ec899b2 neither could emit any program taking `Sys`: *"the exported
+ * function `__wacHost` is not in the module"*. `bindgen --js` is how `./bootstrap.sh --host nodejs`
+ * relinks the command, which is where wacuum found it.
+ */
+export string test_compile_and_bindgen_take_a_program_whose_main_takes_sys(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  Dir d = workspace(env, fs, "program");
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  Ran c = wac(env, procs, d.path, ["compile", "prog.wac"]);
+  t.eqI32(c.status, 0, "compile exits 0 — \{c.out}");
+  Ran b = wac(env, procs, d.path, ["bindgen", "prog.wac", "--js"]);
+  t.eqI32(b.status, 0, "bindgen --js exits 0 — \{b.out}");
+  u8[]? glue = flatten(fs.readFile("\{d.path}/prog.wac.js").wait()).ok();
+  t.isTrue((glue is not null), "the glue is there");
   return t.report();
 }
 
