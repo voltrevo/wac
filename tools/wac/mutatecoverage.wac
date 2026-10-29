@@ -76,8 +76,13 @@ export Share shareOf(Files fs, Procs procs, string binary, string work, string e
   args.copyFrom(grants, 0, 2, grants.len());
   args[2 + grants.len()] = entry;
 
-  Exec r = flatten(procs.exec(binary, args, u8[](), ChildEnv(false, ["WAC_PROFILE=" + profileDir]), Launch(work, false, false, false)).wait()).unwrap();
-  if (!r.ran()) { return none("the binary did not run"); }
+  // **A binary that cannot be started is a fault, not an `Exec` that did not run**, so this asks
+  // rather than unwrapping: `.unwrap()` trapped on it, and the one test that hands this a missing
+  // binary on purpose — to show a cache miss really runs one — trapped instead of answering false.
+  auto rRan = flatten(procs.exec(binary, args, u8[](), ChildEnv(false, ["WAC_PROFILE=" + profileDir]), Launch(work, false, false, false)).wait());
+  Exec? r = rRan.ok();
+  if (r is null) { return none("the binary did not run — \{rRan.err()!}"); }
+  if (!r!.ran()) { return none("the binary did not run"); }
 
   string[]? listed = flatten(fs.readDir(profileDir).wait()).ok();
   if (listed is null) { return none("no profile directory after the run"); }
