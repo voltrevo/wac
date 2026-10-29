@@ -430,7 +430,14 @@ Cover[] coverage() {
     gap("VALIDATE",
       "nothing compares it. Its one caller is `wac` itself, which asks the engine about a module it just built; " +
       "the native hosts answer from two different engines, so the case worth having is a module one of them " +
-      "refuses and the other accepts")
+      "refuses and the other accepts"),
+
+    // ── Capabilities by name ──
+    gap("CAPABILITY",
+      "nothing to compare yet: no host provides a capability, and each answers `Unsupported` naming the one asked " +
+      "for. capability_test pins the v8 host's sentence and a parent's providers — the lookup, the same range asked " +
+      "again, a major version refused, a name passed through to the host. The comparison worth having arrives with " +
+      "the first capability a host provides, `wac.site`, which the page, Deno and Node should answer alike")
   ];
 }
 
