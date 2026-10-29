@@ -13,6 +13,8 @@
 // the applet table, not the `box` program — and `wac` and `sh` are not here at all yet.
 
 export * as abi from "./packages/abi/src/abi.wac";
+export * as bignum from "./packages/bignum/src/lib.wac";
+export * as bls from "./packages/bls/src/lib.wac";
 export * as box from "./packages/box/src/lib.wac";
 export * as crypto from "./packages/crypto/src/lib.wac";
 export * as ens from "./packages/ens/src/ens.wac";

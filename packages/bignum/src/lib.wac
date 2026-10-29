@@ -1,0 +1,32 @@
+// `bignum` as the repository's root entry presents it (`lib.wac` at the root): arbitrary-precision
+// signed integers and their decimal and hex text. All of it — none of `big.wac` or `text.wac` is
+// scaffolding. Written 2026-10-29 alongside `bls`'s entry.
+//
+// **One name per statement, deliberately** — see `packages/crypto/src/lib.wac`.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { Big } from "./big.wac";
+export { DivMod } from "./big.wac";
+export { DivSmall } from "./big.wac";
+export { isZero } from "./big.wac";
+export { copy } from "./big.wac";
+export { negate } from "./big.wac";
+export { abs } from "./big.wac";
+export { bitLen } from "./big.wac";
+export { cmpAbs } from "./big.wac";
+export { cmp } from "./big.wac";
+export { addAbs } from "./big.wac";
+export { subAbs } from "./big.wac";
+export { add } from "./big.wac";
+export { sub } from "./big.wac";
+export { mul } from "./big.wac";
+export { mulSmall } from "./big.wac";
+export { shl } from "./big.wac";
+export { shr } from "./big.wac";
+export { divSmall } from "./big.wac";
+export { divmod } from "./big.wac";
+export { parseDecimal } from "./text.wac";
+export { formatDecimal } from "./text.wac";
+export { toStr } from "./text.wac";
+export { parseHex } from "./text.wac";
+export { formatHex } from "./text.wac";

@@ -1,0 +1,113 @@
+// `bls` as the repository's root entry presents it (`lib.wac` at the root): BLS12-381 with Ethereum's
+// parameters and encodings — the fields, both groups, hashing to G2, the pairing and signature
+// verification. Written 2026-10-29 for a project outside this repository that needs the pairing for
+// EIP-4844 and the curve operations for EIP-2537.
+//
+// **What is left out is the arithmetic underneath, not the curve.** `fpkernel.wac`'s Montgomery
+// primitives, the Fp6 tower, Frobenius and the sparse multiplications the Miller loop uses, `g2Psi`
+// and `absX`, `millerLoopTwo`, the batch-verification transcript, and `fpModulusConstantsAgree`, which
+// exists for one test. A caller that wants one of them has found a gap in what this offers, and the
+// answer is a name here rather than a deeper import.
+//
+// An `Fp` is a `u32[]` in Montgomery form; `fpFromBytes` and `fpToBytes` are the way in and out.
+//
+// **One name per statement, deliberately** — see `packages/crypto/src/lib.wac`.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { fpZero } from "./fp.wac";
+export { fpOne } from "./fp.wac";
+export { fpCopy } from "./fp.wac";
+export { fpIsZero } from "./fp.wac";
+export { fpEquals } from "./fp.wac";
+export { fpAdd } from "./fp.wac";
+export { fpSub } from "./fp.wac";
+export { fpNeg } from "./fp.wac";
+export { fpMul } from "./fp.wac";
+export { fpSquare } from "./fp.wac";
+export { fpInvert } from "./fp.wac";
+export { fpSqrt } from "./fp.wac";
+export { fpSgn0 } from "./fp.wac";
+export { fpIsLexicographicallyLarger } from "./fp.wac";
+export { fpFromBytes } from "./fp.wac";
+export { fpFromWideBytes } from "./fp.wac";
+export { fpToBytes } from "./fp.wac";
+export { Fp2 } from "./fp2.wac";
+export { fp2Zero } from "./fp2.wac";
+export { fp2One } from "./fp2.wac";
+export { fp2Copy } from "./fp2.wac";
+export { fp2IsZero } from "./fp2.wac";
+export { fp2Equals } from "./fp2.wac";
+export { fp2Add } from "./fp2.wac";
+export { fp2Sub } from "./fp2.wac";
+export { fp2Neg } from "./fp2.wac";
+export { fp2Conjugate } from "./fp2.wac";
+export { fp2Mul } from "./fp2.wac";
+export { fp2Square } from "./fp2.wac";
+export { fp2MulByU } from "./fp2.wac";
+export { fp2MulByNonresidue } from "./fp2.wac";
+export { fp2MulByFp } from "./fp2.wac";
+export { fp2Norm } from "./fp2.wac";
+export { fp2Invert } from "./fp2.wac";
+export { fp2Sqrt } from "./fp2.wac";
+export { fp2Sgn0 } from "./fp2.wac";
+export { fp2FromBytes } from "./fp2.wac";
+export { fp2C0Bytes } from "./fp2.wac";
+export { fp2C1Bytes } from "./fp2.wac";
+export { Fp6 } from "./fp12.wac";
+export { Fp12 } from "./fp12.wac";
+export { fp12One } from "./fp12.wac";
+export { fp12Equals } from "./fp12.wac";
+export { fp12IsOne } from "./fp12.wac";
+export { fp12Conjugate } from "./fp12.wac";
+export { fp12Mul } from "./fp12.wac";
+export { fp12Square } from "./fp12.wac";
+export { fp12Invert } from "./fp12.wac";
+export { G1 } from "./g1.wac";
+export { groupOrder } from "./g1.wac";
+export { g1Infinity } from "./g1.wac";
+export { g1IsInfinity } from "./g1.wac";
+export { g1Generator } from "./g1.wac";
+export { g1Negate } from "./g1.wac";
+export { g1Double } from "./g1.wac";
+export { g1Add } from "./g1.wac";
+export { g1Mul } from "./g1.wac";
+export { g1IsOnCurve } from "./g1.wac";
+export { g1InSubgroup } from "./g1.wac";
+export { g1AffineX } from "./g1.wac";
+export { g1AffineY } from "./g1.wac";
+export { g1Compress } from "./g1.wac";
+export { g1Decompress } from "./g1.wac";
+export { g1FromBytes } from "./g1.wac";
+export { G2 } from "./g2.wac";
+export { g2Infinity } from "./g2.wac";
+export { g2IsInfinity } from "./g2.wac";
+export { g2Generator } from "./g2.wac";
+export { g2Negate } from "./g2.wac";
+export { g2Double } from "./g2.wac";
+export { g2Add } from "./g2.wac";
+export { g2Mul } from "./g2.wac";
+export { g2IsOnCurve } from "./g2.wac";
+export { g2InSubgroup } from "./g2.wac";
+export { g2AffineX } from "./g2.wac";
+export { g2AffineY } from "./g2.wac";
+export { g2Compress } from "./g2.wac";
+export { g2Decompress } from "./g2.wac";
+export { g2FromBytes } from "./g2.wac";
+export { expandMessageXmd } from "./hash.wac";
+export { hashToFieldFp2 } from "./hash.wac";
+export { mapToCurveG2 } from "./map.wac";
+export { clearCofactorG2 } from "./map.wac";
+export { hashToG2 } from "./map.wac";
+export { Pair } from "./pairing.wac";
+export { millerLoop } from "./pairing.wac";
+export { millerLoopMulti } from "./pairing.wac";
+export { finalExponentiate } from "./pairing.wac";
+export { pairing } from "./pairing.wac";
+export { ethDst } from "./verify.wac";
+export { verify } from "./verify.wac";
+export { aggregatePubkeys } from "./verify.wac";
+export { aggregateSignatures } from "./verify.wac";
+export { aggregate } from "./verify.wac";
+export { fastAggregateVerify } from "./verify.wac";
+export { aggregateVerify } from "./verify.wac";
+export { batchVerify } from "./verify.wac";
