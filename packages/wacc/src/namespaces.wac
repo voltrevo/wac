@@ -547,12 +547,16 @@ struct NsExports {
  * member it reaches, and the imports that reach it.
  */
 export string[] lowerNamespaces(string[] paths, string[] sources, const Res res) {
-  return lowerNamespacesIn(paths, sources, res, false, Reads.create());
+  return lowerNamespacesIn(paths, sources, res, false, false, Reads.create());
 }
 
-/** `lowerNamespaces`, reading through the caller's `reads` — see `frontend.wac`. */
+/**
+ * `lowerNamespaces`, reading through the caller's `reads` — see `frontend.wac` — **for a graph that is settled**:
+ * everything a build will read has been read, so an import from a module that is not here never will be, and its
+ * `X.m` items are spelled `@"X.m" as m` rather than left for a later pass that is not coming.
+ */
 export string[] lowerNamespacesWith(string[] paths, string[] sources, const Res res, Reads reads) {
-  return lowerNamespacesIn(paths, sources, res, false, reads);
+  return lowerNamespacesIn(paths, sources, res, false, true, reads);
 }
 
 /**
@@ -562,16 +566,16 @@ export string[] lowerNamespacesWith(string[] paths, string[] sources, const Res 
  * a namespace, and nothing declares `@"X.m"` — which is why it is a separate entry.
  */
 export string[] lowerNamespacesForDeclarations(string[] paths, string[] sources, const Res res) {
-  return lowerNamespacesIn(paths, sources, res, true, Reads.create());
+  return lowerNamespacesIn(paths, sources, res, true, false, Reads.create());
 }
 
 /** `lowerNamespacesForDeclarations`, reading through the caller's `reads`. */
 export string[] lowerNamespacesForDeclarationsWith(string[] paths, string[] sources, const Res res,
                                                    Reads reads) {
-  return lowerNamespacesIn(paths, sources, res, true, reads);
+  return lowerNamespacesIn(paths, sources, res, true, false, reads);
 }
 
-string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool loose, Reads reads) {
+string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool loose, bool settled, Reads reads) {
   i32 n = paths.len();
   bool any = false;
   for (i32 i = 0; i < n; i++) {
@@ -622,7 +626,7 @@ string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool
   }
 
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(reads, all, flat, res, exports, locals, i, loose); }
+  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(reads, all, flat, res, exports, locals, i, loose, settled); }
   return out;
 }
 
@@ -928,7 +932,8 @@ string importItem(string name, string local) {
 
 string verbatimIfNeeded(string name) { return name.indexOf(".") >= 0 ? "@\"" + name + "\"" : name; }
 
-string rewriteUses(Reads reads, string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f, bool loose) {
+string rewriteUses(Reads reads, string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f, bool loose,
+                   bool settled) {
   NsFile src = NsFile.via(reads, flat[f]);
   NsEdits ed = NsEdits.create();
   NsBindings binds = NsBindings(NsStrs.create(), i32[].filled(8, 0), NsStrs.create());
@@ -962,7 +967,7 @@ string rewriteUses(Reads reads, string[] paths, string[] flat, const Res res, Ns
       continue;
     }
     if (depth == 0 && k == kImport()) {
-      t = rewriteImport(paths, res, exports, src, ed, binds, wanted, f, t, loose);
+      t = rewriteImport(paths, res, exports, src, ed, binds, wanted, f, t, loose, settled);
       continue;
     }
     if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
@@ -1061,7 +1066,7 @@ string[] splitSpace(string s) {
  * `X.m` becomes an import of the member from the module that declares it.
  */
 i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src, NsEdits ed, NsBindings binds,
-                  NsWanted wanted, i32 f, i32 t, bool loose) {
+                  NsWanted wanted, i32 f, i32 t, bool loose, bool settled) {
   i32 endTok = t;
   while (endTok < src.count() && src.kind(endTok) != kSemi()) { endTok = endTok + 1; }
   // `import * as X from "s";`
@@ -1085,10 +1090,12 @@ i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src
   // `@"X.m" as m`. Left as it was there, `import { html.p } from "./page.wac"` did not parse, and a
   // directory run dropped every test in the file without a word.
   //
-  // **A build spells them the same way** when the module is not in its graph — which, after `pruneForBuild`, is
-  // what an import of a name nothing declares looks like: it reached nothing, so its file was pruned. Left as
-  // written there, the line drew a cascade of "unexpected token" at a dot the parser has never accepted
-  // (`checkgraph_test.wac`); spelled, it parses, and the name is what it always was — needed or not.
+  // **A settled graph spells them the same way** — a build's, once it has read everything it will. A module that is
+  // not there then never will be: an import no declaration needs is not read (spec ch05). Left as written, the
+  // line drew a cascade of "unexpected token" at a dot the parser has never accepted (`nsimport_test.wac`).
+  // **Not an unsettled one**: a test file lowered on its own (`program.wac`'s `asParsed`) is lowered again with
+  // its graph, and an item spelled early names a member the module may only reach through `export * as`.
+  if (target == -1 && !loose && !settled) { return endTok; }
   if (target == -1) {
     i32 u = t + 2;
     while (u < close) {
