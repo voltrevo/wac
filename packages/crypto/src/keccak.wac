@@ -256,9 +256,7 @@ void absorb(u64[] state, u8[] block, i32 off, i32 rate) {
  * others whose lengths differ, and the sponge underneath is already checked against `node:crypto` for two
  * other domain bytes.
  *
- * **There is no streaming form.** `Sha3_256` below hashes incrementally and hardcodes SHA-3's domain byte;
- * nothing in this repo hashes a keccak256 input it cannot hold, so a `Keccak256` beside it would be a
- * shape with no caller. Said here rather than left for somebody to assume `Sha3_256` can be repointed.
+ * The running form is `Keccak256` below — the same sponge as `Sha3_256` with this byte.
  */
 export u8[] keccak256(u8[] msg) { return sponge(msg, 136, 0x01, 32); }
 
@@ -282,12 +280,50 @@ export u8[] shake256(u8[] msg, i32 outLen) { return sponge(msg, 136, 0x1F, outLe
  * `Sha1` in `packages/crypto/src/sha1.wac` has exactly this shape and for exactly this reason.
  */
 export struct Sha3_256 {
+  RunningSponge s;
+
+  Sha3_256 create() { return Sha3_256(RunningSponge.create(0x06)); }
+  /** Absorb more of the message. */
+  void update(this, u8[] data) { this.s.update(data); }
+  /** An independent copy, for taking a trial digest without disturbing this one. */
+  Sha3_256 clone(const this) { return Sha3_256(RunningSponge.copyOf(this.s)); }
+  /** The digest of everything absorbed so far, without ending the hash — see `RunningSponge.peek`. */
+  u8[] peek(const this) { return this.s.peek(); }
+}
+
+/**
+ * keccak256 as a running hash, `Sha3_256`'s shape with Ethereum's domain byte.
+ *
+ * For devp2p: an RLPx frame MAC is a running keccak256 over everything a side has sent or received,
+ * whose digest is taken after each frame while the hash goes on — exactly the `peek` that `Sha3_256`
+ * exists for. Asked for by wacuum, which implements RLPx on it.
+ */
+export struct Keccak256 {
+  RunningSponge s;
+
+  Keccak256 create() { return Keccak256(RunningSponge.create(0x01)); }
+  /** Absorb more of the message. */
+  void update(this, u8[] data) { this.s.update(data); }
+  /** An independent copy, for taking a trial digest without disturbing this one. */
+  Keccak256 clone(const this) { return Keccak256(RunningSponge.copyOf(this.s)); }
+  /** The digest of everything absorbed so far, without ending the hash — see `RunningSponge.peek`. */
+  u8[] peek(const this) { return this.s.peek(); }
+}
+
+/**
+ * The running sponge under both: rate 136, a 32-byte digest, and the domain byte that is the only
+ * difference between SHA3-256 and keccak256. Not exported — the two names are the interface, so a
+ * caller cannot build a running hash with a byte that is neither.
+ */
+struct RunningSponge {
   u64[] state;
   /** Bytes buffered but not yet absorbed; always fewer than `RATE`. */
   u8[] pending;
   i32 pendingLen;
+  /** The padding's first byte: 0x06 for SHA-3, 0x01 for keccak256. */
+  i32 domain;
 
-  Sha3_256 create() { return Sha3_256(u64[].filled(25, 0), u8[].filled(136, 0), 0); }
+  RunningSponge create(i32 domain) { return RunningSponge(u64[].filled(25, 0), u8[].filled(136, 0), 0, domain); }
 
   /** Absorb more of the message. */
   void update(this, u8[] data) {
@@ -305,13 +341,18 @@ export struct Sha3_256 {
     }
   }
 
-  /** An independent copy, for taking a trial digest without disturbing this one. */
-  Sha3_256 clone(const this) {
+  /**
+   * An independent copy of `from`. Static rather than a `clone(const this)`, because what a method
+   * answers through a `const` receiver is `const` at the call site (spec ch17
+   * `§wac-deep-const-accessor-w3kf8nq`), and the wrappers' own `clone(const this)` need a plain one to
+   * build theirs from.
+   */
+  RunningSponge copyOf(const RunningSponge from) {
     u64[] state = u64[].filled(25, 0);
-    state.copyFrom(this.state, 0, 0, 25);
+    state.copyFrom(from.state, 0, 0, 25);
     u8[] pending = u8[].filled(136, 0);
-    pending.copyFrom(this.pending, 0, 0, 136);
-    return Sha3_256(state, pending, this.pendingLen);
+    pending.copyFrom(from.pending, 0, 0, 136);
+    return RunningSponge(state, pending, from.pendingLen, from.domain);
   }
 
   /**
@@ -326,7 +367,7 @@ export struct Sha3_256 {
     copy.copyFrom(this.state, 0, 0, 25);
     u8[] block = u8[].filled(136, 0);
     block.copyFrom(this.pending, 0, 0, this.pendingLen);
-    block[this.pendingLen] = block[this.pendingLen] | 0x06;
+    block[this.pendingLen] = (block[this.pendingLen] as i32 | this.domain) as@ u8;
     block[135] = block[135] | 0x80;
     absorb(copy, block, 0, 136);
     u8[] out = u8[].filled(32, 0);
