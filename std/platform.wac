@@ -1317,7 +1317,9 @@ export struct Files {
   /** The file to read a piece at a time; `close` it when done. */
   Ticket<Result<Input, ReadFault>> openRead(this, string p) {
     Host h = this.via;
-    return hostAsk(h, OP_OPEN_FILE(), OPEN_READ as i64, 0 as i64, p, u8[](), (Answer o) => openedToRead(h, p, o));
+    bool composed = this.hostGrants == 0;
+    return hostAsk(h, OP_OPEN_FILE(), OPEN_READ as i64, 0 as i64, p, u8[](),
+                   (Answer o) => composed ? openedToReadAll(h, p, o) : openedToRead(h, p, o));
   }
 
   /** The file, created or emptied, to write a piece at a time; what was written is there once `close` answers. */
@@ -1382,6 +1384,7 @@ export struct Files {
       no.resolve(Answer(FAULT_UNSUPPORTED(), "not a file request: \{op}", u8[](), 0 as i64, 0 as i64, 0));
       return no;
     }
+    if (op == SERVED_READ_ALL && this.hostGrants != 0) { return readAllAnswer(this.via, a as~ i32); }
     return ask(this.via, op, a, b, text, bytes);
   }
 }
@@ -1966,6 +1969,27 @@ Result<Input, ReadFault> openedToRead(Host host, string p, Answer o) {
   return Result.Ok(handleInput(host, h, () => closeReadOnce(host, h, p, shut)));
 }
 
+/**
+ * `openedToRead`, for files something other than the host answers: reading to the end is asked of them
+ * (`SERVED_READ_ALL`), since a stream there may have no end and an answer of its own for that.
+ */
+Result<Input, ReadFault> openedToReadAll(Host host, string p, Answer o) {
+  if (o.fault != FAULT_NONE()) { return Result.Err(readFault(o.fault, o.text)); }
+  i32 h = o.n as~ i32;
+  bool[] shut = bool[].filled(1, false);
+  return Result.Ok(Input(() => hostAsk(host, OP_RECV(), h as i64, 0 as i64, "", u8[](), readOf),
+                         () => hostAsk(host, SERVED_READ_ALL, h as i64, 0 as i64, "", u8[](), allOf),
+                         () => closeReadOnce(host, h, p, shut)));
+}
+
+/** `SERVED_READ_ALL` answered over a host, which has no such request: read the stream to its end here. */
+async Answer readAllAnswer(Host host, i32 h) {
+  match (await streamAll(host, h)) {
+    Ok(all): { return Answer(FAULT_NONE(), "", all, 0 as i64, 0 as i64, 0); }
+    Err(e): { return Answer(FAULT_OTHER(), "\{e}", u8[](), 0 as i64, 0 as i64, 0); }
+  }
+}
+
 /** Closing twice is not an error (`§wac-std-close-r4v8ndq`), so the second asks the host nothing. */
 Ticket<Result<void, HostFault>> closeReadOnce(Host host, i32 h, string p, bool[] shut) {
   if (shut[0]) { return nothingToClose(); }
@@ -2102,6 +2126,12 @@ static i32 SERVED_REQUEST = 1;
  * and `bytes` the owner. A host's owners are not names, so it is not among the `OP_*` a host answers.
  */
 static i32 SERVED_CHOWN = 1000;
+/**
+ * Read stream `a` to its end, the answer its bytes — asked of whatever answers a composed `Files`, since one of those
+ * may hold a stream with no end (`/dev/zero`) whose own `readAll` refuses. A host has no such request; a `Files` over
+ * one reads to the end itself (`Files.__wacAsk`).
+ */
+static i32 SERVED_READ_ALL = 1001;
 
 /** What the parent answers `ASK_HELLO` with, so a channel speaking anything else is not mistaken for this one. */
 string servedHello() { return "wac files 2"; }
@@ -2527,7 +2557,7 @@ bool pathRequest(i32 op) {
 }
 
 /** Whether request `op` acts on a stream's handle, in `a`. */
-bool streamRequest(i32 op) { return op == OP_RECV() || op == OP_SEND() || op == OP_CLOSE_FILE(); }
+bool streamRequest(i32 op) { return op == OP_RECV() || op == OP_SEND() || op == OP_CLOSE_FILE() || op == SERVED_READ_ALL; }
 
 /** Whether request `op` changes what is there, which a read-only view refuses. */
 bool changeRequest(i32 op, i64 a) {
@@ -2953,7 +2983,7 @@ async Answer answerRequest(FileOps files, ServedStreams open, i32 op, i64 a, i64
       Err(e): { return answerFault(e); }
     }
   }
-  if (op == OP_RECV() || op == OP_SEND() || op == OP_CLOSE_FILE()) {
+  if (op == OP_RECV() || op == OP_SEND() || op == OP_CLOSE_FILE() || op == SERVED_READ_ALL) {
     i32 h = a as~ i32;
     i32 i = h / 2;
     if (h % 2 == 0) {
@@ -2966,6 +2996,12 @@ async Answer answerRequest(FileOps files, ServedStreams open, i32 op, i64 a, i64
         return answerDone((await in.close()).err());
       }
       if (op == OP_SEND()) { return Answer(FAULT_UNSUPPORTED(), "stream \{h} is open to read", u8[](), 0 as i64, 0 as i64, 0); }
+      if (op == SERVED_READ_ALL) {
+        match (await in.readAll()) {
+          Ok(all): { return Answer(FAULT_NONE(), "", all, 0 as i64, 0 as i64, 0); }
+          Err(e): { return answerFault(e); }
+        }
+      }
       match (await in.chunk()) {
         Ok(c): {
           match (c) {
@@ -2985,7 +3021,7 @@ async Answer answerRequest(FileOps files, ServedStreams open, i32 op, i64 a, i64
       open.writeOpen.set(i, false);
       return answerDone((await out.close()).err());
     }
-    if (op == OP_RECV()) { return Answer(FAULT_UNSUPPORTED(), "stream \{h} is open to write", u8[](), 0 as i64, 0 as i64, 0); }
+    if (op == OP_RECV() || op == SERVED_READ_ALL) { return Answer(FAULT_UNSUPPORTED(), "stream \{h} is open to write", u8[](), 0 as i64, 0 as i64, 0); }
     match (await out.write(bytes)) {
       Ok(_): { return Answer(FAULT_NONE(), "", u8[](), 0 as i64, 0 as i64, 1); }
       Err(e): { return answerFault(e); }

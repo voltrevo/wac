@@ -7,7 +7,7 @@
 // a write to a sink. An endless stream has no whole to read, so `readFile` refuses it and `openRead` reads a
 // piece at a time: `head -c 16 /dev/urandom` costs sixteen bytes and a chunk.
 
-import { Files, Input, Output, Random, Stat, Other, IsDir, NotADir, NotFound, ReadOnly, Unsupported, ReadFault,
+import { FileOps, Files, Input, Output, Random, Stat, Other, IsDir, NotADir, NotFound, ReadOnly, Unsupported, ReadFault,
          WriteFault, LookFault, MkdirFault, MoveFault, ModeFault, HostFault, OutputFault, FAULT_NONE, Mount, Exists } from "std";
 import { Read, Result, Ticket } from "core";
 import { PROC_RUN, Proc, ProcTable } from "./proc.wac";
