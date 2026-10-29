@@ -127,7 +127,7 @@ export async function wacTestRun(
   // native runner names them and carries on; this is the same answer in Deno's vocabulary, so the
   // two lanes agree about which tests exist. `issues/system/0161` step 4.
   const wantsCapability = (t: { params: { type: string }[] }) =>
-    t.params.some(p => p.type === "__WacHost" || p.type === "Sys");
+    t.params.some(p => p.type === "Sys" || p.type === "Host" || p.type.startsWith("Host__"));
   const capability = tests.filter(wantsCapability);
   tests = tests.filter(t => !wantsCapability(t));
 

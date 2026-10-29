@@ -94,6 +94,18 @@ struct ExportSig {
     ret: String,
 }
 
+/// The type a module's host value is spelled with in its own signatures: whatever its `__wacHost` answers. Not the
+/// name `Host` — a module whose graph declares another `Host` spells std's one `Host__std` — so a parameter is the host
+/// exactly when it is this type.
+fn host_type(exports: &[ExportSig]) -> Option<&str> {
+    exports.iter().find(|e| e.name == "__wacHost").map(|e| e.ret.as_str())
+}
+
+/// Whether `params` is the one parameter a host fills itself: the module's own host value.
+fn takes_host(params: &[String], exports: &[ExportSig]) -> bool {
+    params.len() == 1 && host_type(exports) == Some(params[0].as_str())
+}
+
 impl Manifest {
     fn find_struct(&self, name: &str) -> Option<&Struct> {
         self.structs.iter().find(|s| s.name == name)
@@ -430,12 +442,12 @@ struct ModuleCtx {
     /// loader's grants — `wac test --allow-read` handed a test the command's write capability, and a
     /// test wrote a file the run had not granted.
     grants: Grants,
-    /// The `__WacHost` its `__wacHost` answered and its `__wacAnswered`, when it wants a host.
+    /// The `Host` its `__wacHost` answered and its `__wacAnswered`, when it wants a host.
     /// Per module because each is that module's own value and export — handing one module's
     /// answers to another's export would settle the wrong program's requests.
     wac: Option<WacHost>,
     /// Its requests whose answers are still on a thread: the program's id, and the ticket's.
-    /// The ids are the module's own (each `__WacHost` counts from 1), so these swap with it.
+    /// The ids are the module's own (each `Host` counts from 1), so these swap with it.
     inflight: HashMap<i32, i32>,
 }
 
@@ -507,7 +519,7 @@ struct HostState {
     /// owned because a worker holds one too; nothing in it touches V8, which is what lets it cross
     /// a thread at all.
     tickets: Arc<Tickets>,
-    /// This module's `__WacHost` and `__wacAnswered`, and its requests on threads — swapped with
+    /// This module's `Host` and `__wacAnswered`, and its requests on threads — swapped with
     /// the rest of `ModuleCtx` while a loaded module runs.
     wac: Option<WacHost>,
     inflight: HashMap<i32, i32>,
@@ -1081,7 +1093,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // **A `main` that takes something other than a world is an ordinary export** (spec ch07,
     // `§wac-main-ordinary-pnxd9gt`): the module is a library, not a program, and `wac run m.wasm main wac`
     // calls it by name like any other.
-    let is_world = |ps: &[String]| ps.is_empty() || (ps.len() == 1 && ps[0] == "__WacHost");
+    let is_world = |ps: &[String]| ps.is_empty() || takes_host(ps, &m.exports);
     let main_sig = match m.exports.iter().find(|e| e.name == "main" && is_world(&e.params)) {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -1096,13 +1108,13 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             return call_named(scope, exports, m, &args);
         }
     };
-    // `main()` is handed nothing, and `main(__WacHost)` what `__wacHost` answered.
+    // `main()` is handed nothing, and `main(Host)` what `__wacHost` answered.
     let host_v: Option<v8::Local<v8::Value>> = wac.as_ref().map(|w| v8::Local::new(scope, w.host.clone()));
     let args: Vec<v8::Local<v8::Value>> = match (main_sig.params.len(), host_v) {
         (0, _) => Vec::new(),
         (_, Some(h)) => vec![h],
         (_, None) => {
-            eprintln!("wac: main takes a __WacHost and the module exports no __wacHost to make one");
+            eprintln!("wac: main takes a Host and the module exports no __wacHost to make one");
             return 1;
         }
     };
@@ -1196,7 +1208,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // `__wacOutstanding` is asked: the requests in flight and the continuations queued.
     //
     // **A module that took a host and cannot be asked is refused**, not let off: this called
-    // `__WacHost.outstanding` through a bindgen export until that value began crossing opaque
+    // `Host.outstanding` through a bindgen export until that value began crossing opaque
     // (`issues/lang/0398a`), and when the export went the check was skipped without a word.
     if let Some(h) = host_v {
         let Some(f) = get_export(scope, exports, "__wacOutstanding") else {
@@ -3656,7 +3668,7 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
     let mut caps: Vec<Vec<Cap>> = vec![Vec::new(); m.callbacks.len()];
     let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
 
-    // **Its own `__WacHost`, and none is required.** A module of pure test functions exports no
+    // **Its own `Host`, and none is required.** A module of pure test functions exports no
     // `__wacHost` and is called with nothing. One that does gets the host's four functions bound in
     // *its* slot table, so its requests come back through `dispatch` with its own context installed,
     // and its answers go to its own `__wacAnswered` — never the loader's. `issues/system/0263c` was
@@ -3723,8 +3735,8 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
         let lm = st.loaded.get(&handle)?;
         let sig = lm.exports.iter().find(|e| e.name == name)?;
         let takes_int = sig.params.len() == 1 && sig.params[0] == "i32";
-        // A test that takes the module's own `__WacHost`, as `main` may.
-        let takes_host = sig.params.len() == 1 && sig.params[0] == "__WacHost";
+        // A test that takes the module's own `Host`, as `main` may.
+        let takes_host = takes_host(&sig.params, &lm.exports);
         // 0 nothing to read, 1 an `i32`, 2 a `string`, 3 something this cannot answer for.
         let ret_kind: u8 = if sig.ret.is_empty() || sig.ret == "void" {
             0

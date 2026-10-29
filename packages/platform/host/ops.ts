@@ -50,7 +50,7 @@ export const OP = {
   WRITE_STDERR: 48,
   SPAWN_SELF: 49,
   /**
-   * "Has the user asked to interrupt?" — `__WacHost.interrupted` in `std/platform.wac`.
+   * "Has the user asked to interrupt?" — `Host.interrupted` in `std/platform.wac`.
    *
    * Answered from what the host already knows, so it starts nothing; it still parks the worker like
    * every opcode, and that is the point rather than the cost — see the note in `provider.ts`.

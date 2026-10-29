@@ -212,7 +212,7 @@ export string test_an_answer_nobody_asked_for_and_a_late_one_are_dropped() {
   Browser b = Browser("", Page.create(Dom.inert()), null, false);
   World w = over(b, GRANT_READ);
   give(b.page, w, 99, "stray");
-  t.eqI32(w.host.pending.len(), 0, "an answer to a request never made is not kept");
+  t.eqI32(w.host.__wacInFlightCount(), 0, "an answer to a request never made is not kept");
   // A read whose ticket is abandoned before the browser answers: the browser is told, and the late answer
   // settles nothing.
   auto read = w.sys.files().readFile("x");

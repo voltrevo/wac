@@ -370,6 +370,12 @@ typo. And a module whose every export is skipped binds without complaint and exp
 
 The types that do not cross today are arrays of functions and nullable functions.
 
+A member named as the implementation's is left out too, without a comment: `__wacDrain` on std's `Host` is for std and the
+program adapter, and a host never asks for it ([01](../1-programs/01-names-and-identity.md)).
+
+`[§wac-implementation-names-3vq8kzt]` A field or method whose name begins `__wac` is not bound: no accessor, no export, and
+nothing its signature names is bound for its sake.
+
 ## The name section
 
 `[§wac-name-section-2mkq6wp]` A compiled module carries a `name` section mapping each function to its source name, unless

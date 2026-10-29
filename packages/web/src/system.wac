@@ -20,12 +20,12 @@ import { FAULT_NOT_GRANTED, FAULT_UNSUPPORTED, GRANT_READ, GRANT_WRITE, HOST_CAN
          OP_CHMOD, OP_CLOSE_OUTPUT, OP_CONNECT, OP_ACCEPT, OP_ENV, OP_EXEC, OP_LINK_STAT, OP_LISTEN, OP_LOAD,
          OP_MKDIR, OP_OPEN_FILE, OP_READ_DIR, OP_READ_FILE, OP_READ_STDIN, OP_RECEIVE_FROM, OP_REMOVE, OP_RENAME,
          OP_SEND_TO, OP_SET_EXECUTABLE, OP_SPAWN, OP_SPAWN_SELF, OP_STAT, OP_UNLOAD, OP_VALIDATE, OP_WRITE_FILE,
-         OP_WRITE_STDERR, OP_WRITE_STDOUT, Sys, __WacHost, answered, faultWords } from "std";
+         OP_WRITE_STDERR, OP_WRITE_STDOUT, Sys, Host, answered, faultWords } from "std";
 import { Ticket } from "core";
 import { Runner } from "./page.wac";
 
 /**
- * What the browser does for a program's system, supplied by the host: `request` as std's `__WacHost` takes it,
+ * What the browser does for a program's system, supplied by the host: `request` as std's `Host` takes it,
  * answered through `answered(..., id, ...)` -- at once for what the browser knows (the clock, the arguments, the
  * working directory), later for what it has to go and do.
  */
@@ -88,11 +88,11 @@ struct PageLine {
   bool asking;
   /** `closeOutput` ends a stream for this program: a page's console has no end to give, so later writes are refused. */
   bool[] closed;
-  __WacHost? host;
+  Host? host;
 }
 
 void pageRequest(PageLine line, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
-  __WacHost h = line.host!;
+  Host h = line.host!;
   string why = refusal(op, a, line.grants);
   if (why != "") {
     answered(h, id, FAULT_NOT_GRANTED(), why, u8[](), 0 as i64, 0 as i64, 0);
@@ -131,14 +131,14 @@ void pageRequest(PageLine line, i32 op, i32 id, i64 a, i64 b, string text, u8[] 
 
 /** A program's world in a page: the host its requests go to, and the `Sys` its `main` is handed. */
 export struct World {
-  __WacHost host;
+  Host host;
   Sys sys;
   PageLine line;
 
   /** The world `system` provides, holding `grants` (`GRANT_*` bits) and nothing more. */
   World create(System system, i32 grants) {
     PageLine line = PageLine(system, grants, false, bool[].filled(2, false), null);
-    __WacHost h = __WacHost.of(
+    Host h = Host.of(
       (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => { pageRequest(line, op, id, a, b, text, bytes); },
       // **Which of these has answered, never waiting for one to**: an answer reaches the program the moment the
       // browser gives it, so nothing is ever waiting to be collected, and a wait that would block cannot.

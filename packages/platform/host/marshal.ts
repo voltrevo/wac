@@ -17,7 +17,7 @@
 //
 //   void · scalars (`i32`, `i64`, `bool`, …) · `string` · arrays · a named reference
 //
-// Everything named is **opaque**: a `__WacHost`, or a struct an export answers, is a reference the host
+// Everything named is **opaque**: a `Host`, or a struct an export answers, is a reference the host
 // receives and hands straight back and never looks inside. That is why a boundary with hundreds of
 // type strings needs a handful of conversions, and it is the observation the whole issue rests on.
 //
@@ -98,7 +98,7 @@ export function shapeOf(type: string): Shape {
     const elem = shapeOf(t.slice(0, -2));
     return { kind: "array", elem, suffix: arrSuffix(elem) };
   }
-  // `__WacHost`, a struct, `fn[...]` — all opaque here. A funcref is not converted by this module
+  // `Host`, a struct, `fn[...]` — all opaque here. A funcref is not converted by this module
   // at all: it is the callback machinery, which is the driver's job and not a value conversion.
   return { kind: "ref", name: t };
 }

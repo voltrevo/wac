@@ -361,8 +361,9 @@ function call(handle: number, name: string, arg: number): Flat {
   let args: unknown[];
   if (sig.params.length === 0) args = [];
   else if (sig.params.length === 1 && sig.params[0] === "i32") args = [arg];
-  else if (sig.params.length === 1 && sig.params[0] === "__WacHost") {
-    if (m.host === undefined) return flat({ flags: 3, text: "this module was built without __WacHost" });
+  // The host value is whatever this module's `__wacHost` answers — `Host`, or `Host__std` in a graph with another `Host`.
+  else if (sig.params.length === 1 && sig.params[0] === m.exports.get("__wacHost")?.ret) {
+    if (m.host === undefined) return flat({ flags: 3, text: "this module was built without a host" });
     args = [m.host];
   } else return flat({ flags: 3, text: "cannot call " + name + "(" + sig.params.join(", ") + ")" });
   if (sig.ret !== "" && sig.ret !== "void" && sig.ret !== "i32" && sig.ret !== "string") {

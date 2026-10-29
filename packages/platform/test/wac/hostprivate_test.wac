@@ -60,8 +60,8 @@ export string test_no_std_handle_but_sys_holds_the_host_in_a_public_field(Sys sy
     if (owner == "" || !exported || l.indexOf("  ") != 0 || l.indexOf("   ") == 0) { continue; }
     string f = trimmed(l);
     if (f.indexOf("(") >= 0 || f.indexOf("=") >= 0 || f.indexOf(";") != f.len() - 1) { continue; }
-    bool hostField = f.indexOf("__WacHost ") == 0 || f.indexOf("Host ") == 0;
-    bool privateHost = f.indexOf("private __WacHost ") == 0 || f.indexOf("private Host ") == 0;
+    bool hostField = f.indexOf("Host ") == 0 || f.indexOf("Host ") == 0;
+    bool privateHost = f.indexOf("private Host ") == 0 || f.indexOf("private Host ") == 0;
     if (!hostField && !privateHost) { continue; }
     seen = seen + 1;
     if (hostField && owner != "Sys") { open = open + " " + owner; }

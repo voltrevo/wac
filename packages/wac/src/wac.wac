@@ -1465,7 +1465,10 @@ export async i32 main(Sys sys) {
   }
   // **Building a program gives `main` its contract** — spec ch07 — and, for a `main` the hosts
   // cannot call as written, the adapter they can. `compile` makes a plain module and leaves it alone.
-  if (cmd == "build" || cmd == "run") {
+  // `app` is `build` with a different thing written, so it is adapted here too: the emitter adapts
+  // again, idempotently, but only after this build has chosen what of `std` to keep from the text it
+  // was given — and the adapter names std functions the unadapted entry does not (`__wacHostOf`).
+  if (cmd == "build" || cmd == "run" || cmd == "app") {
     ProgramGraph pg = programGraph(paths, texts, entry);
     if (pg.why != "") {
       err.line("wacc: cannot build \{entry} as a program — \{pg.why}");

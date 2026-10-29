@@ -145,3 +145,30 @@ export string test_a_string_an_enum_and_a_method_reach_the_host_under_the_names_
   takes(t, a, "$bind$mem_ensure", 1);
   return t.report();
 }
+
+/**
+ * A member named `__wac…` is the implementation's, and is not bound (spec ch48 `§wac-implementation-names-3vq8kzt`): std's
+ * plumbing on `Host` — `__wacDrain`, `__wacDeliver` — is for std and the program adapter, a host has no use for it, and
+ * following its signatures bound the scheduler behind `Host`. Its neighbour is bound as usual, which is what tells
+ * this from a rule that binds nothing.
+ */
+export string test_an_implementation_name_is_not_bound_3vq8kzt() {
+  T t = T.create();
+  u8[] b = emitFiles(
+    ["packages/std/src/main.wac"],
+    ["export struct Gauge { i32 n;\n" +
+     "  i32 read(const this) { return this.n; }\n" +
+     "  i32 __wacPlumb(this) { return this.n + 1; }\n}\n" +
+     "export Gauge make() { return Gauge(3); }\n"],
+    "packages/std/src/main.wac");
+  string[] names = allExportNames(b);
+  bool read = false;
+  bool plumb = false;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i].indexOf("_read") >= 0 && names[i].indexOf("$bind$m_Gauge") == 0) { read = true; }
+    if (names[i].indexOf("__wacPlumb") >= 0) { plumb = true; }
+  }
+  t.isTrue(read, "Gauge.read is bound");
+  t.isTrue(!plumb, "Gauge.__wacPlumb is not");
+  return t.report();
+}

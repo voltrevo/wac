@@ -34,7 +34,7 @@ host ABI (design/system/0013 step 6), which is the same for every capability:
 2. `$bind$fnref_<j>(slot)`, the module turning a slot number into a funcref of that signature — the
    one operation a host cannot do for itself — for the four functions `__wacHost` takes: `request`,
    `waitAny`, `exitWith` and `interrupted`
-3. `main(__WacHost)` called with what `__wacHost` answered, and every capability arriving back in
+3. `main(Host)` called with what `__wacHost` answered, and every capability arriving back in
    Rust as `request(op, id, a, b, text, bytes)` — std's `OP_*` numbers, the table in the design
 4. each answer handed to `__wacAnswered(h, id, fault, text, bytes, n, m, flags)`, from inside
    `request` when it is in hand and from inside `waitAny` when a thread finishes it

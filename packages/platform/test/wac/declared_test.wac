@@ -108,12 +108,12 @@ export string test_a_program_handed_sys_is_described_by_the_world(Sys sys) {
   if (m.error != "") { return t.report(); }
 
   // `main(Sys)` — the one authority a program is handed (spec ch07). Since design/system/0013 step 6 a host builds no
-  // wac value, and since `issues/lang/0398a` the value `__wacHost` answers crosses opaque: no host reads it, so
-  // nothing behind it is described — not the requests in flight, not the continuations nobody awaited. That list was
-  // nine structs, and 36 before step 6, every `Pending<T>` a capability answered with among them. Asserted as the
-  // *whole* list rather than as an absence, because a rule that only forbids today's capabilities says nothing about
-  // the one added next week.
-  t.eqStr(joinedWith(sorted(m.structs), ", "), "", "hello.wac's declared boundary");
+  // wac value: the boundary is the value `__wacHost` answers, `Host`, and nothing behind it — its fields are private and
+  // its plumbing is named the implementation's (spec ch48 `§wac-implementation-names-3vq8kzt`), so neither the requests
+  // in flight nor the continuations nobody awaited are described. That list was nine structs, and 36 before step 6,
+  // every `Pending<T>` a capability answered with among them. Asserted as the *whole* list rather than as an absence,
+  // because a rule that only forbids today's capabilities says nothing about the one added next week.
+  t.eqStr(joinedWith(sorted(m.structs), ", "), "Host", "hello.wac's declared boundary");
 
   // So the boundary is the callbacks: the four calls `__wacHost` takes, and what the module's own closures need —
   // against 51 when every imported file's exports were roots. At least the four, which is what tells this program
@@ -129,7 +129,7 @@ export string test_and_a_program_that_takes_nothing_is_handed_nothing(Sys sys) {
   Procs procs = sys.procs();
   // The canary. A rule that bound nothing would pass the test above only if hello's list were empty, and a rule
   // that bound everything would hand this program the host: `main()` asked for no authority, so there is no
-  // `__WacHost`, no callback and no struct to describe.
+  // `Host`, no callback and no struct to describe.
   T t = T.create();
   Boundary m = manifestOf(env, fs, procs, "packages/platform/size/none.wac", "none");
   t.eqStr(m.error, "", "the manifest was read");
