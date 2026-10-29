@@ -317,6 +317,36 @@ string buildCachePath(string[] argv, Env env, i32 argc, string cmd, string entry
 }
 
 /**
+ * Each of `paths` as it was read, where `readPaths` has it, and as `texts` has it otherwise. A rewrite keeps lines
+ * where they were — lowering is careful to — so a diagnostic's line and column still point into the text as read.
+ * What a rewrite appended — a test's or a program's adapter — is kept after it, so a diagnostic in generated code
+ * still shows the line it is about.
+ */
+string[] asWritten(string[] paths, string[] texts, string[] readPaths, string[] readTexts) {
+  string[] out = string[].filled(paths.len(), "");
+  for (i32 i = 0; i < paths.len(); i++) {
+    out[i] = texts[i];
+    for (i32 k = 0; k < readPaths.len(); k++) {
+      if (readPaths[k] == paths[i]) { out[i] = readTexts[k] + appendedPast(texts[i], readTexts[k]); }
+    }
+  }
+  return out;
+}
+
+/** The lines of `text` past as many as `read` has, starting on a line of their own. */
+string appendedPast(string text, string read) {
+  i32 lines = 0;
+  for (i32 i = 0; i < read.len(); i++) { if (read.slice(i, i + 1) == "\n") { lines = lines + 1; } }
+  i32 seen = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) != "\n") { continue; }
+    seen = seen + 1;
+    if (seen == lines) { return (read.len() > 0 && read.slice(read.len() - 1, read.len()) != "\n" ? "\n" : "") + text.slice(i + 1, text.len()); }
+  }
+  return "";
+}
+
+/**
  * A missing import rendered where it was written, or `""` when it cannot be located.
  *
  * `parts` is `key\tfrom\tspec` from `missingImportFilesIn`. The specifier is found in the importing
@@ -1420,6 +1450,10 @@ export async i32 main(Sys sys) {
   }
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
+  // As read, for quoting a diagnostic's line: what follows rewrites the texts — adapters, and the pruning a build
+  // does on lowered text — and a line quoted from those is one nobody wrote (`nsimport_test.wac`).
+  string[] readPaths = paths;
+  string[] readTexts = texts;
   Res res = resOf(src);
   // **A test takes capabilities as `main` does** (spec ch47): one taking `Sys`, or `async`, is
   // compiled behind an adapter the runner can call — `testEntry`, which leaves every other file alone.
@@ -1561,7 +1595,7 @@ export async i32 main(Sys sys) {
     res = pruned.res;
   }
   string wire = diagnoseGraphIn(paths, texts, res, entry);
-  string diags = renderDiagnostics(wire, paths, texts);
+  string diags = wire == "" ? "" : renderDiagnostics(wire, paths, asWritten(paths, texts, readPaths, readTexts));
   if (diags != "") { err.line(diags); }
   if (wireHasErrors(wire)) { return 1; }
 

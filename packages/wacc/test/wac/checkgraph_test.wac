@@ -291,3 +291,41 @@ export string test_a_call_to_an_unbound_name_is_an_undefined_name() {
   t.isTrue(wireField(got[0], 5).indexOf("nosuch") >= 0, "and it names the name: " + wireField(got[0], 5));
   return t.report();
 }
+
+// ── A namespace import of a name the namespace does not have ─────────────────────────────────────
+//
+// `import { fs.Fs } from "wac"` after `Fs` left `fs` was reported as **"unexpected token … found '.'"**, five
+// times over, at the dot: the lowering that turns `fs.X` into an import of `X` from the file declaring it
+// left a chain it could not resolve as it was written, and the parser — which has never accepted a dot
+// there — said so. A reader is sent to look for a typo in a line that is spelled right.
+static string NS_ROOT = "export * as shapes from \"./shapes.wac\";\n";
+static string NS_SHAPES = "export i32 area(i32 w) { return w * w; }\n";
+
+string[] nsChecked(string entry) {
+  return wireLines(diagnoseGraph(["/t/m.wac", "/t/lib.wac", "/t/shapes.wac"], [entry, NS_ROOT, NS_SHAPES], "/t/m.wac"));
+}
+
+export string test_a_namespace_member_that_is_not_there_is_named_not_parsed() {
+  T t = T.create();
+  string[] got = nsChecked("import { shapes.perimeter } from \"./lib.wac\";\nexport i32 main() { return 0; }\n");
+  t.eqI32(got.len(), 1, "one diagnostic — " + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.eqStr(wireField(got[0], 4), "that file does not export this name", "the headline");
+  t.eqStr(wireField(got[0], 5), "`shapes.perimeter`: no namespace `shapes` there with that member",
+          "and it names the chain");
+  // And the one that is there still is.
+  t.eqI32(nsChecked("import { shapes.area } from \"./lib.wac\";\nexport i32 main() { return area(2); }\n").len(), 0,
+          "a member that is there");
+  return t.report();
+}
+
+export string test_a_namespace_that_is_not_there_is_named_not_parsed() {
+  T t = T.create();
+  string[] got = nsChecked("import { circles.area } from \"./lib.wac\";\nexport i32 main() { return 0; }\n");
+  t.eqI32(got.len(), 1, "one diagnostic — " + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.eqStr(wireField(got[0], 4), "that file does not export this name", "the headline");
+  t.eqStr(wireField(got[0], 5), "`circles.area`: no namespace `circles` there with that member", "and it names the chain");
+  return t.report();
+}
+

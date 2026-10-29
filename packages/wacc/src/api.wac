@@ -2169,8 +2169,12 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
         // **A built-in gets its own code**, because for those two trees "that file does not export
         // this name" is usually false: the file on disk does, and the compiler is reading the copy
         // it carries. `issues/system/0291b`.
-        c.report(isBuiltinSpec(paths[i]) ? errStaleBuiltinEmbedding() : errNoSuchExport(),
-                 wantLine[k], wantCol[k]);
+        // **A namespace member names both parts**: the lowering left a chain it could not follow as its qualified
+        // name, and by now nothing records which link failed — so the note names the chain rather than guess.
+        string asked = wantName[k];
+        c.reportWith(isBuiltinSpec(paths[i]) ? errStaleBuiltinEmbedding() : errNoSuchExport(),
+                     wantLine[k], wantCol[k], asked.indexOf(".") < 0 ? ""
+                       : "`" + asked + "`: no namespace `" + asked.slice(0, asked.indexOf(".")) + "` there with that member");
       }
     }
 
