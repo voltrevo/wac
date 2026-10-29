@@ -1,0 +1,12 @@
+// expect: twice() = 4
+// why: a binary operator calls its left operand's method from any file, not only the one that declared the struct — and the file using it need not import `operators`
+// spec: §wac-operator-dispatch-left-txsqbyi
+// ---- v.wac ----
+import { operators } from "core";
+export struct V {
+  i32 x;
+  V [operators.add](const this, const V rhs) { return V(this.x + rhs.x); }
+}
+// ---- main.wac ----
+import { V } from "./v.wac";
+export i32 twice() { V a = V(2); V b = a + a; return b.x; }
