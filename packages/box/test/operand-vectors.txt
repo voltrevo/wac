@@ -1,5 +1,5 @@
 wac-applet-vectors 1
-bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+bash: GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
 count: 31

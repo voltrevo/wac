@@ -33,7 +33,10 @@ export async i32 strings(Input stdin, Output err, Output out, Files fs, Args a) 
     u8[] data = got.bytes;
     for (i32 i = 0; i < data.len(); i++) {
       i32 b = data[i] as i32;
-      if (b >= 32 && b < 127) { run.push(b as@ u8); continue; }
+      // A tab is part of a run, as binutils' `STRING_ISGRAPHIC` has it, and no other control byte
+      // is. Leaving it out split `a\tb` into two strings, which nothing noticed while the only
+      // fixture was a host binary with no tabs in its runs.
+      if ((b >= 32 && b < 127) || b == 9) { run.push(b as@ u8); continue; }
       emit(sink, run, min);
     }
   }

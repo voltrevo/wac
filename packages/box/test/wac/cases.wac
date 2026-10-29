@@ -286,7 +286,7 @@ export string[] appletCases() {
     // `fold`'s width in the short spelling, which is a *number* flag rather than a letter.
     "fold -10 fields.txt", "fold -20 fields.txt", "fold -80 prose.txt",
     // `strings` on a binary: the one applet whose input is deliberately not text.
-    "strings -4 /bin/true", "strings -8 /bin/true",
+    "strings -4 bin.dat", "strings -8 bin.dat",
 
     // **A flag's value, attached and detached.** Every one of these is the same command spelled two ways,
     // and coreutils is what says which answer is right. `-f2` always worked; `-f 2` did not, and the
@@ -508,6 +508,19 @@ export Fixture[] appletFixtures() {
   uni.pushCodepoint(0x00FC); uni.push(0x0a);
   string m1 = "alpha\nbeta\ngamma\n";
   string m2 = "delta\nepsilon\n";
+  // **A binary of our own for `strings`, not `/bin/true`.** That one was the host's, so the capture
+  // recorded `/lib/ld-linux-aarch64.so.1` and its symbol table, and every x86-64 machine replayed both
+  // cases as defects. Runs of 3, 4, 7, 8 and more on either side of the two thresholds, split by a NUL,
+  // control bytes, DEL, high bytes and a UTF-8 sequence — which `strings` reads as two non-printables,
+  // not as a letter — with a tab inside one run and the last run ending at end of file, unterminated.
+  Buf bin = Buf.create();
+  bin.pushAll("abc".toBytes()); bin.push(0x00);
+  bin.pushAll("abcd".toBytes()); bin.push(0x01); bin.push(0x02);
+  bin.pushAll("seven77".toBytes()); bin.push(0x7f);
+  bin.pushAll("eightchr".toBytes()); bin.push(0xff); bin.push(0xfe);
+  bin.pushAll("a longer run\twith a tab".toBytes()); bin.push(0x00);
+  bin.pushAll("caf".toBytes()); bin.pushCodepoint(0x00E9); bin.pushAll("-au-lait".toBytes()); bin.push(0x80);
+  bin.pushAll("ends-at-eof".toBytes());
   return [
     Fixture("fields.txt", fields.toBytes(), false),
     Fixture("prose.txt", prose.toBytes(), false),
@@ -527,6 +540,7 @@ export Fixture[] appletFixtures() {
     // one — GitHub wac-mono#18. `tools/wac/appletvectors.wac` once wrote this as an empty *file*, and
     // sixteen directory cases replayed as defects because `cat adir` had been captured exiting 0.
     Fixture("uni.txt", uni.bytes(), false),
+    Fixture("bin.dat", bin.bytes(), false),
     Fixture("adir", u8[](), true)
   ] as Fixture[];
 }
