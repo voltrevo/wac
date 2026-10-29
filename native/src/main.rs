@@ -1850,6 +1850,10 @@ fn serve(
         // engine accepts the bytes, asked without a manifest, a world, or anything running. wasmtime
         // hands back the reason as an ordinary error, so unlike the V8 host there is no exception
         // left on anything and no guard needed around a second call.
+        // **No named capability yet**: the first is `wac.site`. A parent serving a child answers its lookups itself.
+        OP_CAPABILITY => {
+            return Ok(fault(FAULT_UNSUPPORTED, &format!("no capability {} on this host", String::from_utf8_lossy(&text))));
+        }
         OP_VALIDATE => {
             let prog = bytes.clone();
             let why = match wasmtime::Module::validate(caller.engine(), &prog) {
@@ -2990,6 +2994,7 @@ const OP_LOAD: i32 = 64;
 const OP_CALL: i32 = 65;
 const OP_UNLOAD: i32 = 66;
 const OP_VALIDATE: i32 = 67;
+const OP_CAPABILITY: i32 = 68;
 
 /// `GRANT_*`, matching `platform.wac`.
 const GRANT_READ: i32 = 1;

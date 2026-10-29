@@ -107,6 +107,8 @@ export const OP = {
   CALL: 65,
   UNLOAD: 66,
   VALIDATE: 67,
+  // A capability by name: none yet on this host; a parent serving a child answers its lookups itself.
+  CAPABILITY: 68,
 } as const;
 
 /**

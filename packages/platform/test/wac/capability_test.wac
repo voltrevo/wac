@@ -1,0 +1,57 @@
+// Capabilities by name (`OP_CAPABILITY`): a parent provides them to a child it starts, and a host — which provides none
+// yet — says so.
+//
+// The child is `capability_probe.wac`, started with `Procs.spawnProviding` and a provider of `wac.test.echo` 1.3.0. It
+// looks the capability up twice, asks both of its requests, asks for a major version nobody provides, and asks for a
+// name its parent does not provide — which the parent passes to its own host.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Answer, Authority, ChildEnv, Exec, Files, Launch, Procs, Provider, Sys, capability } from "std";
+import { flatten } from "core";
+
+async Answer echo(i32 k, i64 a, i64 b, string text, u8[] bytes) {
+  if (k == 0) { return Answer(0, "you said " + text, u8[](), 0 as i64, 0 as i64, 0); }
+  return Answer(0, "", u8[](), a * (2 as i64), 0 as i64, 0);
+}
+
+export async string test_a_parent_provides_a_capability_by_name(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  string dir = scratch(sys.env(), "capability");
+  fs.mkdir(dir, true).wait();
+  Exec built = flatten(procs.exec(binaryPath(sys.env()),
+                                  ["build", "--no-cache", "packages/platform/test/wac/capability_probe.wac", "-o", dir + "/probe"],
+                                  u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
+  t.eqI32(built.status, 0, "the probe builds: " + string.fromBytes(built.stderr));
+  u8[]? wasm = flatten(fs.readFile(dir + "/probe.wasm").wait()).ok();
+  if (wasm is null) { return t.report(); }
+
+  Provider[] provides = [Provider("wac.test.echo", "1.3.0", 2, echo)];
+  auto spawned = await procs.spawnProviding(wasm!, string[](), Authority.none(), provides, Launch.plain());
+  if (spawned.isErr()) { t.fail("the probe did not start: \{spawned.err()!}"); return t.report(); }
+  auto child = spawned.ok()!;
+  string said = string.fromBytes((await child.output().readAll()).orElse(u8[]()));
+  string errs = string.fromBytes((await child.errors().readAll()).orElse(u8[]()));
+  t.eqI32((await child.exit()).orElse(0 - 1), 0, "the probe exits 0: " + errs);
+
+  t.isTrue(contains(said, "found 1.3.0 at 1048576 for 2\n"), "found where a parent numbers its own:\n" + said);
+  t.isTrue(contains(said, "again at 1048576\n"), "asked again, the same range:\n" + said);
+  t.isTrue(contains(said, "echo: you said hi\n"), "the first request, answered by the provider:\n" + said);
+  t.isTrue(contains(said, "doubled: 42\n"), "the second, with its fields:\n" + said);
+  t.isTrue(contains(said, "^2 refused: wac.test.echo 1.3.0 here, and ^2.0 was asked for\n"), "another major is refused, saying what is here:\n" + said);
+  t.isTrue(contains(said, "none refused: no capability wac.test.none on this host\n"), "a name the parent does not provide is its host's to answer:\n" + said);
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export async string test_a_host_provides_no_capability_yet(Sys sys) {
+  T t = T.create();
+  match (await capability(sys.host, "wac.test.anything", "^1.0")) {
+    Ok(c): { t.fail("the host provided \{c.version} at \{c.base}"); }
+    Err(why): { t.isTrue(contains(why, "no capability wac.test.anything"), "the host says which: " + why); }
+  }
+  return t.report();
+}

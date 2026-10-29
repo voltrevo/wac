@@ -95,6 +95,7 @@ JavaScript hosts; `native/` holds the two Rust ones. They serve this table, whic
 | 65 | `CALL` | `Module.call` | — |
 | 66 | `UNLOAD` | `Module.unload` | — |
 | 67 | `VALIDATE` | `Modules.validate` | — (compiles, and nothing more) |
+| 68 | `CAPABILITY` | `capability(host, name, versions)` | — (no host provides one yet; a parent serving a child may) |
 
 What each request carries in `a`, `b`, `text` and `bytes`, and what each answer puts in which field, is
 the pair of tables in design/system/0013 — the contract a new host implements.

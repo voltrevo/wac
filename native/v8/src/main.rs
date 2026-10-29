@@ -177,6 +177,8 @@ enum Cap {
     Call,
     Unload,
     Validated,
+    /// `OP_CAPABILITY`: a capability by name, of which this host provides none yet.
+    Capability,
     Unsupported,
 }
 
@@ -229,6 +231,7 @@ fn cap_of_op(op: i32) -> Cap {
         65 => Cap::Call,
         66 => Cap::Unload,
         67 => Cap::Validated,
+        68 => Cap::Capability,
         _ => Cap::Unsupported,
     }
 }
@@ -3194,6 +3197,9 @@ fn serve(scope: &mut v8::PinScope, cap: Cap, op: i32, r: &Req) -> Reply {
         // which aborts the process with SIGABRT rather than returning. Nothing else in this file needs
         // one because nothing else compiles twice in a row; a caller validating a corpus does nothing
         // else. `packages/wac/test/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
+        // **No named capability yet**: the first is `wac.site`. A parent serving a child answers its lookups itself,
+        // so this is only what a program asks of the host directly.
+        Cap::Capability => Reply::Now(Answer::Change(FAULT_UNSUPPORTED, format!("no capability {} on this host", r.text))),
         Cap::Validated => {
             let said = {
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));

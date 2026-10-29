@@ -577,6 +577,7 @@ export string systemSide() {
               return answer(id, 0, said, NONE, BigInt(value), 0n, status);
             }
             case 66: loaded.delete(n); return;
+            case 68: return answer(id, 9, "no capability " + text + " in a page", NONE, 0n, 0n, 0);
             default: return answer(id, 9, "a page does not serve request " + op, NONE, 0n, 0n, 0);
           }
         };

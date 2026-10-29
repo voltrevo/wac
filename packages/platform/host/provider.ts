@@ -484,6 +484,7 @@ export function hostFor(b: Bridge, app: Record<string, unknown>, grants?: number
       case OP.CALL: return deliver(id, call(a, text, bb));
       case OP.UNLOAD: loadedModules.delete(a); return deliver(id, flat({}));
       case OP.VALIDATE: return deliver(id, validate(bytes));
+      case OP.CAPABILITY: return deliver(id, flat({ fault: FAULT_UNSUPPORTED, text: `no capability ${text} on this host` }));
     }
     const payload = payloadOf(op, a, bb, text, bytes);
     if (payload === null) {

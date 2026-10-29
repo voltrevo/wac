@@ -699,7 +699,9 @@ export struct Sys {
 
   /** The `Sys` a program's `main` is handed — by the program adapter (`wacc/src/program.wac`). */
   Sys __wacOn(Host host) {
-    return Sys(host, ParentLine.on(host), (bool toErr, string line) => { hostWrite(host, toErr, (line + "\n").toBytes()); });
+    ParentLine parent = ParentLine.on(host);
+    host.__wacSetParent(parent);
+    return Sys(host, parent, (bool toErr, string line) => { hostWrite(host, toErr, (line + "\n").toBytes()); });
   }
 
   /** The program's arguments, in order, without its own name. Needs no grant. */
@@ -782,7 +784,7 @@ export struct Sys {
    * withheld it.
    */
   Files files(this) {
-    if (this.parent.serves()) { return this.parent.files(); }
+    if (this.parent.servesFiles()) { return this.parent.files(); }
     return Files.host(this.host);
   }
 
@@ -2134,7 +2136,11 @@ static i32 SERVED_CHOWN = 1000;
 static i32 SERVED_READ_ALL = 1001;
 
 /** What the parent answers `ASK_HELLO` with, so a channel speaking anything else is not mistaken for this one. */
-string servedHello() { return "wac files 2"; }
+string servedHello() { return "wac served 3"; }
+
+/** In the hello's answer: the parent serves this program's files, and capabilities by name. */
+static i32 SERVES_FILES = 1;
+static i32 SERVES_CAPABILITIES = 2;
 
 /** `OutputClosed` on the wire; it has no `FAULT_*` code because no host operation answers it. */
 static i32 WIRE_OUTPUT_CLOSED = 100;
@@ -2360,15 +2366,19 @@ struct ParentLine {
   i32 served;
   /** Who the parent's files act as, from its answer to the hello. */
   string user;
+  /** What the parent serves, from its answer to the hello: `SERVES_FILES`, `SERVES_CAPABILITIES`, or both. */
+  i32 serving;
+  /** The route to the parent, once made — one per line, since two would each read the other's answers. */
+  Host? toParent;
   /** The served `Files`, once asked for. */
   Files? routed;
 
   ParentLine on(Host host) {
-    return ParentLine(WireLine.on(host, PARENT_FS), 0, "", null);
+    return ParentLine(WireLine.on(host, PARENT_FS), 0, "", 0, null, null);
   }
 
   /**
-   * Ask the parent whether it serves files, **without waiting** — what the program adapter does before an `async`
+   * Ask the parent whether it serves anything, **without waiting** — what the program adapter does before an `async`
    * `main`, so that `serves` already knows by the time a program asks. A page cannot wait for the parent's
    * answer, and asking it the first time `files()` was called waited: every spawned applet in the browser
    * terminal trapped there.
@@ -2379,14 +2389,21 @@ struct ParentLine {
       this.served = 2;
       return;
     }
-    WireReader r = await this.line.next();
+    this.heard(await this.line.next());
+  }
+
+  /** The parent's answer to the hello. */
+  void heard(this, WireReader r) {
     string said = r.text();
     this.served = !r.bad && said == servedHello() ? 1 : 2;
-    if (this.served == 1) { this.user = r.text(); }
+    if (this.served == 1) {
+      this.user = r.text();
+      this.serving = r.u32();
+    }
   }
 
   /**
-   * Whether the parent serves files — asked once, the first time, and remembered. An `async` program has already
+   * Whether the parent serves anything — asked once, the first time, and remembered. An `async` program has already
    * asked (`greet`); a synchronous one asks here, waiting for the answer.
    */
   bool serves(this) {
@@ -2396,23 +2413,28 @@ struct ParentLine {
       framed.pushU32(hello.len as@ u32);
       framed.pushAll(hello.bytes());
       bool asked = lineSend(this.line.host, PARENT_FS, framed.bytes()).wait().orElse(false);
-      WireReader r = asked ? this.line.nextNow() : brokenReader("not spawned");
-      string said = r.text();
-      this.served = !r.bad && said == servedHello() ? 1 : 2;
-      if (this.served == 1) { this.user = r.text(); }
+      this.heard(asked ? this.line.nextNow() : brokenReader("not spawned"));
     }
     return this.served == 1;
   }
 
-  /**
-   * The files the parent serves, made once: every request and answer goes over this one line, so two routes over it
-   * would each read the other's answers.
-   */
+  bool servesFiles(this) { return this.serves() && (this.serving & SERVES_FILES) != 0; }
+
+  bool servesCapabilities(this) { return this.serves() && (this.serving & SERVES_CAPABILITIES) != 0; }
+
+  /** The route to the parent: what served files and capability lookups both ask. */
+  Host route(this) {
+    if (this.toParent is null) { this.toParent = servedHost(this.line); }
+    return this.toParent!;
+  }
+
+  /** The files the parent serves, made once. */
   Files files(this) {
-    if (this.routed is null) { this.routed = Files.served(servedHost(this.line), this.user); }
+    if (this.routed is null) { this.routed = Files.served(this.route(), this.user); }
     return this.routed!;
   }
 }
+
 
 /**
  * A host that is the parent: what a served child's `Files` asks, sent over the parent channel, and its answers delivered
@@ -2844,10 +2866,13 @@ struct ServedStreams {
  * which is the child being stopped; then close what it left open. Runs as this program's scheduler does: nothing else
  * has to drive it.
  */
-async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
+async void serveFiles(Host host, i32 handle, Served served, Ticket<bool> stop) {
   WireLine line = WireLine.on(host, handle);
   // The streams the child opened and has not closed, by the handle the files answered with — closed when it ends.
   Vec<i32> open = Vec.create();
+  Capabilities caps = Capabilities(served.providers, Vec.create(), Vec.create(), Vec.create(),
+                                   host.__wacRangeEnd() > PROVIDED_FROM ? host.__wacRangeEnd() : PROVIDED_FROM);
+  i32 serving = (served.files is not null ? SERVES_FILES : 0) | (served.providers.len() > 0 ? SERVES_CAPABILITIES : 0);
   bool going = true;
   while (going) {
     WireReader q = await line.nextUnless(stop);
@@ -2858,7 +2883,8 @@ async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
       i32 kind = q.byte();
       if (kind == ASK_HELLO) {
         putWireString(a, servedHello());
-        putWireString(a, files.user);
+        putWireString(a, served.files is not null ? served.files!.user : "");
+        a.pushU32(serving as@ u32);
       } else if (kind == SERVED_REQUEST) {
         i32 op = q.u32();
         i32 id = q.u32();
@@ -2867,7 +2893,10 @@ async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
         string text = q.text();
         u8[] bytes = q.bytes();
         Answer ans = Answer(FAULT_OTHER(), "a request the parent could not read", u8[](), 0 as i64, 0 as i64, 0);
-        if (!q.bad) {
+        if (!q.bad && (op == OP_CAPABILITY() || caps.holds(op))) {
+          ans = await answerCapabilityRequest(host, caps, op, x, y, text, bytes);
+        } else if (!q.bad && served.files is not null) {
+          Files files = served.files!;
           // **Passed on as it is**: these files answer the host's own requests, whoever holds them. `chown` is the
           // one asked by its method, which knows that the host's owners are not names.
           if (op == SERVED_CHOWN) {
@@ -2877,6 +2906,8 @@ async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
           }
           if (op == OP_OPEN_FILE() && ans.fault == FAULT_NONE()) { open.push(ans.n as~ i32); }
           if (op == OP_CLOSE_FILE()) { dropHandle(open, x as~ i32); }
+        } else if (!q.bad) {
+          ans = Answer(FAULT_UNSUPPORTED(), "this parent serves no request \{op}", u8[](), 0 as i64, 0 as i64, 0);
         }
         a.pushU32(id as@ u32);
         a.pushU32(ans.fault as@ u32);
@@ -2892,9 +2923,137 @@ async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
       if (going) { going = await line.put(a); }
     }
   }
-  for (i32 i = 0; i < open.len(); i++) {
-    await files.__wacAsk(OP_CLOSE_FILE(), open.get(i) as i64, 0 as i64, "", u8[]());
+  if (served.files is not null) {
+    for (i32 i = 0; i < open.len(); i++) {
+      await served.files!.__wacAsk(OP_CLOSE_FILE(), open.get(i) as i64, 0 as i64, "", u8[]());
+    }
   }
+}
+
+/** Where a serving parent's own capabilities are numbered from: above every host's, which a host keeps below this. */
+static i32 PROVIDED_FROM = 1048576;
+
+/**
+ * The capabilities a parent serves one child: what it provides, each range it allocated (to which provider), and each
+ * range it passed through from its own host — the only requests in those it will pass on, so a child cannot reach its
+ * parent's host by numbering a request it was never given.
+ */
+struct Capabilities {
+  Provider[] providers;
+  /** Allocated: first number, count, provider index — three to an entry. */
+  Vec<i32> allocated;
+  /** Passed through: first number, count — two to an entry. */
+  Vec<i32> passed;
+  /** Each allocated range's name and major version, so asking again answers the same range. */
+  Vec<string> keys;
+  i32 next;
+
+  bool holds(const this, i32 op) {
+    for (i32 i = 0; i + 2 < this.allocated.len(); i = i + 3) {
+      if (op >= this.allocated.get(i) && op < this.allocated.get(i) + this.allocated.get(i + 1)) { return true; }
+    }
+    for (i32 i = 0; i + 1 < this.passed.len(); i = i + 2) {
+      if (op >= this.passed.get(i) && op < this.passed.get(i) + this.passed.get(i + 1)) { return true; }
+    }
+    return false;
+  }
+}
+
+/** A lookup, or a request in a range a lookup gave the child, answered by the parent. */
+async Answer answerCapabilityRequest(Host host, Capabilities caps, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+  if (op == OP_CAPABILITY()) { return await lookUp(host, caps, text, string.fromBytes(bytes)); }
+  for (i32 i = 0; i + 2 < caps.allocated.len(); i = i + 3) {
+    i32 base = caps.allocated.get(i);
+    if (op >= base && op < base + caps.allocated.get(i + 1)) {
+      return await caps.providers[caps.allocated.get(i + 2)].answer(op - base, a, b, text, bytes);
+    }
+  }
+  return await ask(host, op, a, b, text, bytes);
+}
+
+/**
+ * Capability `name` in `versions` for the child: from this parent's providers — the same range for the same name and
+ * major version, however often it is asked — and otherwise from this parent's own host, passed through.
+ */
+async Answer lookUp(Host host, Capabilities caps, string name, string versions) {
+  string closest = "";
+  for (i32 p = 0; p < caps.providers.len(); p++) {
+    Provider pr = caps.providers[p];
+    if (pr.name != name) { continue; }
+    if (!semverAllows(versions, pr.version)) {
+      closest = pr.version;
+      continue;
+    }
+    string key = name + "@" + semverMajor(pr.version);
+    for (i32 k = 0; k < caps.keys.len(); k++) {
+      if (caps.keys.get(k) == key) {
+        return Answer(FAULT_NONE(), pr.version, u8[](), caps.allocated.get(k * 3) as i64, caps.allocated.get(k * 3 + 1) as i64, 0);
+      }
+    }
+    i32 base = caps.next;
+    caps.next = caps.next + pr.count;
+    caps.allocated.push(base);
+    caps.allocated.push(pr.count);
+    caps.allocated.push(p);
+    caps.keys.push(key);
+    return Answer(FAULT_NONE(), pr.version, u8[](), base as i64, pr.count as i64, 0);
+  }
+  if (closest != "") {
+    return Answer(FAULT_UNSUPPORTED(), name + " " + closest + " here, and " + versions + " was asked for", u8[](),
+                  0 as i64, 0 as i64, 0);
+  }
+  Answer x = await ask(host, OP_CAPABILITY(), 0 as i64, 0 as i64, name, versions.toBytes());
+  if (x.fault == FAULT_NONE()) {
+    caps.passed.push(x.n as~ i32);
+    caps.passed.push(x.m as~ i32);
+  }
+  return x;
+}
+
+/** `major.minor.patch` as three numbers; a missing part is 0, and anything unreadable -1. */
+i32[] semverParts(string v) {
+  i32[] out = i32[].filled(3, 0);
+  i32 part = 0;
+  i32 n = 0;
+  bool any = false;
+  u8[] b = v.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '.') {
+      if (!any || part >= 2) { out[0] = 0 - 1; return out; }
+      out[part] = n;
+      part = part + 1;
+      n = 0;
+      any = false;
+    } else if (b[i] >= '0' && b[i] <= '9') {
+      n = n * 10 + (b[i] - '0') as i32;
+      any = true;
+    } else {
+      out[0] = 0 - 1;
+      return out;
+    }
+  }
+  if (!any) { out[0] = 0 - 1; return out; }
+  out[part] = n;
+  return out;
+}
+
+string semverMajor(string v) { return "\{semverParts(v)[0]}"; }
+
+/**
+ * Whether version `v` is one `versions` allows: `^1.2` (anything from 1.2.0 below 2.0.0 — below 0.3.0 for `^0.2`,
+ * as semver has it), or `1.2.3` exactly.
+ */
+bool semverAllows(string versions, string v) {
+  i32[] have = semverParts(v);
+  if (have[0] < 0) { return false; }
+  bool caret = versions.len() > 0 && versions.slice(0, 1) == "^";
+  i32[] want = semverParts(caret ? versions.slice(1, versions.len()) : versions);
+  if (want[0] < 0) { return false; }
+  if (!caret) { return have[0] == want[0] && have[1] == want[1] && have[2] == want[2]; }
+  if (have[0] != want[0]) { return false; }
+  if (want[0] == 0 && have[1] != want[1]) { return false; }
+  if (have[1] != want[1]) { return have[1] > want[1]; }
+  return have[2] >= want[2];
 }
 
 /** `h` out of the open handles. */
@@ -3241,6 +3400,25 @@ export struct Authority {
   bool composedFiles(const this) { return this.files is not null && this.files!.hostGrants == 0; }
 }
 
+/**
+ * A capability this program provides to a child it starts (`Procs.spawnProviding`): what the child finds by `name`
+ * with `capability(host, name, versions)`, `count` request numbers of its own, each answered by `answer` with its
+ * offset (0 up to `count`) and the request's fields.
+ */
+export struct Provider {
+  string name;
+  /** The version provided, `major.minor.patch`. */
+  string version;
+  i32 count;
+  fn<Ticket<Answer>(i32, i64, i64, string, u8[])> answer;
+}
+
+/** What a parent serves a child: the files it was handed, composed, and the capabilities it provides. */
+struct Served {
+  Files? files;
+  Provider[] providers;
+}
+
 /** How a child is started. */
 export struct Launch {
   /** Where its relative paths resolve; `""` for this program's own. */
@@ -3306,8 +3484,17 @@ export struct Procs {
 
   /** Start the compiled module `wasm` with `args`, holding `given`. */
   Ticket<Result<Child, SpawnFault>> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
+    return this.spawnProviding(wasm, args, given, Provider[](), how);
+  }
+
+  /**
+   * `spawn`, providing the child capabilities by name: its `capability(host, name, …)` asks this program, which
+   * answers out of `provides` — and passes a name it does not provide to its own host, as the child's host would.
+   */
+  Ticket<Result<Child, SpawnFault>> spawnProviding(this, u8[] wasm, string[] args, Authority given, Provider[] provides,
+                                                  Launch how) {
     Host h = this.host;
-    Files? served = given.composedFiles() ? given.files : null;
+    Served? served = servedFor(given, provides);
     return hostAsk(h, OP_SPAWN(), given.grants() as i64, spawnFlags(how, served is not null) as i64, how.cwd,
                    spawnBytes(wasm, args), (Answer a) => childOf(h, a, served));
   }
@@ -3315,7 +3502,7 @@ export struct Procs {
   /** Start another instance of this program — its `main`, with `args` — holding `given`. Needs the grant as `spawn` does. */
   Ticket<Result<Child, SpawnFault>> spawnSelf(this, string[] args, Authority given, Launch how) {
     Host h = this.host;
-    Files? served = given.composedFiles() ? given.files : null;
+    Served? served = servedFor(given, Provider[]());
     return hostAsk(h, OP_SPAWN_SELF(), given.grants() as i64, spawnFlags(how, served is not null) as i64, how.cwd,
                    spawnBytes(u8[](), args), (Answer a) => childOf(h, a, served));
   }
@@ -3366,7 +3553,14 @@ u8[] execBytes(string program, string[] args, u8[] input, string[] pairs) {
  * The started child — and, when it was handed a composed `Files`, this program serving it from now until it ends.
  * `m` packs the error stream's handle (low 32) and the served-files channel's (high 32).
  */
-Result<Child, SpawnFault> childOf(Host h, Answer a, Files? served) {
+/** What a child holding `given` and provided `provides` is served, or null when it is served nothing. */
+Served? servedFor(Authority given, Provider[] provides) {
+  Files? files = given.composedFiles() ? given.files : null;
+  if (files is null && provides.len() == 0) { return null; }
+  return Served(files, provides);
+}
+
+Result<Child, SpawnFault> childOf(Host h, Answer a, Served? served) {
   if (a.fault != FAULT_NONE()) { return Result.Err(spawnFaultOf(a.fault, a.text)); }
   i32 handle = a.n as~ i32;
   i32 errHandle = (a.m & (4294967295 as i64)) as~ i32;
@@ -3583,6 +3777,12 @@ export struct Host {
   private bool yielded;
   /** The continuations nobody awaited — the program's schedule target (spec ch35), run by `drain`. */
   private Queue<Continuation> queued;
+  /** The parent, when this program was spawned by one: where capability lookups go if it serves them. */
+  private ParentLine? parent;
+  /** The request ranges a capability lookup through the parent allocated: each a first number and a count. */
+  private Vec<i32> parentRanges;
+  /** Each request sent to the parent rather than the host, by id, so a wait or a drop reaches it there. */
+  private Map<i32, Ticket<Answer>> routed;
 
   /**
    * The host's four calls, as the program adapter's `__wacHost` is handed them — and the schedule target, set
@@ -3591,7 +3791,8 @@ export struct Host {
   Host of(fn<void(i32, i32, i64, i64, string, u8[])> request, fn<i32(i32[], i32)> waitAny, fn<void(i32)> exitWith,
                fn<bool()> interrupted) {
     Queue<Continuation> queued;
-    Host h = Host(request, waitAny, exitWith, interrupted, Map.create(hashI32, i32Eq), 0, false, queued);
+    Host h = Host(request, waitAny, exitWith, interrupted, Map.create(hashI32, i32Eq), 0, false, queued, null, Vec.create(),
+                  Map.create(hashI32, i32Eq));
     if (__wacScheduleTarget() is null) { __wacSetScheduleTarget(h.queued.push); }
     return h;
   }
@@ -3678,9 +3879,40 @@ export struct Host {
 
   /** `waitAny`, noting a host that cannot wait. */
   i32 __wacWaitFor(this, i32[] ids, i32 millis) {
+    // **A request sent to the parent is waited for through the parent's route**: the host does not know its id, and
+    // delivers only what it is asked about. Every other id waits on the host, the route's own reads among them.
+    if (this.routed.len() > 0) {
+      i32 mine = 0;
+      for (i32 i = 0; i < ids.len(); i++) { if (this.routed.get(ids[i]) is null) { mine = mine + 1; } }
+      if (mine == 0) { return this.waitRouted(ids, millis); }
+      if (mine < ids.len()) {
+        i32[] own = i32[].filled(mine, 0);
+        i32 k = 0;
+        for (i32 i = 0; i < ids.len(); i++) { if (this.routed.get(ids[i]) is null) { own[k] = ids[i]; k = k + 1; } }
+        i32 w = this.__wacWaitFor(own, millis);
+        if (w < 0) { return w; }
+        for (i32 i = 0; i < ids.len(); i++) { if (ids[i] == own[w]) { return i; } }
+        return 0 - 1;
+      }
+    }
     i32 which = this.waitAny(ids, millis);
     if (which == HOST_CANNOT_WAIT()) { this.yielded = true; }
     return which;
+  }
+
+  /** A wait for requests that all went to the parent: through the first one's route, until one of them is answered. */
+  private i32 waitRouted(this, i32[] ids, i32 millis) {
+    while (true) {
+      Ticket<Answer>? first = null;
+      for (i32 i = 0; i < ids.len(); i++) {
+        if (this.pending.get(ids[i]) is null) { return i; }
+        if (first is null) { first = this.routed.get(ids[i]); }
+      }
+      if (first is null || first!.waitHost is null) { return 0 - 1; }
+      i32 w = first!.waitHost!([first!.hostId], millis);
+      if (w < 0) { return w; }
+    }
+    return 0 - 1;
   }
 
   /** The ids in flight, for a wait over all of them. */
@@ -3695,15 +3927,71 @@ export struct Host {
     return this.last;
   }
 
+  /** This program's parent — told once, by `Sys`, so that capability lookups can go there when it serves them. */
+  void __wacSetParent(this, ParentLine p) { this.parent = p; }
+
+  /** The end of the highest range a capability lookup through the parent allocated: a serving parent allocates above it. */
+  i32 __wacRangeEnd(const this) {
+    i32 end = 0;
+    for (i32 i = 0; i + 1 < this.parentRanges.len(); i = i + 2) {
+      i32 e = this.parentRanges.get(i) + this.parentRanges.get(i + 1);
+      if (e > end) { end = e; }
+    }
+    return end;
+  }
+
+  /** Whether `op` is in a range a lookup through the parent allocated. */
+  private bool parentsRequest(const this, i32 op) {
+    for (i32 i = 0; i + 1 < this.parentRanges.len(); i = i + 2) {
+      i32 base = this.parentRanges.get(i);
+      if (op >= base && op < base + this.parentRanges.get(i + 1)) { return true; }
+    }
+    return false;
+  }
+
   /** Ask the host, `settle` running on the answer to `id`. */
   void __wacAsk(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes, fn<void(Answer)> settle) {
     this.pending.set(id, settle);
     this.request(op, id, a, b, text, bytes);
   }
 
-  /** Stop waiting for `id`, and tell the host — which closes whatever it answered, unless it was read. */
+  /**
+   * Whether request `op` is the parent's to answer: a capability lookup, or a request in a range one allocated, in a
+   * program whose parent serves capabilities. Asked only by `ask` — what a program asks a capability with — so that a
+   * program that asks for none carries none of this.
+   */
+  bool __wacParents(this, i32 op) {
+    return this.parent is not null && (op == OP_CAPABILITY() || this.parentsRequest(op)) && this.parent!.servesCapabilities();
+  }
+
+  /** `__wacAsk`, sent to the parent: for a request `__wacParents` says is its. */
+  void __wacAskParent(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes, fn<void(Answer)> settle) {
+    this.pending.set(id, settle);
+    {
+      Host self = this;
+      Ticket<Answer> t = ask(this.parent!.route(), op, a, b, text, bytes);
+      t.whenSettled(() => {
+        Answer x = t.value();
+        self.routed.remove(id);
+        if (op == OP_CAPABILITY() && x.fault == FAULT_NONE()) {
+          self.parentRanges.push(x.n as~ i32);
+          self.parentRanges.push(x.m as~ i32);
+        }
+        answered(self, id, x.fault, x.text, x.bytes, x.n, x.m, x.flags);
+      });
+      if (!t.done) { this.routed.set(id, t); }
+    }
+  }
+
+  /** Stop waiting for `id`, and tell whoever was asked — which closes whatever it answered, unless it was read. */
   void __wacDrop(this, i32 id) {
     this.pending.remove(id);
+    Ticket<Answer>? t = this.routed.get(id);
+    if (t is not null) {
+      this.routed.remove(id);
+      t!.cancel();
+      return;
+    }
     this.request(OP_DROP(), id, 0 as i64, 0 as i64, "", u8[]());
   }
 
@@ -3763,12 +4051,49 @@ export Host __wacHostOf(fn<void(i32, i32, i64, i64, string, u8[])> request, fn<i
 }
 export Sys __wacSysOn(Host host) { return Sys.__wacOn(host); }
 
+/** A capability found by name (`capability`): its requests are `base` up to `base + count`. */
+export struct Capability {
+  i32 base;
+  i32 count;
+  /** The version provided, which satisfies the versions asked for. */
+  string version;
+}
+
+/**
+ * The capability `name`, in a version `versions` allows (`^1.2`, `1.2.3`): what the host provides by that name — or,
+ * for a program whose parent serves capabilities (`Procs.spawnProviding`), what the parent does. `Err` says why not.
+ */
+export async Result<Capability, string> capability(Host host, string name, string versions) {
+  Answer a = await ask(host, OP_CAPABILITY(), 0 as i64, 0 as i64, name, versions.toBytes());
+  if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+  return Result.Ok(Capability(a.n as~ i32, a.m as~ i32, a.text));
+}
+
 /**
  * Ask `host` directly, the answer arriving as a ticket — what a program that takes a `Host` (spec ch07
  * `§wac-main-host-7qkz2mw`) asks with; `host.tell` is a request nobody answers.
  */
 export Ticket<Answer> ask(Host host, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+  if (host.__wacParents(op)) { return parentAsk(host, op, a, b, text, bytes); }
   return hostAsk(host, op, a, b, text, bytes, (Answer x) => x);
+}
+
+/** `hostAsk` for a request the parent answers (`Host.__wacParents`). */
+Ticket<Answer> parentAsk(Host host, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+  i32 id = host.__wacNext();
+  Ticket<Answer> t;
+  Host h = host;
+  t.hostId = id;
+  t.waitHost = (i32[] ids, i32 millis) => h.__wacWaitFor(ids, millis);
+  t.release = () => { h.__wacDrop(id); };
+  t.drive = () => {
+    while (!t.done) {
+      if (h.__wacWaitFor([id], 0 - 1) < 0) { return false; }
+    }
+    return true;
+  };
+  host.__wacAskParent(op, id, a, b, text, bytes, (Answer x) => { if (!t.done) { t.resolve(x); } });
+  return t;
 }
 /** The host answered request `id`. Called by the host, only from inside `request` or `waitAny`. */
 export void answered(Host h, i32 id, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
@@ -3870,3 +4195,9 @@ export i32 OP_CALL() { return 65; }
 export i32 OP_UNLOAD() { return 66; }
 /** `bytes` a module → nothing, or the engine's sentence as a fault. Answered at once. */
 export i32 OP_VALIDATE() { return 67; }
+/**
+ * A capability by name: `text` the name (`wac.site`), `bytes` the versions asked for (`^1.2`). Answered with `n` the
+ * first request number it allocated, `m` how many, `text` the version it provides — the same range every time it is
+ * asked for one major version — or `Unsupported` with why. A program whose parent serves capabilities asks the parent.
+ */
+export i32 OP_CAPABILITY() { return 68; }

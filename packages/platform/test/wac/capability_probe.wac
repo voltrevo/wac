@@ -1,0 +1,30 @@
+// The child `capability_test.wac` spawns, provided `wac.test.echo` by its parent: what each lookup and request answered,
+// one line each.
+
+import { Answer, Sys, ask, capability } from "std";
+
+export async i32 main(Sys sys) {
+  match (await capability(sys.host, "wac.test.echo", "^1.2")) {
+    Ok(c): {
+      sys.log("found \{c.version} at \{c.base} for \{c.count}");
+      match (await capability(sys.host, "wac.test.echo", "^1.0")) {
+        Ok(again): { sys.log("again at \{again.base}"); }
+        Err(why): { sys.log("again refused: \{why}"); }
+      }
+      Answer said = await ask(sys.host, c.base, 0 as i64, 0 as i64, "hi", u8[]());
+      sys.log("echo: \{said.text}");
+      Answer doubled = await ask(sys.host, c.base + 1, 21 as i64, 0 as i64, "", u8[]());
+      sys.log("doubled: \{doubled.n}");
+    }
+    Err(why): { sys.log("not found: \{why}"); }
+  }
+  match (await capability(sys.host, "wac.test.echo", "^2.0")) {
+    Ok(c): { sys.log("a second major found"); }
+    Err(why): { sys.log("^2 refused: \{why}"); }
+  }
+  match (await capability(sys.host, "wac.test.none", "^1.0")) {
+    Ok(c): { sys.log("none found"); }
+    Err(why): { sys.log("none refused: \{why}"); }
+  }
+  return 0;
+}

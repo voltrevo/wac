@@ -12,7 +12,9 @@
 // files. On 2026-10-29 a serving parent began answering the host's own requests, and the file was 83,292 bytes in 714
 // functions; then `Files` stopped being a closure per operation and became a method per operation over one host, so
 // one `readFile` keeps one request and one decoder: 50,022 bytes in 447 functions, of which the parent channel —
-// `sys.files()` asks at run time whether a parent serves it — is most of the difference from the line.
+// `sys.files()` asks at run time whether a parent serves it — is most of the difference from the line. Capabilities by
+// name (`OP_CAPABILITY`) added 2.5 KB to both: a host keeps the requests a parent is answering so that waiting for
+// one, or dropping it, reaches it — 23,897 and 52,898.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
@@ -87,8 +89,8 @@ export string test_a_program_that_logs_a_line_carries_what_logging_needs(Sys sys
   // The binders `__wacHost`'s four callbacks need, and the string and array helpers their signatures move:
   // a handful, where it was 777.
   t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
-  t.isTrue(s.functions <= 200, "functions: " + itoa(s.functions));
-  t.isTrue(w!.len() <= 24000, "bytes: " + itoa(w!.len()));
+  t.isTrue(s.functions <= 220, "functions: " + itoa(s.functions));
+  t.isTrue(w!.len() <= 26000, "bytes: " + itoa(w!.len()));
   return t.report();
 }
 
@@ -106,6 +108,6 @@ export string test_reading_a_file_adds_what_reading_needs(Sys sys) {
   Shape s = shapeOf(w!);
   t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
   t.isTrue(s.functions <= 470, "functions: " + itoa(s.functions));
-  t.isTrue(w!.len() <= 52000, "bytes: " + itoa(w!.len()));
+  t.isTrue(w!.len() <= 55000, "bytes: " + itoa(w!.len()));
   return t.report();
 }
