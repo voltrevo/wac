@@ -1,0 +1,46 @@
+// A program whose `main` returns with work it scheduled still waiting exits 1, on every host
+// (spec ch07 `§wac-exit-work-left-pu5wju6`).
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/platform/test/wac/workleft_test.wac
+//
+// The spec's own example asks this, and the spec probe runs only on the v8 binary — so when design/system/0013 step 6
+// took the check out of the JavaScript hosts, and the wasmtime host had never made it, the rule held on one host of
+// four and nothing said so. Each host is asked here, with the drained case beside it: a host that failed every
+// program would pass the first half.
+
+import { ChildEnv, Exec, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
+import { T } from "../../../wactest/src/assert.wac";
+import { nativeBinaryPath } from "../../../wactest/src/host.wac";
+
+static string LEFT = "packages/platform/test/wac/workleft_probe.wac";
+
+Exec ran(Procs procs, string cmd, string[] args) {
+  auto r = flatten(procs.exec(cmd, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  return r.isOk() ? r.unwrap() : Exec(0 - 1, u8[](), u8[](), "\{r.err()!}");
+}
+
+/** `left` asks for work left behind; `drained` drains it first, and must finish 0. */
+void both(T t, string host, fn<Exec(string)> run) {
+  Exec left = run("left");
+  t.eqI32(left.status, 1, host + ": a main that returned with a sleep still waiting — " + string.fromBytes(left.stderr));
+  Exec drained = run("drained");
+  t.eqI32(drained.status, 0, host + ": the same, drained — " + string.fromBytes(drained.stderr));
+}
+
+export string test_work_left_waiting_is_a_failure_on_every_host(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string dir = flatten(sys.env().cwd().wait()).unwrap() + "/.cache/workleft";
+  sys.files().mkdir(dir, true).wait();
+  both(t, "v8", (string mode) => ran(procs, "native/v8/target/release/wac", ["run", LEFT, mode]));
+  string native = nativeBinaryPath(sys.env(), sys.files(), t);
+  if (native != "") { both(t, "wasmtime", (string mode) => ran(procs, native, ["run", LEFT, mode])); }
+  string denoOut = dir + "/probe-deno.js";
+  ran(procs, "deno", ["run", "-A", "packages/platform/build.ts", LEFT, "--target", "deno", "-o", denoOut]);
+  both(t, "deno", (string mode) => ran(procs, "deno", ["run", "-A", denoOut, mode]));
+  string nodeOut = dir + "/probe-node.js";
+  ran(procs, "deno", ["run", "-A", "packages/platform/build.ts", LEFT, "--target", "node", "-o", nodeOut]);
+  both(t, "node", (string mode) => ran(procs, "node", [nodeOut, mode]));
+  return t.report();
+}

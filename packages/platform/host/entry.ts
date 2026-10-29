@@ -14,7 +14,7 @@
 import { type Bridge, bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { denoWorld } from "./deno.ts";
-import { mainArgs, WacExit } from "./provider.ts";
+import { callMain, mainArgs, WacExit } from "./provider.ts";
 
 /**
  * The generated module of an application.
@@ -221,7 +221,7 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
         if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
         // A host only for a program that takes one — `mainArgs` carries the reason.
         if (world === undefined) world = mainArgs(b, app as unknown as Record<string, unknown>);
-        const code = app.main(...world);
+        const code = callMain(b, app as unknown as Record<string, unknown>, world);
         if (cov !== undefined) dumpCoverage(app, cov);
         worker.postMessage({ ok: true, code });
       } catch (err) {

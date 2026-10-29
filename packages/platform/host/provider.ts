@@ -542,4 +542,30 @@ export function mainArgs(b: Bridge, app: Record<string, unknown>): unknown[] {
   return h === undefined ? [] : [h];
 }
 
+/**
+ * Call `main` with `args` and answer its status — then hold it to **work scheduled and never run is an error** (spec
+ * ch07 `§wac-exit-work-left-pu5wju6`): `main` returning says the program is done, and a continuation still waiting
+ * says it was not. The program's `__wacOutstanding` is asked, as both native hosts ask it, and a module that took the
+ * host and cannot be asked is refused rather than let off. Every entry calls `main` through this, so none can skip it.
+ *
+ * **Status 1, said on the program's own diagnostic output** — where its `warn`s go, so a parent reading a child hears
+ * it — and not a thrown error, which every entry turns into a host failure (70).
+ */
+export function callMain(b: Bridge, app: Record<string, unknown>, args: unknown[]): number {
+  const code = (app.main as (...a: unknown[]) => number)(...args);
+  if (args.length === 1) {
+    const ask = app.__wacOutstanding;
+    if (typeof ask !== "function") {
+      throw new Error("the module exports no `__wacOutstanding`, so its unfinished work cannot be asked about");
+    }
+    const left = Number((ask as (h: unknown) => unknown)(args[0]));
+    if (left > 0) {
+      const said = `wac: finished with ${left} continuation(s) still waiting — call \`sys.drain()\` to run them\n`;
+      hostCall(b, OP.WRITE_STDERR, new TextEncoder().encode(said));
+      return 1;
+    }
+  }
+  return code;
+}
+
 export { HostCallError };

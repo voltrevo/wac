@@ -1,0 +1,10 @@
+// The probe for `workleft_test.wac`: a sleep nobody awaits, and then — with `drained` — the drain that runs it.
+
+import { Sys } from "std";
+
+export async i32 main(Sys sys) {
+  string[] args = sys.args();
+  sys.sleepMillis(10);
+  if (args.len() > 0 && args[0] == "drained") { await sys.drain(); }
+  return 0;
+}

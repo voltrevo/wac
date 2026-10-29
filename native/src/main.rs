@@ -1076,6 +1076,22 @@ fn enter(
         Some(Val::I32(n)) => *n,
         _ => 0,
     };
+    // **Work scheduled and never run is an error** (spec ch07 `§wac-exit-work-left-pu5wju6`): `main` returning says
+    // the program is done, and a continuation still waiting says it was not. The program's `__wacOutstanding` is
+    // asked, as the v8 host asks it; a module that took the host and cannot be asked is refused rather than let off.
+    if let Some(host) = args.first().cloned() {
+        let ask = instance.get_func(&mut *store, "__wacOutstanding").ok_or_else(|| {
+            wasmtime::Error::msg(format!("{}: exports no `__wacOutstanding`, so its unfinished work cannot be asked about", m.entry))
+        })?;
+        let mut left = [Val::I32(0)];
+        ask.call(&mut *store, &[host], &mut left)?;
+        if let Val::I32(n) = left[0] {
+            if n > 0 {
+                eprintln!("wac: {} finished with {n} continuation(s) still waiting — call `sys.drain()` to run them", m.entry);
+                return Ok(1);
+            }
+        }
+    }
     Ok(status)
 }
 

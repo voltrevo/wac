@@ -167,6 +167,9 @@ import {
   test_stat_and_readdir_reach_the_application_and_are_gated as worl__stat_and_readdir_reach_the_application_and_are_gated,
   test_the_c_locale_accounts_for_its_own_two_words as worl__the_c_locale_accounts_for_its_own_two_words,
 } from "./wac/world_test.wac";
+import {
+  test_work_left_waiting_is_a_failure_on_every_host as work__work_left_waiting_is_a_failure_on_every_host,
+} from "./wac/workleft_test.wac";
 
 export i32 main(Sys sys) {
   Output err = sys.stderr();
@@ -568,6 +571,10 @@ export i32 main(Sys sys) {
   }
   if (worl__the_c_locale_accounts_for_its_own_two_words(sys).len() > 0) {
     err.line("error: FAILED world_test test_the_c_locale_accounts_for_its_own_two_words");
+    bad = bad + 1;
+  }
+  if (work__work_left_waiting_is_a_failure_on_every_host(sys).len() > 0) {
+    err.line("error: FAILED workleft_test test_work_left_waiting_is_a_failure_on_every_host");
     bad = bad + 1;
   }
   if (bad > 0) { err.line("platform: \{bad} test(s) failed under the coverage driver"); }
