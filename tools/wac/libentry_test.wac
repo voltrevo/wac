@@ -162,3 +162,43 @@ export string test_bls_and_bignum_work_through_the_root_entry(Sys sys) {
   fs.remove(probe, false).wait();
   return t.report();
 }
+
+/**
+ * A program as a project writes one — `async main(Sys)` — importing through the root entry.
+ *
+ * The two probes above take nothing, so they never met the program adapter, and this is where the two
+ * meet: `wac build` adapts the entry before pruning so `std` keeps what the adapter calls, and it
+ * adapted the *raw* text, which with a namespace-member import does not parse. So nothing was adapted,
+ * `__wacHostOf` was pruned, and every such program failed to emit — *"the exported function `__wacHost`
+ * is not in the module"*, found by wacuum on 2026-10-29. The running `Keccak256` is the one it asked for.
+ */
+static string SYS_PROBE =
+  "import { Sys } from \"std\";\n" +
+  "import { crypto.Keccak256, json.parse } from \"../lib.wac\";\n" +
+  "export async i32 main(Sys sys) {\n" +
+  "  Keccak256 k = Keccak256.create();\n" +
+  "  if (k.peek()[0] != 0xc5) { return 1; }\n" +
+  "  if (parse(\"[1, 2]\".toBytes()).ok() is null) { return 2; }\n" +
+  "  sys.log(\"ok\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
+export string test_an_async_main_taking_sys_builds_through_the_root_entry(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  T t = T.create();
+  i32 cwdLen = flatten(env.cwd().wait()).orElse("").len();
+  string probe = ".cache/libentry_sys_probe-\{cwdLen}.wac";
+  fs.mkdir(".cache", true).wait();
+  t.isTrue(flatten(fs.writeFile(probe, SYS_PROBE.toBytes()).wait()).isOk(), "wrote the probe at \{probe}");
+  string out = "/tmp/wac-libentry-sys-\{cwdLen}";
+  Exec built = run(procs, binaryPath(env), ["build", "--no-cache", probe, "-o", out]);
+  t.eqI32(built.status, 0, "the probe builds: \{string.fromBytes(built.stdout)}\{string.fromBytes(built.stderr)}");
+  Exec ran = run(procs, binaryPath(env), ["\{out}.wasm"]);
+  t.eqI32(ran.status, 0, "and it runs — 1 keccak, 2 json: \{string.fromBytes(ran.stderr)}");
+  t.eqStr(trimmed(string.fromBytes(ran.stdout)), "ok", "and its log reaches standard output");
+  fs.remove("\{out}.wasm", false).wait();
+  fs.remove(probe, false).wait();
+  return t.report();
+}
