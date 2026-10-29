@@ -64,6 +64,23 @@ static string PROBE =
   "  return 0;\n" +
   "}\n";
 
+/** A program that listens on loopback and connects to itself: the network grant, end to end. */
+static string NET_PROGRAM =
+  "import { Listener, Sys } from \"std\";\n" +
+  "import { flatten } from \"core\";\n" +
+  "export i32 main(Sys sys) {\n" +
+  "  auto l = flatten(sys.net().listen(\"127.0.0.1\", 0).wait());\n" +
+  "  if (l.isErr()) { sys.log(\"listen refused: \\{l.err()!}\"); return 1; }\n" +
+  "  Listener listener = l.unwrap();\n" +
+  "  auto dial = sys.net().connect(\"127.0.0.1\", listener.port);\n" +
+  "  auto served = flatten(listener.accept().wait());\n" +
+  "  auto mine = flatten(dial.wait());\n" +
+  "  if (served.isErr() || mine.isErr()) { sys.log(\"connect failed\"); return 1; }\n" +
+  "  mine.unwrap().send(\"ping\".toBytes()).wait();\n" +
+  "  sys.log(\"listened, connected, sent\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
 /** A program that only prints, so what is being tested is the command and not a graph. */
 static string PROGRAM =
   "import { Output, Sys } from \"std\";\n" +
@@ -146,6 +163,19 @@ string oneHost(Output out, Env env, Files fs, Procs procs, T t, string host, str
                        + string.fromBytes(ran.stdout));
   t.eqStr(trimmed(string.fromBytes(ran.stdout)), "it compiled and it ran",
           "\{host} printed: \{string.fromBytes(ran.stdout)}");
+
+  // **A grant the command passes on reaches the program.** `wac run --allow-net` on the Node-hosted command refused
+  // every socket: its launcher was bundled with an export list the bundler dropped, so it was handed no network at
+  // all (`packages/ts/test/wac/bundle_test.wac` has that half). The refusal without the flag is the canary — a host
+  // that granted everything would pass the first line.
+  auto wroteNet = flatten(fs.writeFile("\{dir}/net.wac", NET_PROGRAM.toBytes()).wait());
+  t.isTrue(wroteNet.isOk(), "could not write the network program");
+  Exec net = sh(procs, "'\{bin}' run --allow-read --allow-net '\{dir}/net.wac' 2>&1");
+  t.eqStr(trimmed(string.fromBytes(net.stdout)), "listened, connected, sent",
+          "\{host}: `wac run --allow-net` could not use the network: \{string.fromBytes(net.stdout)}");
+  Exec noNet = sh(procs, "'\{bin}' run --allow-read '\{dir}/net.wac' 2>&1");
+  t.isTrue(contains(string.fromBytes(noNet.stdout), "not granted"),
+           "\{host}: and without `--allow-net` it is refused: \{string.fromBytes(noNet.stdout)}");
 
   sameAnswerOnBothHosts(env, fs, procs, t, host, dir, bin);
 

@@ -7,7 +7,7 @@
 // two bindings silently, so a failure here is a worklist and not a wrong answer.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Files, Output, Sys } from "std";
+import { ChildEnv, Files, Launch, Output, Sys } from "std";
 import { Bundled, bundle } from "../../src/bundle.wac";
 import { Stripped, strip } from "../../src/strip.wac";
 import { flatten } from "core";
@@ -188,5 +188,34 @@ export string test_a_relative_import_not_in_the_set_is_refused() {
   named[0] = "import { base } from \"./gone.ts\";\nexport const go = () => base();\n".toBytes();
   Bundled r2 = bundle(paths, named, "a.ts");
   t.isTrue(r2.error != "", "and so is a named import of it");
+  return t.report();
+}
+
+/**
+ * **An export list exports what it lists.** `export { nodeNet };` came out as a bare `{ nodeNet };` and an empty
+ * export object, so every importer read `undefined` — and the Node-hosted `wac` built by `bootstrap.sh --host nodejs`
+ * handed its launcher no network: `wac run --allow-net` refused every socket. Run rather than read, because the
+ * text can look right and the module still export nothing.
+ */
+export string test_an_export_list_exports_its_names_and_aliases(Sys sys) {
+  T t = T.create();
+  string[] paths = ["main.ts", "m.ts", "n.ts"];
+  u8[][] texts = u8[][].filled(3, u8[]());
+  texts[0] = "import { a, c, K, z } from \"./m.ts\";\nconsole.log(a, c, new K().v, z);\n".toBytes();
+  // `z` is imported and exported again, which is `provider.ts`'s `HostCallError`: a bundle has no local `z`.
+  texts[1] = "import { z } from \"./n.ts\";\nconst a = 1;\nconst b = 2;\nexport class K { v = 3; }\nexport { a, b as c, z };\n".toBytes();
+  texts[2] = "export const z = 4;\n".toBytes();
+  Bundled r = bundle(paths, texts, "main.ts");
+  t.eqStr(r.error, "", "it bundles");
+  if (r.error != "") { return t.report(); }
+  string dir = flatten(sys.env().cwd().wait()).unwrap() + "/.cache/bundle-exportlist";
+  sys.files().mkdir(dir, true).wait();
+  sys.files().writeFile(dir + "/out.js", r.out).wait();
+  auto ran = flatten(sys.procs().exec("deno", ["run", dir + "/out.js"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  t.isTrue(ran.isOk(), "deno ran");
+  if (ran.isErr()) { return t.report(); }
+  t.eqStr(string.fromBytes(ran.unwrap().stdout), "1 2 3 4\n",
+          "the listed name, the aliased one, a declared export and an imported one exported again all arrive — "
+          + string.fromBytes(ran.unwrap().stderr) + "\n" + string.fromBytes(r.out));
   return t.report();
 }

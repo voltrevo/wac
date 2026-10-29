@@ -123,7 +123,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     string open = tla ? " = await (async () => {\n" : " = (() => {\n";
     pushString(out, "// -- \{paths[m]}\nconst \{ns[m]}\{open}");
     pushString(out, body);
-    pushString(out, "\nreturn { \{exportList(texts[m])} };\n})();\n\n");
+    pushString(out, "\n})();\n\n");
   }
   u8[] bytes = u8[].filled(out.len(), 0);
   for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i) as@ u8; }
@@ -184,7 +184,8 @@ bool used(u8[][] texts, string p) {
 }
 
 /**
- * One module's body: imports deleted, `export` removed, imported names read through their module.
+ * One module's body: imports deleted, `export` removed, imported names read through their module — ending with the
+ * object it returns, where an exported name it imported is read through its module too.
  *
  * Answers `ERROR:…` when a static use of an imported symbol crosses a cycle.
  */
@@ -290,6 +291,25 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
     string w = textAt(src, l, i);
 
     if (w == "export" && !(i > 0 && kindAt(l, i - 1) == kPunct() && textAt(src, l, i - 1) == ".")) {
+      // **An export list is a statement only of what to export**, so all of it goes — `exportList` puts the names in
+      // the module's object. Blanking the keyword alone left `{ nodeNet };`, and `{ a, b as c };` is not a program.
+      if (i + 1 < n && kindAt(l, i + 1) == kPunct() && textAt(src, l, i + 1) == "{") {
+        i32 close = i + 1;
+        while (close < n && !(kindAt(l, close) == kPunct() && textAt(src, l, close) == "}")) { close = close + 1; }
+        // A re-export names another module, which this would have to import: refused rather than dropped.
+        if (close + 1 < n && kindAt(l, close + 1) == kIdent() && textAt(src, l, close + 1) == "from") {
+          return "ERROR:\{paths[m]}:\{lineAt(l, i)}:\{colAt(l, i)}"
+               + ": `export { … } from` is not bundled — import the names and export them from this module.";
+        }
+        i32 last = close;
+        if (last + 1 < n && kindAt(l, last + 1) == kPunct() && textAt(src, l, last + 1) == ";") { last = last + 1; }
+        copyThrough(out, src, written, s);
+        i32 end = startAt(l, last) + lenAt(l, last);
+        blankInto(out, src, s, end);
+        written = end;
+        i = last;
+        continue;
+      }
       copyThrough(out, src, written, s);
       blankInto(out, src, s, e);
       written = e;
@@ -338,7 +358,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
     if (to < 0) { continue; }
     writeOver(b, imports[i].from, "const \{imports[i].namespace} = \{ns[to]};");
   }
-  return string.fromBytes(b);
+  return string.fromBytes(b) + "\nreturn { " + exportList(src, local, reads) + " };";
 }
 
 /** Write `what` over `b` at `at`, stopping at a line break. */
@@ -419,13 +439,35 @@ bool hasTopLevelAwait(u8[] src) {
   return false;
 }
 
-/** The names a module exports, for the object its IIFE returns. */
-string exportList(u8[] src) {
+/**
+ * The names a module exports, for the object its IIFE returns: each declaration's name, and each entry of an export
+ * list — `export { a, b as c }` exports `a` and, as `c`, `b`. A listed name the module imported is read through the
+ * module it came from (`reads`), as every other use of it is: there is no local of that name in the bundle.
+ */
+string exportList(u8[] src, Vec<string> local, Vec<string> reads) {
   Lexed l = lex(src);
   Vec<string> names = Vec.create();
   i32 n = tokenCount(l);
   for (i32 i = 0; i < n - 1; i++) {
     if (kindAt(l, i) != kIdent() || textAt(src, l, i) != "export") { continue; }
+    if (kindAt(l, i + 1) == kPunct() && textAt(src, l, i + 1) == "{") {
+      i32 k = i + 2;
+      while (k < n && !(kindAt(l, k) == kPunct() && textAt(src, l, k) == "}")) {
+        if (kindAt(l, k) == kIdent()) {
+          string name = textAt(src, l, k);
+          i32 li = indexOfVec(local, name);
+          string value = li >= 0 ? reads.get(li) : name;
+          if (k + 2 < n && kindAt(l, k + 1) == kIdent() && textAt(src, l, k + 1) == "as" && kindAt(l, k + 2) == kIdent()) {
+            names.push(textAt(src, l, k + 2) + ": " + value);
+            k = k + 3;
+            continue;
+          }
+          names.push(li >= 0 ? name + ": " + value : name);
+        }
+        k = k + 1;
+      }
+      continue;
+    }
     i32 j = i + 1;
     while (j < n && kindAt(l, j) == kIdent()
            && (textAt(src, l, j) == "async" || textAt(src, l, j) == "const"
