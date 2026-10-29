@@ -264,5 +264,9 @@ This is the guarantee `const this` gives a receiver ([12](12-structs.md)), and t
 
 ## A const struct
 
-A `const struct` has only `const` fields, so no reference to one was ever writable — `const` or not
-([12](12-structs.md)).
+A `const struct` has only `const` fields ([12](12-structs.md)), so `const` adds nothing to what a
+reference to one can write — there was nothing to write. It is still a `const` reference, and the rules
+above hold for it unchanged: it does not become a plain one by assignment, initialisation or return
+(`§wac-const-no-launder-t584c4n`). Declare the binding or the result `const` instead. A method
+handing back what it reaches through its `const` receiver — `return this;` — is the accessor exception,
+the same for every struct (`§wac-deep-const-accessor-w3kf8nq`).
