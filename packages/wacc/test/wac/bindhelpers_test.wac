@@ -73,6 +73,9 @@ export string test_an_instances_methods_carry_the_compilers_mangled_name() {
   // file, then each argument mangled — because that is what the bindgen generates its glue against.
   // `packages/box` and `packages/fs` stopped at `$bind$sm_Vec__packages_std_src_vec$string_create`
   // for want of exactly this. `issues/lang/0089`.
+  //
+  // The instances cross the boundary, so they are bound: an instance only used inside the module has no
+  // methods exported since `issues/lang/0398a`, which is the last assertion here.
   T t = T.create();
   u8[] b = emitFiles(
     ["packages/std/src/vec.wac", "packages/std/src/main.wac"],
@@ -81,8 +84,9 @@ export string test_an_instances_methods_carry_the_compilers_mangled_name() {
       "  Vec<T> create() { return Vec<T>(T[](), 0); }\n" +
       "  i32 len(const this) { return this.n; }\n}\n",
       "import { Vec } from \"./vec.wac\";\n" +
-      "export i32 f() { Vec<string> a = Vec.create(); Vec<u8[]> b = Vec.create(); " +
-      "return a.len() + b.len(); }\n"
+      "export Vec<string> words() { return Vec.create(); }\n" +
+      "export Vec<u8[]> chunks() { return Vec.create(); }\n" +
+      "export i32 f() { Vec<i32> c = Vec.create(); return c.len(); }\n"
     ],
     "packages/std/src/main.wac");
   string[] names = allExportNames(b);
@@ -106,6 +110,10 @@ export string test_an_instances_methods_carry_the_compilers_mangled_name() {
   string[] first = string[].filled(nMissing, "");
   for (i32 i = 0; i < nMissing; i++) { first[i] = missing[i]; }
   t.eqI32(nMissing, 0, "missing: " + joined(first, ", "));
+  for (i32 k = 0; k < names.len(); k++) {
+    t.isTrue(names[k].indexOf("Vec__packages_std_src_vec$i32_") < 0,
+             names[k] + " is exported, for an instance that never crosses");
+  }
   return t.report();
 }
 

@@ -28,8 +28,7 @@ use serde::Deserialize;
 
 // ---------------------------------------------------------------------------------------------
 // The manifest, which is the compiler's description of the module beside it. `packages/platform/
-// native.ts` writes it. The host reads the callback signatures `__wacHost` takes, the exports, and
-// one method — `__WacHost.outstanding`.
+// native.ts` writes it. The host reads the callback signatures `__wacHost` takes and the exports.
 
 #[derive(Deserialize, Clone, Copy, Default)]
 struct Grants {
@@ -1194,21 +1193,25 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // **Work scheduled and never run is an error.** `main` returning is the program saying it is
     // done, and a continuation still waiting says it was not — the answer would simply never arrive,
     // silently, which is the failure a promise-shaped API is most likely to have. So the program's
-    // own `__WacHost.outstanding` is asked: the requests in flight and the continuations queued.
-    if let (Some(spec), Some(h)) = (m.find_struct("__WacHost"), host_v) {
-        if let Some(mm) = spec.methods.iter().find(|mm| mm.name == "outstanding") {
-            if let Some(f) = get_export(scope, exports, &mm.export_name) {
-                if let Some(v) = f.call(scope, exports.into(), &[h]) {
-                    let left = v.to_int32(scope).map(|i| i.value()).unwrap_or(0);
-                    if left > 0 {
-                        eprintln!(
-                            "wac: {} finished with {left} continuation(s) still waiting — \
-                             call `sys.drain()` to run them",
-                            m.entry
-                        );
-                        return 1;
-                    }
-                }
+    // `__wacOutstanding` is asked: the requests in flight and the continuations queued.
+    //
+    // **A module that took a host and cannot be asked is refused**, not let off: this called
+    // `__WacHost.outstanding` through a bindgen export until that value began crossing opaque
+    // (`issues/lang/0398a`), and when the export went the check was skipped without a word.
+    if let Some(h) = host_v {
+        let Some(f) = get_export(scope, exports, "__wacOutstanding") else {
+            eprintln!("wac: {} exports no `__wacOutstanding`, so its unfinished work cannot be asked about", m.entry);
+            return 1;
+        };
+        if let Some(v) = f.call(scope, exports.into(), &[h]) {
+            let left = v.to_int32(scope).map(|i| i.value()).unwrap_or(0);
+            if left > 0 {
+                eprintln!(
+                    "wac: {} finished with {left} continuation(s) still waiting — \
+                     call `sys.drain()` to run them",
+                    m.entry
+                );
+                return 1;
             }
         }
     }
