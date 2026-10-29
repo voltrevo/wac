@@ -54,7 +54,7 @@ export string test_the_tree_is_there_and_says_who_gets_what(Sys sys) {
   ];
   string[] holds = [
                             "export enum Read", "export symbol @\"markup.text\"", "| `hash.wac` |",
-                            "export struct Cli", "A capability, or the type of one"
+                            "export struct Sys", "A capability, or the type of one"
   ];
   for (i32 i = 0; i < files.len(); i++) {
     u8[]? f = flatten(fs.readFile(files[i]).wait()).ok();

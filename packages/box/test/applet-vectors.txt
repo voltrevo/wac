@@ -1,5 +1,5 @@
 wac-applet-vectors 1
-bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+bash: GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu)
 coreutils: cp (GNU coreutils) 9.4
 locale: LC_ALL=C
 count: 152
@@ -245,309 +245,27 @@ Mixed Case Words
 
 E 0
 
-S 20
-strings -4 /bin/true
+S 18
+strings -4 bin.dat
 X 0
-O 2782
-/lib/ld-linux-aarch64.so.1
-__libc_start_main
-__cxa_finalize
-abort
-__cxa_atexit
-nl_langinfo
-dcgettext
-error
-fileno
-__freading
-fflush
-__errno_location
-fclose
-lseek
-fseeko
-__fpending
-setlocale
-strlen
-memcpy
-strcmp
-__stack_chk_fail
-__ctype_get_mb_cur_max
-__ctype_b_loc
-memcmp
-mbrtoc32
-iswprint
-mbsinit
-stdout
-_exit
-stderr
-__fprintf_chk
-fputc_unlocked
-strrchr
-strncmp
-program_invocation_short_name
-__progname
-program_invocation_name
-__progname_full
-bindtextdomain
-fwrite
-__printf_chk
-fputs_unlocked
-__stack_chk_guard
-libc.so.6
-ld-linux-aarch64.so.1
-GLIBC_2.17
-GLIBC_2.34
-_ITM_deregisterTMCloneTable
-__gmon_start__
-_ITM_registerTMCloneTable
-T)!6
-hc8"ic8(
-`"B9@
-@9Bx
-@9!x
-@9!x
-T`&@
-Tahu8?
-Xaxb
-`hu8
-h38`
-h 8`
-h 8s
-h38s
-h38_
-h38`
-h 8s
-h38`
-h 8`
-h 8s
-h38`
-h 8`
-h 8!
-h38ahu8s
-h38s
-h38`
-h 8s
-h38`
-h 8`
-@z`A
-Xaxb
-Taha8!
-Xaxb
-h&8a
-h!8b
-@9!l
-'W)_
-T`hf8`
-k38s
-hs8a
-h&8a
-h!8f
-h38s
-ks8`
-fh`8
-h38a
-h!8a
-h!8a
-h!8s
-R! '
-memory exhausted
-POSIX
-write error
-GNU coreutils
-true
-%s (%s) %s
-License GPLv3+: GNU GPL version 3 or later <%s>.
-This is free software: you are free to change and redistribute it.
-There is NO WARRANTY, to the extent permitted by law.
-https://gnu.org/licenses/gpl.html
-Written by %s.
-Written by %s and %s.
-Written by %s, %s, and %s.
-Written by %s, %s, %s,
-and %s.
-Written by %s, %s, %s,
-%s, and %s.
-Written by %s, %s, %s,
-%s, %s, and %s.
-Written by %s, %s, %s,
-%s, %s, %s, and %s.
-Written by %s, %s, %s,
-%s, %s, %s, %s,
-and %s.
-Written by %s, %s, %s,
-%s, %s, %s, %s,
-%s, and %s.
-Written by %s, %s, %s,
-%s, %s, %s, %s,
-%s, %s, and others.
- invocation
-ASCII
-A NULL argv[0] was passed through an exec system call.
-/.libs/
-/usr/share/locale
-coreutils
---help
-Usage: %s [ignored command line arguments]
-  or:  %s OPTION
-Exit with a status code indicating success.
-      --help        display this help and exit
-      --version     output version information and exit
-NOTE: your shell may have its own version of %s, which usually supersedes
-the version described here.  Please refer to your shell's documentation
-for details about the options it supports.
-%s online help: <%s>
-https://www.gnu.org/software/coreutils/
-Report any translation bugs to <https://translationproject.org/team/>
-Full documentation <%s%s>
-or available locally via: info '(coreutils) %s%s'
---version
-Jim Meyering
-UTF-8
-test invocation
-Multi-call invocation
-sha224sum
-sha2 utilities
-sha256sum
-sha384sum
-sha512sum
-Copyright %s %d Free Software Foundation, Inc.
-/usr/lib/debug/.dwz/aarch64-linux-gnu/coreutils.debug
-9f5ce020c0174a6f48b9ef25a5e950caa5701e.debug
-.shstrtab
-.interp
-.note.gnu.build-id
-.note.ABI-tag
-.gnu.hash
-.dynsym
-.dynstr
-.gnu.version
-.gnu.version_r
-.rela.dyn
-.rela.plt
-.init
-.text
-.fini
-.rodata
-.eh_frame_hdr
-.eh_frame
-.init_array
-.fini_array
-.dynamic
-.got
-.data
-.bss
-.gnu_debugaltlink
-.gnu_debuglink
+O 67
+abcd
+seven77
+eightchr
+a longer run	with a tab
+-au-lait
+ends-at-eof
 
 E 0
 
-S 20
-strings -8 /bin/true
+S 18
+strings -8 bin.dat
 X 0
-O 2290
-/lib/ld-linux-aarch64.so.1
-__libc_start_main
-__cxa_finalize
-__cxa_atexit
-nl_langinfo
-dcgettext
-__freading
-__errno_location
-__fpending
-setlocale
-__stack_chk_fail
-__ctype_get_mb_cur_max
-__ctype_b_loc
-mbrtoc32
-iswprint
-__fprintf_chk
-fputc_unlocked
-program_invocation_short_name
-__progname
-program_invocation_name
-__progname_full
-bindtextdomain
-__printf_chk
-fputs_unlocked
-__stack_chk_guard
-libc.so.6
-ld-linux-aarch64.so.1
-GLIBC_2.17
-GLIBC_2.34
-_ITM_deregisterTMCloneTable
-__gmon_start__
-_ITM_registerTMCloneTable
-hc8"ic8(
-h38ahu8s
-memory exhausted
-write error
-GNU coreutils
-%s (%s) %s
-License GPLv3+: GNU GPL version 3 or later <%s>.
-This is free software: you are free to change and redistribute it.
-There is NO WARRANTY, to the extent permitted by law.
-https://gnu.org/licenses/gpl.html
-Written by %s.
-Written by %s and %s.
-Written by %s, %s, and %s.
-Written by %s, %s, %s,
-Written by %s, %s, %s,
-%s, and %s.
-Written by %s, %s, %s,
-%s, %s, and %s.
-Written by %s, %s, %s,
-%s, %s, %s, and %s.
-Written by %s, %s, %s,
-%s, %s, %s, %s,
-Written by %s, %s, %s,
-%s, %s, %s, %s,
-%s, and %s.
-Written by %s, %s, %s,
-%s, %s, %s, %s,
-%s, %s, and others.
- invocation
-A NULL argv[0] was passed through an exec system call.
-/usr/share/locale
-coreutils
-Usage: %s [ignored command line arguments]
-  or:  %s OPTION
-Exit with a status code indicating success.
-      --help        display this help and exit
-      --version     output version information and exit
-NOTE: your shell may have its own version of %s, which usually supersedes
-the version described here.  Please refer to your shell's documentation
-for details about the options it supports.
-%s online help: <%s>
-https://www.gnu.org/software/coreutils/
-Report any translation bugs to <https://translationproject.org/team/>
-Full documentation <%s%s>
-or available locally via: info '(coreutils) %s%s'
---version
-Jim Meyering
-test invocation
-Multi-call invocation
-sha224sum
-sha2 utilities
-sha256sum
-sha384sum
-sha512sum
-Copyright %s %d Free Software Foundation, Inc.
-/usr/lib/debug/.dwz/aarch64-linux-gnu/coreutils.debug
-9f5ce020c0174a6f48b9ef25a5e950caa5701e.debug
-.shstrtab
-.note.gnu.build-id
-.note.ABI-tag
-.gnu.hash
-.gnu.version
-.gnu.version_r
-.rela.dyn
-.rela.plt
-.eh_frame_hdr
-.eh_frame
-.init_array
-.fini_array
-.dynamic
-.gnu_debugaltlink
-.gnu_debuglink
+O 54
+eightchr
+a longer run	with a tab
+-au-lait
+ends-at-eof
 
 E 0
 
@@ -1614,8 +1332,9 @@ E 0
 S 2
 ls
 X 0
-O 69
+O 77
 adir
+bin.dat
 fields.txt
 m1.txt
 m2.txt
@@ -1666,8 +1385,9 @@ E 0
 S 11
 mkdir d; ls
 X 0
-O 71
+O 79
 adir
+bin.dat
 d
 fields.txt
 m1.txt
@@ -1692,8 +1412,9 @@ E 0
 S 13
 rm m1.txt; ls
 X 0
-O 62
+O 70
 adir
+bin.dat
 fields.txt
 m2.txt
 numeric.txt
@@ -1723,8 +1444,9 @@ E 0
 S 20
 mkdir d; rmdir d; ls
 X 0
-O 69
+O 77
 adir
+bin.dat
 fields.txt
 m1.txt
 m2.txt

@@ -108,3 +108,57 @@ export string test_a_program_reads_what_it_reaches_through_the_root_entry(Sys sy
   fs.remove(probe, false).wait();
   return t.report();
 }
+
+/**
+ * `bls` and `bignum` through the root entry, used the way the project that asked for them uses them:
+ * a pairing-product check (KZG's shape, `e(P, Q) · e(−P, Q) == 1`) and a negative beside it, a point
+ * encoding, and big-integer arithmetic. Each is checked against something outside the probe — the
+ * compressed G1 generator is the published one, in `packages/bls/test/g1.json` and Ethereum's
+ * fixtures, and `137 · 429` is `CONTRIBUTING.md`'s own example of a number hard to hit by accident.
+ * A distinct exit code per check, so a failure says which.
+ */
+static string BLS_PROBE =
+  "import { bls.Pair, bls.g1Generator, bls.g1Negate, bls.g1Compress, bls.g1AffineX, bls.g1AffineY,\n" +
+  "         bls.g2Generator, bls.g2AffineX, bls.g2AffineY, bls.millerLoopMulti, bls.finalExponentiate,\n" +
+  "         bls.fp12IsOne, bignum.parseDecimal, bignum.mul, bignum.formatDecimal } from \"../lib.wac\";\n" +
+  "export i32 main() {\n" +
+  "  u8[] c = g1Compress(g1Generator());\n" +
+  "  u8[] want = \"97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb\".toBytes();\n" +
+  "  u8[] digit = \"0123456789abcdef\".toBytes();\n" +
+  "  if (c.len() * 2 != want.len()) { return 1; }\n" +
+  "  for (i32 i = 0; i < c.len(); i++) {\n" +
+  "    if (digit[(c[i] as i32) >> 4] != want[2 * i] || digit[(c[i] as i32) & 15] != want[2 * i + 1]) { return 1; }\n" +
+  "  }\n" +
+  "  auto p = g1Generator();\n" +
+  "  auto n = g1Negate(p);\n" +
+  "  auto q = g2Generator();\n" +
+  "  Pair a = Pair(g1AffineX(p)!, g1AffineY(p)!, g2AffineX(q)!, g2AffineY(q)!);\n" +
+  "  Pair b = Pair(g1AffineX(n)!, g1AffineY(n)!, g2AffineX(q)!, g2AffineY(q)!);\n" +
+  "  auto both = finalExponentiate(millerLoopMulti([a, b] as Pair[]));\n" +
+  "  if (both is null || !fp12IsOne(both!)) { return 2; }\n" +
+  "  auto one = finalExponentiate(millerLoopMulti([a] as Pair[]));\n" +
+  "  if (one is null || fp12IsOne(one!)) { return 3; }\n" +
+  "  auto x = parseDecimal(\"137\".toBytes());\n" +
+  "  auto y = parseDecimal(\"429\".toBytes());\n" +
+  "  if (x is null || y is null) { return 4; }\n" +
+  "  return string.fromBytes(formatDecimal(mul(x!, y!))) == \"58773\" ? 0 : 5;\n" +
+  "}\n";
+
+export string test_bls_and_bignum_work_through_the_root_entry(Sys sys) {
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  Env env = sys.env();
+  T t = T.create();
+  i32 cwdLen = flatten(env.cwd().wait()).orElse("").len();
+  string probe = ".cache/libentry_bls_probe-\{cwdLen}.wac";
+  fs.mkdir(".cache", true).wait();
+  t.isTrue(flatten(fs.writeFile(probe, BLS_PROBE.toBytes()).wait()).isOk(), "wrote the probe at \{probe}");
+  string out = "/tmp/wac-libentry-bls-\{cwdLen}";
+  Exec built = run(procs, binaryPath(env), ["build", "--no-cache", probe, "-o", out]);
+  t.eqI32(built.status, 0, "the probe builds: \{string.fromBytes(built.stdout)}\{string.fromBytes(built.stderr)}");
+  Exec ran = run(procs, binaryPath(env), ["\{out}.wasm"]);
+  t.eqI32(ran.status, 0, "and it runs — 1 G1 encoding, 2 pairing product, 3 lone pairing, 4 bignum parse, 5 bignum product: \{string.fromBytes(ran.stderr)}");
+  fs.remove("\{out}.wasm", false).wait();
+  fs.remove(probe, false).wait();
+  return t.report();
+}

@@ -606,7 +606,10 @@ export string test_the_speed_table_lists_what_the_bench_measures(Sys sys) {
   string bench = read(err, fs, "packages/crypto/tools/bench.wac");
   string readme = read(err, fs, "packages/crypto/README.md");
 
-  string[] measured = identifiersMatching(bench, "row\\(core, \"([A-Za-z0-9]+)");
+  // **Any receiver, not the one it happens to be called.** This read `row(core, "…` until
+  // `design/system/0013` took `Core` away and the bench's rows became `row(out, "…`: the pattern
+  // matched nothing, and the floor below was the only thing that said so.
+  string[] measured = identifiersMatching(bench, "row\\([A-Za-z]+, \"([A-Za-z0-9]+)");
   // **Bounded to that one section**, because this README has other tables whose rows are also a
   // backticked name and a duration — the side-channel table and the two before-and-after cost
   // tables. A pattern loose enough to read the speed table reads those too, and then names an

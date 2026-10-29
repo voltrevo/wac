@@ -33,6 +33,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { copyPreserving, keygen, publicBlobText, restrict }
   from "../../../wactest/src/keys.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
+import { trimmed } from "../../../wactest/src/strings.wac";
 import { flatten } from "core";
 
 /** Everything a test needs from a running sshd, so the setup is written once. */
@@ -136,6 +137,20 @@ export bool wouldReap(Procs procs, string line) {
   auto rRan = flatten(procs.exec("/bin/sh", ["-c", "\{ARMS}ours \"$1\"", "sh", line], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
   Exec? r = rRan.ok();
   return (r is not null) && r!.status == 0;
+}
+
+/**
+ * The account to authenticate. sshd runs as this user, so it is the only one it can accept.
+ *
+ * Asked rather than assumed: `wacsshd.wac` once spelled it `"claude"`, which is the account on the
+ * machine the tests were written on, and on any other one sshd closed every connection from our
+ * client as an invalid user — read by the test as `Connection reset by peer`.
+ */
+export string whoami(Procs procs) {
+  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "id -un"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  string said = (r is null) ? "" : trimmed(string.fromBytes(r!.stdout));
+  return said == "" ? "claude" : said;
 }
 
 /**

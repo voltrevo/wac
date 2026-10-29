@@ -1,0 +1,19 @@
+// expect: combined() = -233
+// why: a prefix operator, a reverse operator from a numeric left and a compound assignment find the struct's methods from another file as a binary one does
+// ---- v.wac ----
+import { operators } from "core";
+export struct V {
+  i32 x;
+  V [operators.negate](const this) { return V(-this.x); }
+  V [operators.multiplyFromLeft](const this, const i32 lhs) { return V(lhs * this.x); }
+  void [operators.addAssign](this, const V rhs) { this.x += rhs.x; }
+}
+// ---- main.wac ----
+import { V } from "./v.wac";
+export i32 combined() {
+  V a = V(3);
+  V n = -a;
+  V m = 2 * a;
+  a += V(4);
+  return n.x * 100 + m.x * 10 + a.x;
+}

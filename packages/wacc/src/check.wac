@@ -551,15 +551,12 @@ i32[] operatorMethodOf(C c, i32 k, string lt, string rt) {
   string sym = operatorSymbolOf(k);
   if (sym == "") { return none; }
   if (lt != typeNone() && lt != "" && c.isStruct(templateOf(lt))) {
-    string key = c.coreMember("operators." + sym);
-    i32 mi = key == "" ? -1 : c.methodAt(templateOf(lt), key);
     i32[] got = i32[].filled(2, 0);
-    got[0] = mi;
+    got[0] = coreSymbolMethodAt(c, lt, "operators." + sym);
     return got;
   }
   if (rt != typeNone() && rt != "" && c.isStruct(templateOf(rt)) && (lt == typeNone() || !c.isStruct(templateOf(lt)))) {
-    string rkey = c.coreMember("operators." + sym + "FromLeft");
-    i32 rmi = rkey == "" ? -1 : c.methodAt(templateOf(rt), rkey);
+    i32 rmi = coreSymbolMethodAt(c, rt, "operators." + sym + "FromLeft");
     if (rmi >= 0) {
       i32[] got = i32[].filled(2, 0);
       got[0] = rmi;
@@ -796,8 +793,7 @@ bool isStructOperand(C c, string t) {
 /** A struct type's method named by core's `operators.<sym>`, or -1. */
 i32 structOperator(C c, string t, string sym) {
   if (sym == "" || !isStructOperand(c, t)) { return -1; }
-  string key = c.coreMember("operators." + sym);
-  return key == "" ? -1 : c.methodAt(templateOf(t), key);
+  return coreSymbolMethodAt(c, t, "operators." + sym);
 }
 
 /**
@@ -7373,19 +7369,32 @@ bool markupCan(C c, string k, string sym) {
   return mi >= 0 && c.methodStatics[mi];
 }
 
-/**
- * The method of `k` named by core's `markup.<sym>`, or -1 — under core's own spelling, which is how a
- * type declared in a file that imported `markup` plainly is keyed, or under this file's alias for it:
- * `import { markup as m }` keys a method written `[m.text]` by that spelling (spec ch23
- * `§wac-conversion-symbol-identity-4ga8txc` — a symbol keeps its identity under any alias).
- */
+/** The method of `k` named by core's `markup.<sym>`, or -1 — see `coreSymbolMethodAt`. */
 i32 markupMethodAt(C c, string k, string sym) {
+  return coreSymbolMethodAt(c, k, "markup." + sym);
+}
+
+/**
+ * The method of `k` named by core's symbol `name` — `operators.add`, `markup.text` — or -1: under
+ * core's own spelling, which is how a type declared in a file that imported the namespace plainly is
+ * keyed, or under this file's alias for it: `import { markup as m }` keys a method written `[m.text]`
+ * by that spelling (spec ch23 `§wac-conversion-symbol-identity-4ga8txc` — a symbol keeps its identity
+ * under any alias).
+ *
+ * **Core's spelling first, and always**, because this file's is only there when this file wrote the
+ * symbol. The namespace rewrite imports each member it *meets* — `@"operators.add" as
+ * @"operators.add"` — and `a + a` meets none, so the operators used to be found only in the file that
+ * declared them: `V [operators.add]` in `v.wac`, and `a + a` anywhere else was "V has no
+ * implementation of operators.add", importing `operators` or not. The emitter already looked under
+ * core's spelling alone. `spec/cases/0855`, `0856`.
+ */
+i32 coreSymbolMethodAt(C c, string k, string name) {
   string owner = templateOf(k);
-  i32 mi = c.methodAt(owner, "[markup." + sym + "]");
+  i32 mi = c.methodAt(owner, "[" + name + "]");
   if (mi >= 0) { return mi; }
   // The namespace rewrite imports each member it meets as `@"markup.text" as @"m.text"`, so the member
   // this file writes is core's `markup.text` under the name `coreMember` answers.
-  string local = c.coreMember("markup." + sym);
+  string local = c.coreMember(name);
   return local == "" ? 0 - 1 : c.methodAt(owner, local);
 }
 

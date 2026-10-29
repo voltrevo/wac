@@ -11,9 +11,15 @@
 # the mirror.
 #
 # What it gives you is `test-ntor-cl`, tor's own command-line ntor implementation, which is
-# the only independent check of the handshake available offline.
+# the only independent check of the handshake available offline — and `test-hs-ntor-cl`,
+# `src/app/tor` and `libtor.a`, which the hs vectors, the live tests and the capture probes need.
+#
+# **`$HOME/tor-build` by default, because that is where the tests look.** This defaulted to
+# `/tmp/tor-build` while every test read `$HOME/tor-build/torproject-tor-c8d2b17`, so the
+# script's own output was a tree nothing found unless `TOR_NTOR_CL` was set, and only
+# `ntor_test.wac` reads that.
 set -e
-DIR="${1:-/tmp/tor-build}"
+DIR="${1:-$HOME/tor-build}"
 TAG="${TOR_TAG:-tor-0.4.7.13}"
 
 command -v aclocal >/dev/null 2>&1 || sudo apt-get install -y -qq \
@@ -34,11 +40,17 @@ cd torproject-tor-*
 # I have now hit this twice: once building the oracle, and once rebuilding after the
 # container was recreated, because the first time I fixed the build by hand and not the
 # script. Check `relay: yes, dirauth: yes` in configure's summary.
+#
+# **lzma and zstd stay off whatever is installed.** The capture probes link `libtor.a` with
+# `-lssl -lcrypto -lz -lm -levent -lpthread` and nothing else, so a configure that found
+# `liblzma-dev` on the machine produced a library every probe failed to link, with forty lines
+# of `undefined reference to lzma_code` — a fact about the image, not about the probe.
 [ -f Makefile ] || ./configure --disable-asciidoc --disable-manpage \
-  --disable-html-manual
-make -j"$(nproc)" src/test/test-ntor-cl
+  --disable-html-manual --disable-lzma --disable-zstd
+make -j"$(nproc)"
+make -j"$(nproc)" src/test/test-ntor-cl src/test/test-hs-ntor-cl
 
 echo
-echo "built: $PWD/src/test/test-ntor-cl"
+echo "built: $PWD/src/test/test-ntor-cl, test-hs-ntor-cl, src/app/tor and libtor.a"
 echo "point the tests at it with:"
 echo "  export TOR_NTOR_CL=$PWD/src/test/test-ntor-cl"

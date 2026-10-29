@@ -30,7 +30,7 @@ import { Incoming, Window, channelClose, defaultMaxPacket, execRequest, extended
          msgChannelOpenFailure, msgChannelRequest, openSession, parse, windowAdjust }
   from "../../src/channel.wac";
 import { Session, handshake } from "./handshake.wac";
-import { Sshd, haveSshd, reapSelects, freshScratch, startSshd, stopSshd } from "./fixture.wac";
+import { Sshd, haveSshd, reapSelects, freshScratch, startSshd, stopSshd, whoami } from "./fixture.wac";
 import { keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 import { flipped, ramp, slice } from "./build.wac";
 
@@ -44,14 +44,6 @@ string verdictName(Verdict v) {
     Mismatch: { return "mismatch"; }
     default: { return "revoked"; }
   }
-}
-
-/** The account to authenticate. sshd runs as this user, so it is the only one it can accept. */
-string whoami(Procs procs) {
-  auto rRan = flatten(procs.exec("/bin/sh", ["-c", "id -un"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
-  Exec? r = rRan.ok();
-  string said = trimmed(string.fromBytes(r!.stdout));
-  return said == "" ? "claude" : said;
 }
 
 export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_public_key(Sys sys) {
