@@ -761,10 +761,10 @@ export struct Sys {
   }
 
   /** The clocks. Needs no grant. */
-  Clock clock(this) { return Clock(this.host); }
+  Clock clock(this) { return Clock.__wacOf(this.host); }
 
   /** Random bytes. Needs no grant. */
-  Random random(this) { return Random(this.host); }
+  Random random(this) { return Random.__wacOf(this.host); }
 
   /**
    * Whether the user has asked to interrupt (`^C`) since the last time this asked — answered by whoever owns the
@@ -774,7 +774,7 @@ export struct Sys {
   bool interrupted(const this) { return this.host.interrupted(); }
 
   /** The environment. Each operation answers `NotGranted` when the host withheld it. */
-  Env env(this) { return Env(this.host); }
+  Env env(this) { return Env.__wacOf(this.host); }
 
   /**
    * The files this program was given: what its parent serves when it was spawned with a composed `Files` (spec ch44
@@ -787,13 +787,13 @@ export struct Sys {
   }
 
   /** The network. Each operation answers `NotGranted` when the host withheld it. */
-  Net net(this) { return Net(this.host); }
+  Net net(this) { return Net.__wacOf(this.host); }
 
   /** Starting other programs, this one included. Each operation answers `NotGranted` when the host withheld it. */
-  Procs procs(this) { return Procs(this.host); }
+  Procs procs(this) { return Procs.__wacOf(this.host); }
 
   /** Loading wasm modules into this instance. */
-  Modules modules(this) { return Modules(this.host); }
+  Modules modules(this) { return Modules.__wacOf(this.host); }
 
   /** End the program now with status `code`, abandoning whatever is left. */
   never exit(const this, i32 code) {
@@ -1130,7 +1130,10 @@ Result<void, OutputFault> outputClosedOf(Answer a) {
 
 /** The clocks (spec ch44 `§wac-std-time-mzn6gvc`). Needs no grant. */
 export struct Clock {
-  __WacHost host;
+  private __WacHost host;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Clock __wacOf(__WacHost host) { return Clock(host); }
 
   /** Wall-clock time, in milliseconds since the epoch. */
   Ticket<Result<i64, union<Unsupported>>> nowMillis(const this) { return hostAsk(this.host, OP_NOW_MILLIS(), 0 as i64, 0 as i64, "", u8[](), timeOf); }
@@ -1198,7 +1201,10 @@ Result<void, union<Unsupported>> sleptOf(Answer a) {
 
 /** Random bytes. Needs no grant. */
 export struct Random {
-  __WacHost host;
+  private __WacHost host;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Random __wacOf(__WacHost host) { return Random(host); }
 
   Ticket<Result<u8[], union<Unsupported>>> bytes(const this, i32 n) { return hostAsk(this.host, OP_RANDOM_BYTES(), n as i64, 0 as i64, "", u8[](), bytesOk); }
 }
@@ -1210,7 +1216,10 @@ Result<u8[], union<Unsupported>> bytesOk(Answer a) {
 
 /** The environment's variables and the directory relative paths resolve from. */
 export struct Env {
-  __WacHost host;
+  private __WacHost host;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Env __wacOf(__WacHost host) { return Env(host); }
 
   /**
    * A variable's value, `Ok(null)` when it is not set (`§wac-std-env-unset-r4c8tqb`).
@@ -2769,7 +2778,10 @@ BindFault bindFault(i32 code, string m) {
 
 /** The network (spec ch44). Each operation answers `NotGranted` when the host withheld it. */
 export struct Net {
-  __WacHost host;
+  private __WacHost host;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Net __wacOf(__WacHost host) { return Net(host); }
 
   /** A connection to `host:port`. */
   Ticket<Result<Socket, ConnectFault>> connect(this, string to, i32 port) {
@@ -2795,23 +2807,23 @@ export struct Net {
 
 Result<Socket, ConnectFault> connectedOf(__WacHost h, Answer a) {
   if (a.fault != FAULT_NONE()) { return Result.Err(connectFault(a.fault, a.text)); }
-  return Result.Ok(Socket(h, a.n as~ i32, a.text, a.m as~ i32));
+  return Result.Ok(Socket.__wacOf(h, a.n as~ i32, a.text, a.m as~ i32));
 }
 
 Result<Listener, BindFault> listeningOf(__WacHost h, string addr, Answer a) {
   if (a.fault != FAULT_NONE()) { return Result.Err(bindFault(a.fault, a.text)); }
   i32 port = a.m as~ i32;
-  return Result.Ok(Listener(h, a.n as~ i32, addr + ":" + "\{port}", port));
+  return Result.Ok(Listener.__wacOf(h, a.n as~ i32, addr + ":" + "\{port}", port));
 }
 
 Result<Datagrams, BindFault> boundOf(__WacHost h, Answer a) {
   if (a.fault != FAULT_NONE()) { return Result.Err(bindFault(a.fault, a.text)); }
-  return Result.Ok(Datagrams(h, a.n as~ i32, a.m as~ i32));
+  return Result.Ok(Datagrams.__wacOf(h, a.n as~ i32, a.m as~ i32));
 }
 
 Result<Socket, HostFault> acceptedOf(__WacHost h, Answer a) {
   if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
-  return Result.Ok(Socket(h, a.n as~ i32, a.text, a.m as~ i32));
+  return Result.Ok(Socket.__wacOf(h, a.n as~ i32, a.text, a.m as~ i32));
 }
 
 Result<Read, SocketFault> recvOf(Answer a) {
@@ -2822,12 +2834,15 @@ Result<Read, SocketFault> recvOf(Answer a) {
 
 /** A listening socket. */
 export struct Listener {
-  __WacHost host;
+  private __WacHost host;
   i32 handle;
   /** `"0.0.0.0:8080"`. */
   string addr;
   /** The port bound — what the host chose when 0 was asked for. */
   i32 port;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Listener __wacOf(__WacHost host, i32 handle, string addr, i32 port) { return Listener(host, handle, addr, port); }
 
   /**
    * The next connection. `Err` only when the listener itself cannot go on (spec ch44 `§wac-std-accept-tkafecv`):
@@ -2843,11 +2858,14 @@ export struct Listener {
 
 /** One connection (spec ch44 `§wac-std-socket-gs9parx`). */
 export struct Socket {
-  __WacHost host;
+  private __WacHost host;
   i32 handle;
   /** The other end's address, and its port. */
   string peer;
   i32 port;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Socket __wacOf(__WacHost host, i32 handle, string peer, i32 port) { return Socket(host, handle, peer, port); }
 
   /** The next bytes, or the end. */
   Ticket<Result<Read, SocketFault>> recv(this) {
@@ -2876,9 +2894,12 @@ Result<void, SocketFault> sentOf(Answer a, string peer) {
 
 /** A datagram socket: no connection, the peer named on every send and arriving with every receive. */
 export struct Datagrams {
-  __WacHost host;
+  private __WacHost host;
   i32 handle;
   i32 port;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Datagrams __wacOf(__WacHost host, i32 handle, i32 port) { return Datagrams(host, handle, port); }
 
   Ticket<Result<Datagram, HostFault>> receive(this) {
     return hostAsk(this.host, OP_RECEIVE_FROM(), this.handle as i64, 0 as i64, "", u8[](), datagramOf);
@@ -2997,7 +3018,10 @@ bool namedBy(string pair, string prefix) {
 
 /** Starting other programs (spec ch44). */
 export struct Procs {
-  __WacHost host;
+  private __WacHost host;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Procs __wacOf(__WacHost host) { return Procs(host); }
 
   /** Start the compiled module `wasm` with `args`, holding `given`. */
   Ticket<Result<Child, SpawnFault>> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
@@ -3066,9 +3090,9 @@ Result<Child, SpawnFault> childOf(__WacHost h, Answer a, Files? served) {
   i32 handle = a.n as~ i32;
   i32 errHandle = (a.m & (4294967295 as i64)) as~ i32;
   i32 fsHandle = (a.m >> 32) as~ i32;
-  if (served is null) { return Result.Ok(Child(h, handle, errHandle, null, null)); }
+  if (served is null) { return Result.Ok(Child.__wacOf(h, handle, errHandle, null, null)); }
   Ticket<bool> stopping;
-  return Result.Ok(Child(h, handle, errHandle, serveFiles(h, fsHandle, served!, stopping), stopping));
+  return Result.Ok(Child.__wacOf(h, handle, errHandle, serveFiles(h, fsHandle, served!, stopping), stopping));
 }
 
 SpawnFault spawnFaultOf(i32 code, string m) {
@@ -3100,13 +3124,16 @@ Unsupported composedRefused() {
 
 /** A running child (spec ch44). */
 export struct Child {
-  __WacHost host;
+  private __WacHost host;
   i32 handle;
   i32 errHandle;
   /** This program answering the child's file questions, when it was handed a composed `Files`; done once the child is. */
   Ticket<void>? serving;
   /** Settled by `stop`, which ends the serving as well as the child. */
   Ticket<bool>? stopServing;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Child __wacOf(__WacHost host, i32 handle, i32 errHandle, Ticket<void>? serving, Ticket<bool>? stopServing) { return Child(host, handle, errHandle, serving, stopServing); }
 
   /** What it writes to its output, unless that was inherited. */
   Input output(this) { return handleInput(this.host, this.handle, nothingToClose); }
@@ -3180,7 +3207,10 @@ Result<void, OutputFault> fedOf(Answer a) {
 
 /** Loading wasm modules into this instance (spec ch44 `§wac-std-module-same-thread-q8d2kzm`). */
 export struct Modules {
-  __WacHost host;
+  private __WacHost host;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Modules __wacOf(__WacHost host) { return Modules(host); }
 
   /** Load `wasm`, holding `given`. It runs on this thread when called. */
   Result<Module, union<Unsupported, Other>> load(this, u8[] wasm, Authority given) {
@@ -3205,7 +3235,7 @@ export struct Modules {
 Result<Module, union<Unsupported, Other>> loadedOf(__WacHost h, Answer a) {
   if (a.fault == FAULT_UNSUPPORTED()) { return Result.Err(Unsupported(a.text)); }
   if (a.fault != FAULT_NONE()) { return Result.Err(Other(a.text)); }
-  return Result.Ok(Module(h, a.n as~ i32));
+  return Result.Ok(Module.__wacOf(h, a.n as~ i32));
 }
 
 Result<void, union<Unsupported, Other>> validatedOf(Answer a) {
@@ -3216,8 +3246,11 @@ Result<void, union<Unsupported, Other>> validatedOf(Answer a) {
 
 /** A loaded module. */
 export struct Module {
-  __WacHost host;
+  private __WacHost host;
   i32 handle;
+
+  /** Made by std alone: its host is private (`issues/system/0372c`), so nothing outside can build one around it. */
+  Module __wacOf(__WacHost host, i32 handle) { return Module(host, handle); }
 
   /**
    * Call the export `name` with `arg`. A trap is an answer (`CallResult.trapped`), not a fault: `flags` the status,
