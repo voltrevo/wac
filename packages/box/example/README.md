@@ -1,7 +1,7 @@
 # box examples — browser pages
 
 Whole applications, not snippets. Each is one `.wac` file with no TypeScript beside it: a
-[`packages/web`](../../web/README.md) page, which is a wac program in a worker of its own that awaits
+[`web`](https://git.voltrevo.com/web.git) page, which is a wac program in a worker of its own that awaits
 the browser rather than waiting for it. If you followed a link here from a page on the website, the
 file you can build below is byte for byte the file you were looking at.
 
@@ -16,8 +16,8 @@ You need this repository and its `wac` command (`./bootstrap.sh`). Nothing else 
 `npm install`.
 
 ```sh
-wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-    packages/box/example/hash.wac .cache/hash --page ./packages/web
+wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+    packages/box/example/hash.wac .cache/hash
 ```
 
 That writes `.cache/hash/index.html`, a single self-contained file: the wasm is embedded and it
@@ -31,8 +31,8 @@ page, and it reports the byte count, the code-point count when they differ, the 
 compressed size as a percentage, and how long both took.
 
 ```sh
-wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-    packages/box/example/hash.wac .cache/hash --page ./packages/web
+wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+    packages/box/example/hash.wac .cache/hash
 ```
 
 No grants: it reads no files and opens no sockets, so the built page has no capability to do
@@ -65,8 +65,8 @@ does not. The website prints the same three lines where the frame cannot load, a
 either of them claims.
 
 ```sh
-wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-    packages/box/example/term.wac .cache/term --page ./packages/web --grant read,write --spawn applet
+wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+    packages/box/example/term.wac .cache/term --grant read,write --spawn applet
 ```
 
 `--grant read,write` is why it has a filesystem at all: the page's `main` is handed a `Sys` whose files
@@ -98,8 +98,8 @@ close, all on one filesystem, so `cd` and a write in one terminal show in the fi
 terminal runs its commands at once and `^C` stops only its own. Built the same way as `term.wac`:
 
 ```sh
-wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-    packages/box/example/desk.wac .cache/desk --page ./packages/web --grant read,write --spawn applet
+wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+    packages/box/example/desk.wac .cache/desk --grant read,write --spawn applet
 ```
 
 ## The rest of `box`

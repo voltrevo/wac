@@ -1,14 +1,14 @@
 // A page with files: a note that is still there after a reload.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/platform/example/notes.wac .cache/notes --page ./packages/web --grant read,write
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/platform/example/notes.wac .cache/notes --grant read,write
 //
 // Built with `--grant read,write`, a page's `page.sys` reaches the browser's Origin Private File System —
 // storage that belongs to the page's origin and survives a reload. `readFile` and `writeFile` are the
 // two calls a program on a command line makes, awaited the same way; what answers them is the browser.
 // A handler cannot wait, so it starts an `async` function, and that sets state when its answer comes.
 
-import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.p, html.span, html.textarea } from "../../web";
+import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.p, html.span, html.textarea } from "web";
 import { Sys } from "std";
 
 static string FILE = "notes.txt";

@@ -7,7 +7,7 @@
 // names now, and that all of it works under a project's path rather than at the root of a domain,
 // which is where GitHub Pages serves it.
 //
-// **Skipped loudly** when there is no browser, in the words `packages/web/test/view_live.test.ts` uses.
+// **Skipped loudly** when there is no browser, in the words `test/view_live.test.ts` in `web` uses.
 import { ROOT } from "../harness/programs.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {

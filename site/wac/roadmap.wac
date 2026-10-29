@@ -6,7 +6,7 @@
 // without a status is a wish, and because "not started" appearing this often is the thing that
 // makes the rest of the page credible.
 
-import { Node, html.em, html.span } from "../../packages/web";
+import { Node, html.em, html.span } from "web";
 import { A, BLOB, Caveat, Code, Frame, Lead, P, Section, Table, m, t } from "./ui.wac";
 import { Figures, Totals } from "./figures.wac";
 

@@ -13,7 +13,7 @@
 // The curl line is first because that is the question. Everything else on this site answers "is this
 // real"; this page answers "what do I type".
 
-import { Node, html.b, html.i } from "../../packages/web";
+import { Node, html.b, html.i } from "web";
 import { A, BLOB, Caveat, Code, Frame, Lead, P, Section, Table, m, t } from "./ui.wac";
 import { Figures } from "./figures.wac";
 

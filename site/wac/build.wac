@@ -17,7 +17,7 @@
 
 import { Sys, Files, Output } from "std";
 import { Vec, flatten } from "core";
-import { Head, Node, documentOf } from "../../packages/web";
+import { Head, Node, documentOf } from "web";
 import { CSS, Doc, Link, fileOf, pages } from "./ui.wac";
 import { Figures, readFigures, readText } from "./figures.wac";
 import { Bootstrap } from "./bootstrap.wac";

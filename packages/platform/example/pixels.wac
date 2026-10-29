@@ -1,7 +1,7 @@
 // Pixels, a pointer, and a frame you can keep.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/platform/example/pixels.wac .cache/pixels --page ./packages/web
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/platform/example/pixels.wac .cache/pixels
 //
 // Everything a raster application needs, and it is three capabilities: a canvas's `pixels` blits a
 // buffer wac filled, an event's `x` and `y` say where in that buffer the pointer is, and
@@ -18,7 +18,7 @@
 // pixels, each an iteration loop, recomputed on every zoom, in compiled code fast enough that the
 // page never notices. A drawing API would have made this the slow way to do it.
 
-import { ElementEvent, Node, Page, Ref, Ui, html.b, html.button, html.canvas, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.a, html.p, html.style } from "../../web";
+import { ElementEvent, Node, Page, Ref, Ui, html.b, html.button, html.canvas, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.a, html.p, html.style } from "web";
 
 static string STYLE =
   ":root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +

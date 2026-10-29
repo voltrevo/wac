@@ -12,7 +12,7 @@
 import { Vec } from "core";
 import { Attr, Node, html.a, html.code, html.div, html.em, html.footer, html.h2, html.h3, html.li, html.main,
          html.p, html.section, html.span, html.strong, html.style, html.table, html.tbody, html.td, html.th,
-         html.thead, html.tr, html.ul } from "../../packages/web";
+         html.thead, html.tr, html.ul } from "web";
 import { highlighted } from "./highlight.wac";
 
 export static string GITHUB = "https://github.com/voltrevo/wac";

@@ -61,7 +61,7 @@ if (cannotBecause !== "") {
   );
 }
 
-/** Serve a directory. A page built by `packages/web` needs no special headers. */
+/** Serve a directory. A page built by `web` needs no special headers. */
 function serve(dir: string): { port: number; stop: () => Promise<void> } {
   const server = Deno.serve({ port: 0, onListen: () => {} }, async (req) => {
     const name = new URL(req.url).pathname.replace(/^\//, "") || "index.html";

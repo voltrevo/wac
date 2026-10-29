@@ -8,7 +8,7 @@
 // Prose carried over from the pages this replaces, which had been corrected against the sources
 // several times; the numbers come from `./built.wac`, generated from the repository's own generated map.
 
-import { Node, html.a, html.div, html.em, html.span } from "../../packages/web";
+import { Node, html.a, html.div, html.em, html.span } from "web";
 import { A, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Sub, TREE, Table, m, mono, t } from "./ui.wac";
 import { BuiltPackage, Figures, Totals, commas } from "./figures.wac";
 

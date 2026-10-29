@@ -1,14 +1,14 @@
 // A desktop, in a tab — design/0001 step 8.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/box/example/desk.wac .cache/desk --page ./packages/web --grant read,write --spawn applet
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/box/example/desk.wac .cache/desk --grant read,write --spawn applet
 //
 // The design's own sentence: "`Page` has render, events and pixels; a window manager in wac over the
 // same system, with the terminal as one window. Deliberately last: windows want something to show."
 //
 // A tab holds a real system — `/bin` with sixty-odd programs, `/proc` with the process table, `/dev`,
 // users, a shell that spawns its applets as processes of their own — so a window manager over it is
-// showing the machine rather than decorating an empty one. Like `term.wac` it is a `packages/web` page:
+// showing the machine rather than decorating an empty one. Like `term.wac` it is a `web` page:
 // a worker of its own, no shared memory, every applet a copy of this page started with `--spawn applet`.
 //
 // ## What a window is here
@@ -17,7 +17,7 @@
 // the caret and IME to get something worse than the browser already does. So a window is a `<div>` the
 // manager positions, and the terminal's body is a `<pre>` and an `<input>`, as in `term.wac`.
 //
-// ## Components (`packages/web`'s `view.wac`)
+// ## Components (`web`'s `view.wac`)
 //
 // The desktop renders its windows in stacking order, each keyed by its id, so the document order *is* the
 // z-order: raising is moving one to the end of the list, and the view moves that one element — a
@@ -38,7 +38,7 @@
 // **Resizing** and **minimise** — there is no taskbar to minimise *to* yet.
 
 import { Sys } from "std";
-import { ElementEvent, MOD_CTRL, Node, Page, State, Ui, html.button, html.div, html.input, html.pre, html.span, html.style } from "../../web";
+import { ElementEvent, MOD_CTRL, Node, Page, State, Ui, html.button, html.div, html.input, html.pre, html.span, html.style } from "web";
 import { Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";

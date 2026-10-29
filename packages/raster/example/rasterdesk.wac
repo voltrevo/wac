@@ -1,7 +1,7 @@
 // The raster desktop on a canvas, which is the first thing that puts every piece on a screen.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/raster/example/rasterdesk.wac .cache/rasterdesk --page ./packages/web
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/raster/example/rasterdesk.wac .cache/rasterdesk
 //
 // `design/system/0004` steps 1 to 4, wired: `Desk` holds the windows and their terminals, `Surface`
 // is the pixels, a canvas handle's `pixels` establishes the canvas and `pixelsIn` updates part of it.
@@ -13,7 +13,7 @@
 // model's idea of a rectangle and the page's shows up as a colour in the wrong place.
 //
 
-import { Element, ElementEvent, Listen, Node, Page, Ref, Ui, html.canvas, html.div, html.style } from "../../web";
+import { Element, ElementEvent, Listen, Node, Page, Ref, Ui, html.canvas, html.div, html.style } from "web";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Desk, barHeight } from "../src/desk.wac";
 import { Surface, cellHeight, cellWidth } from "../src/surface.wac";

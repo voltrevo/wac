@@ -7,7 +7,7 @@
 //
 // A program is a `.wac` file outside a `test/` directory exporting `main` or `page`. That is the
 // whole rule — `packages/platform`'s entry point dispatches on exactly those two names, so anything
-// else is a library however it is written. A `main` taking a `Page` is a page too: `packages/web`'s.
+// else is a library however it is written. A `main` taking a `Page` is a page too: `web`'s.
 //
 // This was `harness/programs.ts`, and it is the reason the map generator could not be ported on its
 // own: seven tools files read that one definition, and moving the map without moving this would have
@@ -78,7 +78,7 @@ string entryLine(string src, string name) {
   return "";
 }
 
-/** Whether `main` takes a `Page` — a `packages/web` page, which a browser opens. */
+/** Whether `main` takes a `Page` — a `web` page, which a browser opens. */
 bool isWebPage(string src) {
   string params = entryLine(src, "main");
   return params.len() >= 5 && params.slice(0, 5) == "Page ";

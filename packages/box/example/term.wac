@@ -1,7 +1,7 @@
 // A shell, in a browser tab.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/box/example/term.wac .cache/term --page ./packages/web --grant read,write --spawn applet
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/box/example/term.wac .cache/term --grant read,write --spawn applet
 //
 // `packages/sh` unchanged: quoting, parameter expansion, command substitution, arithmetic,
 // pipelines, redirection, `&&`/`||`, `if`/`while`/`for`/`case`, functions, subshells, globbing.
@@ -13,7 +13,7 @@
 // applet in `packages/box`, wired in with `sh.external = boxRun`: the same code the command-line
 // `box` runs, in the page.
 //
-// **A `packages/web` page** (design/system/0011): the program runs in a worker of its own, nothing in
+// **A `web` page** (design/system/0011): the program runs in a worker of its own, nothing in
 // it waits for the browser — every capability hands back a ticket and the program `await`s it — and
 // there is no `SharedArrayBuffer`, so no cross-origin-isolation headers and no service worker faking
 // them.
@@ -46,7 +46,7 @@
 // make those three our problem. A decision rather than an oversight, written down here.
 
 import { Sys, Unsupported } from "std";
-import { Element, ElementEvent, Listen, MOD_CTRL, Node, Page, Ref, Ui, html.a, html.div, html.input, html.label, html.pre, html.span, html.style } from "../../web";
+import { Element, ElementEvent, Listen, MOD_CTRL, Node, Page, Ref, Ui, html.a, html.div, html.input, html.label, html.pre, html.span, html.style } from "web";
 import { Result, Ticket, TicketBase, Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";

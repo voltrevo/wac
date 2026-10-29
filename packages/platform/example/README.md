@@ -3,7 +3,7 @@
 A wac program is a function that takes the world as parameters. There is no `extern`, no
 declaration form, no way to write the name of a function that lives outside the program — so the
 only host code a module can call is a value someone handed it, and a whole application is
-`main(Sys sys)`, or `main(Page page)` for a [`packages/web`](../../web/README.md) page.
+`main(Sys sys)`, or `main(Page page)` for a [`web`](https://git.voltrevo.com/web.git) page.
 
 Everything here is one `.wac` file with no TypeScript beside it. If you followed a link here from a
 page on the website, the file you can build below is byte for byte the file you were looking at.
@@ -34,11 +34,11 @@ parameter has no wasm imports at all — not "none that it uses", none in the bi
 ### The pages
 
 `counter.wac`, `pixels.wac`, `life.wac`, `ripple.wac`, `notes.wac` and `procs.wac` are
-[`packages/web`](../../web/README.md) pages — `main(Page page)` — built by its builder:
+[`web`](https://git.voltrevo.com/web.git) pages — `main(Page page)` — built by its builder:
 
 ```sh
-wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-    packages/platform/example/pixels.wac .cache/pixels --page ./packages/web
+wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+    packages/platform/example/pixels.wac .cache/pixels
 ```
 
 That writes one HTML file with the program inside it. Serve it from anywhere — it needs no

@@ -6,7 +6,7 @@
 // them; each keeps its own keyword list. `text` is program output and is not coloured at all.
 
 import { Vec } from "core";
-import { Node, html.code, html.pre, html.span } from "../../packages/web";
+import { Node, html.code, html.pre, html.span } from "web";
 
 /** `src` as a code frame, coloured as `lang` — `"wac"`, `"ts"` or `"text"`. */
 export Node highlighted(string src, string lang) {

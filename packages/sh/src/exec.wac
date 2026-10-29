@@ -3480,7 +3480,7 @@ async Ran trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   // file called `wc` hid the `wc` that works behind exit 126.
   //
   // **Except for a path.** A name found on `$WACPATH` may also be an applet, and falling through is
-  // what finds it; `./prog` names this file and nothing else. A `packages/web` page is such a world —
+  // what finds it; `./prog` names this file and nothing else. A `web` page is such a world —
   // it starts copies of itself and no program files — and falling through ran `./shared` as an applet
   // called `./shared` and answered "command not found" for a file the line before had read. It exists
   // and cannot be executed here: 126, in the world's own words.

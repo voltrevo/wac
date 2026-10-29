@@ -12,7 +12,7 @@
 // `file://` the entry API's `readEntries` fails, so there a folder can only be read through a handle, and
 // without one the program is told it was a folder that could not be listed.
 //
-// **Skipped loudly** when there is no browser, in the words `packages/web/test/view_live.test.ts` uses.
+// **Skipped loudly** when there is no browser, in the words `test/view_live.test.ts` in `web` uses.
 import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {

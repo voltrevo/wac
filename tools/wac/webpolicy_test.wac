@@ -1,4 +1,4 @@
-// `packages/web`'s policy, from outside: each way a page could write script into its document traps,
+// `web`'s policy, from outside: each way a page could write script into its document traps,
 // with a message saying which call refused what — through the handle layer and through `htmlOf`, which
 // writes a tree out as HTML (`design/system/0012`, "Policy is in wac").
 //

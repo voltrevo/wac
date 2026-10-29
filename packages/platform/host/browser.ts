@@ -187,7 +187,7 @@ export type BrowserWorldOptions = {
    * that has to stop learns that the user asked. Absent answers no.
    *
    * There was a `dom` beside it until design/system/0011 step 7: std's `Page`, served over this
-   * bridge. A page is `packages/web`'s now, and talks to its document by messages.
+   * bridge. A page is `web`'s now, and talks to its document by messages.
    */
   askInterrupt?: () => boolean;
 };

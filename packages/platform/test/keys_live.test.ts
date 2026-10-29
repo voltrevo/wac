@@ -6,7 +6,7 @@
 // matches only with exactly those held; a plain key matches whatever is held, as it did. The handler
 // tells the two apart by `ElementEvent.mods`, which this checks too.
 //
-// **Skipped loudly** when there is no browser, in the words `packages/web/test/view_live.test.ts` uses.
+// **Skipped loudly** when there is no browser, in the words `test/view_live.test.ts` in `web` uses.
 import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {

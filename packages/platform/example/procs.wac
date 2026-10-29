@@ -1,14 +1,14 @@
 // Programs in a page: a copy of this page, started as a process, streaming into the one that started it.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/platform/example/procs.wac .cache/procs --page ./packages/web --grant read,write \
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/platform/example/procs.wac .cache/procs --grant read,write \
 //       --spawn upper
 //
 // `--spawn upper` names what a started copy runs: `upper`, below, with a `Sys` holding the arguments,
 // input and directory its parent gave it. Each copy is a worker of its own — no shared memory, so
 // everything between the two crosses as a message, and a copy that never stops can be stopped.
 
-import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.input, html.p, html.span } from "../../web";
+import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.input, html.p, html.span } from "web";
 import { Authority, Child, Input, Launch, Output, Sys } from "std";
 import { Buf, Read } from "core";
 

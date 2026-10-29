@@ -8,7 +8,7 @@
 import { Exec, Stat, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { Vec, flatten } from "core";
 import { T } from "../../../packages/wactest/src/assert.wac";
-import { Attr, Node } from "../../../packages/web";
+import { Attr, Node } from "web";
 import { Doc } from "../ui.wac";
 import { Figures, readFigures } from "../figures.wac";
 import { readSpec } from "../spec.wac";

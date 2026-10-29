@@ -3,7 +3,7 @@
 //
 //   deno run -A site/tools/syncDemos.ts [repo-root]
 //
-// These are whole applications, not snippets: `packages/web` pages, each a wac program in a worker of its
+// These are whole applications, not snippets: `web` pages, each a wac program in a worker of its
 // own, waiting with `await`, with no `SharedArrayBuffer` and so no headers to ask a host for. Nothing
 // about them is specific to this site: each file is what its builder produces, which is the point.
 // What you can open on the website is the artifact you would build yourself.
@@ -107,7 +107,7 @@ const out = new URL("../dist/", import.meta.url).pathname;
 await Deno.mkdir(out, { recursive: true });
 
 /**
- * A `wac` command to run `packages/web`'s builder with: this checkout's native one when it has been
+ * A `wac` command to run `web`'s builder with: this checkout's native one when it has been
  * built, and otherwise the one `bootstrap.sh --host deno` writes — which needs nothing but Deno, so it
  * is what `pages.yml`, with no cargo and no binary, gets. Built once, into `.cache`, and reused.
  */
@@ -122,7 +122,7 @@ function wacCommand(): string {
     Deno.statSync(js);
     return js;
   } catch { /* not yet */ }
-  console.log("building a wac command with deno, for packages/web's builder");
+  console.log("building a wac command with deno, for web's builder");
   const r = new Deno.Command("sh", {
     args: ["./bootstrap.sh", "--host", "deno", "-o", js, "--no-profile"],
     cwd: mono,
@@ -137,8 +137,8 @@ function wacCommand(): string {
 }
 
 /**
- * A page built by `packages/web/tools/build.wac`, copied to `dest` as it came out: one `index.html`
- * with the module inside it. No isolation script — a `packages/web` page has no `SharedArrayBuffer`
+ * A page built by `tools/wac/buildpage.wac`, copied to `dest` as it came out: one `index.html`
+ * with the module inside it. No isolation script — a `web` page has no `SharedArrayBuffer`
  * to need one.
  */
 async function buildWebPage(demo: Demo, dest: string): Promise<void> {
@@ -148,8 +148,8 @@ async function buildWebPage(demo: Demo, dest: string): Promise<void> {
   const dir = `.cache/demos/${demo.file.replace(/\.html$/, "")}`;
   const r = new Deno.Command(wac, {
     args: [
-      "run", "--allow-read", "--allow-write", "--allow-run", "packages/web/tools/build.wac",
-      demo.entry, dir, "--page", "./packages/web", "--wac", wac, ...demo.extra,
+      "run", "--allow-read", "--allow-write", "--allow-run", "tools/wac/buildpage.wac",
+      demo.entry, dir, "--wac", wac, ...demo.extra,
     ],
     cwd: mono,
     stdout: "piped",
@@ -165,7 +165,7 @@ async function buildWebPage(demo: Demo, dest: string): Promise<void> {
 
 for (const demo of DEMOS) {
   const dest = `${out}${demo.file}`;
-  console.log(`building ${demo.file} from ${demo.entry}, with packages/web`);
+  console.log(`building ${demo.file} from ${demo.entry}, with web`);
   await buildWebPage(demo, dest);
   console.log(`  ${demo.file}: ${Math.round((await Deno.stat(dest)).size / 1024)}K`);
 }

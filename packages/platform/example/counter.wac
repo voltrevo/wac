@@ -1,13 +1,13 @@
 // A page: a component, its state, and handlers that change it.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/platform/example/counter.wac .cache/counter --page ./packages/web
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/platform/example/counter.wac .cache/counter
 //
-// `Counter` is a function of `Ui` (`packages/web`'s `view.wac`): `ui.state` keeps a value from one
+// `Counter` is a function of `Ui` (`web`'s `view.wac`): `ui.state` keeps a value from one
 // render to the next, and setting it renders the component again. A handler is a closure that sets
 // state; the page follows.
 
-import { ElementEvent, Node, Page, Ui, html.b, html.button, html.div, html.input, html.p } from "../../web";
+import { ElementEvent, Node, Page, Ui, html.b, html.button, html.div, html.input, html.p } from "web";
 
 Node Counter(Ui ui) {
   auto n = ui.state(0);

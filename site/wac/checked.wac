@@ -8,7 +8,7 @@
 // with you is worth more than any suite you wrote, and the further down this page you go the more
 // the evidence is internal.
 
-import { Node, html.em } from "../../packages/web";
+import { Node, html.em } from "web";
 import { A, BLOB, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Table, m, mono, t } from "./ui.wac";
 import { Figures, Totals, Tree, commas } from "./figures.wac";
 

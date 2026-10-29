@@ -180,8 +180,8 @@ export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Sys sys) 
     Named[] said = namesAfter(readAll(fs, files[i]), "wac");
     if (said.len() == 0) { continue; }
     // **Against the registry that would run it** — the nearest `tasks.json5` at or above the file,
-    // which is the one `wac task` reads there. `templates/webapp` is a project of its own with its
-    // own `build`, and its README naming it is right.
+    // which is the one `wac task` reads there. A project of its own inside this one has its own
+    // tasks, and its README naming them is right.
     string registry = registryFor(fs, files[i]);
     Task[] own = registry == tasksFile() ? tasks : tasksIn(readAll(fs, registry).toBytes());
     for (i32 k = 0; k < said.len(); k++) {

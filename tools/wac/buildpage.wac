@@ -1,0 +1,10 @@
+// `web`'s page builder, run from this repository so that `web` resolves through its `wac.json5`.
+//
+//     wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac <entry.wac> <out-dir> [...]
+//
+// The builder's options are its own (the `web` repository's README); `--page` defaults to `web`, which is
+// what this repository maps, so a caller here never names it.
+import { Sys } from "std";
+import { buildPage } from "webbuild";
+
+export i32 main(Sys sys) { return buildPage(sys.args(), sys.stderr(), sys.stdout(), sys.files(), sys.procs()); }

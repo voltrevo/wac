@@ -24,7 +24,7 @@ import { Files } from "std";
 import { Vec } from "core";
 import { Node, html.a, html.code, html.div, html.em, html.h1, html.h2, html.h3, html.li, html.ol, html.p,
          html.span, html.strong, html.table, html.tbody, html.td, html.th, html.thead, html.tr,
-         html.ul } from "../../packages/web";
+         html.ul } from "web";
 import { BLOB, Doc, Fact, Facts, Frame } from "./ui.wac";
 import { linesOf, readText, splitOn, trimmed } from "./figures.wac";
 import { highlighted } from "./highlight.wac";

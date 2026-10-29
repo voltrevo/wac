@@ -570,4 +570,4 @@ it did not run is still outstanding.
 
 - **The terminal's interrupt** (`^C` delivered to a program that owns the keyboard) has no handle while
   `issues/system/0363a` decides whether any host should offer it.
-- **The page**, for a program running in a browser, is `packages/web`'s and not a capability of `Sys`.
+- **The page**, for a program running in a browser, is `web`'s and not a capability of `Sys`.

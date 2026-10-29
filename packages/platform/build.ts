@@ -751,7 +751,7 @@ async function produceApp(
 
     if (target === "browser") {
       // A program with a `Sys`, run in a page that shows its output. An interactive page is
-      // `packages/web`'s `main(Page)`, built by `packages/web/tools/build.wac`.
+      // `web`'s `main(Page)`, built by `tools/wac/buildpage.wac`.
       const title = entry.split("/").pop() ?? "wac";
       return PAGE_CLI.replaceAll("%TITLE%", title).replace("%LAUNCHER%", launcher);
     }

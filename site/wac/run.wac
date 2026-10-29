@@ -12,7 +12,7 @@
 // **The maze and the bootstrap compile and run code in the page**, which this site cannot do yet: each
 // is a note saying what it is and a link to it on the React site.
 
-import { Node, html.a, html.div, html.em, html.span } from "../../packages/web";
+import { Node, html.a, html.div, html.em, html.span } from "web";
 import { A, BLOB, Caveat, Frame, Lead, P, PLAYGROUND, Runnable, Section, m } from "./ui.wac";
 import { Figures, Totals } from "./figures.wac";
 import { EX_ENUM } from "./snippets.wac";
@@ -138,7 +138,7 @@ export Node Run(Figures F) {
 
     <Section id="how" kicker="what makes it possible" title="An await, a page, and processes as workers">
       <P>
-        These are <m>packages/web</m> pages: <m>main(Page page)</m>, an{" "}
+        These are <m>web</m> pages: <m>main(Page page)</m>, an{" "}
         <m>async</m> function in a worker. It changes the document with plain calls
         and waits for the next click, frame or file with <m>await</m>, and each wait
         hands control back until something arrives. State is ordinary locals, the program reads

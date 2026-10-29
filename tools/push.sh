@@ -204,6 +204,14 @@ if ! git pull --no-rebase --no-edit --quiet origin master; then
   exit 1
 fi
 
+# **The git imports `wac.lock` pins, in the cache, before anything compiles a page.** `web` is a
+# repository of its own since 2026-10-29, and `wac update` cannot fetch it (git.voltrevo.com answers its
+# fetcher 401), so `git` does. After the pull, because the pull is what moves the lock.
+if ! sh tools/fill-cache.sh; then
+  echo "== the locked git imports could not be fetched: nothing ran ==" >&2
+  exit 1
+fi
+
 # **The seed is checked before the first attempt, not only after a merge.**
 #
 # The retry loop already rebuilds when a *merge* ages the seed, with the argument that a script which

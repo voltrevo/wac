@@ -10,13 +10,13 @@
 // a terminal is on the page — it is that the shell, the applets and the filesystem are all wac.
 //
 // **The shell opens on a page of its own here**, where the React site embedded it: a page in wac
-// cannot make an `<iframe>` (`packages/web` refuses it, and so does the policy), so the session is
+// cannot make an `<iframe>` (`web` refuses it, and so does the policy), so the session is
 // printed and the link opens the real one.
 //
 // Written for somebody who assumes there is nothing behind a language site: no superlatives, every
 // number checkable, and the unflattering parts kept.
 
-import { Node, html.a, html.div, html.em, html.h1, html.p, html.pre, html.span } from "../../packages/web";
+import { Node, html.a, html.div, html.em, html.h1, html.p, html.pre, html.span } from "web";
 import { A, Caveat, Code, Fact, Facts, Frame, Lead, P, Runnable, Section, TREE, Table, m, t } from "./ui.wac";
 import { BuiltPackage, Figures, SpecStatus, Totals, Tree, commas } from "./figures.wac";
 

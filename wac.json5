@@ -4,12 +4,20 @@
   // files a program reaches through it (spec ch05 `§wac-reach-namespace-lazy-pxz4t63`), so depending on
   // all of it costs what depending on one package would.
   exports: './lib.wac',
+  // **The page a program is handed, and its builder** — `import { Page } from "web"` in the site and the page
+  // examples under `packages/`. It was `packages/web` until 2026-10-29 and is its own repository now, so
+  // work on it does not wait on this repository's gate; moving this pin is how a change there reaches here.
+  // `wac.lock` holds the commit, and `tools/fill-cache.sh` puts it where a build looks (`CLAUDE.md`).
+  imports: {
+    web: { git: 'https://git.voltrevo.com/web.git', ref: '0e3ce99f75f6e163f76e392d125a44b684dbb9ca' },
+    webbuild: { git: 'https://git.voltrevo.com/web.git', ref: '0e3ce99f75f6e163f76e392d125a44b684dbb9ca', subdir: './tools' },
+  },
   // **What `wac check` with no files means here: the packages and tools.** The rest is not a library a
   // project checks — `spec/` and `bootstrap/` hold examples that are invalid on purpose and drivers that
   // need generated files, and the other trees are prose and sites. A directory is still checked when
   // named (`wac check spec`), and anything an included file imports is checked whatever this says.
   check: {
-    exclude: ['./bootstrap/**', './spec/**', './issues/**', './vision/**', './site/**', './templates/**',
+    exclude: ['./bootstrap/**', './spec/**', './issues/**', './vision/**', './site/**',
               './design/**', './docs/**', './native/**'],
   },
 }

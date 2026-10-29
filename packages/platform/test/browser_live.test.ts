@@ -228,7 +228,7 @@ Deno.test({
       assertEquals(ent.includes("1048576 bytes vary: yes"), true, ent);
       assertEquals(ent.includes("[exit 0]"), true, ent);
 
-      // An interactive page, driven by real clicks. Built by `packages/web`, as every page is: the
+      // An interactive page, driven by real clicks. Built by `web`, as every page is: the
       // program waits with `await`, so delegated listeners surviving a `render` and state kept in a
       // local across events are both its claims to check — once in a worker, which is the default,
       // and once on the page's own thread, which `--in-page` asks for. The same program, and the
@@ -475,7 +475,7 @@ Deno.test({
       );
 
       // And the shell, which is `packages/sh` unchanged with a keyboard in front of it — a
-      // `packages/web` page handed a `Sys`, its applets copies of itself started as processes.
+      // `web` page handed a `Sys`, its applets copies of itself started as processes.
       await buildPage("packages/box/example/term.wac", `${dir}/term`, ["--grant", "read,write", "--spawn", "applet"]);
       await page.goto(`http://127.0.0.1:${port}/term/index.html`, { waitUntil: "load" });
       await page.waitForSelector("#cmd", { timeout: 30_000 });

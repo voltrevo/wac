@@ -67,7 +67,7 @@ export async function findPrograms(): Promise<Program[]> {
       if (rel.includes("/size/")) continue;
       const src = await Deno.readTextFile(path);
       const blurb = blurbOf(src);
-      // Any return type and `async` too, and a `main` taking a `Page` is a page — `packages/web`'s. `tools/wac/programs.wac`.
+      // Any return type and `async` too, and a `main` taking a `Page` is a page — `web`'s. `tools/wac/programs.wac`.
       const main = src.match(/^export [^(=\n]* main\(([^\n]*)/m);
       if (main) out.push({ path: rel, kind: main[1].startsWith("Page ") ? "page" : "cli", pkg: entry.name, blurb });
       if (/^export [^(=\n]* page\(/m.test(src)) out.push({ path: rel, kind: "page", pkg: entry.name, blurb });

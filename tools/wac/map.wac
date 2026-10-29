@@ -423,11 +423,11 @@ string render(Package[] pkgs, Program[] programs) {
     "\n" +
     "## Pages\n" +
     "\n" +
-    "Every `main(Page page, …)`: a `packages/web` page — the program in a worker of its own, built by\n" +
-    "`packages/web/tools/build.wac` into one HTML file that needs no particular headers.\n" +
+    "Every `main(Page page, …)`: a `web` page — the program in a worker of its own, built by\n" +
+    "`tools/wac/buildpage.wac` into one HTML file that needs no particular headers.\n" +
     "\n" +
     "```sh\n" +
-    "wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac <path> <dir> --page ./packages/web\n" +
+    "wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac <path> <dir>\n" +
     "```\n" +
     "\n" +
     "| page | what it does |\n" +

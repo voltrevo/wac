@@ -7,7 +7,7 @@
 // A type with angle brackets is written as a string child — `<m>{"Vec<T>"}</m>` — because markup reads
 // `<T>` between tags as a tag.
 
-import { Node, html.em } from "../../packages/web";
+import { Node, html.em } from "web";
 import { A, BLOB, Code, Frame, Lead, P, PLAYGROUND, Pair, Runnable, Section, Sub, TREE, m } from "./ui.wac";
 import { Figures, Totals } from "./figures.wac";
 import { EX_ARRAYS, EX_BEWORD, EX_BINDGEN, EX_CONST, EX_CORE_LIB, EX_CORE_MAIN, EX_ENUM, EX_ERROR, EX_GENERIC, EX_HELLO,

@@ -1,7 +1,7 @@
-// Build a wac page — `export async i32 main(Page page)` — as one `index.html`, with `packages/web`.
+// Build a wac page — `export async i32 main(Page page)` — as one `index.html`, with the `web` package.
 //
-// The browser tests' way to the artefact a reader would build: `packages/web/tools/build.wac`, run by
-// this checkout's `wac`, which is what `templates/webapp` runs and what the site's demos are. A test
+// The browser tests' way to the artefact a reader would build: `web`'s builder (`tools/wac/buildpage.wac`), run
+// by this checkout's `wac`, which is what `web`'s template runs and what the site's demos are. A test
 // that built its page some other way would be testing a page nobody ships.
 
 import { ROOT } from "./programs.ts";
@@ -25,8 +25,8 @@ export async function buildPage(entry: string, outDir: string, extra: string[] =
   const built = `.cache/pages/${name}`;
   const out = await new Deno.Command(WAC, {
     args: [
-      "run", "--allow-read", "--allow-write", "--allow-run", "packages/web/tools/build.wac",
-      entry, built, "--page", "./packages/web", "--wac", WAC, ...extra,
+      "run", "--allow-read", "--allow-write", "--allow-run", "tools/wac/buildpage.wac",
+      entry, built, "--wac", WAC, ...extra,
     ],
     cwd: ROOT,
     stdout: "piped",
@@ -46,7 +46,7 @@ export async function buildPage(entry: string, outDir: string, extra: string[] =
  *
  * **Playwright evaluates a string predicate with `eval` inside the page**, and the page's Content
  * Security Policy refuses that — it allows its own loader and nothing else (`policy` in
- * `packages/web/tools/build.wac`). `page.evaluate` goes through DevTools rather than the page's own
+ * `tools/build.wac` in `web`). `page.evaluate` goes through DevTools rather than the page's own
  * script, so this asks with that until `expr` is truthy. The signature is Playwright's, `arg` unused, so
  * a call converts by its name alone — including the calls that passed their options second.
  */

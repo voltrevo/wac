@@ -14,7 +14,7 @@
 // The numbers are typed here from `bootstrap/README.md` and are a snapshot; `site/tools/site.test.ts`
 // holds the rung sizes, the excerpts and the trusted-line count to the tree.
 
-import { Node, html.b, html.em } from "../../packages/web";
+import { Node, html.b, html.em } from "web";
 import { A, BLOB, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Sub, Table, m, mono, n, t } from "./ui.wac";
 import { Figures, commas } from "./figures.wac";
 

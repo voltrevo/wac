@@ -47,8 +47,8 @@ string specifierOf(string line) {
  *
  * A mapping name cannot be recognised from the specifier alone — that is the whole of 0234a — so
  * this asks the narrower question every file in *this* repository can answer: it is relative, it is
- * the project root, or it is a built-in. This repository declares no mappings, which is why the
- * narrower question is the right one here and would not be in a project that did.
+ * the project root, or it is a built-in. The mappings this repository does declare are few and named in
+ * its manifests, so `mapped` below answers for them by reading those rather than widening this.
  */
 bool defined(string spec) {
   return startsWith(spec, "./") || startsWith(spec, "../") || startsWith(spec, "@/")
@@ -56,9 +56,9 @@ bool defined(string spec) {
 }
 
 /**
- * Whether the nearest `wac.json5` above `file` maps `spec` to a package (spec ch04). Most of this
- * repository declares no mappings, but `templates/webapp` is a project of its own that does — its
- * `"web"` is defined, by its manifest.
+ * Whether the nearest `wac.json5` above `file` maps `spec` to a package (spec ch04). The root's maps
+ * `web` and `webbuild` — the site and the page examples import the page by name — and a project of its
+ * own inside this one may map more.
  */
 bool mapped(Files fs, string file, string spec) {
   string dir = file;

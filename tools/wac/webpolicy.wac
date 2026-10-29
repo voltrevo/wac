@@ -2,7 +2,7 @@
 // argument, done — each should trap with a message naming the call and what it refused.
 
 import { Sys } from "std";
-import { Attr, Node, On, Page, TestDoc, htmlOf } from "../../packages/web";
+import { Attr, Node, On, Page, TestDoc, htmlOf } from "web";
 
 Node el(string tag, string name, string value) {
   return Node.Element(tag, [Attr(name, value)], On[](), Node[](), null);

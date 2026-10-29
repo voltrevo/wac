@@ -5,8 +5,10 @@
 //
 // **A build reads only what a program reaches through this** — spec ch05
 // `§wac-reach-namespace-lazy-pxz4t63`, ch04 `§wac-package-selective-un8citz` — so a namespace nobody
-// uses costs nothing. Each package's names are its `src/lib.wac`, one per statement; a package with its
-// own manifest, like `web`, is entered through that.
+// uses costs nothing. Each package's names are its `src/lib.wac`, one per statement.
+//
+// **`web` is not here: it is a repository of its own**, `https://git.voltrevo.com/web.git`, which a project
+// maps as `web` beside this one.
 //
 // **Not every package is here yet.** These are the libraries with an entry, and the rest are added as
 // each gets a `src/lib.wac`. A command is here only through its library half — `box` is `Session` and
@@ -26,5 +28,4 @@ export * as regex from "./packages/regex/src/regex.wac";
 export * as rlp from "./packages/rlp/src/rlp.wac";
 export * as ssh from "./packages/ssh/src/ssh.wac";
 export * as url from "./packages/url/src/url.wac";
-export * as web from "./packages/web";
 export * as zstd from "./packages/zstd/src/lib.wac";

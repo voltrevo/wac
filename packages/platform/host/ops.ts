@@ -37,7 +37,7 @@ export const OP = {
   CLOSE_FEED: 29,
   SLEEP_MILLIS: 30,
   // 31–40 were std's `Page` — render, text, values, events, title, pixels, files, downloads — and
-  // 51 and 56 its style and partial blit. Retired rather than reused: a page is `packages/web`'s
+  // 51 and 56 its style and partial blit. Retired rather than reused: a page is `web`'s
   // `main(Page)` now, which talks to the document by messages and needs no bridge
   // (design/system/0011 step 7).
   CWD: 41,

@@ -36,7 +36,7 @@ export i32 main(Sys sys) {
 `Result` whose error is a union of fault types — `NotFound`, `Denied`, `NotGranted` and the rest — so a
 caller matches on what happened rather than on a host's English (design/system/0013, spec ch44).
 
-A browser page is built with `packages/web`: it exports `main(Page page)`, and what it was granted —
+A browser page is built with `web`: it exports `main(Page page)`, and what it was granted —
 files, with `--grant read,write` — is `page.sys`.
 
 **Under the handles is one host call** (design/system/0013 step 6). A host serves numbered requests
@@ -488,7 +488,7 @@ it can report instead of one protocol that works by accident. `box get`, `box ge
 
 ### Interactive pages
 
-**A page is built with [`packages/web`](../web/README.md)**: `export async i32 main(Page page)`, run in a
+**A page is built with [`web`](https://git.voltrevo.com/web.git)**: `export async i32 main(Page page)`, run in a
 worker (or with `--in-page` on the page's own thread) and waiting with `await`, with no
 `SharedArrayBuffer` and no headers to serve — with `page.sys` holding what `--grant read,write` grants,
 whose files are the browser's own storage. `example/{life,pixels,ripple,notes,procs}.wac` are those, and
@@ -553,7 +553,7 @@ are bound once per module**, because bindgen registers one wasm function per hos
 sixteen per signature can be live](../../spec/8-tooling/48-bindgen.md) — registration is by identity, so
 binding new closures per run burns slots until it fails.
 
-Testing needs no host: `packages/web`'s `system_test.wac` builds a `System` from wac closures that record
+Testing needs no host: `web`'s `system_test.wac` builds a `System` from wac closures that record
 each request, answers them by hand with `answered`, and asserts on what the program did.
 
 ## Rules that are not style

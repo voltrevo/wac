@@ -1,7 +1,7 @@
 // A page that opens a real packfile — the object database, with no network anywhere near it.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/git/example/gitpage.wac .cache/gitpage --page ./packages/web
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/git/example/gitpage.wac .cache/gitpage
 //
 // Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. Nothing is fetched and
 // nothing is uploaded: the bytes go from the file input into wasm and the answers come back out.
@@ -23,7 +23,7 @@
 // we shipped. `git verify-pack -v` on the same file, on your machine, prints the same object count
 // and the same names — which is a check anyone can run and nobody has to trust us for.
 
-import { ElementEvent, Node, Page, Picked, State, Ui, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "../../web";
+import { ElementEvent, Node, Page, Picked, State, Ui, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "web";
 import { Vec } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { PackIndex } from "../src/idx.wac";
@@ -80,7 +80,7 @@ static i32 SHOWN = 200;
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 
 // **Nothing here escapes anything, because nothing has to.** Every string reaches the page as a text
-// node (`packages/web`), so a commit message containing `<script>` lands as those characters.
+// node (`web`), so a commit message containing `<script>` lands as those characters.
 
 /** A pack read and indexed: what the page shows about it, and the commits it offers. */
 struct Opened {

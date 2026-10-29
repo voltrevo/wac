@@ -22,7 +22,7 @@
 // `core/read.wac` does not appear. It declares a type and nothing else — `Read` is an enum of three
 // variants — so it holds no branch points at all, and a file with no executable code contributes nothing
 // to cover. (Core's markup tree was the other such file, until `design/lang/0017` moved it to
-// `packages/web`.)
+// `web`.)
 //
 // Worth writing down because it looks exactly like the failure this issue has now found twice:
 // `packages/http`'s `proxy.wac` was absent from its report with eighty-six branch points in it, and

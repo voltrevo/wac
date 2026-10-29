@@ -1,7 +1,7 @@
 // Life, seeded from a file you drop — so the pattern is yours rather than one we chose.
 //
-//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-//       packages/platform/example/life.wac .cache/life --page ./packages/web
+//   wac run --allow-read --allow-write --allow-run tools/wac/buildpage.wac \
+//       packages/platform/example/life.wac .cache/life
 //
 // Conway's rule is four lines. What makes this worth a page is the seed: drop any file and its bytes
 // become the starting grid, one bit per cell. A photograph, a wasm module, this page's own source —
@@ -20,11 +20,11 @@
 // The one real claim it makes is incidental: the timer below runs a cellular automaton over 128×96
 // cells every 60 ms, in WebAssembly compiled from wac, and the millisecond counter is not decoration.
 //
-// It is a component (`packages/web`'s `view.wac`): the grid is kept across renders, a timer and a file
+// It is a component (`web`'s `view.wac`): the grid is kept across renders, a timer and a file
 // watcher start once from an effect, and another effect paints the canvas, named by a `ref`, after each
 // render that changed it.
 
-import { ElementEvent, Node, Page, Picked, Ref, State, Ui, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1, html.input, html.p, html.span, html.style } from "../../web";
+import { ElementEvent, Node, Page, Picked, Ref, State, Ui, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1, html.input, html.p, html.span, html.style } from "web";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";
