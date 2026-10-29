@@ -314,7 +314,9 @@ export string test_wc_reads_standard_input_when_given_no_file(Sys sys) {
   if ((r is null)) { fs.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r!.status, 0, string.fromBytes(r!.stderr));
 
-  auto oracleRan = flatten(procs.exec("/bin/sh", ["-c", "wc < '\{WC}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  // `LC_ALL=C.UTF-8` for the same reason as the file argument's test above: inherited, this was
+  // only right on an image that sets a UTF-8 locale, and failed 395 against 393 on one that sets none.
+  auto oracleRan = flatten(procs.exec("/bin/sh", ["-c", "LC_ALL=C.UTF-8 wc < '\{WC}'"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
   Exec? oracle = oracleRan.ok();
   string[] got = fields(trimmed(string.fromBytes(r!.stdout)));
   string[] want = fields(trimmed(string.fromBytes(oracle!.stdout)));
