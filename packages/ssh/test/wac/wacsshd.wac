@@ -38,7 +38,7 @@ import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wa
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
-import { freshScratch } from "./fixture.wac";
+import { freshScratch, whoami } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
@@ -294,14 +294,14 @@ export string buildClient(T t, Env env, Files fs, Procs procs, bool writable) {
 export Said ourSshEnv(Env env, Procs procs, string client, string home, string[] args, string[] names, string[] values) {
   string[] argv = withTail([client], args);
   string[] allNames = withTail(["HOME", "USER", "PATH"], names);
-  string[] allValues = withTail([home, "claude", "/usr/bin:/bin:/usr/local/bin"], values);
+  string[] allValues = withTail([home, whoami(procs), "/usr/bin:/bin:/usr/local/bin"], values);
   return said(onlyEnv(procs, allNames, allValues, wacBinary(env), argv));
 }
 
 /** Our own client, with `home` as its `HOME`. */
 export Said ourSsh(Env env, Procs procs, string client, string home, string[] args) {
   string[] argv = withTail([client], args);
-  return said(onlyEnv(procs, ["HOME", "USER", "PATH"], [home, "claude", "/usr/bin:/bin:/usr/local/bin"], wacBinaryPath(env), argv));
+  return said(onlyEnv(procs, ["HOME", "USER", "PATH"], [home, whoami(procs), "/usr/bin:/bin:/usr/local/bin"], wacBinaryPath(env), argv));
 }
 
 string wacBinaryPath(Env env) { return wacBinary(env); }
