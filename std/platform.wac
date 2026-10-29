@@ -1247,14 +1247,151 @@ Result<string, HostFault> cwdOf(Answer a) {
 // ── Files ────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * A filesystem, as a value built from functions (spec ch44 `§wac-std-files-compose-h6vq3ne`).
+ * A filesystem a program holds: the operations of design/system/0013's request table, asked of whatever answers this
+ * `Files` — the host, a parent serving it files, a store in memory, a mount table — through one private host.
  *
- * A backing is a constructor: the host's own, `readOnly` over any `Files`, `mounted` routing each path to the
- * mount that owns it — and, outside std, `packages/fs`'s trees held in memory, generated `/proc` and `/dev`,
- * and images. Each operation is a field, so a backing supplies exactly the functions and nothing branches on
- * which backing it is.
+ * **A method per operation, and one host underneath.** Until 2026-10-29 a `Files` was fourteen closures, so holding
+ * one held every operation's request and decoder, and a program that read one file kept all of them (the layers too:
+ * `readOnly` was fourteen more). Now each operation is a method that asks `host` and decodes the answer, so a program
+ * keeps the operations it calls. What answers is the host: the program's own, `servedHost`'s route to a parent, or
+ * one std makes over another — `readOnly` refusing, `relativeTo` rewriting paths, `mounted` routing by them, `of`
+ * answering out of a `FileOps`. The host is private (`issues/system/0372c`): a `Files` asks for files and nothing else.
  */
 export struct Files {
+  /** What answers these files: the host, a parent, or a layer std made over other files. */
+  private Host via;
+  /**
+   * The `GRANT_*` bits a spawned child can be handed instead of these files: `GRANT_READ | GRANT_WRITE` for the
+   * host's own, `GRANT_READ` read-only, and 0 for anything composed, which the parent has to serve.
+   */
+  i32 hostGrants;
+  /**
+   * Who these files act as: the owner of what they create and the name each permission check is against. `""` for
+   * the host's, whose owners are not names; the name for `store.asUser(name)`; and the parent's for files a parent
+   * serves, which is how a spawned `whoami` knows the session it runs in.
+   */
+  string user;
+
+  /** The host's filesystem, under whatever grants the host gave this program. */
+  Files host(Host host) { return Files(host, GRANT_READ | GRANT_WRITE, ""); }
+
+  /**
+   * The files a parent serves, over `route` — `servedHost`, which sends each request to the parent. A child holding
+   * these is handed on no host grants, so a grandchild is served them in turn.
+   */
+  Files served(Host route, string user) { return Files(route, 0, user); }
+
+  /** Files answered out of `ops`, a backing written as one function per operation — a store, a tree. */
+  Files of(FileOps ops, string user) { return Files(opsHost(ops), 0, user); }
+
+  /** The same files, every change answering `NotGranted`. */
+  Files readOnly(this) { return Files(refusingHost(this, true), this.hostGrants & GRANT_READ, this.user); }
+
+  /**
+   * The same files, every read answering `NotGranted` — what `--allow-write` without `--allow-read` holds. A
+   * change still lands; what is there cannot be looked at, its existence included.
+   */
+  Files writeOnly(this) { return Files(refusingHost(this, false), this.hostGrants & GRANT_WRITE, this.user); }
+
+  /**
+   * The same files, a relative path starting at `dir` — a shell's current directory. `.` and `..` are taken out
+   * before the path goes on, and an absolute path goes on as it is. A child handed this is told `dir` when it is
+   * spawned, so the host's grants carry over.
+   */
+  Files relativeTo(this, string dir) { return Files(relativeHost(this, dir), this.hostGrants, this.user); }
+
+  /**
+   * One `Files` of several, each answering the paths under where it is mounted — the longest mount wins, and `/`
+   * answers the rest. A directory lists the mounts directly under it beside what is there.
+   */
+  Files mounted(Mount[] mounts) { return Files(mountHost(mounts), 0, rootUser(mounts)); }
+
+  Ticket<Result<u8[], ReadFault>> readFile(this, string p) {
+    return hostAsk(this.via, OP_READ_FILE(), 0 as i64, 0 as i64, p, u8[](), readOfFile);
+  }
+
+  Ticket<Result<void, WriteFault>> writeFile(this, string p, u8[] b) {
+    return hostAsk(this.via, OP_WRITE_FILE(), 0 as i64, 0 as i64, p, b, writtenOf);
+  }
+
+  /** The file to read a piece at a time; `close` it when done. */
+  Ticket<Result<Input, ReadFault>> openRead(this, string p) {
+    Host h = this.via;
+    return hostAsk(h, OP_OPEN_FILE(), OPEN_READ as i64, 0 as i64, p, u8[](), (Answer o) => openedToRead(h, p, o));
+  }
+
+  /** The file, created or emptied, to write a piece at a time; what was written is there once `close` answers. */
+  Ticket<Result<Output, WriteFault>> openWrite(this, string p) {
+    Host h = this.via;
+    return hostAsk(h, OP_OPEN_FILE(), OPEN_WRITE as i64, 0 as i64, p, u8[](), (Answer o) => openedToWrite(h, p, o));
+  }
+
+  /** The same, writing after what is there — created if it is not. */
+  Ticket<Result<Output, WriteFault>> openAppend(this, string p) {
+    Host h = this.via;
+    return hostAsk(h, OP_OPEN_FILE(), OPEN_APPEND as i64, 0 as i64, p, u8[](), (Answer o) => openedToWrite(h, p, o));
+  }
+
+  Ticket<Result<Stat, LookFault>> stat(this, string p) {
+    return hostAsk(this.via, OP_STAT(), 0 as i64, 0 as i64, p, u8[](), (Answer o) => statOf(o, p));
+  }
+
+  /** `stat` of a symbolic link itself rather than what it names. */
+  Ticket<Result<Stat, LookFault>> linkStat(this, string p) {
+    return hostAsk(this.via, OP_LINK_STAT(), 0 as i64, 0 as i64, p, u8[](), (Answer o) => statOf(o, p));
+  }
+
+  Ticket<Result<string[], LookFault>> readDir(this, string p) {
+    return hostAsk(this.via, OP_READ_DIR(), 0 as i64, 0 as i64, p, u8[](), (Answer o) => listedOf(o, p));
+  }
+
+  Ticket<Result<void, MkdirFault>> mkdir(this, string p, bool parents) {
+    return hostAsk(this.via, OP_MKDIR(), parents ? 1 as i64 : 0 as i64, 0 as i64, p, u8[](), madeOf);
+  }
+
+  Ticket<Result<void, MoveFault>> remove(this, string p, bool recursive) {
+    return hostAsk(this.via, OP_REMOVE(), recursive ? 1 as i64 : 0 as i64, 0 as i64, p, u8[](), movedOf);
+  }
+
+  Ticket<Result<void, MoveFault>> rename(this, string from, string to) {
+    return hostAsk(this.via, OP_RENAME(), 0 as i64, 0 as i64, from, to.toBytes(), movedOf);
+  }
+
+  Ticket<Result<void, ModeFault>> chmod(this, string p, i32 mode) {
+    return hostAsk(this.via, OP_CHMOD(), mode as i64, 0 as i64, p, u8[](), modeOf);
+  }
+
+  Ticket<Result<void, ModeFault>> setExecutable(this, string p, bool on) {
+    return hostAsk(this.via, OP_SET_EXECUTABLE(), on ? 1 as i64 : 0 as i64, 0 as i64, p, u8[](), modeOf);
+  }
+
+  /** Give a file to another owner, which is root's to do — `Unsupported` on the host, whose owners are not names. */
+  Ticket<Result<void, ModeFault>> chown(this, string p, string owner) {
+    if (this.hostGrants != 0) { return hostChown(p); }
+    return hostAsk(this.via, SERVED_CHOWN, 0 as i64, 0 as i64, p, owner.toBytes(), modeOf);
+  }
+
+  /**
+   * A file request as it stands, answered as it comes — what a parent serving these files passes on, and what a layer
+   * over them forwards. **Only a file request**: anything else is `Unsupported` here, since the host underneath may be
+   * the program's own, and a `Files` asks for files (`issues/system/0372c`).
+   */
+  Ticket<Answer> __wacAsk(this, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+    if (!pathRequest(op) && !streamRequest(op)) {
+      Ticket<Answer> no;
+      no.resolve(Answer(FAULT_UNSUPPORTED(), "not a file request: \{op}", u8[](), 0 as i64, 0 as i64, 0));
+      return no;
+    }
+    return ask(this.via, op, a, b, text, bytes);
+  }
+}
+
+/**
+ * A filesystem written as one function per operation: what `Files.of` answers out of, for a backing that is code rather
+ * than a host — a `MemoryStore`, the trees of `packages/fs`. Holding one holds every operation, which is why a program
+ * holds a `Files` over it instead.
+ */
+export struct FileOps {
   fn<Ticket<Result<u8[], ReadFault>>(string)> readFile;
   fn<Ticket<Result<void, WriteFault>>(string, u8[])> writeFile;
   /** The file to read a piece at a time; `close` it when done. */
@@ -1274,123 +1411,8 @@ export struct Files {
   fn<Ticket<Result<void, ModeFault>>(string, bool)> setExecutable;
   /** Give a file to another owner, which is root's to do — `Unsupported` on the host, whose owners are not names. */
   fn<Ticket<Result<void, ModeFault>>(string, string)> chown;
-  /**
-   * The `GRANT_*` bits a spawned child can be handed instead of these files: `GRANT_READ | GRANT_WRITE` for the
-   * host's own, `GRANT_READ` read-only, and 0 for anything composed, which the parent has to serve.
-   */
-  i32 hostGrants;
-  /**
-   * Who these files act as: the owner of what they create and the name each permission check is against. `""` for
-   * the host's, whose owners are not names; the name for `store.asUser(name)`; and the parent's for files a parent
-   * serves, which is how a spawned `whoami` knows the session it runs in.
-   */
-  string user;
-
-  /** The host's filesystem, under whatever grants the host gave this program. */
-  Files host(Host host) {
-    i64 z = 0 as i64;
-    return Files(
-      (string p) => hostAsk(host, OP_READ_FILE(), z, z, p, u8[](), readOfFile),
-      (string p, u8[] b) => hostAsk(host, OP_WRITE_FILE(), z, z, p, b, writtenOf),
-      (string p) => hostAsk(host, OP_OPEN_FILE(), OPEN_READ as i64, z, p, u8[](), (Answer o) => openedToRead(host, p, o)),
-      (string p) => hostAsk(host, OP_OPEN_FILE(), OPEN_WRITE as i64, z, p, u8[](), (Answer o) => openedToWrite(host, p, o)),
-      (string p) => hostAsk(host, OP_OPEN_FILE(), OPEN_APPEND as i64, z, p, u8[](), (Answer o) => openedToWrite(host, p, o)),
-      (string p) => hostAsk(host, OP_STAT(), z, z, p, u8[](), (Answer o) => statOf(o, p)),
-      (string p) => hostAsk(host, OP_LINK_STAT(), z, z, p, u8[](), (Answer o) => statOf(o, p)),
-      (string p) => hostAsk(host, OP_READ_DIR(), z, z, p, u8[](), (Answer o) => listedOf(o, p)),
-      (string p, bool parents) => hostAsk(host, OP_MKDIR(), parents ? 1 as i64 : z, z, p, u8[](), madeOf),
-      (string p, bool recursive) => hostAsk(host, OP_REMOVE(), recursive ? 1 as i64 : z, z, p, u8[](), movedOf),
-      (string from, string to) => hostAsk(host, OP_RENAME(), z, z, from, to.toBytes(), movedOf),
-      (string p, i32 mode) => hostAsk(host, OP_CHMOD(), mode as i64, z, p, u8[](), modeOf),
-      (string p, bool on) => hostAsk(host, OP_SET_EXECUTABLE(), on ? 1 as i64 : z, z, p, u8[](), modeOf),
-      (string p, string owner) => hostChown(p),
-      GRANT_READ | GRANT_WRITE, "");
-  }
-
-  /**
-   * The files a parent serves, over `route` — `servedHost`, which sends each request to the parent. The host's own
-   * `Files` in every operation but two: `chown` is asked too, since the parent's files have owners by name, and a child
-   * holding these is handed on no host grants, so a grandchild is served them in turn.
-   */
-  Files served(Host route, string user) {
-    Files f = Files.host(route);
-    return Files(f.readFile, f.writeFile, f.openRead, f.openWrite, f.openAppend, f.stat, f.linkStat, f.readDir, f.mkdir,
-                 f.remove, f.rename, f.chmod, f.setExecutable,
-                 (string p, string owner) => hostAsk(route, SERVED_CHOWN, 0 as i64, 0 as i64, p, owner.toBytes(), modeOf),
-                 0, user);
-  }
-
-  /** The same files, every change answering `NotGranted`. */
-  Files readOnly(this) {
-    return Files(this.readFile, (string p, u8[] b) => refusedWrite(p), this.openRead,
-                 (string p) => refusedOpen(p), (string p) => refusedOpen(p), this.stat, this.linkStat, this.readDir,
-                 (string p, bool parents) => refusedMkdir(p), (string p, bool r) => refusedMove(p),
-                 (string from, string to) => refusedMove(from), (string p, i32 mode) => refusedMode(p),
-                 (string p, bool on) => refusedMode(p), (string p, string owner) => refusedMode(p),
-                 this.hostGrants & GRANT_READ, this.user);
-  }
-
-  /**
-   * The same files, every read answering `NotGranted` — what `--allow-write` without `--allow-read` holds. A
-   * change still lands; what is there cannot be looked at, its existence included.
-   */
-  Files writeOnly(this) {
-    return Files((string p) => refusedRead(p), this.writeFile, (string p) => refusedOpenRead(p), this.openWrite,
-                 this.openAppend, (string p) => refusedLook(p), (string p) => refusedLook(p),
-                 (string p) => refusedList(p), this.mkdir, this.remove, this.rename, this.chmod, this.setExecutable,
-                 this.chown, this.hostGrants & GRANT_WRITE, this.user);
-  }
-
-  /**
-   * The same files, a relative path starting at `dir` — a shell's current directory. `.` and `..` are taken out
-   * before the path goes on, and an absolute path goes on as it is. A child handed this is told `dir` when it is
-   * spawned, so the host's grants carry over.
-   */
-  Files relativeTo(this, string dir) {
-    Files f = this;
-    return Files(
-      (string p) => f.readFile(pathFrom(dir, p)),
-      (string p, u8[] b) => f.writeFile(pathFrom(dir, p), b),
-      (string p) => f.openRead(pathFrom(dir, p)),
-      (string p) => f.openWrite(pathFrom(dir, p)),
-      (string p) => f.openAppend(pathFrom(dir, p)),
-      (string p) => f.stat(pathFrom(dir, p)),
-      (string p) => f.linkStat(pathFrom(dir, p)),
-      (string p) => f.readDir(pathFrom(dir, p)),
-      (string p, bool parents) => f.mkdir(pathFrom(dir, p), parents),
-      (string p, bool r) => f.remove(pathFrom(dir, p), r),
-      (string from, string to) => f.rename(pathFrom(dir, from), pathFrom(dir, to)),
-      (string p, i32 mode) => f.chmod(pathFrom(dir, p), mode),
-      (string p, bool on) => f.setExecutable(pathFrom(dir, p), on),
-      (string p, string owner) => f.chown(pathFrom(dir, p), owner),
-      f.hostGrants, f.user);
-  }
-
-  /**
-   * Each path to the mount whose `at` is its longest prefix, with that prefix taken off — `/` mounted last is
-   * everything else. A rename across two mounts is `Other`, as a rename across two devices is. A listing has the
-   * mount points directly under it among its names, as a directory holding a mount point does. The user is the
-   * root mount's, `""` when nothing is mounted at `/`.
-   */
-  Files mounted(Mount[] mounts) {
-    return Files(
-      (string p) => mountOf(mounts, p).files.readFile(innerOf(mounts, p)),
-      (string p, u8[] b) => mountOf(mounts, p).files.writeFile(innerOf(mounts, p), b),
-      (string p) => mountOf(mounts, p).files.openRead(innerOf(mounts, p)),
-      (string p) => mountOf(mounts, p).files.openWrite(innerOf(mounts, p)),
-      (string p) => mountOf(mounts, p).files.openAppend(innerOf(mounts, p)),
-      (string p) => mountOf(mounts, p).files.stat(innerOf(mounts, p)),
-      (string p) => mountOf(mounts, p).files.linkStat(innerOf(mounts, p)),
-      (string p) => mountedReadDir(mounts, p),
-      (string p, bool parents) => mountOf(mounts, p).files.mkdir(innerOf(mounts, p), parents),
-      (string p, bool r) => mountOf(mounts, p).files.remove(innerOf(mounts, p), r),
-      (string from, string to) => mountedRename(mounts, from, to),
-      (string p, i32 mode) => mountOf(mounts, p).files.chmod(innerOf(mounts, p), mode),
-      (string p, bool on) => mountOf(mounts, p).files.setExecutable(innerOf(mounts, p), on),
-      (string p, string owner) => mountOf(mounts, p).files.chown(innerOf(mounts, p), owner),
-      0, rootUser(mounts));
-  }
 }
+
 
 /** One mount of `Files.mounted`: `files` answers every path under `at`. */
 export struct Mount {
@@ -1572,7 +1594,7 @@ export struct MemoryStore {
   /** This store as `user` sees it. A relative path is from the root; `relativeTo` gives it somewhere else to start. */
   Files asUser(this, string user) {
     MemoryStore st = this;
-    return Files(
+    return Files.of(FileOps(
       (string p) => memRead(st, user, p),
       (string p, u8[] b) => memWrite(st, user, p, b),
       (string p) => memOpenRead(st, user, p),
@@ -1586,8 +1608,7 @@ export struct MemoryStore {
       (string from, string to) => memRename(st, user, from, to),
       (string p, i32 mode) => memChmod(st, user, p, mode),
       (string p, bool on) => memSetExecutable(st, user, p, on),
-      (string p, string owner) => memChown(st, user, p, owner),
-      0, user);
+      (string p, string owner) => memChown(st, user, p, owner)), user);
   }
 
   /** The node at an absolute normal path, or `STORE_NONE` / `STORE_NOT_A_DIR`. */
@@ -1920,68 +1941,10 @@ async Result<void, ModeFault> memChown(MemoryStore st, string user, string path,
   }
 }
 
-/** The mount owning `p`: the longest `at` that prefixes it at a path boundary. A table with no `/` and no match traps. */
-Mount mountOf(Mount[] mounts, string p) {
-  i32 best = 0 - 1;
-  for (i32 i = 0; i < mounts.len(); i++) {
-    string at = mounts[i].at;
-    bool under = at == "/" || p == at || (p.len() > at.len() && p.slice(0, at.len()) == at && p.slice(at.len(), at.len() + 1) == "/");
-    if (under && (best < 0 || at.len() > mounts[best].at.len())) { best = i; }
-  }
-  if (best < 0) { trap "no mount answers " + p; }
-  return mounts[best];
-}
 
-/** `p` as the mount owning it sees it. */
-string innerOf(Mount[] mounts, string p) {
-  string at = mountOf(mounts, p).at;
-  if (at == "/") { return p; }
-  string rest = p.slice(at.len(), p.len());
-  return rest == "" ? "/" : rest;
-}
 
-/** What the mount owning `p` lists there, with the mounts directly under `p` added — sorted, each name once. */
-async Result<string[], LookFault> mountedReadDir(Mount[] mounts, string p) {
-  string dir = p != "/" && p.len() > 1 && p.slice(p.len() - 1, p.len()) == "/" ? p.slice(0, p.len() - 1) : p;
-  string prefix = dir == "/" ? "/" : dir + "/";
-  Vec<string> extra = Vec.create();
-  for (Mount m in mounts) {
-    string at = m.at;
-    if (at == "/" || at.len() <= prefix.len() || at.slice(0, prefix.len()) != prefix) { continue; }
-    string rest = at.slice(prefix.len(), at.len());
-    if (rest.indexOf("/") < 0) { extra.push(rest); }
-  }
-  string[] own = string[]();
-  match (await mountOf(mounts, dir).files.readDir(innerOf(mounts, dir))) {
-    Ok(names): { own = names; }
-    // A directory that exists only because something is mounted under it lists its mount points.
-    Err(e): { if (extra.len() == 0) { return Result.Err(e); } }
-  }
-  Vec<string> all = Vec.fromArray(own);
-  for (i32 i = 0; i < extra.len(); i++) {
-    bool seen = false;
-    for (i32 k = 0; k < own.len(); k++) { if (own[k] == extra.get(i)) { seen = true; } }
-    if (!seen) { all.push(extra.get(i)); }
-  }
-  return Result.Ok(sortedNames(all.toArray()));
-}
 
-async Result<void, MoveFault> mountedRename(Mount[] mounts, string from, string to) {
-  if (mountOf(mounts, from).at != mountOf(mounts, to).at) {
-    return Result.Err(Other("cannot rename " + from + " to " + to + ": they are on different mounts"));
-  }
-  return await mountOf(mounts, from).files.rename(innerOf(mounts, from), innerOf(mounts, to));
-}
 
-async Result<u8[], ReadFault> refusedRead(string p) { return Result.Err(NotGranted(p + ": write-only")); }
-async Result<Input, ReadFault> refusedOpenRead(string p) { return Result.Err(NotGranted(p + ": write-only")); }
-async Result<Stat, LookFault> refusedLook(string p) { return Result.Err(NotGranted(p + ": write-only")); }
-async Result<string[], LookFault> refusedList(string p) { return Result.Err(NotGranted(p + ": write-only")); }
-async Result<void, WriteFault> refusedWrite(string p) { return Result.Err(NotGranted(p + ": read-only")); }
-async Result<Output, WriteFault> refusedOpen(string p) { return Result.Err(NotGranted(p + ": read-only")); }
-async Result<void, MkdirFault> refusedMkdir(string p) { return Result.Err(NotGranted(p + ": read-only")); }
-async Result<void, MoveFault> refusedMove(string p) { return Result.Err(NotGranted(p + ": read-only")); }
-async Result<void, ModeFault> refusedMode(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, ModeFault> hostChown(string p) {
   return Result.Err(Unsupported(p + ": the host's owners are not names, so a file cannot be given to one"));
 }
@@ -2551,6 +2514,271 @@ i32 routeWait(ServedRoute r, i32[] ids, i32 millis) {
   return 0 - 1;
 }
 
+// ── Hosts std makes over others: the layers of `Files` ──────────────────────────────────────────────────────────
+
+/**
+ * Whether request `op` names a path in `text` — every file operation but the three that act on a stream's handle.
+ * `rename`'s second path is in `bytes`, and `SERVED_CHOWN`'s owner.
+ */
+bool pathRequest(i32 op) {
+  return op == OP_READ_FILE() || op == OP_WRITE_FILE() || op == OP_OPEN_FILE() || op == OP_STAT()
+      || op == OP_LINK_STAT() || op == OP_READ_DIR() || op == OP_MKDIR() || op == OP_REMOVE() || op == OP_RENAME()
+      || op == OP_CHMOD() || op == OP_SET_EXECUTABLE() || op == SERVED_CHOWN;
+}
+
+/** Whether request `op` acts on a stream's handle, in `a`. */
+bool streamRequest(i32 op) { return op == OP_RECV() || op == OP_SEND() || op == OP_CLOSE_FILE(); }
+
+/** Whether request `op` changes what is there, which a read-only view refuses. */
+bool changeRequest(i32 op, i64 a) {
+  return op == OP_WRITE_FILE() || (op == OP_OPEN_FILE() && a != OPEN_READ as i64) || op == OP_MKDIR() || op == OP_REMOVE()
+      || op == OP_RENAME() || op == OP_CHMOD() || op == OP_SET_EXECUTABLE() || op == SERVED_CHOWN;
+}
+
+/** Whether request `op` looks at what is there, which a write-only view refuses. */
+bool lookRequest(i32 op, i64 a) {
+  return op == OP_READ_FILE() || (op == OP_OPEN_FILE() && a == OPEN_READ as i64) || op == OP_STAT()
+      || op == OP_LINK_STAT() || op == OP_READ_DIR();
+}
+
+/** The host a layer is, once made, and each request it forwarded, so a wait or a drop reaches it below. */
+struct Layer {
+  Host? self;
+  Map<i32, Ticket<Answer>> sent;
+}
+
+Layer layerState() { return Layer(null, Map.create(hashI32, i32Eq)); }
+
+/** Answer request `id` of the layer `l` here and now. */
+void layerAnswer(Layer l, i32 id, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
+  if (id != 0) { answered(l.self!, id, fault, text, bytes, n, m, flags); }
+}
+
+/**
+ * Forward request `id` of the layer `l` to the files `below`, as `op`…`bytes`; `then` turns their answer into this
+ * layer's — the same answer, or one with what the layer adds.
+ */
+void layerForward(Layer l, Files below, i32 id, i32 op, i64 a, i64 b, string text, u8[] bytes, fn<Answer(Answer)> then) {
+  Ticket<Answer> t = below.__wacAsk(op, a, b, text, bytes);
+  if (t.done) {
+    Answer y = then(t.value());
+    layerAnswer(l, id, y.fault, y.text, y.bytes, y.n, y.m, y.flags);
+    return;
+  }
+  l.sent.set(id, t);
+  t.whenSettled(() => {
+    l.sent.remove(id);
+    Answer y = then(t.value());
+    layerAnswer(l, id, y.fault, y.text, y.bytes, y.n, y.m, y.flags);
+  });
+}
+
+/** A request of the layer withdrawn: withdrawn below too, which closes what it opened unless it was read. */
+void layerDrop(Layer l, i32 id) {
+  Ticket<Answer>? t = l.sent.get(id);
+  l.sent.remove(id);
+  if (t is not null) { t!.cancel(); }
+}
+
+/**
+ * `waitAny` for a layer: wait for the first of `ids` still waiting, through its forwarded ticket's own host — a host
+ * delivers only the answers it is asked about, so waiting anywhere else would not deliver it.
+ */
+i32 layerWait(Layer l, i32[] ids, i32 millis) {
+  Host me = l.self!;
+  while (true) {
+    Ticket<Answer>? below = null;
+    for (i32 i = 0; i < ids.len(); i++) {
+      if (!me.__wacWaiting(ids[i])) { return i; }
+      if (below is null) { below = l.sent.get(ids[i]); }
+    }
+    if (below is null || below!.waitHost is null) { return 0 - 1; }
+    i32 w = below!.waitHost!([below!.hostId], millis);
+    if (w == HOST_CANNOT_WAIT()) { return HOST_CANNOT_WAIT(); }
+    if (w < 0) { return 0 - 1; }
+  }
+  return 0 - 1;
+}
+
+/** A layer's host, its requests answered by `serve`. */
+Host layerHost(Layer l, fn<void(i32, i32, i64, i64, string, u8[])> serve) {
+  Host h = Host.of(
+    (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+      if (op == OP_DROP()) { layerDrop(l, id); } else { serve(op, id, a, b, text, bytes); }
+    },
+    (i32[] ids, i32 millis) => layerWait(l, ids, millis), (i32 code) => { }, () => false);
+  l.self = h;
+  return h;
+}
+
+Answer sameAnswer(Answer x) { return x; }
+
+/** `inner`, with every change refused (`readOnly`) or every look refused (`writeOnly`). */
+Host refusingHost(Files below, bool readOnly) {
+  Layer l = layerState();
+  return layerHost(l, (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+    if (readOnly && changeRequest(op, a)) {
+      layerAnswer(l, id, FAULT_NOT_GRANTED(), text + ": read-only", u8[](), 0 as i64, 0 as i64, 0);
+    } else if (!readOnly && lookRequest(op, a)) {
+      layerAnswer(l, id, FAULT_NOT_GRANTED(), text + ": write-only", u8[](), 0 as i64, 0 as i64, 0);
+    } else {
+      layerForward(l, below, id, op, a, b, text, bytes, sameAnswer);
+    }
+  });
+}
+
+/** `inner`, each path taken from `dir`: `rename`'s second as well as its first. */
+Host relativeHost(Files below, string dir) {
+  Layer l = layerState();
+  return layerHost(l, (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+    if (!pathRequest(op)) {
+      layerForward(l, below, id, op, a, b, text, bytes, sameAnswer);
+      return;
+    }
+    u8[] rest = op == OP_RENAME() ? pathFrom(dir, string.fromBytes(bytes)).toBytes() : bytes;
+    layerForward(l, below, id, op, a, b, pathFrom(dir, text), rest, sameAnswer);
+  });
+}
+
+/** One stream a mount table opened: which mount, and its handle there. */
+struct MountedStream {
+  i32 mount;
+  i32 handle;
+}
+
+/**
+ * The host of `Files.mounted`: each path to the mount that owns it, as that mount sees it; a stream's handle to the mount
+ * that opened it, numbered here so two mounts' handles cannot meet; a listing with the mounts under it added; and a
+ * rename across two mounts refused, since neither could do it.
+ */
+Host mountHost(Mount[] mounts) {
+  Layer l = layerState();
+  Vec<MountedStream> streams = Vec.create();
+  return layerHost(l, (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+    if (streamRequest(op)) {
+      i32 k = a as~ i32;
+      if (k < 0 || k >= streams.len()) {
+        layerAnswer(l, id, FAULT_OTHER(), "no stream \{k} is open here", u8[](), 0 as i64, 0 as i64, 0);
+        return;
+      }
+      MountedStream st = streams.get(k);
+      layerForward(l, mounts[st.mount].files, id, op, st.handle as i64, b, text, bytes, sameAnswer);
+      return;
+    }
+    if (!pathRequest(op)) {
+      layerAnswer(l, id, FAULT_UNSUPPORTED(), "a mount table does not answer request \{op}", u8[](), 0 as i64, 0 as i64, 0);
+      return;
+    }
+    i32 at = mountIndex(mounts, text);
+    if (at < 0) {
+      layerAnswer(l, id, FAULT_NOT_FOUND(), text + ": no mount answers it", u8[](), 0 as i64, 0 as i64, 0);
+      return;
+    }
+    Files owner = mounts[at].files;
+    string inner = innerPath(mounts[at].at, text);
+    if (op == OP_RENAME()) {
+      string to = string.fromBytes(bytes);
+      if (mountIndex(mounts, to) != at) {
+        layerAnswer(l, id, FAULT_OTHER(), "cannot rename " + text + " to " + to + ": they are on different mounts",
+                    u8[](), 0 as i64, 0 as i64, 0);
+        return;
+      }
+      layerForward(l, owner, id, op, a, b, inner, innerPath(mounts[at].at, to).toBytes(), sameAnswer);
+      return;
+    }
+    if (op == OP_OPEN_FILE()) {
+      layerForward(l, owner, id, op, a, b, inner, bytes, (Answer x) => {
+        if (x.fault != FAULT_NONE()) { return x; }
+        streams.push(MountedStream(at, x.n as~ i32));
+        return Answer(x.fault, x.text, x.bytes, (streams.len() - 1) as i64, x.m, x.flags);
+      });
+      return;
+    }
+    if (op == OP_READ_DIR()) {
+      string[] extra = mountsUnder(mounts, text);
+      layerForward(l, owner, id, op, a, b, inner, bytes, (Answer x) => withMountPoints(x, extra));
+      return;
+    }
+    layerForward(l, owner, id, op, a, b, inner, bytes, sameAnswer);
+  });
+}
+
+/** Which mount owns `p`: the longest whose place `p` is under, `/` answering the rest; -1 for none. */
+i32 mountIndex(Mount[] mounts, string p) {
+  i32 best = 0 - 1;
+  for (i32 i = 0; i < mounts.len(); i++) {
+    string at = mounts[i].at;
+    bool under = at == "/" || p == at || (p.len() > at.len() && p.slice(0, at.len()) == at && p.slice(at.len(), at.len() + 1) == "/");
+    if (under && (best < 0 || at.len() > mounts[best].at.len())) { best = i; }
+  }
+  return best;
+}
+
+/** `p` as the mount at `at` sees it. */
+string innerPath(string at, string p) {
+  if (at == "/" || at == "") { return p; }
+  string rest = p.slice(at.len(), p.len());
+  return rest == "" ? "/" : rest;
+}
+
+/** The names of the mounts directly under directory `p`. */
+string[] mountsUnder(Mount[] mounts, string p) {
+  string dir = p != "/" && p.len() > 1 && p.slice(p.len() - 1, p.len()) == "/" ? p.slice(0, p.len() - 1) : p;
+  string prefix = dir == "/" ? "/" : dir + "/";
+  Vec<string> extra = Vec.create();
+  for (Mount m in mounts) {
+    string at = m.at;
+    if (at == "/" || at.len() <= prefix.len() || at.slice(0, prefix.len()) != prefix) { continue; }
+    string rest = at.slice(prefix.len(), at.len());
+    if (rest.indexOf("/") < 0) { extra.push(rest); }
+  }
+  return extra.toArray();
+}
+
+/**
+ * A listing with the mount points under it added — sorted, each name once. A directory that exists only because
+ * something is mounted under it lists its mount points rather than failing.
+ */
+Answer withMountPoints(Answer x, string[] extra) {
+  if (extra.len() == 0) { return x; }
+  string[] own = x.fault == FAULT_NONE() ? nulSplit(x.bytes) : string[]();
+  Vec<string> all = Vec.fromArray(own);
+  for (i32 i = 0; i < extra.len(); i++) {
+    bool seen = false;
+    for (i32 k = 0; k < own.len(); k++) { if (own[k] == extra[i]) { seen = true; } }
+    if (!seen) { all.push(extra[i]); }
+  }
+  string[] names = sortedNames(all.toArray());
+  Buf out = Buf.create();
+  for (i32 i = 0; i < names.len(); i++) {
+    out.pushAll(names[i].toBytes());
+    out.push(0);
+  }
+  return Answer(FAULT_NONE(), "", out.take(), 0 as i64, 0 as i64, 1);
+}
+
+/**
+ * The host of `Files.of`: each request answered out of `ops` as a host answers it (`answerRequest`), its streams kept
+ * here. What `ops` answers at once — a `MemoryStore` — is delivered inside the request, as a host may; what it has to
+ * wait for is delivered when it comes, while the program's scheduler runs.
+ */
+Host opsHost(FileOps ops) {
+  ServedStreams open = ServedStreams(Vec.create(), Vec.create(), Vec.create(), Vec.create());
+  Layer l = layerState();
+  Host h = Host.of(
+    (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+      if (op != OP_DROP()) { opsAnswer(l, ops, open, op, id, a, b, text, bytes); }
+    },
+    (i32[] ids, i32 millis) => 0 - 1, (i32 code) => { }, () => false);
+  l.self = h;
+  return h;
+}
+
+async void opsAnswer(Layer l, FileOps ops, ServedStreams open, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+  Answer x = await answerRequest(ops, open, op, a, b, text, bytes);
+  layerAnswer(l, id, x.fault, x.text, x.bytes, x.n, x.m, x.flags);
+}
+
 // ── The parent's end ──
 
 /** A read of `handle` as a ticket the host answers — one that `cancel` withdraws. */
@@ -2588,7 +2816,8 @@ struct ServedStreams {
  */
 async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
   WireLine line = WireLine.on(host, handle);
-  ServedStreams open = ServedStreams(Vec.create(), Vec.create(), Vec.create(), Vec.create());
+  // The streams the child opened and has not closed, by the handle the files answered with — closed when it ends.
+  Vec<i32> open = Vec.create();
   bool going = true;
   while (going) {
     WireReader q = await line.nextUnless(stop);
@@ -2607,8 +2836,18 @@ async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
         i64 y = q.i64();
         string text = q.text();
         u8[] bytes = q.bytes();
-        Answer ans = q.bad ? Answer(FAULT_OTHER(), "a request the parent could not read", u8[](), 0 as i64, 0 as i64, 0)
-                           : await answerRequest(files, open, op, x, y, text, bytes);
+        Answer ans = Answer(FAULT_OTHER(), "a request the parent could not read", u8[](), 0 as i64, 0 as i64, 0);
+        if (!q.bad) {
+          // **Passed on as it is**: these files answer the host's own requests, whoever holds them. `chown` is the
+          // one asked by its method, which knows that the host's owners are not names.
+          if (op == SERVED_CHOWN) {
+            ans = answerDone((await files.chown(text, string.fromBytes(bytes))).err());
+          } else {
+            ans = await files.__wacAsk(op, x, y, text, bytes);
+          }
+          if (op == OP_OPEN_FILE() && ans.fault == FAULT_NONE()) { open.push(ans.n as~ i32); }
+          if (op == OP_CLOSE_FILE()) { dropHandle(open, x as~ i32); }
+        }
         a.pushU32(id as@ u32);
         a.pushU32(ans.fault as@ u32);
         putWireString(a, ans.text);
@@ -2623,13 +2862,19 @@ async void serveFiles(Host host, i32 handle, Files files, Ticket<bool> stop) {
       if (going) { going = await line.put(a); }
     }
   }
-  for (i32 i = 0; i < open.reads.len(); i++) {
-    if (open.readOpen.get(i)) { await open.reads.get(i).close(); }
-  }
-  for (i32 i = 0; i < open.writes.len(); i++) {
-    if (open.writeOpen.get(i)) { await open.writes.get(i).close(); }
+  for (i32 i = 0; i < open.len(); i++) {
+    await files.__wacAsk(OP_CLOSE_FILE(), open.get(i) as i64, 0 as i64, "", u8[]());
   }
 }
+
+/** `h` out of the open handles. */
+void dropHandle(Vec<i32> open, i32 h) {
+  Vec<i32> kept = Vec.create();
+  for (i32 i = 0; i < open.len(); i++) { if (open.get(i) != h) { kept.push(open.get(i)); } }
+  open.clear();
+  for (i32 i = 0; i < kept.len(); i++) { open.push(kept.get(i)); }
+}
+
 
 /** A served stream's handle: its place among the reads or the writes, and which. */
 i32 servedReadHandle(i32 i) { return i * 2; }
@@ -2647,7 +2892,7 @@ Answer answerDone(FilesFault? e) { return e is null ? answerOk() : answerFault(e
  * table in design/system/0013 step 6 — so the child's decoders are a host's. A request a `Files` has no operation
  * for is `Unsupported`.
  */
-async Answer answerRequest(Files files, ServedStreams open, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+async Answer answerRequest(FileOps files, ServedStreams open, i32 op, i64 a, i64 b, string text, u8[] bytes) {
   if (op == OP_READ_FILE()) {
     match (await files.readFile(text)) {
       Ok(got): { return Answer(FAULT_NONE(), "", got, 0 as i64, 0 as i64, 0); }

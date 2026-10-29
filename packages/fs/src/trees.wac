@@ -42,7 +42,7 @@ async Result<Read, HostFault> noMore() { return Result.Ok(Read.End); }
 
 /** A `Files` over `look`, which says what each path is; owned by root and changed by nobody. */
 export Files readOnlyTree(fn<TreeNode(string)> look) {
-  return Files(
+  return Files.of(FileOps(
     (string p) => treeRead(look, p),
     (string p, u8[] b) => treeWrite(look, p),
     (string p) => treeOpenRead(look, p),
@@ -56,8 +56,7 @@ export Files readOnlyTree(fn<TreeNode(string)> look) {
     (string from, string to) => treeRefusedMove(from),
     (string p, i32 mode) => treeRefusedMode(p),
     (string p, bool on) => treeRefusedMode(p),
-    (string p, string owner) => treeRefusedMode(p),
-    0, "");
+    (string p, string owner) => treeRefusedMode(p)), "");
 }
 
 string readOnlyWords(string p) { return p + ": Read-only file system"; }

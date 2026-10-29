@@ -10,8 +10,9 @@
 // after `packages/wacc/src/shake.wac`: 17,794 bytes in 172 functions for the line, and 126,664 in 905 for the file,
 // whose difference was not dead code: `sys.files()` held a client for the host and a second one for a parent serving
 // files. On 2026-10-29 a serving parent began answering the host's own requests, and the file was 83,292 bytes in 714
-// functions. What remains is `Files` itself: a closure per operation, so one `readFile` keeps every operation's
-// request and decoder.
+// functions; then `Files` stopped being a closure per operation and became a method per operation over one host, so
+// one `readFile` keeps one request and one decoder: 50,022 bytes in 447 functions, of which the parent channel —
+// `sys.files()` asks at run time whether a parent serves it — is most of the difference from the line.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
@@ -104,7 +105,7 @@ export string test_reading_a_file_adds_what_reading_needs(Sys sys) {
   if (w is null) { return t.report(); }
   Shape s = shapeOf(w!);
   t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
-  t.isTrue(s.functions <= 800, "functions: " + itoa(s.functions));
-  t.isTrue(w!.len() <= 100000, "bytes: " + itoa(w!.len()));
+  t.isTrue(s.functions <= 470, "functions: " + itoa(s.functions));
+  t.isTrue(w!.len() <= 52000, "bytes: " + itoa(w!.len()));
   return t.report();
 }
