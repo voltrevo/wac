@@ -140,7 +140,9 @@ Deno.test("a capability answering an array of references is built, not passed th
   // `toWasm` could not build them, so a host got as far as the boundary and no further.
   const dir = await Deno.makeTempDir({ prefix: "wac-driver-arrays-" });
   try {
-    await buildNative("packages/platform/example/wc.wac", `${dir}/wc`, { read: true });
+    // A library whose exports carry the shapes: a program's boundary is the host ABI since design/system/0013
+    // step 6, which has no `string[]` or `u8[][]` in it (`packages/platform/host/arrays_fixture.wac`).
+    await buildNative("packages/platform/host/arrays_fixture.wac", `${dir}/wc`);
     const wasm = await Deno.readFile(`${dir}/wc.wasm`);
     const manifest = manifestIn(wasm);
     if (manifest === null) throw new Error("no wac.manifest section");

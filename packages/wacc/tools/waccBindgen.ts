@@ -290,7 +290,7 @@ export function supported(
   const ok = (t0: string): boolean => {
     const t = t0.endsWith("?") ? t0.slice(0, -1) : t0;
     if (t0.endsWith("?") && SCALARS.has(t)) return false;   // no boxed `i32?` at the boundary
-    return SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t) ||
+    return SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t) || isOpaque(t) ||
       (isRefArray(t, named) && ok(t.slice(0, -2)));
   };
   return (ok(sig.ret) || handedOut.has(sig.ret)) && sig.params.every(t => ok(t) || callable.has(t));
@@ -338,6 +338,7 @@ function annRaw(ts: string): string {
 
 function tsType(t: string): string {
   if (t.endsWith("?")) return `${tsType(t.slice(0, -1))} | null`;
+  if (isOpaque(t)) return "unknown";
   const n = namedTypes.get(t);
   if (n) return classNameOf(n);
   const c = callbacks.get(t) ?? outRefs.get(t);
@@ -381,9 +382,17 @@ function toWasm(t: string, expr: string): string {
   return `((v) => v === null ? null : ${toWasmInner(inner, "v")})(${expr})`;
 }
 
+/**
+ * The host ABI's own types — `__WacHost` — which cross as an opaque reference: no class, nothing read from them,
+ * handed straight back (`issues/lang/0398a`).
+ */
+export function isOpaque(t: string): boolean {
+  return t.startsWith("__Wac");
+}
+
 /** Whether a value of this type crosses as a reference, which is what may be null. */
 function isRefType(t: string): boolean {
-  return t === "string" || t.endsWith("[]") || namedTypes.has(t) || callbacks.has(t) ||
+  return t === "string" || t.endsWith("[]") || namedTypes.has(t) || isOpaque(t) || callbacks.has(t) ||
     outRefs.has(t);
 }
 

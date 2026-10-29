@@ -164,10 +164,15 @@ export string hostImports(bool haveHost, bool haveSys) {
 }
 
 /**
- * **The two ways a host reaches an adapted module** (design/system/0013 step 6): `__wacHost` takes the host's
- * four calls and answers the value `main` and the tests are handed, and `__wacAnswered` delivers an answer to a
- * request — called by the host only from inside its own `request` or `waitAny`. Plain values cross both ways, so
- * a host builds no wac value and needs no constructor from the module.
+ * **The three ways a host reaches an adapted module** (design/system/0013 step 6): `__wacHost` takes the host's
+ * four calls and answers the value `main` and the tests are handed, `__wacAnswered` delivers an answer to a
+ * request — called by the host only from inside its own `request` or `waitAny` — and `__wacOutstanding` says,
+ * once `main` has returned, how much work is still waiting (spec ch07 `§wac-exit-work-left-pu5wju6`). Plain values
+ * cross every way, so a host builds no wac value and needs no constructor from the module.
+ *
+ * `__wacOutstanding` was the host calling `__WacHost.outstanding` through its bindgen export, until the value
+ * began crossing opaque (`issues/lang/0398a`); the export went, the host skipped the check without a word, and a
+ * program that left work behind exited 0.
  */
 export string hostEntries() {
   return "export __WacHost __wacHost(fn<void(i32, i32, i64, i64, string, u8[])> request, fn<i32(i32[], i32)> waitAny,\n"
@@ -176,7 +181,8 @@ export string hostEntries() {
        + "}\n"
        + "export void __wacAnswered(__WacHost __wacH, i32 id, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
        + "  @\"$wacAnswered\"(__wacH, id, fault, text, bytes, n, m, flags);\n"
-       + "}\n";
+       + "}\n"
+       + "export i32 __wacOutstanding(__WacHost __wacH) { return __wacH.outstanding(); }\n";
 }
 
 /**

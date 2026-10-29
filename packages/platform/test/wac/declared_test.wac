@@ -108,19 +108,17 @@ export string test_a_program_handed_sys_is_described_by_the_world(Sys sys) {
   if (m.error != "") { return t.report(); }
 
   // `main(Sys)` — the one authority a program is handed (spec ch07). Since design/system/0013 step 6 a host builds no
-  // wac value, so the boundary is the host's own: the value `__wacHost` answers, the one shape every answer takes,
-  // and what that value holds — the requests in flight and the continuations nobody awaited. Asserted as the
-  // *whole* list rather than as an absence, because a rule that only forbids today's capabilities says nothing
-  // about the one added next week. It was 36 structs, every `Pending<T>` a capability answered with among them.
-  t.eqStr(joinedWith(sorted(m.structs), ", "),
-          "Answer, Continuation, Map<i32,fn[void(Answer)]>, MapEntry<i32,fn[void(Answer)]>, Queue<Continuation>, "
-            + "TicketBase, Vec<Continuation>, Vec<fn[void()]>, __WacHost",
-          "hello.wac's declared boundary");
+  // wac value, and since `issues/lang/0398a` the value `__wacHost` answers crosses opaque: no host reads it, so
+  // nothing behind it is described — not the requests in flight, not the continuations nobody awaited. That list was
+  // nine structs, and 36 before step 6, every `Pending<T>` a capability answered with among them. Asserted as the
+  // *whole* list rather than as an absence, because a rule that only forbids today's capabilities says nothing about
+  // the one added next week.
+  t.eqStr(joinedWith(sorted(m.structs), ", "), "", "hello.wac's declared boundary");
 
-  // The callback signatures are the other half of the same boundary: each is a dispatcher the host may call
-  // into — the four calls `__wacHost` takes, and what the module's own closures need — against 51 when every
-  // imported file's exports were roots.
-  t.isTrue(m.callbacks >= 0 && m.callbacks <= 12,
+  // So the boundary is the callbacks: the four calls `__wacHost` takes, and what the module's own closures need —
+  // against 51 when every imported file's exports were roots. At least the four, which is what tells this program
+  // from the canary below.
+  t.isTrue(m.callbacks >= 4 && m.callbacks <= 12,
            "\{m.callbacks} callback signatures");
   return t.report();
 }

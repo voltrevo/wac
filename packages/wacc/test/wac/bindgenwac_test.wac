@@ -279,9 +279,11 @@ export string test_the_two_generators_write_the_same_glue_for_whole_programs(Sys
   // The shapes that are not reachable from a one-file program, so they are named by their entry.
   T t = T.create();
   string[] entries = [
-    // A callback going in, a funcref coming out, `Pending<T>` and its aliases, and 40-odd dispatchers:
-    // the whole capability boundary, which is the hardest thing this generator is ever handed.
-    "packages/platform/example/wc.wac",
+    // Callbacks going in, an enum they answer, generic instances (`Result<u8[], string>`) and an exported
+    // struct. It was `packages/platform/example/wc.wac`, a program, for its capability boundary — until a
+    // program's boundary became the host ABI (design/system/0013 step 6), whose one value crosses opaque
+    // (`issues/lang/0398a`), so there is nothing left in it for bindgen: a host drives a program from its manifest.
+    "packages/gzip/src/inflate.wac",
     // The compiler itself — half a megabyte of module through the base64 writer, and the program whose
     // glue the website actually ships.
     "packages/wacc/src/api.wac"

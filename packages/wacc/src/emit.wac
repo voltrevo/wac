@@ -38,7 +38,8 @@ import { pruneCoreMembers } from "./reach.wac";
 import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram, parseType } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
-import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
+import { shake } from "./shake.wac";
+import { endsWith, startsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
   Field, Method, NamedArg,
@@ -6580,18 +6581,21 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // counts fix `arrayHelpersAt`, `structHelpersAt` and every function index after them, and they are
   // taken here while `env` keeps registering types until the type section is sized.
   // `issues/lang/0271a`.
-  i32 countedArrays = env.arrayCount;
-  i32 arrHelpers = 0;
-  for (i32 bi = 0; bi < env.arrayCount; bi++) {
-    if (!bindableArray(env, env.arrayTypes[bi])) { continue; }
-    arrHelpers = arrHelpers + arrayHelperCount(env, env.arrayTypes[bi]);
-  }
   // The structs a host can hold, and how many helpers they need between them. Computed once: the
   // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
   // an index that disagrees with a count is a call to the wrong function.
-  i32 countedStructs = env.structCount;
   string[] bindStructs = string[].defaulted(512);
   i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs, entryDecls);
+  // **And the arrays a host can be handed**, from the same boundary — not every array the module
+  // builds, which was 175 helper exports for a program that logs one line. `issues/lang/0398a`.
+  string[] bindArrays = boundaryArrays(env, src, lexed, prog, bindStructs, bindStructCount, entryDecls);
+  i32 countedArrays = env.arrayCount;
+  i32 arrHelpers = 0;
+  for (i32 bi = 0; bi < env.arrayCount; bi++) {
+    if (!bindsArray(env, env.arrayTypes[bi], bindArrays)) { continue; }
+    arrHelpers = arrHelpers + arrayHelperCount(env, env.arrayTypes[bi]);
+  }
+  i32 countedStructs = env.structCount;
   // **An enum is a struct in this emitter's tables and not one at the boundary.** `collectBindStructs`
   // finds both, because it asks `isStructName` — which is the right question for reachability and the
   // wrong one for naming. Emitted as a struct family, `enum Shape { Circle(f64 r) }` exported
@@ -6878,7 +6882,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // answers one from an `i32`.
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
-    if (!bindableArray(env, bt)) { continue; }
+    if (!bindsArray(env, bt, bindArrays)) { continue; }
     string bel = bindElemType(elemOf(bt));
     if (arrNeedsFill(env, elemOf(bt))) {
       env.sigType("fn[" + bt + "(i32," + bel + ")]");
@@ -7426,7 +7430,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // its position among the helpers and nothing else.
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
-    if (!bindableArray(env, bt)) { continue; }
+    if (!bindsArray(env, bt, bindArrays)) { continue; }
     emitArrayAccessors(funcs, code, env, bt);
     if (!isBulkArray(bt)) { continue; }
     emitArrToMem(funcs, code, env, bt);
@@ -7592,7 +7596,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 bulkAt = arrayHelpersAt;
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
-    if (!bindableArray(env, bt)) { continue; }
+    if (!bindsArray(env, bt, bindArrays)) { continue; }
     string el = elemOf(bt);
     string sfx = bindArrSuffix(el);
     exportFunc(exports, fnName, "$bind$arr_" + sfx + "_new", bulkAt);
@@ -7860,7 +7864,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
 
   u8[] result = u8[].filled(out.len, 0);
   for (i32 i = 0; i < out.len; i++) { result[i] = out.data[i]; }
-  return result;
+  // **Then what nothing reaches comes out** (`issues/lang/0398a`): everything retained was compiled, so it could
+  // all be checked, and most of it is never called. Not for a covered or traced build, whose probes are numbered
+  // in the order the functions were emitted.
+  if (covered || env.trace) { return result; }
+  return shake(result);
 }
 
 /** A token's text, which the emitter needs for an export's name and for every lookup. */
@@ -20765,6 +20773,10 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
   for (i32 ii = 0; ii < env.instCount; ii++) {
     string inst = env.instName[ii];
     if (!env.isStructName(inst)) { continue; }
+    // **Only an instance a host can be handed.** Every instance the module built was exported, and
+    // with them every method of every `Ticket<Result<…>>` — 409 exports for a program that logs one
+    // line, each pinning a function nothing calls. `issues/lang/0398a`.
+    if (!onBindList(bindStructs, bindStructCount, inst)) { continue; }
     Decl[] w15d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
     u8[] w15s = src; Lexed w15l = lexed; i32 w15f = env.curFile;
     for (i32 d = 0; d < w15d.len(); d++) {
@@ -21892,6 +21904,9 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
       // it bound a page's whole interior — its queues, tickets and vectors, 24 classes and 71 KB of
       // JavaScript — behind a struct whose one field was private.
       string hidden = privateMembersOf(env, src, lexed, prog, out[i]);
+      // **A parent is part of its child's class**: the glue declares one as extending the other, so a
+      // bound `Ticket<i32>` needs `TicketBase` bound too, whatever else does or does not name it.
+      n = noteBindStruct(env, out, n, env.parentOf(out[i]));
       i32 fc = env.fieldCountOf(out[i]);
       for (i32 f = 0; f < fc; f++) {
         if (hidden.indexOf(" " + env.fieldNameAt(out[i], f) + " ") >= 0) { continue; }
@@ -21941,6 +21956,87 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
     if (n == before) { return n; }
   }
   return n;
+}
+
+/** Whether `name` is among the first `n` of `xs`. */
+bool onBindList(string[] xs, i32 n, string name) {
+  for (i32 i = 0; i < n && i < xs.len(); i++) { if (xs[i] == name) { return true; } }
+  return false;
+}
+
+/** An array type a host may hold: one bindgen can write helpers for, at the boundary. */
+bool bindsArray(Env env, string at, string[] boundary) {
+  return bindableArray(env, at) && onBindList(boundary, boundary.len(), at);
+}
+
+/**
+ * The array types that cross this module's boundary: in an exported function's signature, a bound type's
+ * fields, or a bound type's methods — and inside those, through `?`, element types and callbacks.
+ *
+ * Read from the emitter's own record of each function's signature rather than from the declarations again,
+ * so a method exported for a bound instance — `Vec<string>.toArray` — is seen with its type arguments in.
+ * `issues/lang/0398a`.
+ */
+string[] boundaryArrays(Env env, u8[] src, Lexed lexed, Program prog, string[] bindStructs, i32 bindStructCount,
+                        i32 entryDecls) {
+  string[] out = string[].defaulted(512);
+  i32 n = 0;
+  Decl[] ds = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] s0 = src; Lexed l0 = lexed; i32 f0 = env.curFile;
+  for (i32 d = 0; d < ds.len(); d++) {
+    if (entryDecls >= 0 && d >= entryDecls) { break; }
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, s0, env.curFile);
+    lexed = lexFor(env.fileLexeds, l0, env.curFile);
+    match (ds[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (!exported || typeParams.len() > 0) { continue; }
+        n = noteArrays(env, out, n, typeOfTyName(env, src, lexed, returnType));
+        for (i32 i = 0; i < params.len(); i++) {
+          n = noteArrays(env, out, n, typeOfTyName(env, src, lexed, params[i].type));
+        }
+      }
+      default: { }
+    }
+  }
+  env.curFile = f0; src = s0; lexed = l0;
+  for (i32 si = 0; si < bindStructCount; si++) {
+    string owner = bindStructs[si];
+    for (i32 fi = 0; fi < env.fieldCountOf(owner); fi++) { n = noteArrays(env, out, n, env.fieldTypeAt(owner, fi)); }
+    string prefix = owner + ".";
+    for (i32 f = 0; f < env.funcCount; f++) {
+      if (!startsWith(env.funcs[f], prefix)) { continue; }
+      n = noteArrays(env, out, n, env.funcReturns[f]);
+      for (i32 p = 0; p < env.funcParamCount[f]; p++) {
+        n = noteArrays(env, out, n, env.funcParamTypes[env.funcParamAt[f] + p]);
+      }
+    }
+  }
+  string[] got = string[].defaulted(n);
+  for (i32 i = 0; i < n; i++) { got[i] = out[i]; }
+  return got;
+}
+
+/** Every array type inside `t`, added to `out` once each. */
+i32 noteArrays(Env env, string[] out, i32 n, string t) {
+  if (t == "") { return n; }
+  if (isFuncrefType(t)) {
+    n = noteArrays(env, out, n, sigReturn(t));
+    for (i32 i = 0; i < sigParamCount(t); i++) { n = noteArrays(env, out, n, sigParamAt(t, i)); }
+    return n;
+  }
+  string core = t;
+  u8[] a = core.toBytes();
+  while (a.len() > 1 && a[a.len() - 1] == 63) {
+    core = core.slice(0, core.len() - 1);
+    a = core.toBytes();
+  }
+  if (!isArrayType(core)) { return n; }
+  if (!onBindList(out, n, core) && n < out.len()) {
+    out[n] = core;
+    n = n + 1;
+  }
+  return noteArrays(env, out, n, elemOf(core));
 }
 
 /** The type under any `?` and `[]`, which is what decides whether a name is a struct. */
@@ -22000,6 +22096,10 @@ i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
   // `bindNameFor` can, a `Vec<Setting>` crossing an exported signature needs its helpers like any
   // other struct — `packages/git`, `packages/box` and `packages/fs` are all this [issue 0102].
   if (name == "" || !env.isStructName(name)) { return n; }
+  // **The host ABI's own types cross opaque.** `__WacHost` is handed to a host and handed straight back
+  // (design/system/0013 step 6); no host reads its fields or calls its methods, and following them bound
+  // the scheduler's queues and maps behind it. `issues/lang/0398a`.
+  if (startsWith(name, "__Wac")) { return n; }
   for (i32 i = 0; i < n; i++) { if (out[i] == name) { return n; } }
   // **A type that crosses and is not written down does not fail here.** It fails in the generated
   // glue, as a class the host asks for and cannot find: `boxsh` filled this table at 64 and lost

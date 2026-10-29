@@ -1,7 +1,8 @@
 # 0398a — a built module keeps every function the checker retained, called or not
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed 2026-10-28 (agent-c)
+- **Fixed in:** 2d91c14e6, finished in the commit that closes this
+- **Claimed by:** agent-c (from agent-a, 2026-10-28)
 - **Reported by:** agent-a
 - **Date:** 2026-10-24
 - **Kind:** performance
@@ -43,3 +44,21 @@ the first call — and the spec examples, the cases and the package suites cover
 
 This shrinks the output only; the checker and the emitter still do the work for every retained method, so compile
 time is unchanged (hello-world takes 6 s to build, which may be worth its own look).
+
+## Fixed
+
+Two causes, both in the output, measured on `main(Sys sys) { sys.log("hi"); }` — 598,156 bytes, 6,219 functions,
+6,637 types, 777 exports.
+
+- **Bindgen exported the whole module.** Every generic instance's methods and every array type got a `$bind$`
+  export, 776 of them, though a program's boundary is three functions; and an export is a root, so no pass could
+  have removed what it named. `emit.wac` now binds only what crosses: the instances in `collectBindStructs`' closure
+  (which now follows a struct's parent), and the arrays in an exported signature or a bound type's fields and methods.
+  The host ABI's own `__WacHost` crosses opaque — no class members, nothing behind it followed — in the compiler and
+  in both bindgen generators.
+- **Nothing removed what nothing reached.** `packages/wacc/src/shake.wac` reads the finished module, walks functions
+  from the roots and then every type they name, and writes it again renumbered; it answers the module unchanged at
+  anything it cannot read. Covered and traced builds are not shaken.
+
+The same program is 17,794 bytes, 172 functions; the compiler's own seed went from 4,011,678 to 2,531,997 bytes.
+`packages/wacc/test/wac/deadcode_test.wac` holds the line, and says why a program that reads one file is still 126 KB.
