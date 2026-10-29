@@ -7,9 +7,11 @@
 // 777 of them exported, where the code that runs is 58 functions and 2.6 KB.
 //
 // Each case builds with the command, as a user would, runs what it built, and then reads the module. On 2026-10-28,
-// after `packages/wacc/src/shake.wac`: 17,794 bytes in 172 functions for the line, and 126,664 in 905 for the file —
-// whose difference is not dead code: `sys.files()` holds a closure for every file operation, each wired to the host
-// and to a parent that may serve it files, so one `readFile` keeps both clients whole.
+// after `packages/wacc/src/shake.wac`: 17,794 bytes in 172 functions for the line, and 126,664 in 905 for the file,
+// whose difference was not dead code: `sys.files()` held a client for the host and a second one for a parent serving
+// files. On 2026-10-29 a serving parent began answering the host's own requests, and the file was 83,292 bytes in 714
+// functions. What remains is `Files` itself: a closure per operation, so one `readFile` keeps every operation's
+// request and decoder.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
@@ -102,7 +104,7 @@ export string test_reading_a_file_adds_what_reading_needs(Sys sys) {
   if (w is null) { return t.report(); }
   Shape s = shapeOf(w!);
   t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
-  t.isTrue(s.functions <= 1000, "functions: " + itoa(s.functions));
-  t.isTrue(w!.len() <= 150000, "bytes: " + itoa(w!.len()));
+  t.isTrue(s.functions <= 800, "functions: " + itoa(s.functions));
+  t.isTrue(w!.len() <= 100000, "bytes: " + itoa(w!.len()));
   return t.report();
 }

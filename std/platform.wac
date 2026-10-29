@@ -782,7 +782,7 @@ export struct Sys {
    * withheld it.
    */
   Files files(this) {
-    if (this.parent.serves()) { return parentFiles(this.parent); }
+    if (this.parent.serves()) { return this.parent.files(); }
     return Files.host(this.host);
   }
 
@@ -1296,6 +1296,19 @@ export struct Files {
       (string p, bool on) => hostAsk(host, OP_SET_EXECUTABLE(), on ? 1 as i64 : z, z, p, u8[](), modeOf),
       (string p, string owner) => hostChown(p),
       GRANT_READ | GRANT_WRITE, "");
+  }
+
+  /**
+   * The files a parent serves, over `route` — `servedHost`, which sends each request to the parent. The host's own
+   * `Files` in every operation but two: `chown` is asked too, since the parent's files have owners by name, and a child
+   * holding these is handed on no host grants, so a grandchild is served them in turn.
+   */
+  Files served(__WacHost route, string user) {
+    Files f = Files.host(route);
+    return Files(f.readFile, f.writeFile, f.openRead, f.openWrite, f.openAppend, f.stat, f.linkStat, f.readDir, f.mkdir,
+                 f.remove, f.rename, f.chmod, f.setExecutable,
+                 (string p, string owner) => hostAsk(route, SERVED_CHOWN, 0 as i64, 0 as i64, p, owner.toBytes(), modeOf),
+                 0, user);
   }
 
   /** The same files, every change answering `NotGranted`. */
@@ -2095,35 +2108,31 @@ Result<void, ModeFault> modeOf(Answer a) {
 /*
  * A child handed a composed `Files` asks its parent for each operation on the parent channel, and the parent answers out
  * of the one `Files` there is (spec ch44 `§wac-std-files-served-t5h2mzr`), so a child's writes are its parent's and
- * what it may do is what that `Files` allows. Both ends are here because both are std: a frame is a u32 length and
- * that many bytes, a question is an opcode and its arguments, and an answer is a result — 0 and the value, or 1, a
- * `FAULT_*` code and the message. The parent answers one question at a time, in the order asked, so a child's
- * questions take turns and each answer is the oldest question's.
+ * what it may do is what that `Files` allows. Both ends are here because both are std.
+ *
+ * **The parent answers what a host would.** A child's request is the one it would make of its host — `request(op, id,
+ * a, b, text, bytes)`, `OP_READ_FILE` and the rest — and the answer is the host's, `answered(id, fault, text, bytes,
+ * n, m, flags)`. So a served child's files are `Files.host` over a host that happens to be its parent
+ * (`servedHost`), with the same decoders, and the parent's `answerRequest` is the one place that says what each
+ * request means out of a `Files`. Until 2026-10-29 there was a second protocol for this — fifteen questions of its own,
+ * each with its own encoding at both ends — and a child that read one file carried a client for both.
+ *
+ * A frame is a u32 length and that many bytes. The first is a hello (`ASK_HELLO`), which says whether the parent
+ * serves files at all; every one after it is a request, and the parent answers them in the order asked, each answer
+ * naming the request it is for.
  */
 
 static i32 ASK_HELLO = 32;
-static i32 ASK_READ_FILE = 33;
-static i32 ASK_WRITE_FILE = 34;
-static i32 ASK_OPEN_READ = 35;
-static i32 ASK_OPEN_WRITE = 36;
-static i32 ASK_OPEN_APPEND = 37;
-static i32 ASK_STAT = 38;
-static i32 ASK_LINK_STAT = 39;
-static i32 ASK_READ_DIR = 40;
-static i32 ASK_MKDIR = 41;
-static i32 ASK_REMOVE = 42;
-static i32 ASK_RENAME = 43;
-static i32 ASK_CHMOD = 44;
-static i32 ASK_SET_EXECUTABLE = 45;
-static i32 ASK_CHOWN = 46;
-static i32 ASK_CHUNK = 47;
-static i32 ASK_READ_ALL = 48;
-static i32 ASK_CLOSE_READ = 49;
-static i32 ASK_WRITE = 50;
-static i32 ASK_CLOSE_WRITE = 51;
+/** A frame carrying a request: `op`, `id`, `a` and `b`, `text`, `bytes`. */
+static i32 SERVED_REQUEST = 1;
+/**
+ * The one request a parent serving files answers and a host does not: give a file to another owner, `text` the path
+ * and `bytes` the owner. A host's owners are not names, so it is not among the `OP_*` a host answers.
+ */
+static i32 SERVED_CHOWN = 1000;
 
 /** What the parent answers `ASK_HELLO` with, so a channel speaking anything else is not mistaken for this one. */
-string servedHello() { return "wac files 1"; }
+string servedHello() { return "wac files 2"; }
 
 /** `OutputClosed` on the wire; it has no `FAULT_*` code because no host operation answers it. */
 static i32 WIRE_OUTPUT_CLOSED = 100;
@@ -2175,25 +2184,6 @@ void putWireBytes(Buf out, u8[] b) {
 
 void putWireI64(Buf out, i64 v) {
   for (i32 i = 0; i < 8; i++) { out.push((((v >> (i * 8)) & 255 as i64) as! i32) as@ u8); }
-}
-
-void putFault(Buf out, FilesFault e) {
-  out.push(1);
-  out.pushU32(wireCode(e) as@ u32);
-  putWireString(out, "\{e}");
-}
-
-void putStat(Buf out, Stat s) {
-  out.push(s.exists ? 1 : 0);
-  out.push(s.isFile ? 1 : 0);
-  out.push(s.isDir ? 1 : 0);
-  putWireI64(out, s.size);
-  putWireI64(out, s.modifiedMillis);
-  out.push(s.isSymlink ? 1 : 0);
-  out.push(s.isExecutable ? 1 : 0);
-  out.pushU32(s.fault as@ u32);
-  out.pushU32(s.mode as@ u32);
-  putWireString(out, s.owner);
 }
 
 /** A frame's body, read from the front; running off the end marks it `bad` rather than trapping. */
@@ -2365,15 +2355,14 @@ Buf wireAsk(i32 op) {
  */
 struct ParentLine {
   WireLine line;
-  Ticket<bool> turn;
   i32 served;
   /** Who the parent's files act as, from its answer to the hello. */
   string user;
+  /** The served `Files`, once asked for. */
+  Files? routed;
 
   ParentLine on(__WacHost host) {
-    Ticket<bool> open;
-    open.resolve(true);
-    return ParentLine(WireLine.on(host, PARENT_FS), open, 0, "");
+    return ParentLine(WireLine.on(host, PARENT_FS), 0, "", null);
   }
 
   /**
@@ -2413,177 +2402,144 @@ struct ParentLine {
     return this.served == 1;
   }
 
-  /** Ask `question` when the questions before it have their answers, and answer what the parent says. */
-  async WireReader ask(this, Buf question) {
-    Ticket<bool> before = this.turn;
-    Ticket<bool> mine;
-    this.turn = mine;
-    await before;
-    WireReader r = brokenReader("the parent channel has ended");
-    if (await this.line.put(question)) { r = await this.line.next(); }
-    mine.resolve(true);
-    return r;
+  /**
+   * The files the parent serves, made once: every request and answer goes over this one line, so two routes over it
+   * would each read the other's answers.
+   */
+  Files files(this) {
+    if (this.routed is null) { this.routed = Files.served(servedHost(this.line), this.user); }
+    return this.routed!;
   }
 }
 
-/** The `Files` a child's parent serves. Composed in the parent, so a grandchild is served it in turn. */
-Files parentFiles(ParentLine l) {
-  return Files(
-    (string p) => askRead(l, p),
-    (string p, u8[] b) => askWrite(l, p, b),
-    (string p) => askOpenRead(l, p),
-    (string p) => askOpenWrite(l, ASK_OPEN_WRITE, p),
-    (string p) => askOpenWrite(l, ASK_OPEN_APPEND, p),
-    (string p) => askStat(l, ASK_STAT, p),
-    (string p) => askStat(l, ASK_LINK_STAT, p),
-    (string p) => askReadDir(l, p),
-    (string p, bool parents) => askMkdir(l, p, parents),
-    (string p, bool r) => askMove(l, ASK_REMOVE, p, "", r),
-    (string from, string to) => askMove(l, ASK_RENAME, from, to, false),
-    (string p, i32 mode) => askMode(l, ASK_CHMOD, p, mode, false, ""),
-    (string p, bool on) => askMode(l, ASK_SET_EXECUTABLE, p, 0, on, ""),
-    (string p, string owner) => askMode(l, ASK_CHOWN, p, 0, false, owner),
-    0, l.user);
+/**
+ * A host that is the parent: what a served child's `Files` asks, sent over the parent channel, and its answers delivered
+ * through `answered` as a host's are. The real host carries the channel; this one only frames and unframes.
+ *
+ * **Answers arrive inside the real host's own `answered`**, as the decode of a read of the channel, so delivering one
+ * needs no scheduler: a synchronous `.wait()` drives it by waiting on the real host, an `async` one by the real
+ * host's drain, and a page's by the read settling between its turns. A read is in flight only while something here
+ * is — so a program whose files are all answered has nothing left outstanding on the real host when `main` returns.
+ */
+struct ServedRoute {
+  WireLine line;
+  /** The host this route is, once made: answers go to it. */
+  __WacHost? self;
+  /** A read of the channel is in flight. */
+  bool listening;
 }
 
-string lineGone(WireReader r) { return "the parent did not answer: " + r.why; }
-
-async Result<u8[], ReadFault> askRead(ParentLine l, string p) {
-  Buf q = wireAsk(ASK_READ_FILE);
-  putWireString(q, p);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(readFault(r.u32(), r.text())); }
-  u8[] b = r.bytes();
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok(b);
+/** The host a served child's files ask: its requests go over `line` to the parent. */
+__WacHost servedHost(WireLine line) {
+  ServedRoute r = ServedRoute(line, null, false);
+  __WacHost real = line.host;
+  __WacHost h = __WacHost.of(
+    (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => { routeAsk(r, op, id, a, b, text, bytes); },
+    (i32[] ids, i32 millis) => routeWait(r, ids, millis),
+    real.exitWith, real.interrupted);
+  r.self = h;
+  return h;
 }
 
-async Result<void, WriteFault> askWrite(ParentLine l, string p, u8[] b) {
-  Buf q = wireAsk(ASK_WRITE_FILE);
-  putWireString(q, p);
-  putWireBytes(q, b);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(writeFault(r.u32(), r.text())); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok();
-}
-
-async Result<Input, ReadFault> askOpenRead(ParentLine l, string p) {
-  Buf q = wireAsk(ASK_OPEN_READ);
-  putWireString(q, p);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(readFault(r.u32(), r.text())); }
-  i32 id = r.u32();
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok(Input(() => askChunk(l, id), () => askReadAll(l, id), () => askCloseRead(l, id)));
-}
-
-async Result<Read, HostFault> askChunk(ParentLine l, i32 id) {
-  Buf q = wireAsk(ASK_CHUNK);
+void routeAsk(ServedRoute r, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+  // A dropped request was asked of the parent, which answers it anyway; the answer finds nobody waiting.
+  if (op == OP_DROP()) { return; }
+  if (r.line.broken) {
+    if (id != 0) { answered(r.self!, id, FAULT_OTHER(), "the parent has stopped serving files", u8[](), 0 as i64, 0 as i64, 0); }
+    return;
+  }
+  Buf q = Buf.create();
+  q.push(SERVED_REQUEST as@ u8);
+  q.pushU32(op as@ u32);
   q.pushU32(id as@ u32);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(hostFaultOf(r.u32(), r.text())); }
-  bool more = r.flag();
-  u8[] b = more ? r.bytes() : u8[]();
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  if (!more) { return Result.Ok(Read.End); }
-  return Result.Ok(Read.Data(b));
+  putWireI64(q, a);
+  putWireI64(q, b);
+  putWireString(q, text);
+  putWireBytes(q, bytes);
+  Buf framed = Buf.create();
+  framed.pushU32(q.len as@ u32);
+  framed.pushAll(q.bytes());
+  hostAsk<bool>(r.line.host, OP_SEND(), PARENT_FS as i64, 0 as i64, "", framed.bytes(), (Answer o) => routeSent(r, o));
+  routeListen(r);
 }
 
-async Result<u8[], HostFault> askReadAll(ParentLine l, i32 id) {
-  Buf q = wireAsk(ASK_READ_ALL);
-  q.pushU32(id as@ u32);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(hostFaultOf(r.u32(), r.text())); }
-  u8[] b = r.bytes();
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok(b);
+bool routeSent(ServedRoute r, Answer o) {
+  if (o.fault != FAULT_NONE()) { routeBroken(r); }
+  return o.fault == FAULT_NONE();
 }
 
-async Result<void, HostFault> askCloseRead(ParentLine l, i32 id) {
-  Buf q = wireAsk(ASK_CLOSE_READ);
-  q.pushU32(id as@ u32);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(hostFaultOf(r.u32(), r.text())); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok();
+/** Read the channel, if something is waiting on it and nothing is reading it already. */
+void routeListen(ServedRoute r) {
+  if (r.listening || r.line.broken || r.self is null || r.self!.pending.len() == 0) { return; }
+  r.listening = true;
+  hostAsk<bool>(r.line.host, OP_RECV(), PARENT_FS as i64, 0 as i64, "", u8[](), (Answer o) => routeHeard(r, o));
 }
 
-async Result<Output, WriteFault> askOpenWrite(ParentLine l, i32 op, string p) {
-  Buf q = wireAsk(op);
-  putWireString(q, p);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(writeFault(r.u32(), r.text())); }
-  i32 id = r.u32();
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok(Output((u8[] b) => askOutput(l, ASK_WRITE, id, b), () => askOutput(l, ASK_CLOSE_WRITE, id, u8[]())));
+/** A read of the channel answered: every whole answer in it delivered, and the next read started if one is needed. */
+bool routeHeard(ServedRoute r, Answer o) {
+  r.listening = false;
+  if (o.fault != FAULT_NONE() || o.flags == 1) {
+    routeBroken(r);
+    return false;
+  }
+  r.line.held.pushAll(o.bytes);
+  while (true) {
+    WireReader f = r.line.take();
+    if (f.bad) { break; }
+    i32 id = f.u32();
+    i32 fault = f.u32();
+    string text = f.text();
+    u8[] bytes = f.bytes();
+    i64 n = f.i64();
+    i64 m = f.i64();
+    i32 flags = f.u32();
+    if (f.bad) {
+      routeBroken(r);
+      return false;
+    }
+    answered(r.self!, id, fault, text, bytes, n, m, flags);
+  }
+  routeListen(r);
+  return true;
 }
 
-async Result<void, OutputFault> askOutput(ParentLine l, i32 op, i32 id, u8[] b) {
-  Buf q = wireAsk(op);
-  q.pushU32(id as@ u32);
-  if (op == ASK_WRITE) { putWireBytes(q, b); }
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(outputFault(r.u32(), r.text())); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok();
+/** The channel ended: everything still asked of it is answered with that, so nothing waits for ever. */
+void routeBroken(ServedRoute r) {
+  r.line.broken = true;
+  if (r.self is null) { return; }
+  i32[] left = r.self!.inFlight();
+  for (i32 i = 0; i < left.len(); i++) {
+    answered(r.self!, left[i], FAULT_OTHER(), "the parent has stopped serving files", u8[](), 0 as i64, 0 as i64, 0);
+  }
 }
 
-async Result<Stat, LookFault> askStat(ParentLine l, i32 op, string p) {
-  Buf q = wireAsk(op);
-  putWireString(q, p);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(lookFault(r.u32(), r.text())); }
-  Stat s = r.stat();
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok(s);
-}
-
-async Result<string[], LookFault> askReadDir(ParentLine l, string p) {
-  Buf q = wireAsk(ASK_READ_DIR);
-  putWireString(q, p);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(lookFault(r.u32(), r.text())); }
-  i32 n = r.u32();
-  if (r.bad || n < 0) { return Result.Err(Other(lineGone(r))); }
-  string[] names = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { names[i] = r.text(); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok(names);
-}
-
-async Result<void, MkdirFault> askMkdir(ParentLine l, string p, bool parents) {
-  Buf q = wireAsk(ASK_MKDIR);
-  putWireString(q, p);
-  q.push(parents ? 1 : 0);
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(mkdirFault(r.u32(), r.text())); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok();
-}
-
-/** `remove` (`p`, `recursive`) and `rename` (`p` to `to`). */
-async Result<void, MoveFault> askMove(ParentLine l, i32 op, string p, string to, bool recursive) {
-  Buf q = wireAsk(op);
-  putWireString(q, p);
-  if (op == ASK_RENAME) { putWireString(q, to); } else { q.push(recursive ? 1 : 0); }
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(moveFault(r.u32(), r.text())); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok();
-}
-
-/** `chmod` (`mode`), `setExecutable` (`on`) and `chown` (`owner`). */
-async Result<void, ModeFault> askMode(ParentLine l, i32 op, string p, i32 mode, bool on, string owner) {
-  Buf q = wireAsk(op);
-  putWireString(q, p);
-  if (op == ASK_CHMOD) { q.pushU32(mode as@ u32); }
-  if (op == ASK_SET_EXECUTABLE) { q.push(on ? 1 : 0); }
-  if (op == ASK_CHOWN) { putWireString(q, owner); }
-  WireReader r = await l.ask(q);
-  if (r.failed()) { return Result.Err(modeFault(r.u32(), r.text())); }
-  if (r.bad) { return Result.Err(Other(lineGone(r))); }
-  return Result.Ok();
+/**
+ * `waitAny` for the route: wait on the real host — which delivers the channel's answers here as they come — until one
+ * of `ids` has its answer. A real host that cannot wait says so, and so does this.
+ */
+i32 routeWait(ServedRoute r, i32[] ids, i32 millis) {
+  __WacHost me = r.self!;
+  __WacHost real = r.line.host;
+  bool bounded = millis >= 0;
+  i64 deadline = 0 as i64;
+  if (bounded) { deadline = real.nanos() + millisToNanos(millis); }
+  while (true) {
+    for (i32 i = 0; i < ids.len(); i++) {
+      if (me.pending.get(ids[i]) is null) { return i; }
+    }
+    routeListen(r);
+    if (!r.listening) { return 0 - 1; }
+    i32 budget = 0 - 1;
+    if (bounded) {
+      i64 left = deadline - real.nanos();
+      if (left <= 0 as i64) { return 0 - 1; }
+      budget = (left / (1000000 as i64)) as! i32;
+    }
+    i32 w = real.waitFor(real.inFlight(), budget);
+    if (w == HOST_CANNOT_WAIT()) { return HOST_CANNOT_WAIT(); }
+    if (w < 0) { return 0 - 1; }
+  }
+  return 0 - 1;
 }
 
 // ── The parent's end ──
@@ -2617,7 +2573,7 @@ struct ServedStreams {
 }
 
 /**
- * Answer a child's questions out of `files` until its channel ends — which is the child exiting — or `stop` settles,
+ * Answer a child's requests out of `files` until its channel ends — which is the child exiting — or `stop` settles,
  * which is the child being stopped; then close what it left open. Runs as this program's scheduler does: nothing else
  * has to drive it.
  */
@@ -2630,8 +2586,32 @@ async void serveFiles(__WacHost host, i32 handle, Files files, Ticket<bool> stop
     if (q.bad) {
       going = false;
     } else {
-      Buf a = await answerQuestion(files, open, q);
-      going = await line.put(a);
+      Buf a = Buf.create();
+      i32 kind = q.byte();
+      if (kind == ASK_HELLO) {
+        putWireString(a, servedHello());
+        putWireString(a, files.user);
+      } else if (kind == SERVED_REQUEST) {
+        i32 op = q.u32();
+        i32 id = q.u32();
+        i64 x = q.i64();
+        i64 y = q.i64();
+        string text = q.text();
+        u8[] bytes = q.bytes();
+        Answer ans = q.bad ? Answer(FAULT_OTHER(), "a request the parent could not read", u8[](), 0 as i64, 0 as i64, 0)
+                           : await answerRequest(files, open, op, x, y, text, bytes);
+        a.pushU32(id as@ u32);
+        a.pushU32(ans.fault as@ u32);
+        putWireString(a, ans.text);
+        putWireBytes(a, ans.bytes);
+        putWireI64(a, ans.n);
+        putWireI64(a, ans.m);
+        a.pushU32(ans.flags as@ u32);
+      } else {
+        // Not this protocol: a child built against another one. Nothing can be answered by id, so the line ends.
+        going = false;
+      }
+      if (going) { going = await line.put(a); }
     }
   }
   for (i32 i = 0; i < open.reads.len(); i++) {
@@ -2642,132 +2622,122 @@ async void serveFiles(__WacHost host, i32 handle, Files files, Ticket<bool> stop
   }
 }
 
-async Buf answerQuestion(Files files, ServedStreams open, WireReader q) {
-  i32 op = q.byte();
-  Buf a = Buf.create();
-  if (op == ASK_HELLO) {
-    putWireString(a, servedHello());
-    putWireString(a, files.user);
-  } else if (op == ASK_READ_FILE) {
-    match (await files.readFile(q.text())) {
-      Ok(b): { a.push(0); putWireBytes(a, b); }
-      Err(e): { putFault(a, e); }
+/** A served stream's handle: its place among the reads or the writes, and which. */
+i32 servedReadHandle(i32 i) { return i * 2; }
+i32 servedWriteHandle(i32 i) { return i * 2 + 1; }
+
+Answer answerOk() { return Answer(FAULT_NONE(), "", u8[](), 0 as i64, 0 as i64, 0); }
+
+/** What a host answers a fault with: its code, and its words. */
+Answer answerFault(FilesFault e) { return Answer(wireCode(e), "\{e}", u8[](), 0 as i64, 0 as i64, 0); }
+
+Answer answerDone(FilesFault? e) { return e is null ? answerOk() : answerFault(e!); }
+
+/**
+ * A served child's request, answered out of `files` as a host answers it: the same fields, the same meanings — the
+ * table in design/system/0013 step 6 — so the child's decoders are a host's. A request a `Files` has no operation
+ * for is `Unsupported`.
+ */
+async Answer answerRequest(Files files, ServedStreams open, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+  if (op == OP_READ_FILE()) {
+    match (await files.readFile(text)) {
+      Ok(got): { return Answer(FAULT_NONE(), "", got, 0 as i64, 0 as i64, 0); }
+      Err(e): { return answerFault(e); }
     }
-  } else if (op == ASK_WRITE_FILE) {
-    string p = q.text();
-    putDone(a, (await files.writeFile(p, q.bytes())).err());
-  } else if (op == ASK_OPEN_READ) {
-    match (await files.openRead(q.text())) {
-      Ok(in): {
-        open.reads.push(in);
-        open.readOpen.push(true);
-        a.push(0);
-        a.pushU32((open.reads.len() - 1) as@ u32);
+  }
+  if (op == OP_WRITE_FILE()) { return answerDone((await files.writeFile(text, bytes)).err()); }
+  if (op == OP_STAT() || op == OP_LINK_STAT()) {
+    Ticket<Result<Stat, LookFault>> looking = op == OP_STAT() ? files.stat(text) : files.linkStat(text);
+    Result<Stat, LookFault> got = await looking;
+    match (got) {
+      Ok(st): {
+        i32 flags = (st.exists ? STAT_EXISTS : 0) | (st.isFile ? STAT_FILE : 0) | (st.isDir ? STAT_DIR : 0)
+                  | (st.isSymlink ? STAT_LINK : 0) | (st.isExecutable ? STAT_EXEC : 0) | ((st.mode & 65535) << 16);
+        return Answer(FAULT_NONE(), st.owner, u8[](), st.size, st.modifiedMillis, flags);
       }
-      Err(e): { putFault(a, e); }
+      Err(e): { return answerFault(e); }
     }
-  } else if (op == ASK_OPEN_WRITE || op == ASK_OPEN_APPEND) {
-    string p = q.text();
-    Result<Output, WriteFault> opened = op == ASK_OPEN_WRITE ? await files.openWrite(p) : await files.openAppend(p);
+  }
+  if (op == OP_READ_DIR()) {
+    match (await files.readDir(text)) {
+      Ok(names): {
+        Buf all = Buf.create();
+        for (i32 i = 0; i < names.len(); i++) {
+          all.pushAll(names[i].toBytes());
+          all.push(0);
+        }
+        return Answer(FAULT_NONE(), "", all.take(), 0 as i64, 0 as i64, 1);
+      }
+      Err(e): { return answerFault(e); }
+    }
+  }
+  if (op == OP_MKDIR()) { return answerDone((await files.mkdir(text, a == 1 as i64)).err()); }
+  if (op == OP_REMOVE()) { return answerDone((await files.remove(text, a == 1 as i64)).err()); }
+  if (op == OP_RENAME()) { return answerDone((await files.rename(text, string.fromBytes(bytes))).err()); }
+  if (op == OP_CHMOD()) { return answerDone((await files.chmod(text, a as~ i32)).err()); }
+  if (op == OP_SET_EXECUTABLE()) { return answerDone((await files.setExecutable(text, a == 1 as i64)).err()); }
+  if (op == SERVED_CHOWN) { return answerDone((await files.chown(text, string.fromBytes(bytes))).err()); }
+  if (op == OP_OPEN_FILE()) {
+    if (a == OPEN_READ as i64) {
+      match (await files.openRead(text)) {
+        Ok(in): {
+          open.reads.push(in);
+          open.readOpen.push(true);
+          return Answer(FAULT_NONE(), "", u8[](), servedReadHandle(open.reads.len() - 1) as i64, 0 as i64, 0);
+        }
+        Err(e): { return answerFault(e); }
+      }
+    }
+    Ticket<Result<Output, WriteFault>> opening = a == OPEN_APPEND as i64 ? files.openAppend(text) : files.openWrite(text);
+    Result<Output, WriteFault> opened = await opening;
     match (opened) {
       Ok(out): {
         open.writes.push(out);
         open.writeOpen.push(true);
-        a.push(0);
-        a.pushU32((open.writes.len() - 1) as@ u32);
+        return Answer(FAULT_NONE(), "", u8[](), servedWriteHandle(open.writes.len() - 1) as i64, 0 as i64, 0);
       }
-      Err(e): { putFault(a, e); }
+      Err(e): { return answerFault(e); }
     }
-  } else if (op == ASK_STAT || op == ASK_LINK_STAT) {
-    string p = q.text();
-    Result<Stat, LookFault> s = op == ASK_STAT ? await files.stat(p) : await files.linkStat(p);
-    match (s) {
-      Ok(st): { a.push(0); putStat(a, st); }
-      Err(e): { putFault(a, e); }
-    }
-  } else if (op == ASK_READ_DIR) {
-    match (await files.readDir(q.text())) {
-      Ok(names): {
-        a.push(0);
-        a.pushU32(names.len() as@ u32);
-        for (i32 i = 0; i < names.len(); i++) { putWireString(a, names[i]); }
+  }
+  if (op == OP_RECV() || op == OP_SEND() || op == OP_CLOSE_FILE()) {
+    i32 h = a as~ i32;
+    i32 i = h / 2;
+    if (h % 2 == 0) {
+      if (h < 0 || i >= open.reads.len() || !open.readOpen.get(i)) {
+        return Answer(FAULT_OTHER(), "no stream \{h} is open to read", u8[](), 0 as i64, 0 as i64, 0);
       }
-      Err(e): { putFault(a, e); }
-    }
-  } else if (op == ASK_MKDIR) {
-    string p = q.text();
-    putDone(a, (await files.mkdir(p, q.flag())).err());
-  } else if (op == ASK_REMOVE) {
-    string p = q.text();
-    putDone(a, (await files.remove(p, q.flag())).err());
-  } else if (op == ASK_RENAME) {
-    string from = q.text();
-    putDone(a, (await files.rename(from, q.text())).err());
-  } else if (op == ASK_CHMOD) {
-    string p = q.text();
-    putDone(a, (await files.chmod(p, q.u32())).err());
-  } else if (op == ASK_SET_EXECUTABLE) {
-    string p = q.text();
-    putDone(a, (await files.setExecutable(p, q.flag())).err());
-  } else if (op == ASK_CHOWN) {
-    string p = q.text();
-    putDone(a, (await files.chown(p, q.text())).err());
-  } else if (op == ASK_CHUNK || op == ASK_READ_ALL || op == ASK_CLOSE_READ) {
-    await answerRead(open, op, q.u32(), a);
-  } else if (op == ASK_WRITE || op == ASK_CLOSE_WRITE) {
-    i32 id = q.u32();
-    await answerWrite(open, op, id, op == ASK_WRITE ? q.bytes() : u8[](), a);
-  } else {
-    putFault(a, Unsupported("this parent does not know question \{op}"));
-  }
-  return a;
-}
-
-/** The answer to a question with nothing to answer but whether it worked: `e` is its fault, or null. */
-void putDone(Buf a, FilesFault? e) {
-  if (e is null) { a.push(0); } else { putFault(a, e!); }
-}
-
-async void answerRead(ServedStreams open, i32 op, i32 id, Buf a) {
-  if (id < 0 || id >= open.reads.len() || !open.readOpen.get(id)) {
-    putFault(a, Other("no stream \{id} is open to read"));
-    return;
-  }
-  Input in = open.reads.get(id);
-  if (op == ASK_CHUNK) {
-    match (await in.chunk()) {
-      Ok(c): {
-        a.push(0);
-        match (c) {
-          Data(b): { a.push(1); putWireBytes(a, b); }
-          default: { a.push(0); }
+      Input in = open.reads.get(i);
+      if (op == OP_CLOSE_FILE()) {
+        open.readOpen.set(i, false);
+        return answerDone((await in.close()).err());
+      }
+      if (op == OP_SEND()) { return Answer(FAULT_UNSUPPORTED(), "stream \{h} is open to read", u8[](), 0 as i64, 0 as i64, 0); }
+      match (await in.chunk()) {
+        Ok(c): {
+          match (c) {
+            Data(got): { return Answer(FAULT_NONE(), "", got, 0 as i64, 0 as i64, 0); }
+            Failed(why): { return Answer(FAULT_OTHER(), why, u8[](), 0 as i64, 0 as i64, 0); }
+            default: { return Answer(FAULT_NONE(), "", u8[](), 0 as i64, 0 as i64, 1); }
+          }
         }
+        Err(e): { return answerFault(e); }
       }
-      Err(e): { putFault(a, e); }
     }
-  } else if (op == ASK_READ_ALL) {
-    match (await in.readAll()) {
-      Ok(b): { a.push(0); putWireBytes(a, b); }
-      Err(e): { putFault(a, e); }
+    if (i >= open.writes.len() || !open.writeOpen.get(i)) {
+      return answerFault(OutputClosed("no stream \{h} is open to write"));
     }
-  } else {
-    open.readOpen.set(id, false);
-    putDone(a, (await in.close()).err());
+    Output out = open.writes.get(i);
+    if (op == OP_CLOSE_FILE()) {
+      open.writeOpen.set(i, false);
+      return answerDone((await out.close()).err());
+    }
+    if (op == OP_RECV()) { return Answer(FAULT_UNSUPPORTED(), "stream \{h} is open to write", u8[](), 0 as i64, 0 as i64, 0); }
+    match (await out.write(bytes)) {
+      Ok(_): { return Answer(FAULT_NONE(), "", u8[](), 0 as i64, 0 as i64, 1); }
+      Err(e): { return answerFault(e); }
+    }
   }
-}
-
-async void answerWrite(ServedStreams open, i32 op, i32 id, u8[] b, Buf a) {
-  if (id < 0 || id >= open.writes.len() || !open.writeOpen.get(id)) {
-    putFault(a, OutputClosed("no stream \{id} is open to write"));
-    return;
-  }
-  Output out = open.writes.get(id);
-  if (op == ASK_WRITE) {
-    putDone(a, (await out.write(b)).err());
-  } else {
-    open.writeOpen.set(id, false);
-    putDone(a, (await out.close()).err());
-  }
+  return Answer(FAULT_UNSUPPORTED(), "a parent serving files does not answer request \{op}", u8[](), 0 as i64, 0 as i64, 0);
 }
 
 // ── Sockets ──────────────────────────────────────────────────────────────────────────────────────

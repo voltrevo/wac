@@ -1,0 +1,58 @@
+// A child served a `Files` its parent composed does everything with it a host's would — spec ch44
+// `§wac-std-files-served-t5h2mzr` — and the parent's store is where it lands.
+//
+// The child is `servedops_probe.wac`, built with the command and spawned with a `MemoryStore` view as its files and no
+// host files at all. It does every `Files` operation once, streams included, and says what each answered; this checks
+// the lines, then the store. It was written for the change that made a serving parent answer the same requests a host
+// does: a child's `sys.files()` is the host's `Files` over its parent, rather than a second client of its own.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Authority, ChildEnv, Exec, Files, Launch, MemoryStore, Procs, Stat, Sys } from "std";
+import { flatten } from "core";
+
+export async string test_a_served_child_does_everything_a_hosts_files_do(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  string dir = scratch(sys.env(), "servedfiles");
+  fs.mkdir(dir, true).wait();
+  Exec built = flatten(procs.exec(binaryPath(sys.env()),
+                                  ["build", "--no-cache", "packages/platform/test/wac/servedops_probe.wac", "-o", dir + "/probe"],
+                                  u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
+  t.eqI32(built.status, 0, "the probe builds: " + string.fromBytes(built.stderr));
+  u8[]? wasm = flatten(fs.readFile(dir + "/probe.wasm").wait()).ok();
+  if (wasm is null) { return t.report(); }
+
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.writeFile("/in.txt", "hello".toBytes());
+  await root.mkdir("/d", true);
+  await root.writeFile("/d/a", "a".toBytes());
+  await root.writeFile("/d/b", "b".toBytes());
+
+  auto spawned = await procs.spawn(wasm!, string[](), Authority(root, null, null, null), Launch.plain());
+  if (spawned.isErr()) { t.fail("the probe did not start: \{spawned.err()!}"); return t.report(); }
+  auto child = spawned.ok()!;
+  string said = string.fromBytes((await child.output().readAll()).orElse(u8[]()));
+  string errs = string.fromBytes((await child.errors().readAll()).orElse(u8[]()));
+  t.eqI32((await child.exit()).orElse(0 - 1), 0, "the probe exits 0: " + errs);
+
+  string[] want = [
+    "user root", "read hello", "write ok", "stat true false 5", "stat dir true", "dir a,b", "mkdir ok", "rename ok",
+    "remove ok", "stream hello", "close read ok", "stream write ok", "close write ok", "stream append ok",
+    "close append ok", "chmod ok", "exec bit ok", "chown ok", "link stat true bob"
+  ];
+  for (i32 i = 0; i < want.len(); i++) { t.isTrue(contains(said, want[i] + "\n"), "the probe said `" + want[i] + "`:\n" + said); }
+  t.isTrue(contains(said, "missing ") && contains(said, "No such file"), "a missing file is `NotFound` in the host's words:\n" + said);
+
+  // What the child did is in the parent's store.
+  t.eqStr(string.fromBytes((await root.readFile("/m/out.txt")).orElse(u8[]())), "from the child", "the renamed write");
+  t.eqStr(string.fromBytes((await root.readFile("/w.txt")).orElse(u8[]())), "one two", "the written and appended stream");
+  t.isTrue((await root.stat("/d/a")).isErr(), "the removed file is gone");
+  Stat? n = (await root.stat("/m/n")).ok();
+  t.isTrue(n is not null && n!.isDir, "the directory made with its parents");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
