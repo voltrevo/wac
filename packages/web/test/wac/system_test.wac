@@ -239,7 +239,7 @@ export string test_a_page_holds_a_system_before_the_build_gives_it_one() {
 /** What a parent serving files answers the hello with: one frame, the greeting and who its files act as. */
 u8[] servedAnswer(string user) {
   Buf body = Buf.create();
-  for (string part in ["wac files 1", user]) {
+  for (string part in ["wac files 2", user]) {
     u8[] b = part.toBytes();
     body.pushU32(b.len() as@ u32);
     body.pushAll(b);

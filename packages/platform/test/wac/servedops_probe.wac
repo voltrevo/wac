@@ -1,0 +1,55 @@
+// The child `servedfiles_test.wac` spawns: every `Files` operation, through the `sys.files()` its parent serves,
+// one line each — so a difference names the operation that drifted.
+
+import { Input, Output, Stat, Sys } from "std";
+import { Result } from "core";
+
+export async i32 main(Sys sys) {
+  auto f = sys.files();
+  sys.log("user " + f.user);
+  match (await f.readFile("/in.txt")) { Ok(b): { sys.log("read " + string.fromBytes(b)); } Err(e): { sys.log("read failed \{e}"); } }
+  match (await f.readFile("/missing")) { Ok(b): { sys.log("missing read"); } Err(e): { sys.log("missing \{e}"); } }
+  sys.log("write " + ((await f.writeFile("/out.txt", "from the child".toBytes())).isOk() ? "ok" : "failed"));
+  match (await f.stat("/in.txt")) {
+    Ok(s): { sys.log("stat \{s.isFile} \{s.isDir} \{s.size}"); }
+    Err(e): { sys.log("stat failed \{e}"); }
+  }
+  match (await f.stat("/d")) { Ok(s): { sys.log("stat dir \{s.isDir}"); } Err(e): { sys.log("stat dir failed \{e}"); } }
+  match (await f.readDir("/d")) {
+    Ok(names): {
+      string all = "";
+      for (i32 i = 0; i < names.len(); i++) { all = all + (i > 0 ? "," : "") + names[i]; }
+      sys.log("dir " + all);
+    }
+    Err(e): { sys.log("dir failed \{e}"); }
+  }
+  sys.log("mkdir " + ((await f.mkdir("/m/n", true)).isOk() ? "ok" : "failed"));
+  sys.log("rename " + ((await f.rename("/out.txt", "/m/out.txt")).isOk() ? "ok" : "failed"));
+  sys.log("remove " + ((await f.remove("/d/a", false)).isOk() ? "ok" : "failed"));
+  match (await f.openRead("/in.txt")) {
+    Ok(in): {
+      match (await in.readAll()) { Ok(b): { sys.log("stream " + string.fromBytes(b)); } Err(e): { sys.log("stream failed \{e}"); } }
+      sys.log("close read " + ((await in.close()).isOk() ? "ok" : "failed"));
+    }
+    Err(e): { sys.log("open read failed \{e}"); }
+  }
+  match (await f.openWrite("/w.txt")) {
+    Ok(out): {
+      sys.log("stream write " + ((await out.write("one ".toBytes())).isOk() ? "ok" : "failed"));
+      sys.log("close write " + ((await out.close()).isOk() ? "ok" : "failed"));
+    }
+    Err(e): { sys.log("open write failed \{e}"); }
+  }
+  match (await f.openAppend("/w.txt")) {
+    Ok(out): {
+      sys.log("stream append " + ((await out.write("two".toBytes())).isOk() ? "ok" : "failed"));
+      sys.log("close append " + ((await out.close()).isOk() ? "ok" : "failed"));
+    }
+    Err(e): { sys.log("open append failed \{e}"); }
+  }
+  sys.log("chmod " + ((await f.chmod("/w.txt", 416)).isOk() ? "ok" : "failed"));
+  sys.log("exec bit " + ((await f.setExecutable("/w.txt", true)).isOk() ? "ok" : "failed"));
+  sys.log("chown " + ((await f.chown("/w.txt", "bob")).isOk() ? "ok" : "failed"));
+  match (await f.linkStat("/w.txt")) { Ok(s): { sys.log("link stat \{s.isExecutable} \{s.owner}"); } Err(e): { sys.log("link stat failed \{e}"); } }
+  return 0;
+}

@@ -1,0 +1,70 @@
+// A namespace member that is not there, as the command reports it.
+//
+// `import { fs.Fs } from "wac"`, once `Fs` had left `fs`, drew a cascade of **"unexpected token … found '.'"** at the
+// dot — from `wac test` on one file and `wac build`, though `wac check` had stopped — because the lowering that
+// turns `ns.m` into an import of `m` left the line as written when it could not follow it, and the parser has
+// never accepted a dot in an import list. And once it said the right thing, it quoted the line as the compiler
+// had rewritten it, `@"fs.Fs" as Fs`, rather than as it was written.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
+
+async Exec wac(Env env, Procs procs, string dir, string[] args) {
+  return (await procs.exec(binaryPath(env), args, u8[](), ChildEnv.inherited(), Launch(dir, false, false, false))).unwrap();
+}
+
+string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
+
+async string project(Env env, Files fs, T t) {
+  string dir = scratch(env, "nsimport");
+  t.eqStr(freshDir(fs, dir), "", "a scratch directory");
+  string[] names = ["lib.wac", "shapes.wac", "main.wac"];
+  string[] texts = ["export * as shapes from \"./shapes.wac\";\n",
+                    "export i32 area(i32 w) { return w * w; }\n",
+                    "import { shapes.perimeter } from \"./lib.wac\";\nexport i32 main() { return perimeter(2); }\n"];
+  for (i32 i = 0; i < names.len(); i++) {
+    t.isTrue((await fs.writeFile("\{dir}/\{names[i]}", texts[i].toBytes())).isOk(), "writing \{names[i]}");
+  }
+  return dir;
+}
+
+void saysItPlainly(T t, string out, string what) {
+  t.isTrue(contains(out, "that file does not export this name"), "\{what}: the headline — \{out}");
+  t.isTrue(contains(out, "`shapes.perimeter`: no namespace `shapes` there with that member"), "\{what}: the note — \{out}");
+  t.isTrue(contains(out, "import { shapes.perimeter } from \"./lib.wac\";"), "\{what}: the line as written — \{out}");
+  t.isFalse(contains(out, "unexpected token"), "\{what}: no parse cascade — \{out}");
+  t.isFalse(contains(out, "@\""), "\{what}: nothing the compiler rewrote — \{out}");
+}
+
+export async string test_check_and_build_say_which_member_is_not_there(Sys sys) {
+  T t = T.create();
+  string dir = await project(sys.env(), sys.files(), t);
+  Exec checked = await wac(sys.env(), sys.procs(), dir, ["check", "main.wac"]);
+  t.isTrue(checked.status != 0, "check refuses it");
+  saysItPlainly(t, said(checked), "check");
+  Exec built = await wac(sys.env(), sys.procs(), dir, ["build", "main.wac", "-o", "out"]);
+  t.isTrue(built.status != 0, "build refuses it");
+  saysItPlainly(t, said(built), "build");
+  return t.report();
+}
+
+/**
+ * **Imported and not used**, a build reads nothing for it — a file no retained declaration needs is not read
+ * (spec ch05) — so the lowering met the line with the module absent, left it as written, and the parser drew the
+ * cascade. A plain import of a missing name is quiet there, and so is this.
+ */
+export async string test_a_build_is_quiet_about_an_unused_one_as_it_is_about_any_import(Sys sys) {
+  T t = T.create();
+  string dir = await project(sys.env(), sys.files(), t);
+  t.isTrue((await sys.files().writeFile("\{dir}/unused.wac",
+    "import { shapes.perimeter } from \"./lib.wac\";\nexport i32 main() { return 0; }\n".toBytes())).isOk(), "unused.wac");
+  t.isTrue((await sys.files().writeFile("\{dir}/plain.wac",
+    "import { perimeter } from \"./shapes.wac\";\nexport i32 main() { return 0; }\n".toBytes())).isOk(), "plain.wac");
+  Exec plain = await wac(sys.env(), sys.procs(), dir, ["build", "plain.wac", "-o", "plain"]);
+  Exec built = await wac(sys.env(), sys.procs(), dir, ["build", "unused.wac", "-o", "unused"]);
+  t.eqI32(built.status, plain.status, "as a plain import of a missing name — \{said(built)}");
+  t.isFalse(contains(said(built), "unexpected token"), "no parse cascade — \{said(built)}");
+  return t.report();
+}
