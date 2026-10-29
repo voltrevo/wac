@@ -948,7 +948,7 @@ fn call_loaded(handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
         };
         let takes_int = sig.params.len() == 1 && sig.params[0] == "i32";
         // A test that takes the host is handed the one `__wacHost` answered when the module was loaded.
-        let takes_host = sig.params.len() == 1 && sig.params[0] == "__WacHost";
+        let takes_host = sig.params.len() == 1 && lm.manifest.host_type() == Some(sig.params[0].as_str());
         if !sig.params.is_empty() && !takes_int && !takes_host {
             return (3, format!("cannot call {name}({})", sig.params.join(", ")), 0);
         }
@@ -1045,7 +1045,7 @@ fn enter(
     let main = instance
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
-    // **Sized from `main`'s own signature**: `main()` is handed nothing and `main(__WacHost)` the value
+    // **Sized from `main`'s own signature**: `main()` is handed nothing and `main(Host)` the value
     // `__wacHost` answered. Read from the instantiated function rather than from the manifest, which is
     // the copy that could disagree.
     let mut args: Vec<Val> = Vec::new();

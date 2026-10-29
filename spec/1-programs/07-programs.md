@@ -102,7 +102,24 @@ export void main(Sys sys) {
 effect on the world — files, the network, time, randomness, other programs — is a method reached
 through it ([44](../7-library/44-std.md)).
 
-Those are the only two shapes a program's `main` takes: nothing, or one `Sys`. What a program is told
+A program may instead take the `Host` itself: the flat interface every host answers, numbered requests in and
+answers out (`design/system/0013`), which `Sys` is built on. It is the same authority as a `Sys`, without the
+typed handles over it:
+
+```wac
+// expect: prints
+// hello
+import { Host, OP_WRITE_STDOUT } from "std";
+
+export void main(Host host) {
+  host.tell(OP_WRITE_STDOUT(), 0 as i64, 0 as i64, "", "hello\n".toBytes());
+}
+```
+
+`[§wac-main-host-7qkz2mw]` A program that names a `Host` parameter on `main` is handed the host it runs on, and asks it
+directly: `tell` makes a request nobody answers, and `ask` one whose answer arrives as a ticket.
+
+Those are the only three shapes a program's `main` takes: nothing, one `Sys`, or one `Host`. What a program is told
 when it starts — its arguments, for one — comes through the `Sys` as well (`sys.args()`):
 
 ```wac
@@ -113,8 +130,8 @@ import { Sys } from "std";
 export i32 main(Sys sys, string name) { return name.len(); }   // not a program's parameter list
 ```
 
-`[§wac-main-params-tfs9kks]` Building a program whose `main` takes anything but no parameters or exactly one
-`Sys` is refused. Compiled as a plain module, the same `main` is an ordinary export.
+`[§wac-main-params-tfs9kks]` Building a program whose `main` takes anything but no parameters, exactly one
+`Sys`, or exactly one `Host` is refused. Compiled as a plain module, the same `main` is an ordinary export.
 
 Nothing reaches the world any other way. There is no global to read, no function that opens a file
 without being given the means, and nothing a static initialiser can acquire

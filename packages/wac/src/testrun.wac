@@ -145,7 +145,7 @@ export string noTrailingSlash(string dir) {
  *     recurses until the stack goes;
  *   * **the suffix goes on the end**, because a test that wants a trap is recognised by
  *     `test_traps_` at the *start* and `--filter` matches a substring of the name a person typed;
- *   * **the host's entries are declared here** when a wrapper takes `__WacHost`: the aggregate is the module the
+ *   * **the host's entries are declared here** when a wrapper takes `Host`: the aggregate is the module the
  *     runner loads, so it is the one that must export `__wacHost` and `__wacAnswered`.
  *
  * Sharing one module across files is safe because wac has no module-level variables: a trap unwinds
@@ -161,7 +161,7 @@ export string aggregateSource(string[] files, string[] texts, string up) {
   bool hosted = false;
   for (i32 i = 0; i < files.len(); i++) {
     // **Parsed, not scanned** — and from the text a test build compiles (`testEntry`), so a test that
-    // takes `Sys` or is `async` is already its `(__WacHost)` adapter here. A scan for
+    // takes `Sys` or is `async` is already its `(Host)` adapter here. A scan for
     // `export string test` missed every `void` test, every verbatim name and every adapter, and a file
     // of nothing else dropped out of the walk without a word (spec ch47).
     DeclaredTest[] tests = declaredTests(testEntry(texts[i]));
@@ -175,7 +175,7 @@ export string aggregateSource(string[] files, string[] texts, string up) {
       string wrapped = n.len() > 3 && n.slice(0, 2) == "@\""
         ? "\{n.slice(0, n.len() - 1)}__f\{i}\"" : "\{n}__f\{i}";
       string call = "\{impl}(\{tests[k].args})";
-      if (tests[k].params.indexOf("__WacHost") >= 0) { hosted = true; }
+      if (tests[k].params.indexOf("Host") >= 0) { hosted = true; }
       wrappers = wrappers + "export string " + wrapped + "(" + tests[k].params + ") { "
                + (tests[k].isVoid ? "\{call}; return \"\"; }\n" : "return \{call}; }\n");
     }
@@ -190,7 +190,8 @@ export string aggregateSource(string[] files, string[] texts, string up) {
     if (spec.len() > 0 && spec.slice(0, 1) != "." && spec.slice(0, 1) != "/") { spec = "./\{spec}"; }
     out = out + "import { \{aliased} } from \"\{spec}\";\n";
   }
-  if (hosted) { out = out + hostImports(false, true) + hostEntries(); }
+  // The wrappers spell the host as the manifest does, `Host`; nothing here declares one of its own.
+  if (hosted) { out = out + hostImports() + "import { Host } from \"std\";\n" + hostEntries(); }
   return "\{out}\n\{wrappers}";
 }
 
@@ -440,7 +441,7 @@ TestExport[] testExportsIn(string manifest) {
 struct TestExport {
   string name;
   /**
-   * **Whether it takes the host** — a test taking `Sys` is its `(__WacHost)` adapter — which is what decides if
+   * **Whether it takes the host** — a test taking `Sys` is its `(Host)` adapter — which is what decides if
    * a run with no grants may call it.
    *
    * A test that names no capability cannot be affected by a grant, so it runs whatever was passed;
@@ -452,7 +453,7 @@ struct TestExport {
   /**
    * **Whether it declares a parameter this runner cannot supply**, which means it wants an *oracle*.
    *
-   * A test taking `fn<i32(i32)>` — or any type that is not `__WacHost` — is asking for an
+   * A test taking `fn<i32(i32)>` — or any type that is not `Host` — is asking for an
    * independent implementation to compare against, and a *host* is what has one. 31 of this
    * repository's wac test files are entirely of that kind and 17 more are mixed. `Module.call` reports
    * such a call as status 3, "a signature this cannot call", and treating that as a failure is the
@@ -466,7 +467,7 @@ struct TestExport {
 }
 
 /**
- * Whether an export declares a parameter that is not `__WacHost`.
+ * Whether an export declares a parameter that is not `Host`.
  *
  * The host is the world this runner can build; anything else is an oracle only a host supplies.
  * A test with no parameters at all answers false, which is the ordinary case.
@@ -480,7 +481,7 @@ bool namesOracle(JsonObject e) {
         match (items.get(i)) {
           Str(bytes): {
             string ty = string.fromBytes(bytes);
-            if (ty != "__WacHost") { return true; }
+            if (!isHostType(ty)) { return true; }
           }
           default: { }
         }
@@ -491,7 +492,13 @@ bool namesOracle(JsonObject e) {
   return false;
 }
 
-/** Whether an export's declared parameters include `__WacHost`. */
+/**
+ * Whether a manifest's type is std's `Host`: `Host`, or `Host__std` in a graph that declares another `Host` — a
+ * user's own is keyed by its file, never by `std`.
+ */
+bool isHostType(string ty) { return ty == "Host" || ty == "Host__std"; }
+
+/** Whether an export's declared parameters include `Host`. */
 bool namesHost(JsonObject e) {
   JsonValue? ps = e.getStr("params");
   if (ps is null) { return false; }
@@ -499,7 +506,7 @@ bool namesHost(JsonObject e) {
     Array(items): {
       for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
-          Str(bytes): { if (string.fromBytes(bytes) == "__WacHost") { return true; } }
+          Str(bytes): { if (isHostType(string.fromBytes(bytes))) { return true; } }
           default: { }
         }
       }

@@ -8,7 +8,7 @@
 //
 // It also has to describe what the host looks up by hand, which since design/system/0013 step 6 is one export:
 // `__wacHost`, whose four parameters are the host's calls and are bound by their type strings, beside
-// `__wacAnswered` and a `main` taking the `__WacHost` it answers.
+// `__wacAnswered` and a `main` taking the `Host` it answers.
 //
 // Host-side until 2026-08-19, `issues/system/0161`. **Built with `wac build`**, which is the producer:
 // it writes the module and the `.json` beside it, from `manifest.wac`. That was `deno run native.ts`
@@ -82,10 +82,10 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   // Asserted, not assumed: an empty manifest satisfies every "no field names a missing dispatcher"
   // check below without describing anything.
   t.isTrue(callbacks.len() > 0, "the manifest lists no callbacks");
-  // **A program describes no struct** (`issues/lang/0398a`): its boundary is the host ABI, whose one value,
-  // `__WacHost`, crosses opaque. The funcref-field property below is checked on a library, which does describe
-  // its structs — `test_a_librarys_funcref_fields_name_its_callbacks`.
-  t.eqI32(structs.len(), 0, "a program's manifest describes structs");
+  // **A program describes one struct, `Host`**: its boundary is the host ABI, whose one value that is. Its fields are
+  // private, so none of them is a funcref the host must wire, and the property below is checked on a library, which
+  // describes its structs — `test_a_librarys_funcref_fields_name_its_callbacks`.
+  t.eqI32(structs.len(), 1, "a program's manifest describes structs");
 
   string[] callbackTypes = string[].filled(callbacks.len(), "");
   for (i32 i = 0; i < callbacks.len(); i++) {
@@ -136,7 +136,7 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   t.isTrue(main >= 0, "the manifest names no `main`");
   if (main >= 0) {
     JsonArray params = arrayOf(exports.get(main).object()!, "params");
-    t.isTrue(params.len() == 1 && params.get(0).text()! == "__WacHost", "`main` does not take the `__WacHost`");
+    t.isTrue(params.len() == 1 && params.get(0).text()! == "Host", "`main` does not take the `Host`");
   }
 
   // The dispatcher naming is a convention shared with `emit.wac` and the Rust host, so it is stated

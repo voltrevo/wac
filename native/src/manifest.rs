@@ -58,6 +58,12 @@ pub struct Export {
 }
 
 impl Manifest {
+    /// The type this module's host value is spelled with in its own signatures: whatever its `__wacHost` answers.
+    /// Not the name `Host`, which a module whose graph declares another `Host` spells `Host__std`.
+    pub fn host_type(&self) -> Option<&str> {
+        self.exports.iter().find(|e| e.name == "__wacHost").map(|e| e.ret.as_str())
+    }
+
     /// The index of the callback signature spelled `ty`, which is how a parameter names the dispatcher
     /// that will serve it.
     pub fn callback_index(&self, ty: &str) -> Option<usize> {

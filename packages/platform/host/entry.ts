@@ -213,7 +213,7 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
       else if (b.sab !== start.sab) b.rebind(start.sab);
       try {
         if (typeof app.main !== "function") {
-          throw new Error("an application must export `main(__WacHost) -> i32`");
+          throw new Error("an application must export `main(Host) -> i32`");
         }
         // The counter array is allocated by this call, not at instantiation: without it every
         // instrumented function traps on its first branch, and the message names the program under

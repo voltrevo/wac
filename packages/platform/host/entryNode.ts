@@ -134,7 +134,7 @@ export function runAsWorkerEntryNode(
     const b = bridgeOf((m as Start).sab);
     try {
       if (typeof app.main !== "function") {
-        throw new Error("an application must export `main(__WacHost) -> i32`");
+        throw new Error("an application must export `main(Host) -> i32`");
       }
       // Allocates the counter array. Without it every instrumented function traps on its first branch
       // with "dereferencing a null pointer" — which is what a Node coverage build did until this line

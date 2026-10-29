@@ -1,0 +1,72 @@
+// A handle holds what it says and no more: nothing reaches the host through it — `issues/system/0372c`.
+//
+// Eleven of std's handles kept the program's host in a public field, so a function handed only a `Clock` could build
+// `Files.host(c.host)` and read files, or ask the host for anything at all (spec ch07 `§wac-authority-narrows-zjku4nc`).
+// The first case is that program, which must not build. The second keeps the next handle from reopening it: every
+// field of std that holds a host is private, but `Sys`'s, which is all of the program's authority anyway.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
+import { ChildEnv, Exec, Files, Launch, Sys } from "std";
+import { flatten } from "core";
+
+static string ESCALATE =
+  "import { Clock, Sys, Files } from \"std\";\n" +
+  "async string onlyAClock(Clock c) {\n" +
+  "  Files f = Files.host(c.host);\n" +
+  "  return string.fromBytes((await f.readFile(\"/etc/hostname\")).orElse(u8[]()));\n" +
+  "}\n" +
+  "export async i32 main(Sys sys) { sys.log(await onlyAClock(sys.clock())); return 0; }\n";
+
+export string test_a_function_handed_a_clock_cannot_reach_the_host(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = scratch(sys.env(), "hostprivate");
+  fs.mkdir(dir, true).wait();
+  fs.writeFile(dir + "/escalate.wac", ESCALATE.toBytes()).wait();
+  Exec r = flatten(sys.procs().exec(binaryPath(sys.env()),
+                                    ["build", "--no-cache", "--allow-read", dir + "/escalate.wac", "-o", dir + "/escalate"],
+                                    u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.eqI32(r.status, 1, "it is refused, not built: " + said);
+  t.isTrue(contains(said, "host"), "and the refusal is about the clock's host: " + said);
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_no_std_handle_but_sys_holds_the_host_in_a_public_field(Sys sys) {
+  T t = T.create();
+  u8[]? src = flatten(sys.files().readFile("std/platform.wac").wait()).ok();
+  t.isTrue(src is not null, "std/platform.wac was read");
+  if (src is null) { return t.report(); }
+  string[] lines = splitLines(string.fromBytes(src!));
+  string owner = "";
+  bool exported = false;
+  i32 seen = 0;
+  string open = "";
+  for (i32 i = 0; i < lines.len(); i++) {
+    string l = lines[i];
+    if (l.indexOf("struct ") == 0 || l.indexOf("export struct ") == 0) {
+      exported = l.indexOf("export ") == 0;
+      string rest = l.slice(l.indexOf("struct ") + 7, l.len());
+      i32 end = rest.indexOf(" ");
+      owner = end < 0 ? rest : rest.slice(0, end);
+      continue;
+    }
+    if (l.indexOf("}") == 0) { owner = ""; continue; }
+    // A field of an exported struct: indented once, a type and a name, a semicolon and nothing else. A struct std does
+    // not export is not a type a program can name, so it is not checked here.
+    if (owner == "" || !exported || l.indexOf("  ") != 0 || l.indexOf("   ") == 0) { continue; }
+    string f = trimmed(l);
+    if (f.indexOf("(") >= 0 || f.indexOf("=") >= 0 || f.indexOf(";") != f.len() - 1) { continue; }
+    bool hostField = f.indexOf("Host ") == 0 || f.indexOf("Host ") == 0;
+    bool privateHost = f.indexOf("private Host ") == 0 || f.indexOf("private Host ") == 0;
+    if (!hostField && !privateHost) { continue; }
+    seen = seen + 1;
+    if (hostField && owner != "Sys") { open = open + " " + owner; }
+  }
+  t.isTrue(seen >= 10, "only \{seen} host fields of exported structs found — the scan is not reading the fields");
+  t.eqStr(open, "", "a host in a public field");
+  return t.report();
+}

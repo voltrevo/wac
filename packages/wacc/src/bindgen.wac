@@ -104,7 +104,7 @@ bool isRefArray(G g, string t) {
 
 /** Whether a value of this type crosses as a reference, which is what may be null. */
 bool isRefBindType(G g, string t) {
-  return t == "string" || endsWith(t, "[]") || typeIndex(g, t) >= 0 || isOpaque(t) || callbackIndex(g, t) >= 0
+  return t == "string" || endsWith(t, "[]") || typeIndex(g, t) >= 0 || callbackIndex(g, t) >= 0
       || outRefIndex(g, t) >= 0;
 }
 
@@ -217,7 +217,6 @@ string underscored(string s) {
 /** The TypeScript type a wac type crosses as. */
 string tsType(G g, string t) {
   if (endsWith(t, "?")) { return tsType(g, t.slice(0, t.len() - 1)) + " | null"; }
-  if (isOpaque(t)) { return "unknown"; }
   i32 n = typeIndex(g, t);
   if (n >= 0) { return className(g, g.tName[n]); }
   i32 c = callbackIndex(g, t);
@@ -486,16 +485,9 @@ bool okType(G g, string t0) {
   string t = endsWith(t0, "?") ? t0.slice(0, t0.len() - 1) : t0;
   // **`T?` is `T` plus null**, and no boxed `i32?` at the boundary.
   if (endsWith(t0, "?") && isScalar(t)) { return false; }
-  if (isScalar(t) || t == "string" || isBulk(t) || typeIndex(g, t) >= 0 || isOpaque(t)) { return true; }
+  if (isScalar(t) || t == "string" || isBulk(t) || typeIndex(g, t) >= 0) { return true; }
   return isRefArray(g, t) && okType(g, t.slice(0, t.len() - 2));
 }
-
-/**
- * The host ABI's own types — `__WacHost` — which cross as an opaque reference: no class, nothing read from them,
- * handed straight back. The compiler binds none of their members (`issues/lang/0398a`), and a host has no use for
- * any: it holds the value `__wacHost` answers and gives it to `main` and `__wacAnswered`.
- */
-bool isOpaque(string t) { return startsWith(t, "__Wac"); }
 
 /**
  * Whether this signature is one this generator can write glue for.

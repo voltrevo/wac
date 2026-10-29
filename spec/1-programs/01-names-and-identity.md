@@ -565,3 +565,12 @@ export i32 headerCount(HttpRequest request) { // functions, parameters and local
   return seen;
 }
 ```
+
+## Names the implementation keeps
+
+A name beginning `__wac` or `__Wac` belongs to the implementation: the entries a host calls a program by
+(`__wacHost`, `__wacAnswered`, `__wacOutstanding`), the names the program adapter writes into an entry, and std's
+plumbing on `Host` and `Sys` (`__wacDrain`, `__wacOn`). A program should not declare one. Nothing refuses it yet, but
+whatever a program declares under such a name may be taken for the implementation's — bindgen leaves a member named
+so unbound ([48](../8-tooling/48-bindgen.md) `§wac-implementation-names-3vq8kzt`) — and the adapter may write one beside it.
+

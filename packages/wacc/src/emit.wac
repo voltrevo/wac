@@ -4938,6 +4938,7 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
   string out = "";
   for (i32 m = 0; m < methods.len(); m++) {
     string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+    if (implementationName(mn)) { continue; }
     i32 at = env.funcAt(owner + "." + mn);
     if (at < 0 || env.funcIndex[at] < 0) { continue; }
     string line = "M\t" + bind + "\t" + mn + "\t" + (methods[m].hasThis ? "this" : "static") +
@@ -6763,7 +6764,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // not — 35 bytes declared, 34 read.
   B forwardExports = B.create();
   i32 forwardExportCount = forwardExportsInto(forwardExports, env);
-  exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + boxHelpers + bindStrHelpers +
+  exports.u32leb(exportCount + 2 + arrHelpers + structHelperExportCount(env, src, lexed, prog, bindStructs, bindStructCount)
+                 + enumHelpers + boxHelpers + bindStrHelpers +
                  env.cbSigCount + covHelpers + trapHelpers + outHelpers + methodExportCount +
                  forwardExportCount);
   code.u32leb(count + helpers);
@@ -7618,13 +7620,23 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     string sn2 = bindStructs[si5];
     if (env.isEnumName(sn2)) { continue; }
     if (!bindableStruct(env, sn2)) { continue; }
-    exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_new", bulkAt);
+    // **A private member is not exported** (spec ch48 `§wac-bind-private-7kpcy8t`): no accessor for a private field,
+    // and no `_new` for a struct with one, which wac itself builds only in that struct's own body. The helpers are
+    // still emitted, so every index after them stands, and nothing exported reaches them, so they are dropped
+    // with the rest of what nothing reaches. Until 2026-10-29 the glue left them out and the module exported them, so
+    // a host could read and rewrite a `Host`'s private state, or build one.
+    string hidden2 = privateMembersOf(env, src, lexed, prog, sn2);
+    if (hidden2 == " ") {
+      exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_new", bulkAt);
+    }
     bulkAt = bulkAt + 1;
     i32 sfc2 = env.fieldCountOf(sn2);
     for (i32 f = 0; f < sfc2; f++) {
       string fn2 = env.fieldNameAt(sn2, f);
-      exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_get_" + fn2, bulkAt);
-      exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_set_" + fn2, bulkAt + 1);
+      if (hidden2.indexOf(" " + fn2 + " ") < 0) {
+        exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_get_" + fn2, bulkAt);
+        exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_set_" + fn2, bulkAt + 1);
+      }
       bulkAt = bulkAt + 2;
     }
   }
@@ -20792,6 +20804,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
           string bind = bindNameOf(bindTypeSpelling(env, inst, tplPath));
           for (i32 m = 0; m < methods.len(); m++) {
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+            if (implementationName(mn) || methods[m].isPrivate) { continue; }
             i32 at = env.funcAt(inst + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
             out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bind + "_" + mn);
@@ -20823,6 +20836,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
           if (nameKeyOf(env, src, lexed, nameTok) != owner) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+            if (implementationName(mn) || methods[m].isPrivate) { continue; }
             i32 at = env.funcAt(owner + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
             out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bindKeyOf(env, owner) + "_" + mn);
@@ -20836,6 +20850,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
           if (nameKeyOf(env, src, lexed, nameTok) != owner) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+            if (implementationName(mn) || methods[m].isPrivate) { continue; }
             i32 at = env.funcAt(owner + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
             out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bindKeyOf(env, owner) + "_" + mn);
@@ -21927,6 +21942,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
               // A method with letters of its own has no binding — the host cannot say what they are — and naming
               // its types with them unbound makes instances of a letter (`Clock.within<A, E>`'s `Result<A, …>`).
               if (methods[m].typeParams.len() > 0) { continue; }
+              if (implementationName(tokenTextOf(src, lexed, methods[m].nameTok))) { continue; }
               n = noteBindStruct(env, out, n,
                                  baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
               for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
@@ -21940,6 +21956,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
               if (methods[m].typeParams.len() > 0) { continue; }
+              if (implementationName(tokenTextOf(src, lexed, methods[m].nameTok))) { continue; }
               n = noteBindStruct(env, out, n,
                                  baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
               for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
@@ -21957,6 +21974,13 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
   }
   return n;
 }
+
+/**
+ * A name the implementation keeps for itself — `__wac…` (spec ch48 `§wac-implementation-names-3vq8kzt`): the program
+ * adapter's entries, std's plumbing on `Host` and `Sys`. Never bound: a host has no use for one, and following its
+ * signature bound the scheduler behind `Host`. `issues/lang/0398a`.
+ */
+bool implementationName(string name) { return startsWith(name, "__wac"); }
 
 /** Whether `name` is among the first `n` of `xs`. */
 bool onBindList(string[] xs, i32 n, string name) {
@@ -22096,10 +22120,6 @@ i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
   // `bindNameFor` can, a `Vec<Setting>` crossing an exported signature needs its helpers like any
   // other struct — `packages/git`, `packages/box` and `packages/fs` are all this [issue 0102].
   if (name == "" || !env.isStructName(name)) { return n; }
-  // **The host ABI's own types cross opaque.** `__WacHost` is handed to a host and handed straight back
-  // (design/system/0013 step 6); no host reads its fields or calls its methods, and following them bound
-  // the scheduler's queues and maps behind it. `issues/lang/0398a`.
-  if (startsWith(name, "__Wac")) { return n; }
   for (i32 i = 0; i < n; i++) { if (out[i] == name) { return n; } }
   // **A type that crosses and is not written down does not fail here.** It fails in the generated
   // glue, as a class the host asks for and cannot find: `boxsh` filled this table at 64 and lost
@@ -22129,6 +22149,24 @@ bool bindableStruct(Env env, string name) {
   // — `issues/lang/0095`, fixed at the root in `collectBindStructs` — and the guard stays because a
   // disagreement is exactly the shape that must never reach the type section.
   return env.fieldCountOf(name) == countStructFields(env, name);
+}
+
+/**
+ * How many struct helpers are exported, which is fewer than are emitted: no accessor for a private field, and no
+ * `_new` for a struct with one (spec ch48 `§wac-bind-private-7kpcy8t`). The same rule as the loop that names them.
+ */
+i32 structHelperExportCount(Env env, u8[] src, Lexed lexed, Program prog, string[] bindStructs, i32 bindStructCount) {
+  i32 n = 0;
+  for (i32 si = 0; si < bindStructCount; si++) {
+    string sn = bindStructs[si];
+    if (env.isEnumName(sn) || !bindableStruct(env, sn)) { continue; }
+    string hidden = privateMembersOf(env, src, lexed, prog, sn);
+    if (hidden == " ") { n = n + 1; }
+    for (i32 f = 0; f < env.fieldCountOf(sn); f++) {
+      if (hidden.indexOf(" " + env.fieldNameAt(sn, f) + " ") < 0) { n = n + 2; }
+    }
+  }
+  return n;
 }
 
 /** How many helpers a struct needs: one constructor, and a getter and setter per field. */

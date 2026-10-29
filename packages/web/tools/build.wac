@@ -889,7 +889,7 @@ export string moduleSide() {
       };
 
       // A module loaded into this worker: driven, given a host of its own, and called by name — the native host's
-      // `call_loaded`. An export taking nothing, an `i32` or its `__WacHost`, and answering nothing, an `i32` or a
+      // `call_loaded`. An export taking nothing, an `i32` or its `Host`, and answering nothing, an `i32` or a
       // `string`: status 0 with the answer, 1 for a trap with what it said, 2 for no such export, 3 for one this
       // cannot call.
       const wacLoad = (me, wasm, grants) => {
@@ -906,9 +906,11 @@ export string moduleSide() {
             const sig = d.manifest.exports.find((e) => e.name === name);
             if (sig === undefined || typeof d.app[name] !== "function") return [2, "no export named " + name, 0];
             const takesInt = sig.params.length === 1 && sig.params[0] === "i32";
-            const takesHost = sig.params.length === 1 && sig.params[0] === "__WacHost";
+            // The host value is whatever this module's `__wacHost` answers: `Host`, or `Host__std` beside another `Host`.
+            const hostType = (d.manifest.exports.find((e) => e.name === "__wacHost") || {}).ret;
+            const takesHost = sig.params.length === 1 && sig.params[0] === hostType;
             if (sig.params.length > 0 && !takesInt && !takesHost) return [3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0];
-            if (takesHost && host === null) return [3, name + " takes a __WacHost and this module exports no __wacHost", 0];
+            if (takesHost && host === null) return [3, name + " takes a Host and this module exports no __wacHost", 0];
             const ret = sig.ret === "" ? "void" : sig.ret;
             if (ret !== "void" && ret !== "i32" && ret !== "string") return [3, name + " answers " + ret, 0];
             let out;

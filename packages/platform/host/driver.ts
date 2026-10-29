@@ -10,7 +10,7 @@
 //
 // ## Why this is smaller than it sounds
 //
-// Everything named — `__WacHost`, or a struct an export answers — is an **opaque reference the host
+// Everything named — `Host`, or a struct an export answers — is an **opaque reference the host
 // passes straight back**; it never looks inside one. So what needs conversion is the scalars,
 // `string`, the arrays, and a function, which becomes a funcref through the module's own helper.
 

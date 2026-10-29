@@ -422,7 +422,7 @@ Deno.test("a real program runs: built, its host made, `main` called, answer conv
 
     // And `main`, whose signature is read from the manifest like everything else.
     const entry = manifest.exports.find((e) => e.name === "main")!;
-    assertEquals(entry.params, ["__WacHost"], "main's signature is not what a driver expects");
+    assertEquals(entry.params, ["Host"], "main's signature is not what a driver expects");
     const code = fromWasm(bound, shapeOf(entry.ret), (exports["main"] as CallableFunction)(host));
 
     // **21, not 0.** The arithmetic is in the probe so that calling the wrong export, or a host that

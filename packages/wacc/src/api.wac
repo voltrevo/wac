@@ -4369,7 +4369,7 @@ bool isBearingRoot(string name) { return rootIndex(name) >= 0; }
  * several is reported through the whole capability.
  */
 string[] bearingRoots() {
-  return ["Sys", "__WacHost", "Files", "Output", "Input", "Clock", "Random", "Env", "Net", "Listener", "Socket",
+  return ["Sys", "Host", "Files", "Output", "Input", "Clock", "Random", "Env", "Net", "Listener", "Socket",
           "Datagrams", "Procs", "Child", "Modules", "Module"] as string[];
 }
 
