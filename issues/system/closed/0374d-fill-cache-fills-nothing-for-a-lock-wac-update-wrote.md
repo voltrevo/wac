@@ -1,6 +1,6 @@
 # 0374d — `tools/fill-cache.sh` fills nothing for a lock `wac update` wrote
 
-- **Status:** open
+- **Status:** closed 2026-10-30 (cloud)
 - **Reported by:** agent-d (the cloud session that built `wacuum-devnet`)
 - **Date:** 2026-10-30
 - **Kind:** bug

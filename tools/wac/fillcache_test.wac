@@ -1,0 +1,106 @@
+// `tools/fill-cache.sh` reads the pairs a lock pins, whatever the lock's lines — `issues/system/0374d`.
+//
+//     wac test --allow-read --allow-write --allow-run tools/wac/fillcache_test.wac
+//
+// **Through `--list`, so nothing is fetched.** The script's job is to hand `git` each `<url> <commit>`, and
+// the part that was wrong was finding them: it read a line at a time for a `"git"` and then a `"commit"`,
+// which only this repository's hand-written lock satisfies. A lock `wac update` wrote — one key per line —
+// gave nothing and exit 0, and two entries on one line gave the last. Each shape below is one the old
+// pattern got wrong or never met, and `--list` answers what the fetch loop would be given.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { scratch } from "../../packages/wactest/src/host.wac";
+import { Env, Exec, Files, Launch, ChildEnv, Procs, Sys } from "std";
+import { flatten } from "core";
+
+struct Listed {
+  i32 status;
+  string out;
+  string err;
+}
+
+Listed listed(Files fs, Procs procs, string dir, string name, string lock) {
+  string path = "\{dir}/\{name}";
+  fs.writeFile(path, lock.toBytes()).wait();
+  auto rRan = flatten(procs.exec("/bin/sh", ["tools/fill-cache.sh", "--list", path], u8[](), ChildEnv.inherited(),
+                                 Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  if (r is null) { return Listed(-1, "", "\{rRan.err()!}"); }
+  return Listed(r!.status, string.fromBytes(r!.stdout), string.fromBytes(r!.stderr));
+}
+
+static string A = "https://x.example/a-b.git";
+static string B = "https://x.example/b.git";
+static string CA = "1111111111111111111111111111111111111111";
+static string CB = "2222222222222222222222222222222222222222";
+
+export string test_a_lock_wac_update_wrote_is_read(Sys sys) {
+  Files fs = sys.files();
+  T t = T.create();
+  string dir = scratch(sys.env(), "fillcache-update");
+  fs.mkdir(dir, true).wait();
+  // `packages/wacpkg/src/lock.wac`'s `writeLock`: a key per line.
+  Listed l = listed(fs, sys.procs(), dir, "wac.lock",
+                    "{\n  \"imports\": {\n    \"a\": {\n      \"git\": \"\{A}\",\n      \"ref\": \"master\",\n"
+                    + "      \"commit\": \"\{CA}\"\n    }\n  }\n}\n");
+  t.eqI32(l.status, 0, "it exits 0 — \{l.err}");
+  t.eqStr(l.out, "\{A} \{CA}\n", "and finds the one import");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_two_entries_on_one_line_are_two_imports(Sys sys) {
+  Files fs = sys.files();
+  T t = T.create();
+  string dir = scratch(sys.env(), "fillcache-oneline");
+  fs.mkdir(dir, true).wait();
+  // A URL with a hyphen in it, too: the script marks an import with no commit as a line holding `-` alone,
+  // and a check looser than the whole line would refuse this lock.
+  Listed l = listed(fs, sys.procs(), dir, "wac.lock",
+                    "{ \"imports\": { \"a\": { \"git\": \"\{A}\", \"commit\": \"\{CA}\" }, "
+                    + "\"b\": { \"git\": \"\{B}\", \"commit\": \"\{CB}\" } } }\n");
+  t.eqI32(l.status, 0, "it exits 0 — \{l.err}");
+  t.eqStr(l.out, "\{A} \{CA}\n\{B} \{CB}\n", "and finds both, not the last alone");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_keys_may_come_in_either_order(Sys sys) {
+  Files fs = sys.files();
+  T t = T.create();
+  string dir = scratch(sys.env(), "fillcache-order");
+  fs.mkdir(dir, true).wait();
+  Listed l = listed(fs, sys.procs(), dir, "wac.lock",
+                    "{ \"imports\": { \"b\": { \"commit\": \"\{CB}\", \"git\": \"\{B}\" } } }\n");
+  t.eqStr(l.out, "\{B} \{CB}\n", "the commit before the url is still this url's commit");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_an_import_with_no_commit_is_said_and_fails(Sys sys) {
+  Files fs = sys.files();
+  T t = T.create();
+  string dir = scratch(sys.env(), "fillcache-nocommit");
+  fs.mkdir(dir, true).wait();
+  Listed l = listed(fs, sys.procs(), dir, "wac.lock",
+                    "{ \"imports\": { \"b\": { \"git\": \"\{B}\", \"ref\": \"master\" } } }\n");
+  t.eqI32(l.status, 1, "a lock wac update has not finished is a failure, not nothing to do");
+  t.isTrue(l.err.indexOf("\{B} has no commit") >= 0, "and names the import — got \"\{l.err}\"");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_this_repository_s_own_lock_still_reads(Sys sys) {
+  T t = T.create();
+  auto rRan = flatten(sys.procs().exec("/bin/sh", ["tools/fill-cache.sh", "--list"], u8[](), ChildEnv.inherited(),
+                                       Launch.plain()).wait());
+  Exec? r = rRan.ok();
+  t.isTrue(r is not null, "the script ran");
+  if (r is null) { return t.report(); }
+  t.eqI32(r!.status, 0, "exit 0 — \{string.fromBytes(r!.stderr)}");
+  // Not the exact pairs, which change whenever a dependency is repinned: that there are some, each a URL
+  // and a full commit.
+  string out = string.fromBytes(r!.stdout);
+  t.isTrue(out.indexOf("https://") == 0 && out.len() > 50, "at least one `<url> <commit>` — got \"\{out}\"");
+  return t.report();
+}
