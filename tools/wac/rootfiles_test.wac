@@ -63,7 +63,8 @@ string[] expected() {
     "deno.json",
     "deno.lock",
     "lib.wac",           // the repository as a dependency: a namespace per package
-    "wac.json5",         // its manifest, which names `lib.wac` as the entry
+    "wac.json5",         // its manifest, which names `lib.wac` as the entry and `web` as a dependency
+    "wac.lock",          // the commit `web` is pinned at, which `tools/fill-cache.sh` fetches
     "tasks.json5"       // the named commands; `wac task` reads it, and `deno.json` held them until 2026-08-27
   ];
 }

@@ -119,7 +119,7 @@ export string test_the_unsupplied_import_is_itself_reported() {
 /**
  * A member named by one of `core`'s symbols, in a file checked alone. No module of `core` is in hand to
  * declare the symbol, and `[toString]`, `[operators.add]` and `[markup.text]` were each refused as a symbol
- * nothing declared — so `wac test`'s walk of the repository reported `packages/web/src/view.wac`, which
+ * nothing declared — so `wac test`'s walk of the repository reported `web`'s `src/view.wac` (then `packages/web`), which
  * builds clean, the day its `Ui` implemented `[markup.component]`.
  */
 export string test_a_member_named_by_a_core_symbol_is_not_an_undefined_name() {

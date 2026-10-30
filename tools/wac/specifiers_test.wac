@@ -65,10 +65,16 @@ bool mapped(Files fs, string file, string spec) {
   while (true) {
     i32 cut = -1;
     for (i32 i = 0; i < dir.len(); i++) { if (dir.slice(i, i + 1) == "/") { cut = i; } }
-    if (cut < 0) { return false; }
-    dir = dir.slice(0, cut);
+    // **The root is the last directory asked, not one short of it.** The walk's paths are relative, so the
+    // directory above `packages` has no slash to cut at; this returned there, and the one manifest that maps
+    // anything — the root's, since `web` left — was never read, so all 29 imports of `"web"` were refused.
+    bool root = cut < 0;
+    dir = root ? "." : dir.slice(0, cut);
     u8[]? m = flatten(fs.readFile(dir + "/wac.json5").wait()).ok();
-    if ((m is null)) { continue; }
+    if ((m is null)) {
+      if (root) { return false; }
+      continue;
+    }
     Manifest mf = readManifest(m!);
     return mf.ok && matchSpecifier(mf, spec).found;
   }

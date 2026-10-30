@@ -612,6 +612,15 @@ string[][] gone() {
     // Each of these is a record of something done or measured against them on a particular day:
     // a design's measurement table and its step log, a span, a mutation, a false-alarm count, a
     // stale-host failure. Rewriting them to name a file that did not exist then is the wrong direction.
+    // **`packages/web` became the `web` repository (d10f025ce).** The three design notes decided the page's
+    // shape while it lived here and name its files where they were; `harness/buildPage.ts` names
+    // `tools/build.wac` *in `web`*, which is that repository's path and only looks like one of this one's.
+    ["design/system/0011-programs-in-a-page-without-shared-memory.md", "packages/web/"],
+    ["design/system/0012-a-page-is-a-tree-of-handles.md", "packages/web/"],
+    ["design/system/0015-a-page-runs-a-module-it-is-given.md", "packages/web/"],
+    ["harness/buildPage.ts", "tools/build.wac"],
+    // And the one the comment above names, which is the rule applied to its own file.
+    ["tools/wac/links_test.wac", "tools/build.wac"],
     ["design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "packages/platform/src/frame.wac"],
     ["design/lang/0014-async-and-await-over-the-tickets-that-already-exist.md", "packages/platform/test/wac/asynclower_test.wac"],
     ["design/system/0001-a-self-contained-system.md", "packages/fs/src/remote.wac"],

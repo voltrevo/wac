@@ -1380,7 +1380,7 @@ export async i32 main(Sys sys) {
     string[] imports = importable(env, walked);
     // **Files in a project of their own go `beside` too.** A directory with its own `wac.json5` is a
     // project nothing outside it may reach into, so an aggregate in this project's `.cache/` importing
-    // `packages/web/test/wac/page_test.wac` was refused — *reaches a file inside the nested project*
+    // `web`'s `test/wac/page_test.wac`, when it was `packages/web` here, was refused — *reaches a file inside the nested project*
     // — and the suite, which runs `wac test` from the repository's root, could not run that package's
     // tests at all. Written beside them, the aggregate is inside their project and imports them there.
     if (imports.len() > 0 && walked.len() > 0) {

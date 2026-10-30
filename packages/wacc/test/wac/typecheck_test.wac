@@ -360,7 +360,7 @@ export string test_rung3_we_report_nothing_for_a_program_that_is_correct() {
 /**
  * A lambda assigned to a field of a value whose type this file cannot see has no slot to be wrong
  * about — the rule `C.expectedUnknown` already keeps for an argument to a callee it cannot see.
- * `packages/web/test/wac/system_test.wac` assigns its fake `System`'s fields this way, and this slice
+ * `web`'s `test/wac/system_test.wac` assigns its fake `System`'s fields this way, and this slice
  * said *nothing here wants a function* six times about a file that compiles.
  */
 export string test_a_lambda_into_a_field_of_an_unseen_type_is_not_reported() {
