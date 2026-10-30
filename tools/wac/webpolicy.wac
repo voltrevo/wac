@@ -12,7 +12,7 @@ export i32 main(Sys sys) {
   string[] a = sys.args();
   string which = a.len() > 0 ? a[a.len() - 1] : "";
   TestDoc doc = TestDoc.create();
-  Page page = Page.create(doc.dom());
+  Page page = doc.page();
   if (which == "html-handler") { htmlOf(el("img", "onerror", "alert(1)")); }
   if (which == "html-name") { htmlOf(el("img src=x onerror=alert(1) x", "alt", "")); }
   if (which == "html-url") { htmlOf(el("a", "href", " JavaScript:alert(1)")); }
