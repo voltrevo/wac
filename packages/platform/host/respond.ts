@@ -57,8 +57,9 @@ import {
   SUBMIT_SEQ,
 } from "./layout.ts";
 import { FAULT_OTHER, faultedBytes, faultOf } from "./faults.ts";
+import { OP } from "./ops.ts";
 import { type Scheduler, scheduler } from "./schedule.ts";
-import { describeSlots } from "./call.ts";
+import { describeSlots, opName } from "./call.ts";
 
 /** What a capability does with a request payload. May be async; that is the point. */
 export type Handler = (payload: Uint8Array) => Uint8Array | Promise<Uint8Array>;
@@ -92,7 +93,11 @@ export function serveHostCalls(
   b: Bridge,
   handlers: Handlers,
   opts: { signal?: AbortSignal; scheduler?: Scheduler } = {},
-): { stats(): { running: boolean; sweeps: number }; stop(): void; done: Promise<void> } {
+): {
+  stats(): { running: boolean; sweeps: number; handling: string };
+  stop(): void;
+  done: Promise<void>;
+} {
   let running = true;
 
   // The scheduler is shared by every bridge in this process, because the orderings worth exploring are
@@ -110,6 +115,7 @@ export function serveHostCalls(
   // that *died* leaves it in, and a slot table with no note would read as an ordinary busy bridge.
   sched.register(bridgeId, () =>
     `${running ? "" : "responder stopped — "}${describeSlots(b)}` +
+    (handling.size > 0 ? ` handling ${describeHandling()}` : "") +
     (outbox.length > 0 ? ` and ${outbox.length} answer(s) waiting for a free slot` : "")
   );
 
@@ -126,6 +132,21 @@ export function serveHostCalls(
    * never waits on this.
    */
   const outbox: { id: number; status: number; body: Uint8Array }[] = [];
+  /**
+   * The calls whose handlers have not come back, by id: what each one is, for a stall report.
+   *
+   * **The slot table cannot say this any more.** A request's slot goes back the moment it is read, so a
+   * worker parked on a `RECV` that is never answered leaves every slot free — and a report built from the
+   * slots alone reads "no slot in use", which is the picture of a program busy computing, not of one
+   * waiting. This side is the only one that still knows the call exists.
+   */
+  const handling = new Map<number, string>();
+  /** `RECV(h=0) × 1`, tallied by kind, oldest kind first. */
+  const describeHandling = (): string => {
+    const tally = new Map<string, number>();
+    for (const w of handling.values()) tally.set(w, (tally.get(w) ?? 0) + 1);
+    return [...tally].map(([w, n]) => `${w} × ${n}`).join(", ");
+  };
 
   /**
    * Write a message into `slot`, in a pooled buffer when one is free and inline when not, and publish it.
@@ -254,6 +275,12 @@ export function serveHostCalls(
     // capability does not hold up the others. A call the worker has given up on is answered all the same,
     // and the worker drops the answer as it drains it — the host is not told, because there is nothing of
     // the bridge's for it to free.
+    // The handle for the stream operations, as `describeSlots` gives it: `RECV` on standard input and
+    // on a child's output are different waits with different causes.
+    const handle = (op === OP.RECV || op === OP.SEND) && whole.length >= 4
+      ? `(h=${new DataView(whole.buffer, whole.byteOffset, 4).getInt32(0, true)})`
+      : "";
+    handling.set(id, `${opName(op)}${handle}`);
     void (async () => {
       try {
         answer(id, STATUS_OK, await h(whole));
@@ -263,6 +290,8 @@ export function serveHostCalls(
         // Classified *here*, once, rather than at each of the forty handlers: `faultOf` reads the
         // host's own exception, and every capability's failure gains a category for free. wac-mono 0062.
         answer(id, STATUS_ERR, faultedBytes(faultOf(e), e instanceof Error ? e.message : String(e)));
+      } finally {
+        handling.delete(id);
       }
     })();
   };
@@ -353,9 +382,12 @@ export function serveHostCalls(
     throw e;
   });
   return {
-    /** Whether the loop is still going, and how many sweeps it has made. For a caller narrating a stall. */
+    /**
+     * Whether the loop is still going, how many sweeps it has made, and which handlers have not come
+     * back ("" for none). For a caller narrating a stall.
+     */
     stats() {
-      return { running, sweeps };
+      return { running, sweeps, handling: describeHandling() };
     },
     stop() {
       running = false;

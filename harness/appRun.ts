@@ -208,7 +208,7 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
       // And the responder, because "the worker is waiting" and "the host stopped answering" are the two
       // halves of a stall and the slot table alone cannot tell them apart: a sweep count that stops
       // moving says the loop is parked, and `running: false` says it is gone.
-      let responder: { stats(): { running: boolean; sweeps: number } } | undefined;
+      let responder: { stats(): { running: boolean; sweeps: number; handling: string } } | undefined;
       const child = spawnChild(
         source,
         args.map((a) => enc.encode(a)),
@@ -309,7 +309,8 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
         try {
           const slots = describeSlots(bridge);
           const stats = responder?.stats();
-          const host = stats === undefined ? "" : ` host: running=${stats.running} sweeps=${stats.sweeps}`;
+          const host = stats === undefined ? "" : ` host: running=${stats.running} sweeps=${stats.sweeps}` +
+            (stats.handling === "" ? "" : ` handling ${stats.handling}`);
           // The child's own streams, because "the parent is blocked reading" and "the stream was never
           // ended" are the same picture from the slot table alone — which is where 0082's hunt ran out
           // of evidence.
@@ -317,8 +318,12 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
           console.error(`wac: ${entry} still running: ${slots}${host}${streams}`);
           const state = `${slots}${host}`;
           // "Nothing in use" is not a deadlock — a child can legitimately be busy computing with no
-          // call outstanding, and this must not fail `seq 1 200000000`.
-          frozen = state === lastState && !slots.startsWith("no slot in use") ? frozen + 1 : 0;
+          // call outstanding, and this must not fail `seq 1 200000000`. **Nothing in use means no slot
+          // and no handler**: since `issues/system/0373d` a call holds a slot only until the host reads
+          // it, so a child parked on a `RECV` nobody answers shows a free ring and a handler that never
+          // came back.
+          const idle = slots.startsWith("no slot in use") && (stats === undefined || stats.handling === "");
+          frozen = state === lastState && !idle ? frozen + 1 : 0;
           lastState = state;
           if (frozen >= 2 && deadlocked !== undefined) {
             // The scheduler's last choices, when it is on: with an ordering that is ours rather than the

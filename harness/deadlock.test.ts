@@ -39,7 +39,7 @@ Deno.test("a child waiting for an answer that never comes is reported, not waite
     let said = "";
     try {
       // `read` blocks on standard input, and `endStdin: false` means nothing will ever release it —
-      // the shell submits `RECV(h=0)` and waits for bytes or an end that are not coming. That is the
+      // the shell submits `READ_STDIN` and waits for bytes or an end that are not coming. That is the
       // same state the corpus reaches about once in fifty runs on an idle machine, built deliberately.
       await sh.run(["-c", "read line; echo $line"], { endStdin: false });
       throw new Error("the run returned instead of reporting a deadlock");
@@ -51,7 +51,9 @@ Deno.test("a child waiting for an answer that never comes is reported, not waite
     assertEquals(said.includes("0082"), true, `the message does not say where to read: ${said}`);
     // It names what was outstanding, which is the whole point — a failure that says only "deadlocked"
     // leaves the next person exactly where this issue started.
-    assertEquals(/RECV|running:/.test(said), true, `the message does not name the wait: ${said}`);
+    // Since `issues/system/0373d` the call holds no slot while its handler runs, so the name comes from
+    // the host's side — `handling READ_STDIN × 1` — rather than a `running:` slot.
+    assertEquals(/READ_STDIN|RECV/.test(said), true, `the message does not name the wait: ${said}`);
     assertEquals(took < 10_000, true, `took ${Math.round(took)}ms to conclude`);
   } finally {
     Deno.env.delete("WAC_STALL_MS");
