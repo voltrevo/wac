@@ -5,6 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0374d](open/0374d-fill-cache-fills-nothing-for-a-lock-wac-update-wrote.md) | `tools/fill-cache.sh` matches an entry's `"git"` and `"commit"` on one line, and `wac update`'s `writeLock` puts them on separate lines, so for a lock `wac update` wrote it fetches nothing and exits 0; with two imports on one line it fetches only the last. The gate never sees it because this repository's `wac.lock` is formatted by hand | bug | wrong answer — exits 0 having fetched nothing |
+| [0373d](open/0373d-a-server-on-the-javascript-hosts-stops-for-good-at-about-130-idle-connections.md) | A server on the Node host stops for good — accepts, timers, logging — once about 130 connections each hold a pending `recv`, and stays stopped after they close: `layout.ts`'s 128-slot ring parks the next submission for ever, as its comment says. Anyone who can open 130 TCP connections stops a wac server; `wacuum`'s p2p and RPC ports do it. A 40-line repro inside | bug | hang — the whole program, permanently |
 | [0371a](open/0371a-a-stopped-spawn-self-child-never-exits-on-the-v8-host.md) | `wac run packages/platform/example/stop.wac` hangs on v8: after `kid.stop()` the child's `exit()` never resolves; the pre-port `Cli` version hangs the same way | bug | hang |
 | [0370a](closed/0370a-cancelling-a-host-ticket-another-wait-already-settled-leaks-its-resource.md) | Any wait that dispatches settles every registered host ticket, so a `connect` abandoned after its answer arrived holds a `Socket` nobody has and `cancel` does nothing: the peer holds the line. Blocks deleting `Cli` — `lostbytes_test`'s connect arm stays on it | bug | wrong answer |
 | [0369c](open/0369c-a-package-cannot-use-a-sibling-package-in-its-own-repository.md) | Only `web` has a `wac.json5`, so a project outside the repo cannot depend on `gzip`, `zstd`, `crypto`, `json` or `fmt` — the archive explorer vendored 25 files for it. Giving them manifests means rewriting 400 relative imports in 259 files into directory imports, and it leaves `json` with no legal way to use `fmt`: the compiler refuses a package that reaches a sibling package, by file or by directory. Options are a `path:` mapping, a git import of the repo itself, or moving `json`'s two `fmt` functions into `core`. **Operator, 2026-10-28: needs further thought** | design decision | not implemented — packages outside `web` cannot be dependencies |
@@ -135,7 +137,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-351 issues, 254 closed.
+353 issues, 254 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
