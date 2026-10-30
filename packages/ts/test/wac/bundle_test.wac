@@ -88,6 +88,43 @@ export string test_an_imported_name_is_read_through_its_module() {
   return t.report();
 }
 
+export string test_an_import_inside_a_template_substitution_is_read_through_its_module() {
+  T t = T.create();
+  // A template literal is one token to the lexer, and its `${…}` used to be passed over whole — so
+  // `${base(op)}` came out bare, in a scope with no `base` in it, and threw the first time it ran.
+  // Nested templates, a member called the same, an object key and shorthand are the cases a rewrite
+  // inside has to get right as well as the plain one.
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
+  texts[0] = ("import { base } from \"./b.ts\";\n"
+    + "export const go = (o, op) => `x${base(op)} ${`in ${base(2)}`} ${o.base} ${{ base: 1 }.base} ${JSON.stringify({ base })}`;\n").toBytes();
+  texts[1] = "export function base(n) { return n; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.eqStr(r.error, "", "it bundles");
+  if (r.error != "") { return t.report(); }
+  string out = string.fromBytes(r.out);
+  t.isTrue(out.indexOf(".base(op)}") >= 0 && out.indexOf("${base(op)}") < 0,
+           "the import in the substitution reads through its module — got:\n\{out}");
+  t.isTrue(out.indexOf(".base(2)}`}") >= 0 && out.indexOf("${base(2)}") < 0,
+           "and in a template nested inside one — got:\n\{out}");
+  t.isTrue(out.indexOf("${o.base}") >= 0, "a member of the same name is left alone — got:\n\{out}");
+  t.isTrue(out.indexOf("{ base: 1 }.base") >= 0, "and so is a key — got:\n\{out}");
+  t.isTrue(out.indexOf("({ base: $") >= 0, "and shorthand keeps its key — got:\n\{out}");
+  return t.report();
+}
+
+export string test_a_static_template_use_across_a_cycle_is_named() {
+  T t = T.create();
+  // The cycle rule holds inside a template too: this evaluates `fromB` while `a.ts` initialises.
+  string[] paths = ["a.ts", "b.ts"];
+  u8[][] texts = u8[][].filled(2, u8[]());
+  texts[0] = "import { fromB } from \"./b.ts\";\nexport function fromA() { return \"A\"; }\nexport const eager = `${fromB()}`;\n".toBytes();
+  texts[1] = "import { fromA } from \"./a.ts\";\nexport function fromB() { return fromA() + \"B\"; }\n".toBytes();
+  Bundled r = bundle(paths, texts, "a.ts");
+  t.isTrue(r.error.indexOf("fromB") >= 0 && r.error.indexOf("a.ts") >= 0, "it refuses, naming both — got: \{r.error}");
+  return t.report();
+}
+
 export string test_a_cycle_is_allowed_when_nothing_static_crosses_it() {
   T t = T.create();
   // Mutually recursive modules, each using the other only inside a function.

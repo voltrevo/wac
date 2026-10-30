@@ -32,8 +32,8 @@
 
 import { Vec } from "core";
 import {
-  Lexed, kEof, kIdent, kPunct, kStr,
-  kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
+  Lexed, kEof, kIdent, kPunct, kStr, kTemplate,
+  kindAt, lenAt, lex, lineAt, colAt, scanString, scanTemplate, startAt, textAt, tokenCount,
 } from "./lex.wac";
 
 /** The bundle, or the first thing that stopped it. */
@@ -198,6 +198,8 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
   Vec<string> local = Vec.create();
   Vec<string> reads = Vec.create();
   Vec<i32> fromModule = Vec.create();
+  /** 1 where reading the import before every module exists would cross a cycle. */
+  Vec<i32> crosses = Vec.create();
   for (i32 i = 0; i < imports.len(); i++) {
     if (isExternal(imports[i].spec)) { continue; }
     i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
@@ -205,6 +207,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
       local.push(imports[i].names[k + 1]);
       reads.push("\{ns[to]}.\{imports[i].names[k]}");
       fromModule.push(to);
+      crosses.push(crossesBackEdge(backFrom, backTo, m, to) ? 1 : 0);
     }
   }
 
@@ -286,6 +289,23 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
       continue;
     }
 
+    // **A template literal is one token, and its substitutions are code.** `${opName(op)}` reads an
+    // import as surely as `opName(op)` does, and skipping the token left a bare `opName` in a scope
+    // where only `$m5.opName` exists — a ReferenceError the first time that line ran, which for a
+    // stall report is the first time anything wedged. `issues/system/0373d`'s follow-up met it on Node.
+    if (kindAt(l, i) == kTemplate()) {
+      string tpl = textAt(src, l, i);
+      string r = inTemplate(tpl.toBytes(), local, reads, crosses, fnDepth == 0 && arrowsPending == 0);
+      if (r.len() >= 6 && r.slice(0, 6) == "ERROR:") {
+        return "ERROR:\{paths[m]}:\{lineAt(l, i)}:\{colAt(l, i)}: \{r.slice(6, r.len())}";
+      }
+      if (r != tpl) {
+        copyThrough(out, src, written, s);
+        pushString(out, r);
+        written = e;
+      }
+      continue;
+    }
 
     if (kindAt(l, i) != kIdent()) { continue; }
     string w = textAt(src, l, i);
@@ -359,6 +379,125 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
     writeOver(b, imports[i].from, "const \{imports[i].namespace} = \{ns[to]};");
   }
   return string.fromBytes(b) + "\nreturn { " + exportList(src, local, reads) + " };";
+}
+
+/**
+ * A template literal with the imports in its substitutions read through their modules, or `ERROR:…`.
+ *
+ * The literal text is copied as it is; each `${…}` is lexed on its own and given the rules the module
+ * body gets — not after a `.`, not as a key, shorthand expanded — and a template nested inside one is
+ * handled by coming back here. `atInit` says the template is evaluated as the module initialises, where
+ * a read across a cycle is refused, as it is outside a template.
+ */
+string inTemplate(u8[] t, Vec<string> local, Vec<string> reads, Vec<i32> crosses, bool atInit) {
+  Vec<i32> out = Vec.create();
+  i32 n = 0;
+  while (n < t.len()) {
+    i32 c = t[n] as i32;
+    if (c == '\\') {
+      out.push(c);
+      if (n + 1 < t.len()) { out.push(t[n + 1] as i32); }
+      n = n + 2;
+      continue;
+    }
+    if (c == '$' && n + 1 < t.len() && t[n + 1] == '{') {
+      i32 end = substitutionEnd(t, n + 2);
+      if (end < 0) { return "ERROR:an unterminated `${` in a template literal."; }
+      string inner = inSubstitution(textOfRange(t, n + 2, end).toBytes(), local, reads, crosses, atInit);
+      if (inner.len() >= 6 && inner.slice(0, 6) == "ERROR:") { return inner; }
+      pushString(out, "${\{inner}}");
+      n = end + 1;
+      continue;
+    }
+    out.push(c);
+    n = n + 1;
+  }
+  u8[] b = u8[].filled(out.len(), 0);
+  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i) as@ u8; }
+  return string.fromBytes(b);
+}
+
+/** The `}` that closes the substitution whose body starts at `from`, or -1. */
+i32 substitutionEnd(u8[] t, i32 from) {
+  i32 n = from;
+  i32 depth = 1;
+  while (n < t.len()) {
+    i32 d = t[n] as i32;
+    if (d == '{') { depth = depth + 1; }
+    else if (d == '}') {
+      depth = depth - 1;
+      if (depth == 0) { return n; }
+    } else if (d == '`') {
+      n = scanTemplate(t, n);
+      if (n < 0) { return -1; }
+      continue;
+    } else if (d == '"' || d == '\'') {
+      n = scanString(t, n);
+      if (n < 0) { return -1; }
+      continue;
+    } else if (d == '/' && n + 1 < t.len() && t[n + 1] == '/') {
+      while (n < t.len() && t[n] != '\n') { n = n + 1; }
+      continue;
+    } else if (d == '/' && n + 1 < t.len() && t[n + 1] == '*') {
+      n = n + 2;
+      while (n + 1 < t.len() && !(t[n] == '*' && t[n + 1] == '/')) { n = n + 1; }
+      n = n + 2;
+      continue;
+    }
+    n = n + 1;
+  }
+  return -1;
+}
+
+/** One substitution's expression, rewritten as `moduleBody` rewrites a body. */
+string inSubstitution(u8[] e, Vec<string> local, Vec<string> reads, Vec<i32> crosses, bool atInit) {
+  Lexed l = lex(e);
+  if (l.error != "") { return "ERROR:a template substitution did not lex: \{l.error}"; }
+  Vec<i32> out = Vec.create();
+  Vec<i32> brackets = Vec.create();
+  i32 written = 0;
+  i32 n = tokenCount(l);
+  for (i32 i = 0; i < n - 1; i++) {
+    i32 s = startAt(l, i);
+    i32 end = s + lenAt(l, i);
+    if (kindAt(l, i) == kPunct()) {
+      string p = textAt(e, l, i);
+      if (p == "(" || p == "[" || p == "{") { brackets.push(p == "(" ? 40 : (p == "[" ? 91 : 123)); }
+      else if ((p == ")" || p == "]" || p == "}") && brackets.len() > 0) { brackets.remove(brackets.len() - 1); }
+      continue;
+    }
+    if (kindAt(l, i) == kTemplate()) {
+      string tpl = textAt(e, l, i);
+      string r = inTemplate(tpl.toBytes(), local, reads, crosses, atInit);
+      if (r.len() >= 6 && r.slice(0, 6) == "ERROR:") { return r; }
+      copyThrough(out, e, written, s);
+      pushString(out, r);
+      written = end;
+      continue;
+    }
+    if (kindAt(l, i) != kIdent()) { continue; }
+    string w = textAt(e, l, i);
+    i32 li = indexOfVec(local, w);
+    if (li < 0) { continue; }
+    bool prevIs = i > 0 && kindAt(l, i - 1) == kPunct();
+    string prev = prevIs ? textAt(e, l, i - 1) : "";
+    string next = i + 1 < n && kindAt(l, i + 1) == kPunct() ? textAt(e, l, i + 1) : "";
+    if (prev == ".") { continue; }
+    if (next == ":" && (prev == "{" || prev == ",")) { continue; }
+    if (atInit && crosses.get(li) == 1) {
+      return "ERROR:`\{w}` is evaluated here, in a template literal, before the module it comes from "
+           + "has been built — the two modules import each other. Move the use inside a function.";
+    }
+    bool inObject = brackets.len() > 0 && brackets.get(brackets.len() - 1) == 123;
+    bool shorthand = inObject && (prev == "{" || prev == ",") && (next == "}" || next == ",");
+    copyThrough(out, e, written, s);
+    pushString(out, shorthand ? "\{w}: \{reads.get(li)}" : reads.get(li));
+    written = end;
+  }
+  copyThrough(out, e, written, e.len());
+  u8[] b = u8[].filled(out.len(), 0);
+  for (i32 i = 0; i < out.len(); i++) { b[i] = out.get(i) as@ u8; }
+  return string.fromBytes(b);
 }
 
 /** Write `what` over `b` at `at`, stopping at a line break. */
