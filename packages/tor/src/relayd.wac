@@ -165,6 +165,10 @@ static i32 RING_MARGIN = 16;
 /**
  * Whether one more circuit fits inside the ring, given what is outstanding now.
  *
+ * **The ring stopped bounding outstanding calls in `issues/system/0373d`** — a call holds a slot on the
+ * JavaScript hosts only while its request or answer is crossing, and never held one natively — so what
+ * this guards against below can no longer happen, and the refusal now limits the relay and nothing else.
+ *
  * **wac-mono 0091.** `MAX_CONNS` and `MAX_CIRCS` were chosen for memory and bear no relation to the
  * ring: `MAX_CONNS * MAX_CIRCS * 2 + MAX_CONNS + 1` is 1089 against `CALL_SLOTS` of 128, which a
  * relay reaches at about seven busy connections. Exceeding the ring does not degrade — a held slot

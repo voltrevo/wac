@@ -15,8 +15,16 @@ const CALL = import.meta.resolve("../host/call.ts");
  *
  * The worker imports `call.ts` directly: this is a test of that module, not of the
  * capability world above it.
+ *
+ * **`timeoutMs` for a test whose failure is a hang.** A worker parked for ever posts nothing, and without a
+ * bound the test waits with it — so the suite stops, and says nothing about which test it stopped in. With
+ * one, the worker is terminated and the test fails with the time it was given.
  */
-export async function onWorker(body: string, handlers: Record<number, (p: Uint8Array) => Uint8Array | Promise<Uint8Array>>): Promise<unknown> {
+export async function onWorker(
+  body: string,
+  handlers: Record<number, (p: Uint8Array) => Uint8Array | Promise<Uint8Array>>,
+  timeoutMs = 0,
+): Promise<unknown> {
   const bridge = newBridge();
   // **Not scheduled.** Everything driven through this harness is a test *of* the bridge: how many calls
   // can be in flight, what `waitAny` does when several are ready, what happens under random load. A
@@ -34,14 +42,19 @@ export async function onWorker(body: string, handlers: Record<number, (p: Uint8A
   `;
   const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
   const w = new Worker(url, { type: "module" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const r = await new Promise<{ ok: boolean; value?: unknown; error?: string }>((res) => {
       w.onmessage = (e) => res(e.data);
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => res({ ok: false, error: `the worker posted nothing in ${timeoutMs}ms` }), timeoutMs);
+      }
       w.postMessage(bridge.sab);
     });
     if (!r.ok) throw new Error(r.error);
     return r.value;
   } finally {
+    clearTimeout(timer);
     w.terminate();
     responder.stop();
     await responder.done;

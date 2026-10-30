@@ -1,33 +1,35 @@
 // The bridge's slot protocol, walked rather than sampled.
 //
 // The third layer, after the queue and the child's lifecycle. A slot is shared memory written by two
-// agents that never take turns: the worker claims, fills, publishes and later collects; the host sweeps,
-// takes, works and answers. Which of them acts next is the hardware's business, and the code's comments
-// record what that has already cost —
+// agents that never take turns: the worker claims a free one, fills it and publishes a request, and later
+// drains an answer out of one; the host takes requests, works, and puts each answer in whichever slot is
+// free. Which of them acts next is the hardware's business, and the code's comments record what that has
+// already cost —
 //
-//   - a plain store where a compare-and-exchange belongs overwrote `ST_CANCELLED` with `ST_RUNNING`, and
+//   - a plain store where a compare-and-exchange belongs let one side overwrite the other's state, and
 //     the slot was owned by nobody for the life of the program;
 //   - one state for "claimed" and "pending" together let a sweep dispatch a slot whose opcode had not
 //     been written yet, which surfaced as `no handler for capability 0` — invisible at four slots,
-//     reproducible within three runs at sixteen.
+//     reproducible within three runs at sixteen;
+//   - a call held the slot it came in from submission to collection, so a `recv` on a quiet connection
+//     held one for good and the 129th call parked the worker for ever (`issues/system/0373d`).
 //
-// Both were found by a fuzzer, eventually. This walks the state space instead: every interleaving of the
-// two agents' steps over one slot, to a bounded depth, against the rules that must hold in all of them.
+// The first two were found by a fuzzer, eventually, and the third by a server in the field. This walks
+// the state space instead: every state reachable by any interleaving of the two agents' steps over one
+// slot and a few calls, against the rules that must hold in all of them.
+//
+// **The protocol since 0373d.** A call is a number, not a slot. A request holds its slot until the host
+// reads it, which frees it; the call is then a row in the host's memory however long the work takes; the
+// answer goes in any free slot, tagged with the call, and the worker drains it the next time it waits for
+// anything, which frees that slot. So no slot waits on the work or on the program — the property the last
+// test below is about.
 //
 // **What this covers and what it cannot.** It is a model of the *protocol* — who may move a slot from
 // which state to which, and what each side may conclude. It says nothing about memory ordering: a plain
 // load where an `Atomics` one belongs, or a torn read of the payload, is invisible here and is only ever
-// caught by the real thing under stress. The comments above are protocol bugs; that is the class this
-// catches.
+// caught by the real thing under stress. The bugs above are protocol bugs; that is the class this catches.
 
-import {
-  ST_CANCELLED,
-  ST_CLAIMED,
-  ST_FREE,
-  ST_PENDING,
-  ST_READY,
-  ST_RUNNING,
-} from "../host/layout.ts";
+import { ST_ANSWERING, ST_CLAIMED, ST_FREE, ST_PENDING, ST_READY, ST_RUNNING } from "../host/layout.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -39,257 +41,303 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/**
- * One slot, and what each side believes about it.
- *
- * `gen` is not decoration: slots are reused, and a ticket held across a reuse would read whatever call now
- * occupies the slot — an answer that looks plausible, which is the worst kind.
- */
-type Slot = {
+/** Calls the worker makes in a walk. Three through one slot: enough for one to wait while two contend. */
+const CALLS = 3;
+
+/** One slot, and what each side knows about the calls going through it. */
+type World = {
   status: number;
-  gen: number;
-  /** What the worker wrote, or null when the slot holds no request. */
-  op: number | null;
-  /** What the host wrote back, or null when there is no answer in it. */
-  answer: number | null;
-  /** The generation the worker's outstanding ticket was taken at, or null when it holds none. */
-  ticket: number | null;
-  /** Whether the host is mid-handler for this slot. */
-  hostWorking: boolean;
-  /** What the worker collected, for the invariant that it is never somebody else's answer. */
-  collected: number | null;
+  /** What the slot carries: a request, an answer, or nothing worth reading. */
+  kind: "request" | "answer" | null;
+  /** Which call it carries. */
+  id: number | null;
+  /** How many calls the worker has published. */
+  made: number;
+  /** The worker's view: submitted and not yet answered or given up on. */
+  outstanding: number[];
+  /** Answered and waiting to be collected. */
+  answered: number[];
+  /** Given up on while the host had them. */
+  dropped: number[];
+  /** Collected, and what each was — a call's answer is its own number, so a crossed one shows. */
+  collected: [number, number][];
+  /** The host's view: read and being worked on. */
+  working: number[];
+  /** Finished, waiting for a free slot. */
+  outbox: number[];
 };
 
-const fresh = (): Slot => ({
+const fresh = (): World => ({
   status: ST_FREE,
-  gen: 0,
-  op: null,
-  answer: null,
-  ticket: null,
-  hostWorking: false,
-  collected: null,
+  kind: null,
+  id: null,
+  made: 0,
+  outstanding: [],
+  answered: [],
+  dropped: [],
+  collected: [],
+  working: [],
+  outbox: [],
 });
 
-/** A step either side may take. Guards say when it is possible; `go` is what it does. */
-type Move = {
-  readonly show: string;
-  readonly by: "worker" | "host";
-  readonly can: (s: Slot) => boolean;
-  readonly go: (s: Slot) => Slot;
-};
+const without = (xs: number[], x: number): number[] => xs.filter((y) => y !== x);
 
-/** The opcode the worker writes, and the answer the host writes for it — distinct so a mix-up shows. */
-const OP = 7;
-const ANSWER = 700;
+/** A step either side may take. `go` answers the new world, or null when the step is not possible. */
+type Move = { readonly show: string; readonly by: "worker" | "host"; readonly go: (w: World) => World | null };
 
-const MOVES: readonly Move[] = [
-  {
-    show: "worker: claim",
-    by: "worker",
-    can: (s) => s.status === ST_FREE && s.ticket === null,
-    // Claimed, *not* pending: between taking a slot and writing the opcode there is nothing to take, and
-    // sharing one state is what let a sweep dispatch a slot whose opcode was still the previous call's.
-    go: (s) => ({ ...s, status: ST_CLAIMED, op: null, answer: null, collected: null }),
-  },
-  {
-    show: "worker: publish",
-    by: "worker",
-    can: (s) => s.status === ST_CLAIMED,
-    go: (s) => ({ ...s, status: ST_PENDING, op: OP, ticket: s.gen }),
-  },
-  {
-    show: "host: take",
-    by: "host",
-    can: (s) => s.status === ST_PENDING,
-    // Compare-and-exchange, so a cancel that lands between the sweep and here wins.
-    go: (s) => ({ ...s, status: ST_RUNNING, hostWorking: true }),
-  },
-  {
-    show: "host: answer",
-    by: "host",
-    can: (s) => s.hostWorking,
-    // The host only publishes into a slot it still owns: a cancel moved the status, and writing anyway
-    // would overwrite `ST_CANCELLED` with `ST_READY` and strand the slot.
-    go: (s) =>
-      s.status === ST_RUNNING
-        ? { ...s, status: ST_READY, answer: ANSWER, hostWorking: false }
-        : { ...s, hostWorking: false },
-  },
-  {
-    show: "host: reclaim cancelled",
-    by: "host",
-    can: (s) => s.status === ST_CANCELLED && !s.hostWorking,
-    go: (s) => ({ ...s, status: ST_FREE, op: null, answer: null }),
-  },
-  {
-    show: "worker: collect",
-    by: "worker",
-    can: (s) => s.ticket !== null && s.status === ST_READY && s.gen === s.ticket,
-    go: (s) => ({
-      ...s,
-      collected: s.answer,
-      status: ST_FREE,
-      gen: s.gen + 1,
-      ticket: null,
-      op: null,
-      answer: null,
-    }),
-  },
-  {
-    show: "worker: cancel",
-    by: "worker",
-    can: (s) => s.ticket !== null && s.gen === s.ticket && s.status !== ST_FREE,
-    go: (s) =>
-      s.status === ST_READY
-        // Already answered: collecting and discarding is what `cancel` does, so the slot comes straight
-        // back rather than waiting for a host that has nothing left to do.
-        ? { ...s, status: ST_FREE, gen: s.gen + 1, ticket: null, op: null, answer: null }
-        : { ...s, status: ST_CANCELLED, gen: s.gen + 1, ticket: null },
-  },
-];
+/** The steps. Ids are 1..CALLS, so a move per call is written out rather than chosen at random. */
+function moves(): Move[] {
+  const out: Move[] = [
+    {
+      show: "worker: claim",
+      by: "worker",
+      // Claimed, *not* pending: between taking a slot and writing the opcode there is nothing to take, and
+      // sharing one state is what let a sweep dispatch a slot whose opcode was still the previous call's.
+      go: (w) => w.status === ST_FREE && w.made < CALLS ? { ...w, status: ST_CLAIMED, kind: null, id: null } : null,
+    },
+    {
+      show: "worker: publish",
+      by: "worker",
+      go: (w) => {
+        if (w.status !== ST_CLAIMED) return null;
+        const id = w.made + 1;
+        return { ...w, status: ST_PENDING, kind: "request", id, made: id, outstanding: [...w.outstanding, id] };
+      },
+    },
+    {
+      show: "host: take",
+      by: "host",
+      // The request is read and its slot handed straight back; the call is the host's row now.
+      go: (w) =>
+        w.status === ST_PENDING && w.kind === "request"
+          ? { ...w, status: ST_FREE, kind: null, id: null, working: [...w.working, w.id!] }
+          : null,
+    },
+    {
+      show: "host: take a free slot for an answer",
+      by: "host",
+      // A compare-and-exchange from free, because the worker claims from free too.
+      go: (w) => w.outbox.length > 0 && w.status === ST_FREE ? { ...w, status: ST_ANSWERING, kind: null, id: null } : null,
+    },
+    {
+      show: "host: write the answer",
+      by: "host",
+      go: (w) =>
+        w.status === ST_ANSWERING
+          ? { ...w, status: ST_READY, kind: "answer", id: w.outbox[0], outbox: w.outbox.slice(1) }
+          : null,
+    },
+    {
+      show: "worker: drain",
+      by: "worker",
+      // Copied out and the slot freed, whatever the program is doing; a dropped call's answer goes nowhere.
+      go: (w) => {
+        if (w.status !== ST_READY || w.kind !== "answer") return null;
+        const id = w.id!;
+        const was = w.dropped.includes(id);
+        return {
+          ...w,
+          status: ST_FREE,
+          kind: null,
+          id: null,
+          dropped: was ? without(w.dropped, id) : w.dropped,
+          answered: was ? w.answered : [...w.answered, id],
+        };
+      },
+    },
+  ];
+  for (let id = 1; id <= CALLS; id++) {
+    out.push(
+      {
+        show: `host: finish ${id}`,
+        by: "host",
+        go: (w) => w.working.includes(id) ? { ...w, working: without(w.working, id), outbox: [...w.outbox, id] } : null,
+      },
+      {
+        show: `worker: collect ${id}`,
+        by: "worker",
+        go: (w) =>
+          w.answered.includes(id) && w.outstanding.includes(id)
+            ? {
+              ...w,
+              answered: without(w.answered, id),
+              outstanding: without(w.outstanding, id),
+              collected: [...w.collected, [id, id] as [number, number]],
+            }
+            : null,
+      },
+      {
+        show: `worker: cancel ${id}`,
+        by: "worker",
+        // Local: nothing of the bridge's is held by an outstanding call, so the host is not told.
+        go: (w) => {
+          if (!w.outstanding.includes(id)) return null;
+          const had = w.answered.includes(id);
+          return {
+            ...w,
+            outstanding: without(w.outstanding, id),
+            answered: without(w.answered, id),
+            dropped: had ? w.dropped : [...w.dropped, id],
+          };
+        },
+      },
+    );
+  }
+  return out;
+}
 
 type Broken = { rule: string; path: string[]; detail: string };
 
-/** Walk every interleaving of the two agents' moves to `depth`. */
-function enumerate(depth: number, moves: readonly Move[]): Broken[] {
-  const broken: Broken[] = [];
-
-  const walk = (s: Slot, path: string[]): void => {
-    if (path.length === depth || broken.length > 0) return;
-    for (const m of moves) {
-      if (!m.can(s)) continue;
-      const after = m.go(s);
-      const here = [...path, m.show];
-      const fail = (rule: string, detail: string) => broken.push({ rule, path: here, detail });
-
-      // The answer a worker collects is the answer to the call it made — never a later call's, which is
-      // what the generation exists to prevent and what would look entirely plausible if it happened.
-      if (after.collected !== null && after.collected !== ANSWER) {
-        fail("the worker collected something that was not its answer", `${after.collected}`);
-        return;
-      }
-      // A slot the host is working on cannot be handed to anyone else.
-      if (after.hostWorking && after.status === ST_FREE) {
-        fail("a slot was freed while the host was still working on it", "");
-        return;
-      }
-      // Nobody owns it: not free, not held by a live ticket, and the host is not working on it. That is
-      // the ring losing a slot for good — four of those and it cannot be used at all.
-      // Who will move this slot next? Exactly one of:
-      //
-      //   - it is free, so the next claim will;
-      //   - it is claimed, and the worker is mid-fill — no ticket exists yet;
-      //   - a live ticket holds it, so the worker will collect or cancel;
-      //   - the host is inside the handler, so it will answer;
-      //   - it is cancelled, and the host reclaims those.
-      //
-      // Anything else is stranded, and the two cases that matter are precise: a slot left **ready with no
-      // live ticket** is an answer nobody will ever collect, and a slot left **running with nobody
-      // working** is a request nobody will ever finish. Writing this as "READY counts as owned" — which
-      // is how it went in first — let the plain-store mutant through, because that bug's whole signature
-      // is an answer written into a slot whose ticket had already died.
-      const owned = after.status === ST_FREE || after.status === ST_CLAIMED ||
-        after.status === ST_CANCELLED || after.ticket !== null || after.hostWorking;
-      if (!owned) {
-        fail("a slot ended up owned by nobody", `status ${after.status}, ticket ${after.ticket}`);
-        return;
-      }
-      // A pending slot always carries the opcode of the request in it — never the previous call's.
-      if (after.status === ST_PENDING && after.op === null) {
-        fail("a slot was published with no opcode in it", "the `no handler for capability 0` shape");
-        return;
-      }
-      walk(after, here);
-    }
-  };
-
-  walk(fresh(), []);
-  return broken;
+/** What has to hold in every reachable state. */
+function check(w: World): string | null {
+  // A collected answer is its own call's — never another's, which is what would look entirely plausible.
+  for (const [id, said] of w.collected) if (id !== said) return `call ${id} collected call ${said}'s answer`;
+  // A call given up on is never delivered: its answer is dropped as it is drained.
+  for (const id of w.answered) if (!w.outstanding.includes(id)) return `the answer to cancelled call ${id} was delivered`;
+  // A published request carries its call.
+  if (w.status === ST_PENDING && (w.kind !== "request" || w.id === null)) return "a slot was published with no request in it";
+  // No request is lost: every call made is somewhere — on its way to the host, being worked on, answered
+  // and on its way back, delivered, collected, or given up on.
+  for (let id = 1; id <= w.made; id++) {
+    const inSlot = w.id === id && (w.status === ST_PENDING || w.status === ST_READY);
+    const somewhere = inSlot || w.working.includes(id) || w.outbox.includes(id) || w.answered.includes(id) ||
+      w.collected.some(([c]) => c === id) || w.dropped.includes(id) || !w.outstanding.includes(id);
+    if (!somewhere) return `call ${id} was lost`;
+  }
+  return null;
 }
 
-Deno.test("every interleaving of one slot leaves it owned and its answers matched", () => {
-  const broken = enumerate(9, MOVES);
-  assertEquals(
-    broken.length === 0,
-    true,
-    broken.length === 0
-      ? ""
-      : `${broken[0].rule}\n  path: ${broken[0].path.join(" → ")}\n  ${broken[0].detail}`,
-  );
-});
+/** Every reachable state, breadth first, with the first path to each. */
+function reachable(ms: readonly Move[]): { states: { w: World; path: string[] }[]; broken: Broken | null } {
+  const key = (w: World) => JSON.stringify(w);
+  const start = fresh();
+  const seen = new Set<string>([key(start)]);
+  const states = [{ w: start, path: [] as string[] }];
+  for (let i = 0; i < states.length; i++) {
+    const { w, path } = states[i];
+    for (const m of ms) {
+      const after = m.go(w);
+      if (after === null) continue;
+      const k = key(after);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const here = [...path, m.show];
+      const bad = check(after);
+      if (bad !== null) return { states, broken: { rule: bad.replace(/\d+/g, "N"), path: here, detail: bad } };
+      states.push({ w: after, path: here });
+    }
+  }
+  return { states, broken: null };
+}
 
-Deno.test("a slot always comes back: no interleaving strands one for good", () => {
-  // Liveness, as far as a bounded walk can speak to it: from every reachable state there is *some*
-  // continuation that returns the slot to free. A state with no way home is a slot the ring has lost —
-  // which is what the plain-store bug did, permanently, one slot per occurrence.
+/**
+ * Whether the slot comes back from `w` with the host never finishing anything and the program never
+ * collecting or cancelling — a peer that never speaks, and a program busy elsewhere. That is 0373d's
+ * property: no slot waits on the work, and none waits on the program.
+ */
+function comesBack(w: World, ms: readonly Move[]): boolean {
+  const allowed = ms.filter((m) => !/finish|collect|cancel/.test(m.show));
   const seen = new Set<string>();
-  const key = (s: Slot) => `${s.status}|${s.gen === s.ticket}|${s.ticket !== null}|${s.hostWorking}`;
-  const reachable: Slot[] = [];
-
-  const explore = (s: Slot, depth: number): void => {
-    const k = key(s);
-    if (seen.has(k) || depth === 0) return;
+  const queue = [w];
+  while (queue.length > 0) {
+    const s = queue.shift()!;
+    if (s.status === ST_FREE) return true;
+    const k = JSON.stringify(s);
+    if (seen.has(k)) continue;
     seen.add(k);
-    reachable.push(s);
-    for (const m of MOVES) if (m.can(s)) explore(m.go(s), depth - 1);
-  };
-  explore(fresh(), 9);
+    for (const m of allowed) {
+      const after = m.go(s);
+      if (after !== null) queue.push(after);
+    }
+  }
+  return false;
+}
 
-  const stuck = reachable.filter((s) => {
-    // Can this state reach `ST_FREE` at all?
-    const visited = new Set<string>();
-    const canReachFree = (t: Slot, depth: number): boolean => {
-      if (t.status === ST_FREE) return true;
-      if (depth === 0) return false;
-      const tk = key(t);
-      if (visited.has(tk)) return false;
-      visited.add(tk);
-      return MOVES.some((m) => m.can(t) && canReachFree(m.go(t), depth - 1));
-    };
-    return !canReachFree(s, 8);
-  });
+const report = (b: Broken | null) => b === null ? "" : `${b.detail}\n  path: ${b.path.join(" → ")}`;
 
-  assertEquals(
-    stuck.length,
-    0,
-    `${stuck.length} state(s) can never return the slot: ${stuck.map(key).join(", ")}`,
-  );
-  console.log(`  ${reachable.length} distinct slot states reachable, all of them returnable`);
+Deno.test("every reachable state keeps answers matched, cancelled ones undelivered, and no call lost", () => {
+  const { states, broken } = reachable(moves());
+  assertEquals(broken, null, report(broken));
+  console.log(`  ${states.length} reachable states`);
 });
 
-Deno.test("the invariants catch the plain-store bug the fuzzer found", () => {
-  // The historical bug: the host takes a pending slot with a *store* rather than a compare-and-exchange,
-  // so a cancel landing between the sweep and the take is overwritten. The worker believes the call is
-  // cancelled and will not collect; the sweep never sees a cancelled slot to hand back. The slot is owned
-  // by nobody, for the life of the program.
-  const withPlainStore: readonly Move[] = MOVES.map((m) =>
+Deno.test("a slot always comes back, with the host never finishing and the program never collecting", () => {
+  const ms = moves();
+  const { states } = reachable(ms);
+  const stuck = states.filter(({ w }) => !comesBack(w, ms));
+  assertEquals(stuck.length, 0, stuck.length === 0 ? "" : `stuck after: ${stuck[0].path.join(" → ")}`);
+});
+
+Deno.test("the liveness check catches the shape 0373d was: a call holding its slot while the host works", () => {
+  // The old protocol in one move: the host takes the request and keeps the slot, answering into it when
+  // the work is done. A call the host never finishes then holds the slot for good, and with every slot
+  // held like that the worker has nowhere to put the call that would let it recover.
+  const held: Move[] = moves().map((m) =>
     m.show === "host: take"
-      ? { ...m, can: (s: Slot) => s.status === ST_PENDING || s.status === ST_CANCELLED,
-          go: (s: Slot) => ({ ...s, status: ST_RUNNING, hostWorking: true }) }
+      ? {
+        ...m,
+        go: (w: World) =>
+          w.status === ST_PENDING && w.kind === "request" ? { ...w, status: ST_RUNNING, working: [...w.working, w.id!] } : null,
+      }
+      : m.show.startsWith("host: finish")
+      ? {
+        ...m,
+        go: (w: World) => {
+          const id = Number(m.show.slice("host: finish ".length));
+          if (!w.working.includes(id) || w.status !== ST_RUNNING || w.id !== id) return null;
+          return { ...w, status: ST_READY, kind: "answer" as const, working: without(w.working, id) };
+        },
+      }
       : m
   );
-  const broken = enumerate(9, withPlainStore);
-  assertEquals(broken.length > 0, true, "a slot stranded by a plain store went unnoticed");
-  console.log(`  stranded by: ${broken[0].path.join(" → ")}`);
+  const { states } = reachable(held);
+  const stuck = states.filter(({ w }) => !comesBack(w, held));
+  assertEquals(stuck.length > 0, true, "a slot held for as long as the host works went unnoticed");
+  // The state that says it, rather than the first doomed one — a claim is doomed once taking holds slots.
+  const holding = stuck.find(({ w }) => w.status === ST_RUNNING) ?? stuck[0];
+  console.log(`  stuck after: ${holding.path.join(" → ")}`);
+});
+
+Deno.test("and a host taking a slot for its answer with a plain store, over a request the worker had claimed", () => {
+  // Both sides take free slots. Taking one without the exchange lands an answer on top of a slot the worker
+  // has claimed or published, and the request in it is gone — a call that will never be answered.
+  const plain: Move[] = moves().map((m) =>
+    m.show === "host: take a free slot for an answer"
+      ? { ...m, go: (w: World) => w.outbox.length > 0 && w.status !== ST_ANSWERING && w.status !== ST_READY ? { ...w, status: ST_ANSWERING, kind: null, id: null } : null }
+      : m
+  );
+  const { broken } = reachable(plain);
+  assertEquals(broken !== null, true, "an answer written over a request went unnoticed");
+  assertEquals(broken!.rule, "call N was lost", `caught the wrong thing: ${report(broken)}`);
 });
 
 Deno.test("and a publish that skips `claimed`, which is the other historical one", () => {
   // One state for "taken" and "has a request in it" together: the sweep dispatches a slot whose opcode
   // has not been written, and the host runs whatever the previous call left there — zero on a slot's
   // first use, hence `no handler for capability 0`.
-  const eager: readonly Move[] = MOVES.map((m) =>
+  const eager: Move[] = moves().map((m) =>
     m.show === "worker: claim"
+      ? { ...m, go: (w: World) => w.status === ST_FREE && w.made < CALLS ? { ...w, status: ST_PENDING, kind: null, id: null } : null }
+      : m
+  );
+  const { broken } = reachable(eager);
+  assertEquals(broken !== null, true, "a slot published with no request went unnoticed");
+  assertEquals(broken!.rule, "a slot was published with no request in it", `caught the wrong thing: ${report(broken)}`);
+});
+
+Deno.test("and a drain that delivers what it should drop, a cancelled call's answer", () => {
+  const leaky: Move[] = moves().map((m) =>
+    m.show === "worker: drain"
       ? {
         ...m,
-        go: (s: Slot) => ({ ...s, status: ST_PENDING, op: null, answer: null, collected: null, ticket: s.gen }),
+        go: (w: World) =>
+          w.status === ST_READY && w.kind === "answer"
+            ? { ...w, status: ST_FREE, kind: null, id: null, answered: [...w.answered, w.id!] }
+            : null,
       }
       : m
   );
-  const broken = enumerate(6, eager);
-  assertEquals(broken.length > 0, true, "a slot published with no opcode went unnoticed");
-  assertEquals(
-    broken[0].rule,
-    "a slot was published with no opcode in it",
-    `caught the wrong thing: ${broken[0].rule}`,
-  );
+  const { broken } = reachable(leaky);
+  assertEquals(broken !== null, true, "a cancelled call's answer delivered went unnoticed");
+  assertEquals(broken!.rule, "the answer to cancelled call N was delivered", `caught the wrong thing: ${report(broken)}`);
 });

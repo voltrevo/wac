@@ -8,8 +8,15 @@
 // **The loop dispatches and does not await.** It used to `await` each handler before
 // looking at the next request, which serialised everything regardless of what the
 // transport could carry — and with a ring of slots that would have made the ring
-// pointless. A slot is claimed, its handler started, and the loop goes straight back to
-// watching. Completion writes the answer into that slot and bumps `DONE_SEQ`.
+// pointless. A request is read, its slot handed back, its handler started, and the loop goes
+// straight back to watching. Completion puts the answer in whichever slot is free and bumps
+// `DONE_SEQ`.
+//
+// **A call holds no slot while its handler runs** — `issues/system/0373d`. It held the slot it came in
+// until it was collected, so a `recv` on a connection that never spoke held one for good, and past 128 of
+// those every other call parked the worker for ever. Now a call between its request and its answer is a
+// row in this file's memory, as it is in the native hosts' ticket table, and the ring carries messages
+// only: a request until it is read here, an answer until the worker drains it.
 //
 // Several of these may run at once, one per worker. Nothing here is global — which is also
 // why each worker needs its *own* handler table: the capability worlds close over the
@@ -20,9 +27,10 @@ import {
   type Bridge,
   DONE_SEQ,
   HOST_GONE,
+  OP_ANSWER,
   OP_CONTINUE,
   OP_PUSH,
-  S_GEN,
+  S_ID,
   S_OP,
   S_REQ_LEN,
   S_RES_LEN,
@@ -30,7 +38,6 @@ import {
   S_STATUS,
   acquireBuf,
   INLINE_BYTES,
-  BUF_BYTES,
   releaseBuf,
   attach,
   detach,
@@ -38,9 +45,8 @@ import {
   S_RES_BUF,
   SLOTS,
   slotAt,
-  ST_CANCELLED,
+  ST_ANSWERING,
   ST_FREE,
-  ST_CLAIMED,
   ST_PENDING,
   ST_READY,
   ST_RUNNING,
@@ -60,7 +66,6 @@ export type Handler = (payload: Uint8Array) => Uint8Array | Promise<Uint8Array>;
 /** Capability implementations by opcode. */
 export type Handlers = Record<number, Handler>;
 
-const enc = new TextEncoder();
 const EMPTY = new Uint8Array(0);
 
 
@@ -103,38 +108,39 @@ export function serveHostCalls(
   // The description says whether this bridge is still being served, because the interesting stall is a
   // worker parked against a host that stopped: `stop()` takes the bridge out of the survey, but a loop
   // that *died* leaves it in, and a slot table with no note would read as an ordinary busy bridge.
-  sched.register(bridgeId, () => `${running ? "" : "responder stopped — "}${describeSlots(b)}`);
+  sched.register(bridgeId, () =>
+    `${running ? "" : "responder stopped — "}${describeSlots(b)}` +
+    (outbox.length > 0 ? ` and ${outbox.length} answer(s) waiting for a free slot` : "")
+  );
 
-  // Per-slot state kept between the pieces of one call.
-  const pending: (Uint8Array | null)[] = new Array(SLOTS).fill(null);      // response tail
-  const finalStatus: number[] = new Array(SLOTS).fill(STATUS_OK);           // what the tail's last piece is
-  const partial: Uint8Array[][] = Array.from({ length: SLOTS }, () => []); // request head
-
-  const reply = (slot: number, status: number, body: Uint8Array): void => {
-    // **Through the scheduler**, which with scheduling off calls this straight back — the path the host
-    // has always taken. With it on, the answer joins a ready set and the scheduler decides which one
-    // lands next, so the order the whole system runs in is chosen rather than raced for. See
-    // `schedule.ts`, and design/0001 D12 for what that can and cannot promise.
-    // The generation is read *now*, while the slot is still this call's, and travels with the answer
-    // through both delays: the scheduler's, and the wait for a free buffer.
-    const gen = Atomics.load(b.ctrl, slotAt(slot) + S_GEN);
-    sched.ready(bridgeId, slot, () => write(slot, status, body, gen));
-  };
+  /** The rest of an answer too large for the slot it went out in, by call, until `OP_CONTINUE` asks. */
+  const tails = new Map<number, { tail: Uint8Array; status: number }>();
+  /** An oversized request's pieces so far, by the slot they arrive in — it is held for all of them. */
+  const partial: Uint8Array[][] = Array.from({ length: SLOTS }, () => []);
+  /**
+   * Answers waiting for a free slot, oldest first.
+   *
+   * **Unbounded, and that is what makes it safe.** An answer that cannot be written waits here rather than
+   * in a slot, and every slot it could go in is on its way back without help from this side: the worker
+   * drains answers whenever it waits for anything. So nothing here waits on the program, and the program
+   * never waits on this.
+   */
+  const outbox: { id: number; status: number; body: Uint8Array }[] = [];
 
   /**
-   * Write an answer, in a pooled buffer when one is free and inline when not.
+   * Write a message into `slot`, in a pooled buffer when one is free and inline when not, and publish it.
    *
-   * `gen` is the generation the answer belongs to, and checking it is not optional. The answer may have
-   * been held by the scheduler meanwhile, and the worker may have *cancelled* the call — the sweep then
-   * frees the slot and a new call takes it at a new generation. Writing the old answer there delivers one
-   * call's bytes to another, which the fuzzer caught on its first seed: `asked as 15, answered as 22`.
+   * `op` says which kind the worker will find: `OP_ANSWER` for an answer in a slot taken for it,
+   * `OP_CONTINUE` for the next piece of one in the slot that asked, `OP_PUSH` for the acknowledgement of a
+   * pushed request piece. The slot is this side's throughout — `ST_ANSWERING` or `ST_RUNNING` — so the
+   * publish is a store: nothing else moves a slot out of either.
    *
    * **Never fails for want of a buffer.** An earlier version deferred instead, and deadlocked: the
-   * buffers are held by answers the worker has not collected, and a worker parked on one specific call
-   * collects nothing, so the call it waits for never lands. Inline is the guarantee; the pool is speed.
-   */  const write = (slot: number, status: number, body: Uint8Array, gen: number): void => {
+   * buffers are held by answers the worker has not drained, and a worker parked on one specific call
+   * drained nothing, so the call it waited for never landed. Inline is the guarantee; the pool is speed.
+   */
+  const write = (slot: number, id: number, op: number, status: number, body: Uint8Array): void => {
     const at = slotAt(slot);
-    if (Atomics.load(b.ctrl, at + S_GEN) !== gen) return;   // recycled; this answer is for nobody
     // A pooled buffer if one is free, the slot's own inline area otherwise. The tail, if the chosen room
     // cannot hold it all, goes through the same `STATUS_MORE` path an oversized answer always used.
     const bi = body.length > INLINE_BYTES ? acquireBuf(b, "res") : -1;
@@ -145,105 +151,84 @@ export function serveHostCalls(
     attach(b, at, S_RES_BUF, bi);
     Atomics.store(b.ctrl, at + S_RES_LEN, fits);
     Atomics.store(b.ctrl, at + S_RES_STATUS, tail.length > 0 ? STATUS_MORE : status);
-    if (tail.length > 0) {
-      // Remembered here, and asked for with `OP_CONTINUE`. `finalStatus` so the last piece carries the
-      // real answer status rather than `STATUS_MORE`.
-      pending[slot] = tail;
-      finalStatus[slot] = status;
-    }
-
-    // Published with a compare-and-exchange, for the same reason `take` takes with one, and it
-    // is the last store rather than the first because it is what makes the rest visible.
-    //
-    // A cancel can land between the ownership check above and this line. A plain store then
-    // overwrote `ST_CANCELLED` with `ST_READY`, and the slot was stranded: the worker's ticket
-    // is dead so it will never collect, and the sweep only ever looks at pending and cancelled
-    // slots, so it would never hand it back either. One slot gone for the life of the program,
-    // per losing race. The mirror image of the `take` case, and the fuzzer found this one too —
-    // at the eighth seed, where four seeds had passed.
-    //
-    // The payload is written before the exchange, which is safe rather than tidy: only the host
-    // writes a response, and the worker reads one only after seeing `ST_READY`. So a losing
-    // exchange leaves bytes in a buffer that the slot's next owner overwrites before publishing.
-    if (Atomics.compareExchange(b.ctrl, at + S_STATUS, ST_RUNNING, ST_READY) !== ST_RUNNING) {
-      // No longer ours; the sweep hands the slot back — and the buffer with it, or the pool leaks one
-      // per losing race, which is a pool that empties over an hour and a hang nobody can explain.
-      releaseBuf(b, "res", detach(b, at, S_RES_BUF));
-      pending[slot] = null;
-      return;
-    }
+    // Remembered here, and asked for with `OP_CONTINUE`; `status` so the last piece carries the real
+    // answer status rather than `STATUS_MORE`.
+    if (tail.length > 0) tails.set(id, { tail, status });
+    Atomics.store(b.ctrl, at + S_ID, id);
+    Atomics.store(b.ctrl, at + S_OP, op);
+    // The last store, because it is what makes the rest visible: the worker reads a slot only after
+    // seeing `ST_READY`.
+    Atomics.store(b.ctrl, at + S_STATUS, ST_READY);
     Atomics.add(b.ctrl, DONE_SEQ, 1);
     Atomics.notify(b.ctrl, DONE_SEQ);
+  };
+
+  /** Where the scan for a free slot starts, so answers spread over the ring rather than crowding slot 0. */
+  let next = 0;
+
+  /** Put waiting answers in free slots, oldest first, until either runs out. */
+  const flush = (): void => {
+    while (outbox.length > 0) {
+      let slot = -1;
+      for (let k = 0; k < SLOTS && slot < 0; k++) {
+        const i = (next + k) % SLOTS;
+        // A compare-and-exchange, because the worker takes free slots too, for requests.
+        if (Atomics.compareExchange(b.ctrl, slotAt(i) + S_STATUS, ST_FREE, ST_ANSWERING) === ST_FREE) slot = i;
+      }
+      if (slot < 0) return;   // all in use; the worker's next drain frees some, and pings to say so
+      next = (slot + 1) % SLOTS;
+      const a = outbox.shift()!;
+      write(slot, a.id, OP_ANSWER, a.status, a.body);
+    }
   };
 
   /**
-   * Answer. The splitting lives in `write`, which is the only place that knows how much room it got — a
-   * pooled buffer or the slot's inline area — so deciding here as well would be two rules for one thing.
+   * Answer call `id`, whichever slot is free when it is written.
+   *
+   * **Through the scheduler**, which with scheduling off calls this straight back — the path the host
+   * has always taken. With it on, the answer joins a ready set and the scheduler decides which one
+   * lands next, so the order the whole system runs in is chosen rather than raced for. See
+   * `schedule.ts`, and design/0001 D12 for what that can and cannot promise.
    */
-  const send = (slot: number, body: Uint8Array): void => {
-    reply(slot, STATUS_OK, body);
+  const answer = (id: number, status: number, body: Uint8Array): void => {
+    sched.ready(bridgeId, id, () => {
+      outbox.push({ id, status, body });
+      flush();
+    });
   };
 
-  /** A slot the worker gave up on: drop what we know and hand it back. */
-  const abandon = (slot: number): void => {
-    pending[slot] = null;
-    partial[slot] = [];
-    // Both buffers, because a cancel can land at any point: the request may still be attached if the
-    // sweep never took it, and the answer if it was written and never collected.
-    const cancelled = slotAt(slot);
-    for (const dir of ["req", "res"] as const) {
-      releaseBuf(b, dir, detach(b, cancelled, dir === "req" ? S_REQ_BUF : S_RES_BUF));
-    }
-    Atomics.store(b.ctrl, slotAt(slot) + S_STATUS, ST_FREE);
-    Atomics.add(b.ctrl, DONE_SEQ, 1);
-    Atomics.notify(b.ctrl, DONE_SEQ);
+  /** Answer in `slot` itself: the next piece of an answer, or a pushed piece's acknowledgement. */
+  const inPlace = (slot: number, id: number, op: number, status: number, body: Uint8Array): void => {
+    sched.ready(bridgeId, id, () => write(slot, id, op, status, body));
   };
 
   const take = (slot: number): void => {
     const at = slotAt(slot);
-    // Whose call this is. A slot outlives the call in it: `cancel` bumps the generation and
-    // the sweep hands the slot straight back, while the handler here is still running. When
-    // it finishes, the slot may belong to somebody else, and the answer has to be dropped
-    // rather than written — see `stillOurs`.
-    const gen = Atomics.load(b.ctrl, at + S_GEN);
     const op = Atomics.load(b.ctrl, at + S_OP);
     const len = Atomics.load(b.ctrl, at + S_REQ_LEN);
+    const id = Atomics.load(b.ctrl, at + S_ID);
     // Copied out and the buffer released immediately: a request buffer is held for exactly one read, so
     // a worker parked for one waits on this line and nothing else.
     const rb = detach(b, at, S_REQ_BUF);
     const payload = rb < 0 ? EMPTY : b.reqBuf(rb).slice(0, len);
     releaseBuf(b, "req", rb);
-    Atomics.add(b.ctrl, DONE_SEQ, 1);
-    Atomics.notify(b.ctrl, DONE_SEQ);
 
-    // Taken with a compare-and-exchange, not a store.
-    //
-    // The sweep saw `ST_PENDING` a moment ago and the worker may have cancelled since. A plain
-    // store would overwrite `ST_CANCELLED` with `ST_RUNNING`, and then nobody owns the slot:
-    // the worker believes it is cancelled and will not collect, the sweep never sees a
-    // cancelled slot to hand back, and the answer is dropped because the generation moved. The
-    // slot stays `RUNNING` for the life of the program — one fewer for good, and four of those
-    // is a ring that cannot be used. Found by `fuzz.test.ts` on its first run, in the
-    // end-of-run check that every slot came back free.
-    if (
-      Atomics.compareExchange(b.ctrl, at + S_STATUS, ST_PENDING, ST_RUNNING) !== ST_PENDING
-    ) {
-      return;   // cancelled between the sweep and here; the next sweep hands it back
-    }
+    // Taken with a compare-and-exchange, not a store: `failPending` may have taken it already.
+    if (Atomics.compareExchange(b.ctrl, at + S_STATUS, ST_PENDING, ST_RUNNING) !== ST_PENDING) return;
 
     if (op === OP_CONTINUE) {
       // The status the *whole* answer had, kept from the first piece: a failure delivered in two pieces is
       // still a failure, and sending the tail as `STATUS_OK` would turn it into a successful empty answer.
-      const tail = pending[slot] ?? EMPTY;
-      pending[slot] = null;
-      reply(slot, finalStatus[slot], tail);
+      const held = tails.get(id);
+      tails.delete(id);
+      inPlace(slot, id, OP_CONTINUE, held?.status ?? STATUS_OK, held?.tail ?? EMPTY);
       return;
     }
     // A piece of an oversized request, held here rather than in the worker for the same
     // reason the response tail is.
     if (op === OP_PUSH) {
       partial[slot].push(payload);
-      reply(slot, STATUS_ACK, EMPTY);
+      inPlace(slot, id, OP_PUSH, STATUS_ACK, EMPTY);
       return;
     }
 
@@ -253,42 +238,31 @@ export function serveHostCalls(
       partial[slot] = [];
     }
 
+    // **The slot goes back now, before the work starts.** The request is in hand, and the answer goes in
+    // whichever slot is free when it lands — so however long the handler takes, it holds nothing of the
+    // ring. The worker may be parked for a slot; this is what wakes it.
+    Atomics.store(b.ctrl, at + S_STATUS, ST_FREE);
+    Atomics.add(b.ctrl, DONE_SEQ, 1);
+    Atomics.notify(b.ctrl, DONE_SEQ);
+
     const h = handlers[op];
     if (h === undefined) {
-      reply(slot, STATUS_ERR, faultedBytes(FAULT_OTHER, `no handler for capability ${op}`));
+      answer(id, STATUS_ERR, faultedBytes(FAULT_OTHER, `no handler for capability ${op}`));
       return;
     }
     // Dispatched, not awaited: the loop goes back to watching immediately, so a slow
-    // capability in one slot does not hold up the others.
-    // Whether this answer still belongs in this slot.
-    //
-    // The generation, not the status. Checking for `ST_CANCELLED` was the same idea and did
-    // not work: by the time a slow handler finishes, a cancelled slot has usually been swept
-    // free *and claimed by another call*, so the status is `RUNNING` and the check passes —
-    // and the stale answer is written into somebody else's slot and marked ready. Their
-    // `waitAny` then reports a ticket that has not settled, which is wac-mono issue 0023: a
-    // 30-second bound expiring after 15 because a 15-second timer was cancelled earlier.
-    //
-    // Nothing is freed on the way out. A cancelled slot is the sweep's to hand back, and if
-    // the slot has been reused, touching it is the whole bug.
-    const stillOurs = (): boolean => Atomics.load(b.ctrl, at + S_GEN) === gen;
-
+    // capability does not hold up the others. A call the worker has given up on is answered all the same,
+    // and the worker drops the answer as it drains it — the host is not told, because there is nothing of
+    // the bridge's for it to free.
     void (async () => {
       try {
-        const out = await h(whole);
-        if (!stillOurs()) return;
-        send(slot, out);
+        answer(id, STATUS_OK, await h(whole));
       } catch (e) {
-        if (!stillOurs()) return;
         // The worker turns this into a thrown HostCallError, so a capability failing is
         // an error in wac's caller rather than a silent wrong answer.
         // Classified *here*, once, rather than at each of the forty handlers: `faultOf` reads the
         // host's own exception, and every capability's failure gains a category for free. wac-mono 0062.
-        reply(
-          slot,
-          STATUS_ERR,
-          faultedBytes(faultOf(e), e instanceof Error ? e.message : String(e)),
-        );
+        answer(id, STATUS_ERR, faultedBytes(faultOf(e), e instanceof Error ? e.message : String(e)));
       }
     })();
   };
@@ -297,7 +271,7 @@ export function serveHostCalls(
   let sweeps = 0;
 
   /**
-   * Answer every slot still holding a request, so a parked worker learns rather than waits.
+   * Answer every slot still waiting on this side, so a parked worker learns rather than waits.
    *
    * A worker in `Atomics.wait` is waiting for *this* loop and nothing else. If the loop stops — an
    * exception, or a bug that lets it park with work outstanding — the worker waits for ever, and what
@@ -306,20 +280,16 @@ export function serveHostCalls(
    */
   const failPending = (why: string): void => {
     // The flag first, and it is the part that actually covers everything. A worker can be parked with no
-    // slot to answer at all — waiting for a free one, waiting for a request buffer, or holding one it
-    // claimed and never published — and those parks are woken by nothing but this. See `HOST_GONE`.
+    // slot to answer at all — waiting for an answer to a call that holds none, for a free slot, for a
+    // request buffer, or holding a slot it claimed and never published — and those parks are woken by
+    // nothing but this. See `HOST_GONE`.
     Atomics.store(b.ctrl, HOST_GONE, 1);
 
+    // The slots a request is waiting in: one not yet read, and one answered in place — a pushed piece, or
+    // the next piece of an answer. Calls whose handlers are running hold no slot; `HOST_GONE` is theirs.
     for (let s = 0; s < SLOTS; s++) {
       const at = slotAt(s);
       const st = Atomics.load(b.ctrl, at + S_STATUS);
-      // `ST_RUNNING` as well as `ST_PENDING`, and that was the gap: a call the host had *taken* is the
-      // likeliest state when a responder stops, and it was the one state this skipped — so the worker
-      // waited for an answer from a handler that would never be reached.
-      //
-      // A pending slot is moved to running first, because publishing an answer is a compare-and-exchange
-      // from `ST_RUNNING` and would otherwise silently do nothing. That is not hypothetical: it made this
-      // whole function a no-op for every state it claimed to cover.
       if (st === ST_PENDING) {
         if (Atomics.compareExchange(b.ctrl, at + S_STATUS, ST_PENDING, ST_RUNNING) !== ST_PENDING) continue;
         // Taken without being read, so the request buffer has to go back here — `take` is what normally
@@ -332,7 +302,9 @@ export function serveHostCalls(
         continue;
       }
       try {
-        reply(s, STATUS_ERR, faultedBytes(FAULT_OTHER, why));
+        const op = Atomics.load(b.ctrl, at + S_OP);
+        write(s, Atomics.load(b.ctrl, at + S_ID), op === OP_PUSH ? OP_PUSH : OP_ANSWER, STATUS_ERR,
+              faultedBytes(FAULT_OTHER, why));
       } catch {
         // Nothing better to do: the bridge is already in a state we are explaining.
       }
@@ -351,10 +323,11 @@ export function serveHostCalls(
       // made every call cost two turns of the event loop rather than one.
       const seen = Atomics.load(b.ctrl, SUBMIT_SEQ);
       for (let s = 0; s < SLOTS; s++) {
-        const st = Atomics.load(b.ctrl, slotAt(s) + S_STATUS);
-        if (st === ST_PENDING) take(s);
-        else if (st === ST_CANCELLED) abandon(s);
+        if (Atomics.load(b.ctrl, slotAt(s) + S_STATUS) === ST_PENDING) take(s);
       }
+      // Answers that found the ring full go in the slots the worker has drained since — it pings when it
+      // frees one, which is what woke this.
+      flush();
       sweeps++;
       // The worker has come back: whatever it was answered with, it is parked again. That is the signal
       // the scheduler waits on before letting another worker run — see `schedule.ts`.

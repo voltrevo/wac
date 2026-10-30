@@ -42,9 +42,10 @@
 // says what it was worth. `packages/tor/test/wac/socksnet_test.wac` is what made the change safe to
 // make: two clients live at once, each asserted to get its own document.
 //
-// An outstanding call still holds one of the platform's `CALL_SLOTS`, so `MAX_CLIENTS` is still
-// derived from that constant rather than written out — the ring has been four slots, then sixteen,
-// then 128, and a transcribed number becomes a limit nobody can explain.
+// `MAX_CLIENTS` is derived from the platform's `CALL_SLOTS` rather than written out — the ring has been
+// four slots, then sixteen, then 128, and a transcribed number becomes a limit nobody can explain. An
+// outstanding call held one of those slots until `issues/system/0373d`; since then the ring bounds no
+// program's outstanding calls, and this cap bounds nothing but this proxy's own fan-out.
 //
 // ## What changed in behaviour, rather than in shape
 //

@@ -8,9 +8,10 @@
 // which are silent permanent parks:
 //
 //   * a silent peer, which is what the issue was filed about;
-//   * a ticket `waitAny` did not pick and nobody cancelled, which holds a ring slot for good — so the
-//     round count here is deliberately **above** the number of slots in the ring. A run that leaked a
-//     ticket per round stops partway rather than finishing, and the count of `nothing yet` lines is
+//   * a ticket `waitAny` did not pick and nobody cancelled, which held a ring slot for good on the
+//     JavaScript hosts until `issues/system/0373d` — so the round count here is deliberately **above**
+//     the number of slots in the ring. A run that leaked a slot per round stopped partway rather than
+//     finishing, and still would if one came back; the count of `nothing yet` lines is
 //     what says which happened.
 //
 // ## The peer is wac now — `issues/system/0161`

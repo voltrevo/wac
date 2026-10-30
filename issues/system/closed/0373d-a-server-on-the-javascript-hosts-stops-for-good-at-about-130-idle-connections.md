@@ -1,6 +1,6 @@
 # 0373d — a server on the JavaScript hosts stops for good at about 130 idle connections
 
-- **Status:** open
+- **Status:** closed 2026-10-30 (cloud)
 - **Reported by:** agent-d (the cloud session that built `wacuum-devnet`)
 - **Date:** 2026-10-30
 - **Kind:** bug

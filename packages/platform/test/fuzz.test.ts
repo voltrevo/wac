@@ -12,9 +12,13 @@
 //   * **an answer only ever reaches the ticket that asked for it.** Every request carries a
 //     nonce and the handler echoes it, so cross-talk is detected rather than inferred. This is
 //     0023 stated as a check: a cancelled call's nonce must never appear as another's answer.
-//   * **a spent or cancelled ticket is an error, not a plausible answer.** The generation exists
-//     for this, and "plausible" is what makes it worth testing: a recycled slot holds real bytes
-//     from a real call.
+//   * **a spent or cancelled ticket is an error, not a plausible answer.** "Plausible" is what
+//     makes it worth testing: a crossed answer is real bytes from a real call.
+//
+// And a third since `issues/system/0373d`, when a call stopped holding a slot while the host works:
+// **every slot comes back once the worker has drained**, a cancelled call's answer included. A
+// ticket is a call number now, not a slot and a generation, and an answer lands in whichever slot
+// is free; the run ends by waiting for every cancelled call's answer, and then every slot is free.
 //
 // Deterministic despite being random — **of the inputs, and not of the schedule.** The worker's
 // choices come from a seeded xorshift and the host is a pure function of the request, so what is
@@ -26,23 +30,23 @@
 // and passing every targeted re-run since. **A failure here has to carry its own diagnosis**, which
 // is why the checks below report what they found and not only what they wanted.
 //
-// ## Both scheduler modes, because one of them cannot see the bug this file is named for
+// ## Both scheduler modes, because one of them cannot see some of what this checks
 //
 // This ran only with the scheduler `off`, for a good reason: that is the production mode, and a
 // deterministic scheduler takes away the concurrency the file exists to stress.
 //
-// The consequence was not visible from that argument. With scheduling off, `respond.ts` calls
-// `write` straight back inside `reply`, so **the generation is read and checked with nothing in
-// between** — the window a recycled slot needs simply does not open. Deleting the generation check
-// entirely leaves this test passing, five runs out of five, though the file's own notes record that
-// mutation as the way to see the failure. Under `seeded` it dies on the first seed every time, and
-// says which cancelled call's answer arrived.
+// The consequence was not visible from that argument. With scheduling off, `respond.ts` writes an
+// answer straight back inside the handler's completion, so nothing is ever *delayed* between a call
+// finishing and its answer landing — and the slot generation this protocol had until 0373d guarded
+// exactly that window, so deleting it left the `off` pass green, five runs of five. Under `seeded` it
+// died on the first seed. The generation is gone with the protocol it belonged to, and the lesson is
+// not: each mutant below is caught in both modes today, and the next guard on the answer path may not be.
 //
 // So both, and neither is redundant: `off` is production and `seeded` is the only one that reaches
 // the delayed-answer path. A guard is only tested in a configuration that can delay the answer it
 // guards.
 
-import { BUF_BYTES, CTRL_INTS, newBridge, S_GEN, S_STATUS, SLOTS, slotAt, ST_FREE } from "../host/layout.ts";
+import { BUF_BYTES, CTRL_INTS, newBridge, S_STATUS, SLOTS, slotAt, ST_FREE } from "../host/layout.ts";
 import { serveHostCalls } from "../host/respond.ts";
 import { newScheduler } from "../host/schedule.ts";
 
@@ -139,8 +143,8 @@ const BODY = `
       //
       // It matters because this failure appears under a load the seed cannot reproduce
       // (issues/system/0155): the one report you get has to carry its own diagnosis. With the
-      // generation check removed it now says "the nonce belongs to cancelled call 9 - a recycled
-      // slot", which is the diagnosis rather than the symptom.
+      // slot generation removed, under the protocol before 0373d, it said "the nonce belongs to
+      // cancelled call 9", which is the diagnosis rather than the symptom.
       //
       // (Two traps in here, both because this function lives inside the worker source and that is a
       // template literal. A backtick in a comment *ends* it, and the parse error lands two hundred
@@ -162,13 +166,13 @@ const BODY = `
         : found === entry.nonce
         ? "the nonce is this call's, so it is truncated rather than crossed"
         : cancelled.has(found)
-        ? "the nonce belongs to cancelled call " + found + " - a recycled slot"
+        ? "the nonce belongs to cancelled call " + found + " - an answer delivered to the wrong call"
         : "the nonce is " + found + ", another live call's - crossed";
       throw new Error(
         "answer for " + entry.nonce + " is " + bytes.length + " bytes, wanted " + Math.max(8, entry.size) +
         "\\n  " + whose +
         "\\n  " + readSize +
-        "\\n  slot " + entry.t.slot + " gen " + entry.t.gen +
+        "\\n  call " + entry.t.id +
         ", " + live.length + " live, " + cancels + " cancelled and " + spent.size + " spent so far",
       );
     }
@@ -177,7 +181,7 @@ const BODY = `
       throw new Error("the answer to cancelled call " + got + " was delivered as the answer to " + entry.nonce);
     }
     if (got !== entry.nonce) {
-      throw new Error("asked as " + entry.nonce + ", answered as " + got + " in slot " + entry.t.slot + " gen " + entry.t.gen);
+      throw new Error("asked as " + entry.nonce + ", answered as " + got + " for call " + entry.t.id);
     }
     // Every byte, not just the nonce: a response reassembled out of order would keep its head.
     //
@@ -212,7 +216,7 @@ const BODY = `
     // reporting its own mistake as a finding.
     if (live.length >= ${SLOTS} - 1) {
       const got = waitAny(b, live.map((e) => e.t), -1);
-      collectOne(live.findIndex((e) => e.t.slot === got.slot && e.t.gen === got.gen));
+      collectOne(live.findIndex((e) => e.t.id === got.id));
     }
 
     const roll = rnd();
@@ -252,7 +256,7 @@ const BODY = `
         if (ms < 0) throw new Error("waitAny with no deadline returned nothing");
         timeouts++;
       } else {
-        const at = chosen.find((i) => live[i].t.slot === got.slot && live[i].t.gen === got.gen);
+        const at = chosen.find((i) => live[i].t.id === got.id);
         if (at === undefined) throw new Error("waitAny returned a ticket that was not in the list");
         // It said this one is ready, so it must be: collecting is how that is checked, since a
         // wrong answer here is exactly the shape of 0023.
@@ -272,9 +276,20 @@ const BODY = `
 
   while (live.length > 0) {
     const got = waitAny(b, live.map((e) => e.t), -1);
-    const at = live.findIndex((e) => e.t.slot === got.slot && e.t.gen === got.gen);
+    const at = live.findIndex((e) => e.t.id === got.id);
     collectOne(at);
   }
+
+  // **And the cancelled calls' answers, as they land.** A cancelled call holds no slot, but its answer
+  // takes one when it arrives, until a drain drops it — which any wait does. A program that goes on
+  // waiting for anything does this without asking; this one has nothing left to wait for, so it waits
+  // for those, with a deadline so a lost answer fails the run rather than hanging it.
+  const settleBy = Date.now() + 10000;
+  while (droppedCalls(b) > 0 && Date.now() < settleBy) {
+    isDone(b, { id: -1 });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+  if (droppedCalls(b) > 0) throw new Error(droppedCalls(b) + " cancelled call(s) were never answered");
 
   return "steps=" + STEPS + " collected=" + collected + " cancelled=" + cancels +
          " chunked=" + chunked + " polls-that-timed-out=" + timeouts;
@@ -290,12 +305,11 @@ async function fuzz(
   // which is what this file exists to stress and what a deterministic scheduler takes away.
   // design/0001 D12.
   //
-  // **`seeded` is where the generation check is reachable.** With scheduling off the answer is written
-  // synchronously inside `reply`, so the generation is read and checked with nothing in between and a
-  // slot cannot be recycled in the gap. See the header.
+  // **`seeded` is where an answer can be delayed.** With scheduling off it is written synchronously as
+  // the handler finishes, so nothing can happen in between. See the header.
   const responder = serveHostCalls(bridge, handlers, { scheduler: newScheduler(policy) });
   const src = `
-    import { submit, collect, isDone, waitAny, cancel, hostCall, i32le, readI32le } from ${JSON.stringify(CALL)};
+    import { submit, collect, isDone, waitAny, cancel, hostCall, i32le, readI32le, droppedCalls } from ${JSON.stringify(CALL)};
     import { bridgeOf, slotAt, S_STATUS, SLOTS } from ${JSON.stringify(LAYOUT)};
     globalThis.__layout = { slotAt, S_STATUS, SLOTS };
     self.onmessage = (e) => {
@@ -321,9 +335,8 @@ async function fuzz(
       w.postMessage(bridge.sab);
     });
     if (!r.ok) throw new Error(`seed ${seed} (${policy}): ${r.error}`);
-    // The host may still be finishing work for cancelled calls; give the sweep a turn before
-    // asking whether the ring came back clean.
-    await new Promise((res) => setTimeout(res, 50));
+    // The worker has drained every answer, the cancelled calls' included, before it returned; nothing
+    // the host does after that touches a slot.
     return { report: String(r.value), ctrl: new Int32Array(bridge.ctrl.slice(0, CTRL_INTS)) };
   } finally {
     w.terminate();
@@ -338,31 +351,29 @@ Deno.test("the ring keeps its invariants under random load", async () => {
   // first few steps — whether a cancel lands before or after the host takes the slot — and a
   // fresh seed re-rolls those, where a longer run mostly repeats them.
   //
-  // Each of the three bugs this was written for is caught, with a distinct signature, which is the
-  // only evidence that a fuzzer is worth its runtime. **Re-applied and re-measured 2026-08-15**,
-  // because a list like this is a claim about the present and was written in the past — one of the
-  // three had silently stopped holding:
+  // What it catches, each with a distinct signature, which is the only evidence that a fuzzer is
+  // worth its runtime. **Re-applied and re-measured 2026-10-30, against the protocol of
+  // `issues/system/0373d`**, because a list like this is a claim about the present and the protocol
+  // under it changed — the previous list was about slot generations, which no longer exist:
   //
-  //   the generation check removed   ->  the nonce belongs to cancelled call N - a recycled slot
-  //                                      `seeded` only; under `off` the test passes, 5 runs of 5.
-  //                                      See the header: with scheduling off there is nothing
-  //                                      between reading the generation and writing the answer.
-  //   the claim check removed        ->  slot N was not free at the end
-  //                                      Removing the *check* kills it. Replacing the CAS with a
-  //                                      load and a store does **not** — so what is demonstrated
-  //                                      here is that a claim is checked, and not that the check is
-  //                                      atomic.
-  //
-  //                                      The atomicity is still load-bearing, against the *host*
-  //                                      rather than another worker: a bridge serves one worker
-  //                                      (`layout.ts`, "how many calls one worker may have
-  //                                      outstanding"), and `respond.ts` stores `ST_FREE` into the
-  //                                      same word when it frees a slot. A load-then-store claim can
-  //                                      lose to that. Nothing in this repository exercises the
-  //                                      window, which is worth knowing rather than worth a test
-  //                                      written to hit one instruction.
-  //   `ST_CLAIMED` removed           ->  no handler for capability 0
-  //                                      (published as `ST_PENDING` before the opcode is written)
+  //   a drain that keeps a cancelled   ->  N cancelled call(s) were never answered
+  //   call's answer                        The drop is how a cancelled call's row is closed; keeping
+  //                                        the answer leaves the row open for good.
+  //   a drain that frees no slot       ->  answer for N is 4096 bytes, wanted M
+  //                                        The slot stays the drained call's, and the next piece of
+  //                                        an oversized answer is never asked for.
+  //   `ST_CLAIMED` removed             ->  Offset is outside the bounds of the DataView
+  //                                        In both modes: the host takes a slot whose request is
+  //                                        still being written, and decodes whatever was there.
+  //   either claim of a free slot      ->  nothing; passes, 8 seeds of 8 in both modes.
+  //   made a load and a store              What is demonstrated here is that a slot is claimed, not
+  //                                        that the claim is atomic. The atomicity is load-bearing —
+  //                                        both sides take free slots now, the worker for requests
+  //                                        and the host for answers — and a load-then-store loses
+  //                                        to the other side in a window of one instruction, which
+  //                                        load does not find. `bridge_model.test.ts` walks it and
+  //                                        catches the host's: an answer over a claimed request is
+  //                                        "call N was lost".
   // Eight seeds in the suite, because it has to cost about a second. `WAC_FUZZ_SEEDS=200`
   // sweeps wider, which is what to reach for after touching anything in `call.ts`,
   // `respond.ts` or `layout.ts` — the fourth bug was at the eighth seed, so eight is a floor
@@ -372,28 +383,22 @@ Deno.test("the ring keeps its invariants under random load", async () => {
     ? Array.from({ length: wide }, (_, i) => 1 + i * 7919)
     : [1, 7, 31, 1009, 12345, 65537, 99991, 2000003];
 
-  // **Both policies.** `off` is production; `seeded` is the only one in which an answer is delayed
-  // between reading the generation and writing it, which is the window the generation check exists
-  // for. Deleting that check leaves the `off` pass green and kills the `seeded` one on its first
-  // seed — see the header. The mutation list above was recorded against a run that could see it.
+  // **Both policies.** `off` is production; `seeded` is the only one in which an answer is delayed,
+  // which is the window a guard on the answer path needs — see the header. The mutation list was
+  // recorded against a run of both.
   for (const [seed, policy] of seeds.flatMap((s) =>
     [[s, "off"], [s, "seeded"]] as [number, "off" | "seeded"][]
   )) {
     const { report, ctrl } = await fuzz(seed, 600, policy);
 
-    // Every slot back to free, and no generation left behind. A slot still held at the end
-    // would mean an answer nobody could ever take — the leak that fills the ring.
+    // Every slot back to free. A slot still held at the end would mean a message nobody will move
+    // on — the leak that fills the ring. A cancelled call's answer included: it is drained and
+    // dropped, and its slot comes back with the rest.
     for (let i = 0; i < SLOTS; i++) {
       assertEquals(
         Atomics.load(ctrl, slotAt(i) + S_STATUS),
         ST_FREE,
         `seed ${seed} (${policy}): slot ${i} was not free at the end — ${report}`,
-      );
-      // Generations only move forward, and every slot that was used has moved.
-      assertEquals(
-        Atomics.load(ctrl, slotAt(i) + S_GEN) >= 0,
-        true,
-        `seed ${seed} (${policy}): slot ${i} has a negative generation`,
       );
     }
     // A run that cancelled nothing, or chunked nothing, would pass while testing neither.

@@ -11,20 +11,19 @@
 // read backwards for an hour on the strength of it. The first test below is that bug, stated.
 //
 // Checked by putting it back: a table written in *lifecycle* order — free, claimed, pending, running,
-// ready, cancelled — and indexed by the status value prints `1:pending` for a slot that is running, and
+// ready, answering — and indexed by the status value prints `1:pending` for a slot that is running, and
 // three of the four tests here fail. (Writing it in *declaration* order happens to be right today, since
 // the constants are declared 0..5 in order; it was not when `ST_CLAIMED` was declared second and valued
 // five, which is how the bug got in.)
 
 import {
   newBridge,
-  S_GEN,
   S_OP,
   S_REQ_LEN,
   S_STATUS,
   SLOTS,
   slotAt,
-  ST_CANCELLED,
+  ST_ANSWERING,
   ST_CLAIMED,
   ST_PENDING,
   ST_READY,
@@ -49,7 +48,6 @@ function put(b: ReturnType<typeof newBridge>, slot: number, status: number, op: 
   Atomics.store(b.ctrl, at + S_STATUS, status);
   Atomics.store(b.ctrl, at + S_OP, op);
   Atomics.store(b.ctrl, at + S_REQ_LEN, 0);
-  Atomics.store(b.ctrl, at + S_GEN, 0);
 }
 
 Deno.test("every status prints its own name, not the one next to it", () => {
@@ -58,7 +56,7 @@ Deno.test("every status prints its own name, not the one next to it", () => {
     [ST_PENDING, "pending"],
     [ST_RUNNING, "running"],
     [ST_READY, "ready"],
-    [ST_CANCELLED, "cancelled"],
+    [ST_ANSWERING, "answering"],
     [ST_CLAIMED, "claimed"],
   ];
   states.forEach(([st], i) => put(b, i, st, OP.READ_FILE));

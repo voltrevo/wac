@@ -20,10 +20,9 @@
 // three reads are in flight together, so a slow second stage parks its own leg rather than the
 // first child, and the ring supplies the backpressure.
 //
-// It does need a slot per live read, plus one per write. Two stages is a handful of `CALL_SLOTS`,
-// which is why the number rather than the constant is what this line used to carry, and it went
-// on saying sixteen after the ring had 128. When the ring *did* have four, four of four is why a
-// third stage was not something this could grow.
+// It needed a slot per live read, plus one per write, until `issues/system/0373d` — a call holds a
+// slot now only while its request or answer is crossing. When the ring had four, four of four is why
+// a third stage was not something this could grow; it went on saying sixteen after the ring had 128.
 
 import { Authority, Child, Input, Launch, Sys, Files, Output, Procs } from "std";
 import { Ticket } from "core";

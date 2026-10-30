@@ -4,8 +4,8 @@
 // at a time — so nothing there would notice if the ring served them strictly in order and
 // the slots were decoration. These tests use the worker API directly and check the
 // properties the ring exists for: submitting does not block, several calls overlap, the
-// answers do not have to come back in order, and a ticket cannot be confused with the one
-// that reused its slot.
+// answers do not have to come back in order, and a ticket cannot be confused with another
+// call's.
 
 import { SLOTS } from "../host/layout.ts";
 import { onWorker, SLOW, slowHandlers } from "./worker.ts";
@@ -131,14 +131,11 @@ Deno.test("an error in one slot does not disturb the others", async () => {
 });
 
 Deno.test("as many calls in flight as there are slots, all waited on together", async () => {
-  // The count of slots is a ceiling on how many handles a program can watch: watching N means
-  // N outstanding `recv`s, each holding one. At four slots a program could watch three and
-  // still write — and `example/pipe.wac` watches three, so a three-stage pipeline was not
-  // writable. This is that ceiling, exercised at its new height.
-  //
-  // Worth testing rather than assuming, because nothing else in the suite puts more than four
-  // calls in flight: the slot count could have been decoration above four and no test would
-  // have noticed.
+  // A ring's worth of calls waited on as one set, each taken as it lands. The count of slots was
+  // a ceiling on how many handles a program could watch until `issues/system/0373d`, when a call
+  // stopped holding its slot while the host works; `fanout.test.ts` holds it to *no* ceiling.
+  // This is the ordering and the set: answers taken in the order they land, and nothing left
+  // behind when the last is collected.
   const out = await onWorker(
     `
     const ts = [];
@@ -165,21 +162,21 @@ Deno.test("as many calls in flight as there are slots, all waited on together", 
   assertEquals(out, expected, String(out));
 });
 
-Deno.test("a cancelled call's answer does not land on whatever took its slot", async () => {
+Deno.test("a cancelled call's answer does not settle the call that came after it", async () => {
   // wac-mono issue 0023, reported by agent-c: a 30-second bound expiring after 15 because a
   // 15-second timer had been cancelled earlier. Not id recycling — they checked that — and
-  // not about timers at all. The slot is what gets recycled.
+  // not about timers at all. The slot was what got recycled.
   //
-  // `cancel` bumps the generation and the sweep hands the slot back at once, but the host's
-  // handler is still running. When it finished, the only check was whether the slot was
-  // *still* `ST_CANCELLED`; by then the slot had been claimed by another call, so the stale
-  // answer was written into it and marked ready. The new call's `waitAny` then reported a
-  // ticket that had not settled — early, which is worse than late, because a bound that
-  // fires at half its interval drops connections that were about to succeed.
+  // Then, a call held its slot until it was collected, and a cancel handed the slot back while
+  // the host's handler still ran; the stale answer was written into the slot another call had
+  // since claimed, and that call's `waitAny` reported a ticket that had not settled — early,
+  // which is worse than late, because a bound that fires at half its interval drops
+  // connections that were about to succeed.
   //
-  // Reproduced by making the reuse deliberate rather than waiting for luck: cancel a call,
-  // let the sweep free its slot, then put a long call in the same slot and check that the
-  // cancelled call's completion does not settle it.
+  // Now a slot is nobody's while the handler runs (`issues/system/0373d`): the answer goes in
+  // whichever slot is free, says which call it is for, and a cancelled call's is dropped as it
+  // is drained. The property is the same and so is the check: cancel a call the host has taken,
+  // make more, and see that the cancelled one's completion settles none of them.
   const out = await onWorker(
     `
     const doomed = submit(b, ${SLOW}, i32le(300));
@@ -190,24 +187,19 @@ Deno.test("a cancelled call's answer does not land on whatever took its slot", a
     waitAny(b, [doomed], 40);
     cancel(b, doomed);
 
-    // Two quick round trips, which park and so let the host sweep and free the slot. The
-    // second lands in the freed slot, proving it is back in circulation.
+    // Two quick round trips, and then the long call, all made while the cancelled one runs.
     hostCall(b, ${SLOW}, i32le(0));
     hostCall(b, ${SLOW}, i32le(0));
-
-    // The long call now occupies the slot the cancelled one had.
     const real = submit(b, ${SLOW}, i32le(2000));
 
     // 800ms is after the cancelled call's 300ms and well before the real one's 2000ms. If the
-    // stale answer lands on this slot, waitAny reports index 0 at about 300ms.
+    // stale answer settles the real call, waitAny reports it at about 300ms.
     const began = performance.now();
     const got = waitAny(b, [real], 800);
     const waited = Math.round(performance.now() - began);
-    return "slots " + doomed.slot + "/" + real.slot + ": " + (got === null ? "nothing-settled" : "settled") + " after " + (waited < 600 ? "early" : "the full deadline");
+    return (got === null ? "nothing-settled" : "settled") + " after " + (waited < 600 ? "early" : "the full deadline");
   `,
     slowHandlers,
   );
-  // The slot numbers are in the answer so a run that failed to reuse the slot is
-  // distinguishable from one where the reuse was harmless — the first would prove nothing.
-  assertEquals(out, "slots 0/0: nothing-settled after the full deadline", String(out));
+  assertEquals(out, "nothing-settled after the full deadline", String(out));
 });

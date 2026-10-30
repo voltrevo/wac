@@ -299,16 +299,25 @@ worker module — that was checked, not assumed.
 ## The bridge
 
 The JavaScript hosts run a program on a **worker**, because a worker is allowed to block, and answer its
-requests on the main thread through a `SharedArrayBuffer`: a ring of `CALL_SLOTS` slots rather than one
-mailbox — see `host/layout.ts`. `waitAny` is a wait on one completion counter followed by a rescan, which is
-also exactly what `poll` over sockets is.
+requests on the main thread through a `SharedArrayBuffer`: a ring of 128 slots rather than one mailbox —
+see `host/layout.ts`. `waitAny` is a wait on one completion counter followed by a rescan, which is also
+exactly what `poll` over sockets is.
+
+**A slot carries a message, not a call.** A request holds its slot until the host has read it, and the
+host frees it then; however long the work takes, the call is a row in the host's memory, as it is in
+the native hosts' ticket table. The answer goes in whichever slot is free, tagged with the call's number,
+and the worker drains it — copies it out and frees the slot — the next time it waits for anything, which
+includes waiting for a slot. So every busy slot is on its way back without the program's help, and how
+many calls a program may have outstanding has no ceiling. It had one until `issues/system/0373d`; see
+"The ring's limits" below.
 
 ### Who owns a slot
 
-Every state change on a slot is a compare-and-exchange, not a store, and every answer is
-checked against the slot's **generation** before it is written. That is not defensive style; it
-is four bugs, all the same shape — the host and the worker disagreeing about whose call a slot
-holds — and all four were live in a bridge whose tests passed:
+Every change that either side might race the other for is a compare-and-exchange, not a store: the
+worker takes a free slot for a request, and the host takes one for an answer, each from `ST_FREE`. That is
+not defensive style; it is four bugs, all the same shape — the host and the worker disagreeing about
+whose a slot is — and all four were live in a bridge whose tests passed, under the protocol before
+0373d, when a call held its slot from submission to collection and a cancel handed it back early:
 
 | what happened | how it showed |
 |---|---|
@@ -331,14 +340,27 @@ catches all four when they are put back — each with its own signature. Eight s
 about a second; `WAC_FUZZ_SEEDS=250` for a deep sweep, which is what to run after touching
 `call.ts`, `respond.ts` or `layout.ts`. The fourth bug was at the eighth seed.
 
+`test/bridge_model.test.ts` walks every reachable state of the protocol as it is now — one slot, three
+calls, either side moving next — and holds it to answers matched, cancelled ones undelivered, no call
+lost, and the property 0373d is about: from every state the slot comes back with the host never
+finishing anything and the program never collecting.
+
 ### The ring's limits
 
-**The slot count is also a ceiling on how many handles a program can watch**, since watching N
-means N outstanding `recv`s holding N slots, and writing needs one more. It went four → sixteen
-→ 128 for that reason: four meant three handles, and `pipe.wac` already watches three, so a
-three-stage pipeline could not be written; sixteen meant a relay could not fan in more than a
-dozen sockets. Exceeding it is worse than a limit — the held slots are RUNNING, not READY, so it
-is indistinguishable from backpressure and parks silently.
+**The slot count was a ceiling on how many handles a program can watch until `issues/system/0373d`**,
+since watching N meant N outstanding `recv`s holding N slots, and writing needed one more. It went
+four → sixteen → 128 for that reason: four meant three handles, and `pipe.wac` already watches
+three, so a three-stage pipeline could not be written; sixteen meant a relay could not fan in more
+than a dozen sockets. Exceeding it was worse than a limit — the held slots were RUNNING, not READY,
+so it was indistinguishable from backpressure and parked silently, and a server on a network met
+it as soon as anyone opened 130 connections. Raising it again would only have moved that out to
+where a stranger could still reach it.
+
+So a call stopped holding a slot while the host works on it. What the 128 now bound is how many
+messages can be crossing at once, and nothing waits on that: requests are read as the host sees
+them, answers are drained whenever the worker waits. `test/fanout.test.ts` holds the bridge to four
+rings' worth of calls the host never answers, with further calls answered and deadlines kept, and
+`test/fanout_js.test.ts` holds a server to hundreds of idle connections.
 
 **What paid for 128 slots is that a slot no longer owns a buffer.** Sixteen slots × 128KiB was
 2MiB of shared memory per bridge whether a program made one call or none, and the natural way to
@@ -371,7 +393,7 @@ untouched slot claimed to hold buffer 0 and the first `release` of one handed th
 while a live answer was still in it. The fuzzer read one call's answer out of another's —
 `asked as 15, answered as 24` — on its first seed. Handles are one-based now, so zeroed memory
 means "none" by construction, and `test/pool_model.test.ts` walks every reachable state of two
-slots over one buffer with that bug and its mirror image as mutants.
+slots over one buffer with that bug, and a drain that keeps its buffer, as mutants.
 
 **When the host stops, every wait raises rather than parking.** A worker in `Atomics.wait` is
 waiting for the responder loop and nothing else, so a loop that has gone makes every one of those
@@ -383,11 +405,11 @@ the completion counter; every park checks the flag on both sides of its wait, an
 with `the host stopped answering`. The flag is deliberately sticky — a bridge whose host has gone is
 finished, and a half-restarted world is worse than a clear failure.
 
-A ticket abandoned rather than cancelled still fills a slot, so the ring keeps its backstop:
-`all 128 call slots hold answers that were never taken, from: RECV × 127, ACCEPT`.
-A ready slot can only be freed by the thread that submitted it, so a submitter finding all
-every slot ready is provably stuck rather than merely waiting — an error, not a park. It names
-the opcodes because the call that discovers the full ring is rarely the one that leaked.
+A ticket abandoned rather than cancelled no longer fills a slot. It did, and the ring had a backstop
+for it — `all 128 call slots hold answers that were never taken, from: RECV × 127, ACCEPT` — because a
+ready slot could only be freed by the thread that submitted it. Now an answer is drained out of its slot
+whoever it is for, so an uncollected ticket costs a row in the worker's memory, as it does on the native
+hosts, and the state the backstop detected cannot arise.
 
 ### Composing them
 
@@ -405,12 +427,11 @@ printf 'b\na\nb\nc\n' | pipe box.worker.js sort uniq      #  a  b  c
 Note the deadlock it cannot have: a shell pipeline needs an OS buffer between stages, and a
 stage that stops reading while the one before it keeps writing wedges both. Here all three
 reads are in flight, so a slow second stage parks the *pump* rather than the first child.
-**Two things supply the backpressure**, and they are at different distances: the ring, whose
-`CALL_SLOTS` an outstanding call holds one of — this said "four slots" long after the ring had
-128, which is the mistake `CALL_SLOTS` exists to stop anyone making twice — and, nearer the
-program, the child's own output queue, which holds 8 MiB before a writer waits (`QUEUE_CAP` in
-`host/children.ts`, and the same number in `native/src/streams.rs`, which had no cap at all
-until issue 0120). 5MB through `cat | cat` comes out byte-identical, checked by running it.
+**The backpressure is the child's own output queue**, which holds 8 MiB before a writer waits
+(`QUEUE_CAP` in `host/children.ts`, and the same number in `native/src/streams.rs`, which had no cap at
+all until issue 0120). The ring supplied some too, until `issues/system/0373d`, by being a ceiling on
+outstanding calls — which is to say by stopping the program when it ran out. 5MB through `cat | cat`
+comes out byte-identical, checked by running it.
 
 `example/inetd.wac` — accept a connection, spawn a program, relay bytes until either side
 finishes. The handler knows nothing about networks: it reads standard input and writes standard

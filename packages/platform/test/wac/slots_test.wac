@@ -1,11 +1,11 @@
 // The slot count is in two places, and they have to agree.
 //
-// `host/layout.ts` decides how many control records the shared buffer holds; `src/platform.wac` states
-// the same number as `CALL_SLOTS` so a guest can derive its own limits from it instead of transcribing
-// one. Two copies of a number that has already changed twice is exactly the shape that goes stale
-// quietly: the guest would keep watching twelve sockets on a ring of 128, or — far worse in the other
-// direction — submit more calls than there are slots and park for ever with the held slots unable to
-// complete.
+// `host/layout.ts` decides how many control records the shared buffer holds; `std/platform.wac` states
+// the same number as `CALL_SLOTS`. Two copies of a number that has already changed twice is exactly the
+// shape that goes stale quietly. It mattered more while the count was a ceiling on outstanding calls —
+// a guest that read a stale one would watch too few sockets, or submit more calls than there were slots
+// and park for ever — which it stopped being in `issues/system/0373d`; the programs that sized
+// themselves by it still read it, so the two still have to agree.
 //
 // Checked by reading both sources as text. A compile would be a heavier way to learn the same thing.
 //

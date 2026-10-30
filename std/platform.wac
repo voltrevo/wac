@@ -600,16 +600,17 @@ export static i32 INHERIT_OUT = 2;
 export static i32 DETACHED = 4;
 
 /**
- * How many host calls one worker may have outstanding at once.
+ * How many slots the JavaScript hosts' bridge has — **not** how many host calls a program may have
+ * outstanding, which has no ceiling on any host.
  *
- * Every request in flight holds one call slot until it is collected or cancelled, so this is the
- * ceiling on how many handles a program can watch: watching N sockets means N outstanding `recv`s, plus
- * one for an `accept` and one for whatever it writes with. Exceeding it does not degrade into slowness —
- * the extra submission parks, and the calls holding the slots cannot complete, so it deadlocks.
+ * It was that ceiling until `issues/system/0373d`: a request held its slot until it was collected, so
+ * watching N sockets held N slots, and past 128 the next call of any kind parked for ever. Now a call
+ * holds a slot only while its request or its answer is crossing, as the native hosts never held one at
+ * all, and a program can watch as many sockets as it can open.
  *
- * Stated here rather than transcribed into each program, because it has already changed twice (four,
- * sixteen, 128) and every copy of the old number becomes a limit nobody can explain.
- * `test/wac/slots_test.wac` fails if this and `host/layout.ts` disagree.
+ * So nothing should size itself by this. It stays while programs that did — `packages/tor`'s
+ * `socks.wac` and `relayd.wac` — still read it. `test/wac/slots_test.wac` fails if this and
+ * `host/layout.ts` disagree.
  */
 export static i32 CALL_SLOTS = 128;
 

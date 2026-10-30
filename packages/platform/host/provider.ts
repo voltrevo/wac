@@ -523,7 +523,7 @@ export function hostFor(b: Bridge, app: Record<string, unknown>, grants?: number
     const woke = waitOn(b, tickets, millis);
     deliverReady(want);
     if (woke === null) return -1;
-    return tickets.findIndex((t) => t.slot === woke.slot && t.gen === woke.gen);
+    return tickets.findIndex((t) => t.id === woke.id);
   };
 
   // Thrown, not acted on: the throw unwinds the program's wasm frames to whoever called `main`.

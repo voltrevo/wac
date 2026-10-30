@@ -41,14 +41,15 @@
 // wedges leaves the sequence of decisions behind, which replays where a seed might not — 0082 has been
 // observed half a dozen times and never once with its interleaving in hand.
 
-/** A completed answer waiting to be written into its slot. */
+/** A completed answer waiting to be written. */
 export type Pending = {
   /** Which bridge — a test process can be running several children at once. */
   readonly bridge: number;
-  readonly slot: number;
+  /** Which call, by the number the worker gave it — the log names calls, not slots, which they no longer hold. */
+  readonly call: number;
   /** The order it became ready, for `fifo` and for the log. */
   readonly seq: number;
-  /** Writes the answer into the slot and wakes the worker. */
+  /** Writes the answer and wakes the worker. */
   readonly deliver: () => void;
 };
 
@@ -133,12 +134,12 @@ export class Scheduler {
    * With scheduling off this writes it immediately, which is what the host has always done. With it on,
    * the answer joins the ready set and is delivered when this scheduler says.
    */
-  ready(bridge: number, slot: number, deliver: () => void): void {
+  ready(bridge: number, call: number, deliver: () => void): void {
     if (this.#policy === "off") {
       deliver();
       return;
     }
-    this.#ready.push({ bridge, slot, seq: this.#seq++, deliver });
+    this.#ready.push({ bridge, call, seq: this.#seq++, deliver });
     this.#pump();
   }
 
@@ -181,7 +182,7 @@ export class Scheduler {
     const at = this.#choose();
     if (at < 0) return;
     const [chosen] = this.#ready.splice(at, 1);
-    this.#log.push(`${chosen.bridge}:${chosen.slot}@${chosen.seq}`);
+    this.#log.push(`${chosen.bridge}:${chosen.call}@${chosen.seq}`);
     this.#running.add(chosen.bridge);
     chosen.deliver();
     this.#armIdle();

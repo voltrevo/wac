@@ -19,9 +19,10 @@ import {
   type Bridge,
   DONE_SEQ,
   HOST_GONE,
+  OP_ANSWER,
   OP_CONTINUE,
   OP_PUSH,
-  S_GEN,
+  S_ID,
   S_OP,
   S_REQ_LEN,
   S_RES_LEN,
@@ -38,7 +39,7 @@ import {
   S_RES_BUF,
   SLOTS,
   slotAt,
-  ST_CANCELLED,
+  ST_ANSWERING,
   ST_CLAIMED,
   ST_FREE,
   ST_RUNNING,
@@ -94,13 +95,60 @@ export const opName = (op: number): string =>
   op === OP_CONTINUE ? "a continued response" : (OP_NAMES[op] ?? `op ${op}`);
 
 /**
- * A call in flight.
+ * A call in flight: the number its request and answer both carry in `S_ID`.
  *
- * The generation is not decoration: slots are reused, and waiting on a ticket whose slot
- * had been recycled would read whatever call now occupies it — which is the worst kind of
- * bug, because the answer looks plausible.
+ * **Not a slot**, which it was until `issues/system/0373d`. A slot carries a request only until the host
+ * has read it and an answer only until this side has drained it, so a call the host is still working on
+ * holds no slot at all — and the number of those a worker may have is not the ring's size, as it was when a
+ * `recv` on a quiet connection held its slot until the peer spoke.
  */
-export type Ticket = { slot: number; gen: number };
+export type Ticket = { id: number };
+
+/**
+ * What this side of one bridge knows about its calls: which are outstanding, which have answered, and
+ * which it gave up on.
+ *
+ * **In the worker's memory, because draining is what keeps the ring moving.** An answer is copied out of
+ * its slot the moment it is seen — by whatever call happens to be waiting, for whichever ticket — and
+ * the slot handed straight back, so a slot never waits on the program to get round to collecting. The
+ * cost of a ticket nobody collects is a row here, as it is in the native hosts' table, rather than a slot.
+ */
+type Calls = {
+  /** The next call's number. Wraps at 2³¹, long after any call that could share it has gone. */
+  next: number;
+  /** Submitted and not yet answered, nor given up on. */
+  outstanding: Set<number>;
+  /** Answered and not yet collected. */
+  answered: Map<number, { status: number; bytes: Uint8Array }>;
+  /** The pieces so far of an answer too large for one slot. */
+  pieces: Map<number, Uint8Array[]>;
+  /** Given up on while the host still had them: what arrives for these goes nowhere. */
+  dropped: Set<number>;
+};
+
+const callsOf = new WeakMap<Bridge, Calls>();
+
+function calls(b: Bridge): Calls {
+  let c = callsOf.get(b);
+  if (c === undefined) {
+    c = { next: 1, outstanding: new Set(), answered: new Map(), pieces: new Map(), dropped: new Set() };
+    callsOf.set(b, c);
+  }
+  return c;
+}
+
+/** How many calls this worker has outstanding on `b`, for a caller narrating a stall. */
+export function outstandingCalls(b: Bridge): number {
+  return calls(b).outstanding.size;
+}
+
+/**
+ * How many calls this worker gave up on whose answers have not arrived yet — each will take a slot for a
+ * moment when it does, until the next drain drops it. For a test asking whether the ring came back clean.
+ */
+export function droppedCalls(b: Bridge): number {
+  return calls(b).dropped.size;
+}
 
 /**
  * What every slot in a bridge is doing, for a caller narrating a stall.
@@ -126,7 +174,7 @@ export function describeSlots(b: Bridge): string {
     [ST_PENDING]: "pending",
     [ST_RUNNING]: "running",
     [ST_READY]: "ready",
-    [ST_CANCELLED]: "cancelled",
+    [ST_ANSWERING]: "answering",
     [ST_CLAIMED]: "claimed",
   };
   // Detail for the first few, then a tally.
@@ -215,59 +263,87 @@ function gone(b: Bridge): void {
 }
 
 /**
- * Take a free slot, waiting for one if all are busy.
+ * Take a free slot, draining answers to make one if all are busy.
  *
- * Waiting rather than failing is deliberate: a program submitting more than `SLOTS` calls
- * is asking for more concurrency than the bridge has, and backpressure is the useful
- * answer. An error here would have to be handled by waiting anyway.
+ * **Never a wait on the program.** Every busy slot is on its way back without it: a request until the
+ * host reads it, an answer until something here drains it — and `drain` is called right here, so an
+ * answer can never be the reason this waits. Until `issues/system/0373d` a slot was held from submission
+ * to collection, a quiet connection's `recv` held one for good, and this parked the only thread that could
+ * free one; past 128 such calls the program stopped and stayed stopped. What this waits for now is the
+ * host to read a request, which it does as it sees one.
  */
 function claim(b: Bridge): number {
   for (;;) {
     const seen = Atomics.load(b.ctrl, DONE_SEQ);
-    let ready = 0;
     for (let i = 0; i < SLOTS; i++) {
-      const at = slotAt(i);
       // Claimed rather than pending: `submit` publishes it as pending once the opcode and
-      // payload are in, and until then the host must not take it.
-      if (Atomics.compareExchange(b.ctrl, at + S_STATUS, ST_FREE, ST_CLAIMED) === ST_FREE) {
+      // payload are in, and until then the host must not take it. A compare-and-exchange because the
+      // host takes free slots too, for answers.
+      if (Atomics.compareExchange(b.ctrl, slotAt(i) + S_STATUS, ST_FREE, ST_CLAIMED) === ST_FREE) {
         return i;
       }
-      if (Atomics.load(b.ctrl, at + S_STATUS) === ST_READY) ready++;
     }
-    // Parking here is normal backpressure — every slot is busy and the host will finish one.
-    //
-    // Every slot being `ST_READY` is not that. A ready slot holds an answer, and only *this*
-    // thread frees one, by collecting or cancelling; the host cannot. So this thread is
-    // waiting for something that can only happen after it stops waiting, and parking would
-    // be permanent. Safe to conclude without a race, because `ST_READY` moves only from
-    // here: the host's transitions all end at it.
-    //
-    // Worth an error rather than a hang because the cause is a specific mistake with an
-    // obvious fix, and because a silent permanent park is exactly the failure mode issue
-    // 0018 was filed about. `waitAny` says which ticket settled and collects nothing, so a
-    // ticket that lost and was then forgotten keeps its slot for good.
-    if (ready === SLOTS) {
-      // Tallied rather than listed: 128 opcodes in a row is a wall of text, and what the reader needs is
-      // which *kind* of call was abandoned — `RECV × 126` says the mistake at a glance.
-      const tally = new Map<string, number>();
-      for (let i = 0; i < SLOTS; i++) {
-        const name = opName(Atomics.load(b.ctrl, slotAt(i) + S_OP));
-        tally.set(name, (tally.get(name) ?? 0) + 1);
-      }
-      const held = [...tally].sort((x, y) => y[1] - x[1]).map(([n, c]) => c === 1 ? n : `${n} × ${c}`);
-      throw new HostCallError(
-        `all ${SLOTS} call slots hold answers that were never taken, from: ${held.join(", ")}. ` +
-          `A ticket you stopped waiting on has to be wait()ed or cancel()led — waitAny reports ` +
-          `which one settled and collects nothing, so the others keep their slots. The call ` +
-          `that failed here is only the first one to find the ring full; the abandoned ticket ` +
-          `is usually earlier.`,
-      );
-    }
+    if (drain(b) > 0) continue;
     parkForHost(b, seen);
   }
 }
 
-/** Park until this slot has an answer. */
+/**
+ * Copy every answer out of the ring and hand its slot back. Answers how many slots it freed.
+ *
+ * **Every answer, not the one being waited for**, and that is the property the bridge rests on: a slot
+ * holding an answer is freed the next time this side waits for anything, so no slot waits on the program.
+ * The answers wait in `Calls.answered` instead, for whoever collects them.
+ *
+ * An answer too large for one slot comes in pieces. Each is taken here, and the next asked for in the same
+ * slot with `OP_CONTINUE` — so that slot stays this call's until the last piece, which the host sends
+ * without waiting on anything.
+ */
+function drain(b: Bridge): number {
+  const c = calls(b);
+  let freed = 0;
+  for (let i = 0; i < SLOTS; i++) {
+    const at = slotAt(i);
+    if (Atomics.load(b.ctrl, at + S_STATUS) !== ST_READY) continue;
+    const op = Atomics.load(b.ctrl, at + S_OP);
+    // A pushed piece's acknowledgement is `submit`'s, which is waiting on that slot by number.
+    if (op !== OP_ANSWER && op !== OP_CONTINUE) continue;
+    const id = Atomics.load(b.ctrl, at + S_ID);
+    const status = Atomics.load(b.ctrl, at + S_RES_STATUS);
+    const piece = readRes(b, at);
+    const kept = !c.dropped.has(id);
+    if (status === STATUS_MORE) {
+      if (kept) {
+        const so = c.pieces.get(id);
+        if (so === undefined) c.pieces.set(id, [piece]);
+        else so.push(piece);
+      }
+      // Asked for even when the call was dropped: the host holds the rest, and only a last piece lets it go.
+      Atomics.store(b.ctrl, at + S_OP, OP_CONTINUE);
+      Atomics.store(b.ctrl, at + S_REQ_LEN, 0);
+      Atomics.store(b.ctrl, at + S_STATUS, ST_PENDING);
+      ping(b);
+      continue;
+    }
+    const before = c.pieces.get(id);
+    c.pieces.delete(id);
+    if (kept) c.answered.set(id, { status, bytes: before === undefined ? piece : joined(before, piece) });
+    else c.dropped.delete(id);
+    release(b, i);
+    freed++;
+  }
+  return freed;
+}
+
+function joined(parts: Uint8Array[], last: Uint8Array): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0) + last.length);
+  let into = 0;
+  for (const p of parts) { out.set(p, into); into += p.length; }
+  out.set(last, into);
+  return out;
+}
+
+/** Park until this slot has an answer — the acknowledgement of a pushed piece, which comes back in it. */
 function awaitReady(b: Bridge, slot: number): void {
   const at = slotAt(slot);
   for (;;) {
@@ -277,6 +353,11 @@ function awaitReady(b: Bridge, slot: number): void {
   }
 }
 
+/** Which slot a control offset belongs to — the inline area is indexed by slot, not by buffer. */
+function slotOf(at: number): number {
+  return (at - slotAt(0)) / SLOT_INTS;
+}
+
 /**
  * The answer bytes, copied out, with the buffer handed straight back.
  *
@@ -284,11 +365,6 @@ function awaitReady(b: Bridge, slot: number): void {
  * buffer is the scarce thing now, and holding one a moment longer than the copy is memory somebody else
  * is parked on.
  */
-/** Which slot a control offset belongs to — the inline area is indexed by slot, not by buffer. */
-function slotOf(at: number): number {
-  return (at - slotAt(0)) / SLOT_INTS;
-}
-
 function readRes(b: Bridge, at: number): Uint8Array {
   const len = Atomics.load(b.ctrl, at + S_RES_LEN);
   const bi = attached(b, at, S_RES_BUF);
@@ -302,19 +378,17 @@ function readRes(b: Bridge, at: number): Uint8Array {
   return out;
 }
 
-/** Give the slot back and move its generation on, so stale tickets read as expired. */
+/** Give the slot back. */
 function release(b: Bridge, slot: number): void {
   const at = slotAt(slot);
   // The answer's buffer goes back here too, whatever route got us here. Doing it only in `readRes` left
-  // two paths leaking one buffer each — an acknowledged push chunk, and a cancel of a call that had
-  // already answered — and a pool that loses one buffer per occurrence is a hang later with nothing to
-  // point at. `releaseBuf` ignores -1, so a slot whose answer was already read is unaffected.
+  // a path leaking one buffer each — an acknowledged push chunk — and a pool that loses one buffer per
+  // occurrence is a hang later with nothing to point at. `releaseBuf` ignores -1, so a slot whose answer
+  // was already read is unaffected.
   releaseBuf(b, "res", detach(b, at, S_RES_BUF));
-  Atomics.add(b.ctrl, at + S_GEN, 1);
   Atomics.store(b.ctrl, at + S_STATUS, ST_FREE);
-  // Someone may be parked because every slot was busy.
-  Atomics.add(b.ctrl, DONE_SEQ, 1);
-  Atomics.notify(b.ctrl, DONE_SEQ);
+  // The host may be holding answers for want of a free slot; this is what tells it one is.
+  ping(b);
 }
 
 /**
@@ -327,9 +401,13 @@ function release(b: Bridge, slot: number): void {
  * and blamed the destination for a limit in the transport.
  */
 export function submit(b: Bridge, op: number, payload: Uint8Array): Ticket {
+  const c = calls(b);
+  const id = c.next;
+  // Positive and never zero, so a slot no call has written reads as nobody's.
+  c.next = c.next >= 0x7fffffff ? 1 : c.next + 1;
   const slot = claim(b);
   const at = slotAt(slot);
-  const gen = Atomics.load(b.ctrl, at + S_GEN);
+  Atomics.store(b.ctrl, at + S_ID, id);
 
   let sent = 0;
   while (payload.length - sent > BUF_BYTES) {
@@ -361,17 +439,19 @@ export function submit(b: Bridge, op: number, payload: Uint8Array): Ticket {
   attach(b, at, S_REQ_BUF, bi);
   Atomics.store(b.ctrl, at + S_OP, op);
   Atomics.store(b.ctrl, at + S_REQ_LEN, tail.length);
+  // Outstanding before it is published, so an answer drained the moment it lands has a call to belong to.
+  c.outstanding.add(id);
   Atomics.store(b.ctrl, at + S_STATUS, ST_PENDING);
   ping(b);
-  return { slot, gen };
+  return { id };
 }
 
 /** Whether the answer has landed. Never blocks. */
 export function isDone(b: Bridge, t: Ticket): boolean {
-  const at = slotAt(t.slot);
-  // An expired ticket counts as done: there is nothing left to wait for.
-  if (Atomics.load(b.ctrl, at + S_GEN) !== t.gen) return true;
-  return Atomics.load(b.ctrl, at + S_STATUS) === ST_READY;
+  drain(b);
+  const c = calls(b);
+  // A ticket collected or cancelled counts as done: there is nothing left to wait for.
+  return c.answered.has(t.id) || !c.outstanding.has(t.id);
 }
 
 /**
@@ -387,9 +467,12 @@ export function waitAny(b: Bridge, tickets: Ticket[], millis = -1): Ticket | nul
   // slot, and nothing to clean up afterwards. A timer *ticket* would need all three, and the
   // ticket nobody remembers to cancel is how the ring fills up.
   const deadline = millis < 0 ? Infinity : performance.now() + millis;
+  const c = calls(b);
   for (;;) {
     const seen = Atomics.load(b.ctrl, DONE_SEQ);
-    for (const t of tickets) if (isDone(b, t)) return t;
+    // Drained once a pass, not once a ticket: a server waits on thousands, and `isDone` scans the ring.
+    drain(b);
+    for (const t of tickets) if (c.answered.has(t.id) || !c.outstanding.has(t.id)) return t;
     // Checked after the scan, so a deadline of 0 is a poll of the set rather than a wait that
     // always fails, and an already-settled ticket is reported even when the time is up.
     const left = deadline - performance.now();
@@ -399,41 +482,31 @@ export function waitAny(b: Bridge, tickets: Ticket[], millis = -1): Ticket | nul
 }
 
 /**
- * Wait for this call and take its answer, freeing the slot.
+ * Wait for this call and take its answer.
  *
- * A response too large for the slot arrives in pieces: the host says `STATUS_MORE`, we take
- * what is there and ask again with `OP_CONTINUE`.
+ * A response too large for one slot arrives in pieces, which `drain` gathers; by the time a call is
+ * answered here its answer is whole.
  */
 export function collect(b: Bridge, t: Ticket): Uint8Array {
-  const at = slotAt(t.slot);
-  if (Atomics.load(b.ctrl, at + S_GEN) !== t.gen) {
+  const c = calls(b);
+  if (!c.outstanding.has(t.id) && !c.answered.has(t.id)) {
     throw new HostCallError("this call was already collected or cancelled");
   }
-  const parts: Uint8Array[] = [];
   for (;;) {
-    awaitReady(b, t.slot);
-    const status = Atomics.load(b.ctrl, at + S_RES_STATUS);
-    const chunk = readRes(b, at);   // copied out, and the pooled buffer handed back at once
-    if (status === STATUS_ERR) {
-      release(b, t.slot);
-      const said = faultedMessage(chunk);
-      throw new HostCallError(said.message, said.fault);
+    const seen = Atomics.load(b.ctrl, DONE_SEQ);
+    drain(b);
+    const got = c.answered.get(t.id);
+    if (got !== undefined) {
+      c.answered.delete(t.id);
+      c.outstanding.delete(t.id);
+      if (got.status === STATUS_ERR) {
+        const said = faultedMessage(got.bytes);
+        throw new HostCallError(said.message, said.fault);
+      }
+      return got.bytes;
     }
-    parts.push(chunk);
-    if (status !== STATUS_MORE) break;
-    Atomics.store(b.ctrl, at + S_OP, OP_CONTINUE);
-    Atomics.store(b.ctrl, at + S_REQ_LEN, 0);
-    Atomics.store(b.ctrl, at + S_STATUS, ST_PENDING);
-    ping(b);
+    parkForHost(b, seen);
   }
-  release(b, t.slot);
-
-  if (parts.length === 1) return parts[0];
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let into = 0;
-  for (const p of parts) { out.set(p, into); into += p.length; }
-  return out;
 }
 
 /**
@@ -441,18 +514,18 @@ export function collect(b: Bridge, t: Ticket): Uint8Array {
  *
  * **Detach, not abort.** The host may already be inside the work and cannot generally be
  * interrupted; only where the underlying API takes an `AbortSignal` does anything actually
- * stop. What this guarantees is that the answer is discarded and the slot comes back,
- * which is what a caller that has given up needs.
+ * stop. What this guarantees is that the answer is discarded, which is what a caller that has
+ * given up needs.
+ *
+ * **Nothing to tell the host**, because the call holds nothing of the bridge's while it is outstanding:
+ * not a slot, which it did until `issues/system/0373d`, and not a buffer. The answer is dropped as it is
+ * drained, and that frees the slot it came in.
  */
 export function cancel(b: Bridge, t: Ticket): void {
-  const at = slotAt(t.slot);
-  if (Atomics.load(b.ctrl, at + S_GEN) !== t.gen) return;             // already gone
-  if (Atomics.load(b.ctrl, at + S_STATUS) === ST_READY) { release(b, t.slot); return; }
-  // The host frees it when the work lands. The generation moves now, so the ticket is dead
-  // from this side immediately.
-  Atomics.add(b.ctrl, at + S_GEN, 1);
-  Atomics.store(b.ctrl, at + S_STATUS, ST_CANCELLED);
-  ping(b);
+  const c = calls(b);
+  if (c.answered.delete(t.id)) { c.outstanding.delete(t.id); return; }
+  if (!c.outstanding.delete(t.id)) return;                             // already gone
+  c.dropped.add(t.id);
 }
 
 /** Submit and collect, which is what a capability with no reason to overlap does. */

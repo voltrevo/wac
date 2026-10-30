@@ -25,22 +25,20 @@
 // any per-slot state, and is also what makes `poll` over sockets fall out for free.
 
 /**
- * How many calls one worker may have outstanding.
+ * How many messages can be crossing the bridge at once — **not** how many calls can be outstanding.
  *
- * **The count is a ceiling on how many handles a program can watch**, which is why it is
- * sixteen rather than four. Watching N handles means N outstanding `recv`s holding N slots,
- * and a program that also writes needs a slot for that — so four slots meant three handles,
- * and `example/pipe.wac` already watches three. A three-stage pipeline was not writable:
- * four reads in flight and the send has nowhere to go.
+ * A slot carries a request until the host has read it, and an answer until the worker has drained it, and
+ * nothing longer. A call between the two is a row in the host's memory and takes no slot, so a worker can
+ * have as many outstanding as it likes, as on the native hosts (`native/src/tickets.rs`'s `HashMap`).
  *
- * That failure is worse than a limit, because it is not diagnosable. Held slots are RUNNING
- * rather than READY — the host *will* answer each read, once the peer speaks, and the peer
- * is waiting for the write that cannot be submitted. Indistinguishable from backpressure
- * from inside `claim`, so it parks silently and forever. Raising the ceiling does not remove
- * that shape; it moves it out to where real programs do not meet it.
+ * **It was a ceiling on outstanding calls until `issues/system/0373d`**, and the failure past it was not a
+ * limit but a stop: a slot was held from submission to collection, a `recv` on a connection that never
+ * speaks held one for good, and the 129th call of any kind parked the worker — the only thread that frees
+ * a slot — for ever. Raising the number only moved that out to where a stranger with 130 TCP connections
+ * could reach it. Now every slot is always on its way back: the host empties requests as it sees them, and
+ * the worker drains answers whenever it waits, including while it waits for a slot.
  *
- * Submitting with no free slot still waits, which is backpressure rather than an error, and
- * is correct whenever the outstanding calls will finish on their own.
+ * So the size is throughput, and 128 is far more than the traffic between one worker and its host needs.
  */
 export const SLOTS = 128;
 
@@ -155,13 +153,17 @@ export const S_REQ_LEN = 2;
 export const S_RES_LEN = 3;
 export const S_RES_STATUS = 4;
 /**
- * Bumped every time a slot is reused.
+ * The call this slot's message belongs to, which the worker numbers.
  *
- * A ticket is a slot *and* a generation. Without this, waiting on a ticket whose slot had
- * been recycled would read whatever call now occupies it — the worst kind of bug, because
- * the answer looks plausible.
+ * **A call is not a slot.** A request travels in one slot and its answer, later, in whichever is free, so
+ * the answer says whose it is. The number is the worker's: unique among its calls in flight, which is all
+ * it has to be, and never reused while one is outstanding.
+ *
+ * It took the place of a per-slot generation, which made a ticket "a slot and a generation" so that one
+ * whose slot had been reused read as expired. A ticket is a call number now, and a slot is never anybody's
+ * for longer than one message, so there is nothing left for a generation to tell apart.
  */
-export const S_GEN = 5;
+export const S_ID = 5;
 
 /**
  * Which pooled buffer currently carries this slot's request. **One-based**; read it with `attached`.
@@ -171,19 +173,25 @@ export const S_GEN = 5;
  */
 export const S_REQ_BUF = 6;
 
-/** Which pooled buffer carries this slot's answer, one-based. Held until the worker collects. */
+/** Which pooled buffer carries this slot's answer, one-based. Held until the worker drains it. */
 export const S_RES_BUF = 7;
 
-/** Nobody is using this slot. The worker allocates; only the worker sets this. */
+/**
+ * Nobody is using this slot. Either side may take one, each by a compare-and-exchange from here: the
+ * worker to send a request (`ST_CLAIMED`), the host to send an answer (`ST_ANSWERING`).
+ */
 export const ST_FREE = 0;
 /** The worker has written a request and wants it run. */
 export const ST_PENDING = 1;
-/** The host has taken it and is working. */
+/**
+ * The host has taken a request it answers *in this slot*: a piece of an oversized request (`OP_PUSH`) or
+ * the next piece of an oversized answer (`OP_CONTINUE`). Every other request leaves its slot as it is read.
+ */
 export const ST_RUNNING = 2;
-/** The host has written an answer. */
+/** An answer is here, or an acknowledgement of a pushed piece. */
 export const ST_READY = 3;
-/** The worker abandoned it; the host frees the slot when the work lands. */
-export const ST_CANCELLED = 4;
+/** Taken by the host, and the answer it is writing is not here yet — `ST_CLAIMED`'s counterpart. */
+export const ST_ANSWERING = 4;
 /**
  * Taken by the worker, and not yet a request: the opcode and payload are still being written.
  *
@@ -216,6 +224,11 @@ export const STATUS_ACK = 3;
 export const OP_CONTINUE = -1;
 /** Set as the op while the worker is still feeding an oversized request. */
 export const OP_PUSH = -2;
+/**
+ * Set by the host on a slot it filled with an answer, so the worker can tell an answer from the
+ * acknowledgement of a pushed piece, which comes back in the slot the piece went out in.
+ */
+export const OP_ANSWER = -3;
 
 /**
  * One flag per buffer, per direction: 0 free, 1 held.
