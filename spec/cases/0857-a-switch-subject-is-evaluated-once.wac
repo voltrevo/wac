@@ -1,0 +1,18 @@
+// expect: f() = 2
+// why: the subject of a `switch` is one value, read once — not re-read for every case it is compared with
+// from: wacuum's EVM interpreter, whose opcode switch was a chain that re-emitted the subject per case
+//
+// Two switches, one dense enough for a jump table and one too sparse for it, so both of the
+// emitter's shapes are held to it. Before, the first called `next` four times and the second twice.
+
+i32 next(i32[] calls, i32 v) {
+  calls[0] = calls[0] + 1;
+  return v;
+}
+
+export i32 f() {
+  i32[] calls = i32[].filled(1, 0);
+  switch (next(calls, 5)) { case 1: {} case 2: {} case 3: {} case 4: {} default: {} }
+  switch (next(calls, 1000)) { case 1: {} case 1000: {} case 1000000: {} }
+  return calls[0];
+}

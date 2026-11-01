@@ -41,7 +41,7 @@ import { Frontend, frontendOf } from "./frontend.wac";
 import { shake } from "./shake.wac";
 import { endsWith, startsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
-  Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
+  Arm, Case, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
   Field, Method, NamedArg,
   Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding, safeCallReceiver,
 } from "./ast.wac";
@@ -10612,18 +10612,30 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(0);
     }
     Switch(subject, cases): {
-      // A chain of comparisons rather than a jump table. `br_table` is what the reference emits and
-      // is an optimisation of exactly this — the values a canonical form would have to normalise
-      // anyway, and the answers are what this rung compares.
+      // **The subject is evaluated once**, into a local, and every comparison reads that. It was
+      // re-emitted for each case, which is a wrong answer as well as a slow one: `switch (next())`
+      // called `next` once per case it tried. Every comparison runs before any arm does, and an arm
+      // leaves the switch, so one slot per type serves nested switches too.
       i32 savedS = env.breakAt;
+      string st = typeOfE(src, lexed, env, subject);
+      // A bare literal has no type of its own here — `switch (2)` asks for `""` — and a local cannot
+      // be declared at that; the checker admits only `i32` and `u32`, and an unsuffixed literal is the first.
+      if (st == "") { st = naturalLiteralType(subject); }
+      i32 subj = env.scratchNamed("switch", st);
+      emitExprAt(fb, src, lexed, env, subject, st);
+      fb.byte(33);
+      fb.u32leb(subj);
+      if (emitSwitchTable(fb, src, lexed, env, subj, st, cases)) { return; }
+      // Otherwise a chain of comparisons, in the order the cases are written — strings, 64-bit
+      // values, case values that are not constants, and integer cases too sparse for a table.
       fb.byte(2);
       fb.byte(64);
       env.depth = env.depth + 1;
       env.breakAt = env.depth;
-      string st = typeOfE(src, lexed, env, subject);
       for (i32 i = 0; i < cases.len(); i++) {
         if (cases[i].value is null) { continue; }
-        emitExprAt(fb, src, lexed, env, subject, st);
+        fb.byte(32);
+        fb.u32leb(subj);
         emitExprAt(fb, src, lexed, env, cases[i].value!, st);
         emitBinary(fb, env, kEq(), st);
         fb.byte(4);
@@ -19920,6 +19932,145 @@ Value? staticConst(Env env, u8[] src, Lexed lexed, i32 ci) {
   if (ev.status == evUnsupported() || ev.status == evLimit()) { return null; }
   env.declineFor("`" + env.constNames[ci] + "`: " + outcomeName(ev.status) + " — " + ev.message);
   return null;
+}
+
+/**
+ * A `case` value as the 32 bits its comparison would push, when the compiler knows it now: an integer
+ * literal (a character literal is one), a negated one, or a static that folds to a number. Written to
+ * `out[0]`; false for anything else, which leaves the switch a chain.
+ *
+ * **The same bits `emitExprAt` would push at `st`**, case by case, because the table replaces those
+ * comparisons and has to agree with them: a hex literal in an `i8` is its bit pattern, sign-extended,
+ * and a static is substituted at its own type, unconverted.
+ */
+bool caseBits(Env env, u8[] src, Lexed lexed, Expr e, string st, i64[] out) {
+  match (e.kind) {
+    IntLit(tok): {
+      i64 v = parseInt(tokenTextOf(src, lexed, tok));
+      if (st == "i8") { out[0] = (((v & 255) ^ 128) as@ i32 - 128) as i64; return true; }
+      if (st == "i16") { out[0] = (((v & 65535) ^ 32768) as@ i32 - 32768) as i64; return true; }
+      out[0] = (v as@ i32) as i64;
+      return true;
+    }
+    Unary(op, operand): {
+      if (lexed.tokens[op * tokenStride()] != kMinus()) { return false; }
+      match (operand.kind) {
+        IntLit(tok2): {
+          if (!caseBits(env, src, lexed, operand, st, out)) { return false; }
+          out[0] = ((0 - out[0]) as@ i32) as i64;
+          return true;
+        }
+        default: { return false; }
+      }
+    }
+    Ident(tok): {
+      string nm = tokenTextOf(src, lexed, tok);
+      // A local or a capture of that name is nearer than any static, as it is in `emitExprAt`.
+      if (env.captureAt(env.emittingLambda, nm) >= 0 || env.localAt(nm) >= 0) { return false; }
+      i32 ci = env.constAt(nameKeyOf(env, src, lexed, tok));
+      if (ci < 0 || env.constGlobal[ci] >= 0 || env.constInits[ci] is null) { return false; }
+      if (!isIntName(env.constTypes[ci]) || valType(env.constTypes[ci]) != 127) { return false; }
+      Value? got = staticConst(env, src, lexed, ci);
+      if (got is null || got!.kind != vNum()) { return false; }
+      out[0] = (wrapTo("i32", got!.bits) as@ i32) as i64;
+      return true;
+    }
+    default: { return false; }
+  }
+}
+
+/**
+ * A `switch` as one `br_table`, when every case value is a known 32-bit integer and they are dense;
+ * answers whether it emitted one. The subject is already in local `subj`.
+ *
+ * **A chain costs a comparison per case before the one that matches**, and an interpreter's opcode
+ * switch has a hundred and forty of them: wacuum's EVM spent 40% of a V8 profile there, and an opcode
+ * in the middle paid sixty comparisons. Wasmtime's compiler shortens such a chain; V8's does not.
+ *
+ * The shape is one block per value case inside one for the default, inside the switch's own:
+ *
+ *     block $switch  block $default  block $c[k-1] … block $c0
+ *       (subject − min) br_table …            ;; out of range → $default
+ *     end  body0  br $switch
+ *     …
+ *     end  body[k-1]  br $switch
+ *     end  defaults…
+ *     end
+ *
+ * Arms and coverage points come out in the order the chain wrote them, and a repeated value goes to
+ * its first case, which is the one the chain would have matched.
+ *
+ * **Dense means the span is under four entries per case**, and capped, so a table is never mostly
+ * holes and never large. The subtraction wraps, so a subject below the smallest value lands past the
+ * end of the table and takes the default, which is what the unsigned index of `br_table` is for.
+ */
+bool emitSwitchTable(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string st, Case[] cases) {
+  if (!isIntName(st) || valType(st) != 127) { return false; }
+  i32 k = 0;
+  for (i32 i = 0; i < cases.len(); i++) { if (!(cases[i].value is null)) { k = k + 1; } }
+  if (k < 3) { return false; }
+  i64[] vals = i64[].filled(k, 0 as i64);
+  i64[] one = i64[].filled(1, 0 as i64);
+  i32 at = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].value is null) { continue; }
+    if (!caseBits(env, src, lexed, cases[i].value!, st, one)) { return false; }
+    vals[at] = one[0];
+    at = at + 1;
+  }
+  i64 lo = vals[0];
+  i64 hi = vals[0];
+  for (i32 i = 1; i < k; i++) {
+    if (vals[i] < lo) { lo = vals[i]; }
+    if (vals[i] > hi) { hi = vals[i]; }
+  }
+  i64 span = hi - lo + (1 as i64);
+  if (span > (4 * k) as i64 || span > 65536 as i64) { return false; }
+  i32 n = span as~ i32;
+  // The label each index branches to, counted outward from the innermost block: case `c` is `c`, and
+  // anything no case names is the default block, `k`.
+  i32[] target = i32[].filled(n, k);
+  for (i32 c = k - 1; c >= 0; c--) { target[(vals[c] - lo) as~ i32] = c; }
+
+  i32 savedS = env.breakAt;
+  fb.byte(2); fb.byte(64);                 // block — the switch, where `break` goes
+  env.depth = env.depth + 1;
+  env.breakAt = env.depth;
+  fb.byte(2); fb.byte(64);                 // block — the default
+  env.depth = env.depth + 1;
+  for (i32 c = 0; c < k; c++) {
+    fb.byte(2); fb.byte(64);               // block — one per value case
+    env.depth = env.depth + 1;
+  }
+  fb.byte(32); fb.u32leb(subj);            // local.get
+  if (lo != 0 as i64) {
+    fb.byte(65); fb.i32leb(lo as~ i32);    // i32.const
+    fb.byte(107);                          // i32.sub
+  }
+  fb.byte(14);                             // br_table
+  fb.u32leb(n);
+  for (i32 i = 0; i < n; i++) { fb.u32leb(target[i]); }
+  fb.u32leb(k);
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].value is null) { continue; }
+    fb.byte(11);                           // end — case `c`'s block; its arm follows
+    env.depth = env.depth - 1;
+    covPoint(fb, env, "case", cases[i].line, cases[i].col);
+    emitBody(fb, src, lexed, env, cases[i].body);
+    fb.byte(12);                           // br — out of the switch
+    fb.u32leb(env.depth - env.breakAt);
+  }
+  fb.byte(11);                             // end — the default block
+  env.depth = env.depth - 1;
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (!(cases[i].value is null)) { continue; }
+    covPoint(fb, env, "case", cases[i].line, cases[i].col);
+    emitBody(fb, src, lexed, env, cases[i].body);
+  }
+  fb.byte(11);                             // end — the switch
+  env.depth = env.depth - 1;
+  env.breakAt = savedS;
+  return true;
 }
 
 /** Write static `ci`'s value as a literal, if it has one and it is a number; answers whether it did. */

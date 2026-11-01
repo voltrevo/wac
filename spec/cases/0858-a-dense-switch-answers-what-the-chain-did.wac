@@ -1,0 +1,44 @@
+// expect: f() = 828693730
+// why: a dense integer switch becomes one jump table, and has to agree with the comparisons it replaces
+// from: wacuum asked for `br_table`: an opcode in the middle of a 140-case switch paid sixty comparisons
+//
+// The edges a table has and a chain does not: a value below the smallest case and one past the
+// largest, a hole inside the range, a negative case, a case named by a static, `break` from inside
+// an arm, and a `u32` whose cases sit at the top of its range, where the subtraction that indexes the
+// table wraps.
+
+static i32 SEVEN = 7;
+
+i32 dense(i32 x) {
+  switch (x) {
+    case 1: { return 10; }
+    case 2: { return 20; }
+    case 3: { if (x == 3) { break; } return 99; }
+    case SEVEN: { return 70; }
+    case -1: { return 5; }
+    default: { return 1; }
+  }
+  return 3;
+}
+
+i32 top(u32 x) {
+  switch (x) {
+    case 0xFFFFFFFE: { return 1000; }
+    case 0xFFFFFFFF: { return 2000; }
+    case 0: { return 3000; }
+    case 1: { return 4000; }
+  }
+  return 7;
+}
+
+export i32 f() {
+  i32 sum = 0;
+  for (i32 i = -3; i < 10; i++) { sum = sum * 3 + dense(i); }
+  sum = sum * 3 + top(4294967294 as u32);
+  sum = sum * 3 + top(4294967295 as u32);
+  sum = sum * 3 + top(0 as u32);
+  sum = sum * 3 + top(1 as u32);
+  sum = sum * 3 + top(2 as u32);
+  sum = sum * 3 + top(2147483648 as u32);
+  return sum;
+}
