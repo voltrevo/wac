@@ -101,3 +101,45 @@ export string test_a_module_with_more_instantiations_than_the_table_starts_with_
           "1156 instantiations of one generic function: the emitter declined the module");
   return t.report();
 }
+
+/**
+ * **The lambda tables, the same.** Eleven arrays are indexed by a lambda's number, and four of them are declared
+ * far from the other seven: `capNames`, `capTypes` and `lambdaCapCount` after the walk's scope, `lambdaWrites` after
+ * `assignedCount`. `lambdaWrites` is written with no check of its own, so one left short is the engine trap the
+ * function table's straggler was.
+ */
+export string test_every_table_a_lambda_number_indexes_is_the_same_length() {
+  T t = T.create();
+  Env env = Env.create();
+  i32 want = env.lambdaParams.len();
+  t.eqI32(env.lambdaBodies.len(), want, "lambdaBodies is as long as lambdaParams");
+  t.eqI32(env.lambdaSigs.len(), want, "lambdaSigs is as long as lambdaParams");
+  t.eqI32(env.lambdaLine.len(), want, "lambdaLine is as long as lambdaParams");
+  t.eqI32(env.lambdaCol.len(), want, "lambdaCol is as long as lambdaParams");
+  t.eqI32(env.lambdaInst.len(), want, "lambdaInst is as long as lambdaParams");
+  t.eqI32(env.lambdaFile.len(), want, "lambdaFile is as long as lambdaParams");
+  t.eqI32(env.capNames.len(), want, "capNames is as long as lambdaParams");
+  t.eqI32(env.capTypes.len(), want, "capTypes is as long as lambdaParams");
+  t.eqI32(env.lambdaCapCount.len(), want, "lambdaCapCount is as long as lambdaParams");
+  t.eqI32(env.lambdaWrites.len(), want, "lambdaWrites is as long as lambdaParams");
+  return t.report();
+}
+
+/** `n` lambdas in one function, each passed where a `fn<i32(i32)>` is wanted. */
+string manyLambdas(i32 n) {
+  string src = "i32 apply(fn<i32(i32)> f, i32 x) { return f(x); }\nexport i32 main() {\n  i32 s = 0;\n";
+  for (i32 i = 0; i < n; i++) { src = src + "  s = s + apply((i32 x) => x + " + itoa(i) + ", 1);\n"; }
+  return src + "  return s;\n}\n";
+}
+
+/**
+ * **More lambdas than the old 1024 in one module builds.** wac-desktop — the desktop, its apps, `web` and the
+ * shell, one module — reached 1024 on 2026-11-01 and was declined: *"the emitter ran out of room for lambdas in one
+ * module"*, about a program with nothing wrong in it. 1100 is past the old size, so a table left at it fails here.
+ */
+export string test_a_module_with_more_than_1024_lambdas_builds() {
+  T t = T.create();
+  t.eqStr(emitDeclineFiles(["/t/lambdas.wac"], [manyLambdas(1100)], "/t/lambdas.wac"), "",
+          "1100 lambdas in one module: the emitter declined it");
+  return t.report();
+}
