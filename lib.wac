@@ -12,7 +12,8 @@
 //
 // **Not every package is here yet.** These are the libraries with an entry, and the rest are added as
 // each gets a `src/lib.wac`. A command is here only through its library half — `box` is `Session` and
-// the applet table, not the `box` program — and `wac` and `sh` are not here at all yet.
+// the applet table, not the `box` program; `wac` is the command's gathering of a program's sources, and `wacc` the
+// compiler a program can check and build with; `sh` is not here at all yet.
 
 export * as abi from "./packages/abi/src/abi.wac";
 export * as bignum from "./packages/bignum/src/lib.wac";
@@ -28,4 +29,6 @@ export * as regex from "./packages/regex/src/regex.wac";
 export * as rlp from "./packages/rlp/src/rlp.wac";
 export * as ssh from "./packages/ssh/src/ssh.wac";
 export * as url from "./packages/url/src/url.wac";
+export * as wac from "./packages/wac/src/lib.wac";
+export * as wacc from "./packages/wacc/src/lib.wac";
 export * as zstd from "./packages/zstd/src/lib.wac";

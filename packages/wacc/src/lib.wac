@@ -1,0 +1,20 @@
+// `wacc` as the repository's root entry presents it (`lib.wac` at the root): the compiler as a library, for a
+// program that checks, builds or reads wac code itself — an editor, first: the wac IDE checks as it types,
+// colours with the compiler's own lexer, and asks what the name at the caret is.
+//
+// **Each takes the program's files as given** — paths, their sources, and how specifiers resolve (`Res`) — so the
+// caller decides where they come from; `wac`'s library half gathers them from a disk (`packages/wac/src/lib.wac`).
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so a list
+// of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { Res } from "./path.wac";
+export { diagnoseGraphIn } from "./api.wac";
+export { blockedFilesIn } from "./api.wac";
+export { emitFilesIn } from "./api.wac";
+export { PositionFacts } from "./api.wac";
+export { factsAt } from "./api.wac";
+export { lexTokensOf } from "./api.wac";
+export { lexTokenStride } from "./api.wac";
+export { tokenKindName } from "./api.wac";

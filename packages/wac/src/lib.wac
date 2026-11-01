@@ -1,0 +1,16 @@
+// The `wac` command's library half, as the repository's root entry presents it (`lib.wac` at the root): gathering a
+// program's sources the way the command does — its project, its packages from the cache `wac.lock` names, `std`
+// and `core` — from any `Files`, for a program that hands them to the compiler (`packages/wacc/src/lib.wac`).
+// The wac IDE checks and builds with it, from the files it holds.
+//
+// **One name per statement, deliberately.** Reachability keeps an `export { … } from` list whole, so a list
+// of several names would read whatever every one of them needs when a program uses one.
+// `tools/wac/libentry_test.wac` holds this file to that.
+
+export { Sources } from "./sources.wac";
+export { ReadCache } from "./sources.wac";
+export { gather } from "./sources.wac";
+export { gatherNeeded } from "./sources.wac";
+export { gatherWith } from "./sources.wac";
+export { exactly } from "./sources.wac";
+export { resOf } from "./sources.wac";
