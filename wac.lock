@@ -1,6 +1,6 @@
 {
   "imports": {
-    "web": { "git": "https://git.voltrevo.com/web.git", "ref": "d0ad98ab20bb23649440e9904f80860478c47a45", "commit": "d0ad98ab20bb23649440e9904f80860478c47a45" },
-    "webbuild": { "git": "https://git.voltrevo.com/web.git", "ref": "d0ad98ab20bb23649440e9904f80860478c47a45", "subdir": "./tools", "commit": "d0ad98ab20bb23649440e9904f80860478c47a45" }
+    "web": { "git": "https://git.voltrevo.com/web.git", "ref": "ed87134f2538c2aa4a661ec0fa19cd1864d8956b", "commit": "ed87134f2538c2aa4a661ec0fa19cd1864d8956b" },
+    "webbuild": { "git": "https://git.voltrevo.com/web.git", "ref": "ed87134f2538c2aa4a661ec0fa19cd1864d8956b", "subdir": "./tools", "commit": "ed87134f2538c2aa4a661ec0fa19cd1864d8956b" }
   }
 }
