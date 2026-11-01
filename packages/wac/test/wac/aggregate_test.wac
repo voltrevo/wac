@@ -269,6 +269,35 @@ export string test_a_file_importing_a_member_of_a_neighbours_namespace_is_not_dr
   return t.report();
 }
 
+export string test_a_test_taking_a_sys_beside_a_member_it_cannot_resolve_alone_runs(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  // The same file again, with a test that takes a `Sys`, which is the one kind that needs an adapter made for it.
+  // Making one parsed the file after lowering only the built-in namespaces, so a member of anything else did not
+  // parse: run alone, the file's tests taking a `Sys` were dropped without a word — "0 passed" — and in a directory
+  // the adapter named a `Sys` nothing imported. wac-desktop's tests, importing `fs.ProcTable` from "wac", met both.
+  T t = T.create();
+  string dir = scratch(env, "agg-nssys");
+  t.eqStr(freshDir(fs, dir), "", "a fresh directory");
+  t.eqStr(putFile(fs, "\{dir}/tags.wac", "export i32 p() { return 1; }\n"), "", "a module of tags");
+  t.eqStr(putFile(fs, "\{dir}/lib.wac", "export * as tags from \"./tags.wac\";\n"), "", "re-exported as a namespace");
+  t.eqStr(putFile(fs, "\{dir}/test/a_test.wac", "import { Sys } from \"std\";\nimport { tags.p } from \"../lib.wac\";\n"
+                  + "export string test_member(Sys sys) { return p() == 1 ? \"\" : \"wrong\"; }\n"), "",
+          "a test taking a Sys, importing a member");
+  t.eqStr(putFile(fs, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
+          "and a plain one");
+  Exec alone = testFrom(env, procs, dir, "--allow-read test/a_test.wac");
+  string said = saidBy(alone);
+  t.eqI32(alone.status, 0, "alone, it passes — \{said}");
+  t.isTrue(contains(said, "ok   test_member"), "and it ran — \{said}");
+  Exec r = testFrom(env, procs, dir, "--allow-read test");
+  string out = saidBy(r);
+  t.eqI32(r.status, 0, "in a directory, both pass — \{out}");
+  t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
+  return t.report();
+}
+
 export string test_dot_is_the_current_directory(Sys sys) {
   Env env = sys.env();
   Files fs = sys.files();
