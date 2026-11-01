@@ -2866,6 +2866,11 @@ struct ServedStreams {
  * Answer a child's requests out of `files` until its channel ends — which is the child exiting — or `stop` settles,
  * which is the child being stopped; then close what it left open. Runs as this program's scheduler does: nothing else
  * has to drive it.
+ *
+ * **A request in a range a provider was allocated is answered when its answer settles, not in turn**: the next
+ * request is read meanwhile, and the answers go back by id in whatever order they come. A capability may keep a
+ * request open as long as it likes — a page keeps one open for its next event — and answered in turn, that held up
+ * every request after it. The files and the lookups are still answered in turn, as their order is the child's.
  */
 async void serveFiles(Host host, i32 handle, Served served, Ticket<bool> stop) {
   WireLine line = WireLine.on(host, handle);
@@ -2894,7 +2899,11 @@ async void serveFiles(Host host, i32 handle, Served served, Ticket<bool> stop) {
         string text = q.text();
         u8[] bytes = q.bytes();
         Answer ans = Answer(FAULT_OTHER(), "a request the parent could not read", u8[](), 0 as i64, 0 as i64, 0);
-        if (!q.bad && (op == OP_CAPABILITY() || caps.holds(op))) {
+        if (!q.bad && op != OP_CAPABILITY() && caps.holds(op)) {
+          answerWhenSettled(line, id, answerCapabilityRequest(host, caps, op, x, y, text, bytes));
+          continue;
+        }
+        if (!q.bad && op == OP_CAPABILITY()) {
           ans = await answerCapabilityRequest(host, caps, op, x, y, text, bytes);
         } else if (!q.bad && served.files is not null) {
           Files files = served.files!;
@@ -2910,13 +2919,7 @@ async void serveFiles(Host host, i32 handle, Served served, Ticket<bool> stop) {
         } else if (!q.bad) {
           ans = Answer(FAULT_UNSUPPORTED(), "this parent serves no request \{op}", u8[](), 0 as i64, 0 as i64, 0);
         }
-        a.pushU32(id as@ u32);
-        a.pushU32(ans.fault as@ u32);
-        putWireString(a, ans.text);
-        putWireBytes(a, ans.bytes);
-        putWireI64(a, ans.n);
-        putWireI64(a, ans.m);
-        a.pushU32(ans.flags as@ u32);
+        putServedAnswer(a, id, ans);
       } else {
         // Not this protocol: a child built against another one. Nothing can be answered by id, so the line ends.
         going = false;
@@ -2929,6 +2932,25 @@ async void serveFiles(Host host, i32 handle, Served served, Ticket<bool> stop) {
       await served.files!.__wacAsk(OP_CLOSE_FILE(), open.get(i) as i64, 0 as i64, "", u8[]());
     }
   }
+}
+
+/** `ans`, as the answer to request `id` goes back to a served child. */
+void putServedAnswer(Buf a, i32 id, Answer ans) {
+  a.pushU32(id as@ u32);
+  a.pushU32(ans.fault as@ u32);
+  putWireString(a, ans.text);
+  putWireBytes(a, ans.bytes);
+  putWireI64(a, ans.n);
+  putWireI64(a, ans.m);
+  a.pushU32(ans.flags as@ u32);
+}
+
+/** Send the answer to request `id` once `t` settles — the frame alone, so it cannot be split by another's. */
+async void answerWhenSettled(WireLine line, i32 id, Ticket<Answer> t) {
+  Answer ans = await t;
+  Buf a = Buf.create();
+  putServedAnswer(a, id, ans);
+  await line.put(a);
 }
 
 /** Where a serving parent's own capabilities are numbered from: above every host's, which a host keeps below this. */

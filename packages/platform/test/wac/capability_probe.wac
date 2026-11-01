@@ -2,6 +2,7 @@
 // one line each.
 
 import { Answer, Sys, ask, capability } from "std";
+import { Ticket } from "core";
 
 export async i32 main(Sys sys) {
   match (await capability(sys.host, "wac.test.echo", "^1.2")) {
@@ -15,6 +16,12 @@ export async i32 main(Sys sys) {
       sys.log("echo: \{said.text}");
       Answer doubled = await ask(sys.host, c.base + 1, 21 as i64, 0 as i64, "", u8[]());
       sys.log("doubled: \{doubled.n}");
+      // A request the provider answers only after the next one: asked, not awaited, and then the one it waits for.
+      Ticket<Answer> waiting = ask(sys.host, c.base + 2, 0 as i64, 0 as i64, "", u8[]());
+      Answer signal = await ask(sys.host, c.base + 3, 0 as i64, 0 as i64, "", u8[]());
+      sys.log("signal: \{signal.text}");
+      Answer waited = await waiting;
+      sys.log("waited: \{waited.text}");
     }
     Err(why): { sys.log("not found: \{why}"); }
   }
