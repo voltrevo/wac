@@ -2263,8 +2263,14 @@ struct WireLine {
   /** Bytes received and not yet a whole frame. */
   Buf held;
   bool broken;
+  /**
+   * While `nextUnless` waits on a read: a ticket of that read's own, settled when the line's `stop` does. And whether
+   * `stop` is watched yet — once, for the line's whole life.
+   */
+  Ticket<bool>? wake;
+  bool watching;
 
-  WireLine on(Host host, i32 handle) { return WireLine(host, handle, Buf.create(), false); }
+  WireLine on(Host host, i32 handle) { return WireLine(host, handle, Buf.create(), false, null, false); }
 
   /** Send `body` as one frame. */
   async bool put(this, Buf body) {
@@ -2296,13 +2302,33 @@ struct WireLine {
    * `next`, giving up when `stop` settles first: the read in flight is withdrawn and the line is broken. What a
    * parent serving a child's files waits on, so that stopping the child also ends the serving rather than
    * leaving a read of a dead channel registered.
+   *
+   * **Each read races a ticket of its own, not `stop`.** A race leaves a watcher on every ticket in it until that
+   * ticket settles, and `stop` settles only when the child is stopped: raced on every read, it gathered two watchers
+   * a read, each holding the read's bytes — every frame a game in a desktop's window drew, sixty a second, kept for as
+   * long as the game ran. `stop` is watched once instead, and settles whichever read is waiting.
    */
   async WireReader nextUnless(this, TicketBase stop) {
+    if (!this.watching) {
+      this.watching = true;
+      WireLine me = this;
+      stop.whenSettled(() => {
+        Ticket<bool>? w = me.wake;
+        if (w is not null && !w!.settled()) { w!.resolve(true); }
+      });
+    }
     while (!this.broken) {
       WireReader whole = this.take();
       if (!whole.bad) { return whole; }
+      if (stop.settled()) {
+        this.broken = true;
+        break;
+      }
       Ticket<Read> got = lineRecv(this.host, this.handle);
-      i32 won = await Ticket.first([got, stop]);
+      Ticket<bool> wake;
+      this.wake = wake;
+      i32 won = await Ticket.first([got, wake]);
+      this.wake = null;
       if (won != 0) {
         got.cancel();
         this.broken = true;
