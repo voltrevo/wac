@@ -13,6 +13,7 @@ import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
 import { Exec, Env, Files, Procs, Sys } from "std";
+import { ReadCache, Sources, gatherWith } from "../../src/sources.wac";
 
 static string REPO = "https://example.invalid/dep.git";
 static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -43,6 +44,35 @@ export string test_a_wac_home_spelled_with_dot_dot_names_the_same_cache(Sys sys)
     t.isTrue(!contains(said, "leaves the mapped subdirectory"), "WAC_HOME=\{home}: \{said}");
     t.eqI32(r.status, 0, "WAC_HOME=\{home} checks clean: \{said}");
   }
+  fs.remove(root, true).wait();
+  return t.report();
+}
+
+/**
+ * **A cache named by the `ReadCache`, not the environment** (`ReadCache.wacHome`): a program gathering in a page has no
+ * environment to read, and keeps a cache of its own — the wac IDE keeps the `web` it was built with in one. A mapped
+ * import resolves there, whatever `$WAC_HOME` says.
+ */
+export async string test_a_read_cache_names_its_own_package_cache(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string root = scratch(sys.env(), "readcachehome");
+  fs.remove(root, true).wait();
+  string app = "\{root}/app";
+  // Under a folder no `$WAC_HOME` names: only the ReadCache says where it is.
+  string checkout = "\{root}/ide-home/cache/git/\{escapeRepo(REPO)}/\{COMMIT}";
+  t.eqStr(putFile(fs, "\{app}/wac.json5", "{ imports: { dep: { git: \"\{REPO}\", ref: \"main\", subdir: \"./src\" } } }\n"), "", "manifest");
+  t.eqStr(putFile(fs, "\{app}/wac.lock", "{ imports: { dep: { git: \"\{REPO}\", ref: \"main\", subdir: \"./src\", commit: \"\{COMMIT}\" } } }\n"), "", "lock");
+  t.eqStr(putFile(fs, "\{app}/main.wac", "import { two } from \"dep\";\nexport i32 main() { return two() - 2; }\n"), "", "main");
+  t.eqStr(putFile(fs, "\{checkout}/src/wac.json5", "{ exports: './lib.wac' }\n"), "", "dep manifest");
+  t.eqStr(putFile(fs, "\{checkout}/src/lib.wac", "export i32 two() { return 2; }\n"), "", "dep lib");
+  ReadCache cache = ReadCache.create();
+  cache.wacHome = "\{root}/ide-home";
+  Sources got = await gatherWith(fs, sys.env(), "\{app}/main.wac", false, cache);
+  t.eqStr(got.why + got.missing, "", "gathered without a complaint");
+  bool found = false;
+  for (i32 i = 0; i < got.n; i++) { if (got.paths[i] == "\{checkout}/src/lib.wac") { found = true; } }
+  t.isTrue(found, "the dependency was read from the cache the ReadCache names");
   fs.remove(root, true).wait();
   return t.report();
 }

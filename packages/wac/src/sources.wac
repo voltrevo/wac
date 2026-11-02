@@ -221,7 +221,7 @@ struct Mapped {
  * — the triple D8 says identity is. Two mappings naming one repository at one commit produce one
  * key; two mappings at different commits produce two. No separate canonicalisation to keep true.
  */
-async Mapped mapSpecifier(Files fs, Env env, string root, string spec) {
+async Mapped mapSpecifier(Files fs, Env env, string root, string spec, string wacHome) {
   u8[]? mf = (await fs.readFile(root == "." ? MANIFEST_NAME() : "\{root}/\{MANIFEST_NAME()}")).ok();
   if (mf is null) { return Mapped(false, false, "", "", "", ""); }
   Manifest m = readManifest(mf!);
@@ -259,7 +259,7 @@ async Mapped mapSpecifier(Files fs, Env env, string root, string spec) {
                   "`\{name}` has no entry in \{root}/wac.lock — run `wac update`");
   }
 
-  string home = wacHomeOf(env);
+  string home = wacHome != "" ? wacHome : wacHomeOf(env);
   if (home == "") {
     return Mapped(true, false, "", "", "",
                   "neither WAC_HOME nor HOME is set, so there is no cache to read `\{name}" +
@@ -438,10 +438,16 @@ export struct ReadCache {
    * (`gatherRoots`, `checkproject_test.wac`) rather than infer it from a timing.
    */
   i32 reads;
+  /**
+   * **Where the package cache is, when it is not `$WAC_HOME`'s**: `""` reads the environment, as the command does. A
+   * program gathering for its own reasons may have no environment to read — a page in a browser has none — and a cache
+   * it keeps itself: the wac IDE keeps the `web` it was built with in one, so a page program in it can import `web`.
+   */
+  string wacHome;
 
   ReadCache create() {
     return ReadCache(Map.create(hashString, stringEq), Map.create(hashString, stringEq),
-                     Map.create(hashString, stringEq), RootCache.create(), 0);
+                     Map.create(hashString, stringEq), RootCache.create(), 0, "");
   }
 }
 
@@ -669,7 +675,7 @@ async Sources gatherIn(Files fs, Env env, string entry, bool lazy, ReadCache cac
       // only for a name the manifest actually declares, so an ordinary relative import falls
       // through untouched. `design/lang/0009` D9.
       if (isMappingCandidate(spec) && roots[at] != "") {
-        Mapped got = await mapSpecifier(fs, env, roots[at], spec);
+        Mapped got = await mapSpecifier(fs, env, roots[at], spec, cache.wacHome);
         if (got.named) {
           // **A package is resolved only when a retained declaration needs it** — spec ch04
           // `§wac-package-lazy-j3nmf2p`. A build maps it to a key nothing supplies, as it leaves out a
