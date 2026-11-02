@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0422w](open/0422w-the-static-evaluator-takes-no-switch-and-shares-one-step-budget-across-a-file.md) | A static whose evaluation reaches a `switch` is "cannot evaluate statically yet"; and one `Ev` per file means its statics share the 8,000,000-step budget, so a static that evaluates alone fails after two others | missing feature | compile error |
 | [0421c](open/0421c-a-static-method-through-a-verbatim-import-alias-is-not-found.md) | `import { P as @"$q" }` then `@"$q".make(1)` is *no such static method*, where `import { P as Q }` and `Q.make(1)` check; the verbatim alias resolves as a type but not as a static's receiver | bug | compile error |
 | [0420c](open/0420c-a-for-in-variable-in-an-async-function-collides-with-a-later-local-of-its-name.md) | `for (string g in given) { … await … }` followed by `i32[] g = …` in an `async` function gives a module the engine rejects; the index-loop form with a block-local `g` is fine | bug | invalid wasm |
 | [0419a](open/0419a-an-await-on-the-right-of-and-can-yield-the-wrong-value-under-load.md) | `bool fromOut = reading && (await Ticket.first(parts)) == 0;` in `sh`'s `drain` loop picked an unsettled ticket in 10 of 30 loaded runs; awaiting on its own line, never. No small reproduction yet | bug | wrong answer |
@@ -141,7 +142,7 @@ has been fixed and why.
 
 ## Closed
 
-337 issues, 262 closed.
+338 issues, 262 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
