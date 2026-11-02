@@ -23,6 +23,7 @@
 // import nothing retained uses is gone with it, which is what makes a missing file an error exactly
 // when it is needed (`§wac-reach-import-lazy-2jhptfk`).
 
+import { Joined, joinCarried } from "./carried.wac";
 import { Res } from "./path.wac";
 import { resolveVia } from "./path.wac";
 import { kAsync, kConst, kExport, kIdent, kString } from "./kinds.wac";
@@ -375,6 +376,10 @@ Walk? walkFor(string[] givenPaths, string[] givenSources, Res res, string entry,
     sources = string[].filled(givenPaths.len() + 1, stdSource());
     for (i32 i = 0; i < givenPaths.len(); i++) { paths[i] = givenPaths[i]; sources[i] = givenSources[i]; }
   }
+  // And `core`'s carried modules the files import, joined as files (`carried.wac`) — pruned like the rest.
+  Joined jc = joinCarried(paths, sources, false);
+  paths = jc.paths;
+  sources = jc.sources;
   i32 n = paths.len();
   Walk w = Walk(paths, sources, res, Unit?[].defaulted(n), bool[].filled(n, false),
                 Names(string[].filled(64, ""), bool[].filled(64, false), 0), parsed);

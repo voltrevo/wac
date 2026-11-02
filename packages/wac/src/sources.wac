@@ -22,7 +22,7 @@ import { Env, Files } from "std";
 import { Map, Vec, hashString, stringEq } from "core";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, relativeTo, resolveFromAt } from "../../wacc/src/path.wac";
-import { coreSource, isBuiltinSpec, stdSource }
+import { carriedText, coreSource, isBuiltinSpec, stdSource }
   from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, dirOf, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, packageEntry, readManifest }
@@ -632,7 +632,7 @@ async Sources gatherIn(Files fs, Env env, string entry, bool lazy, ReadCache cac
     // answered *`wacc: cannot read core/result.wac`* from any other directory. That is the property
     // the tree was moved inside the compiler to have (`design/lang/0009` D3/D4), so it is worth
     // saying plainly: the CLI has no path to read these from, and the playground has no filesystem.
-    string builtin = path == "core" ? coreSource() : path == "std" ? stdSource() : "";
+    string builtin = path == "core" ? coreSource() : path == "std" ? stdSource() : carriedText(path);
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       u8[]? r = cache.files.get(path);

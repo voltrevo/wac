@@ -32,6 +32,7 @@
 // Column 28 is the `"`, column 21 is the `r` of `return`. Every AST node here carries its own line
 // and column, so this is `e.line, e.col` and not arithmetic.
 
+import { Joined, joinCarried } from "./carried.wac";
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
@@ -1292,6 +1293,10 @@ export void buildStaticView(C c, ViewInputs v) {
     paths = p2;
     sources = s2;
   }
+  // And `core`'s carried modules, which a static may read as it may read `std` (`carried.wac`).
+  Joined jc = joinCarried(paths, sources, false);
+  paths = jc.paths;
+  sources = jc.sources;
   Lexed?[] alx = Lexed?[].filled(paths.len() < 1 ? 1 : paths.len(), null);
   Program?[] apg = Program?[].filled(paths.len() < 1 ? 1 : paths.len(), null);
   for (i32 i = 0; i < paths.len(); i++) {
@@ -11979,13 +11984,19 @@ i32 intBuiltinArity(string name) {
 }
 
 /**
- * The four rounding methods a float has, each answering its receiver's own type: `trunc` toward zero,
- * `floor` and `ceil` toward the infinities, `round` to the nearest with a tie going to the even
- * neighbour (spec ch08). One instruction each, and the float half of what `as@` used to do
- * (`issues/lang/0078`).
+ * A float's methods, each one instruction and each answering its receiver's own type (spec ch08): the four
+ * that round — `trunc` toward zero, `floor` and `ceil` toward the infinities, `round` to the nearest with a
+ * tie going to the even neighbour, the float half of what `as@` used to do (`issues/lang/0078`) — and
+ * `sqrt`, `abs`, `min`, `max` and `copySign`, which wasm has as instructions too.
  */
 export bool isFloatBuiltin(string name) {
-  return name == "trunc" || name == "floor" || name == "ceil" || name == "round";
+  return name == "trunc" || name == "floor" || name == "ceil" || name == "round"
+      || name == "sqrt" || name == "abs" || name == "min" || name == "max" || name == "copySign";
+}
+
+/** How many arguments each takes: `min`, `max` and `copySign` take the other operand, the rest nothing. */
+i32 floatBuiltinArity(string name) {
+  return name == "min" || name == "max" || name == "copySign" ? 1 : 0;
 }
 
 /** Whether a receiver is an integer, which is the one thing these five need of it. */
@@ -12263,12 +12274,26 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     }
     return;
   }
-  // A float's four take nothing, and it has no other methods.
+  // A float's methods, and it has no others. The operand of `min`, `max` and `copySign` is a float of the
+  // receiver's own type: there is no instruction that takes the other width.
   if (recv == "f32" || recv == "f64") {
     if (!isFloatBuiltin(name)) {
       c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
-    } else if (args.len() != 0) {
+      return;
+    }
+    if (args.len() != floatBuiltinArity(name)) {
       c.report(errBuiltinArity(), call.line, call.col);
+      return;
+    }
+    for (i32 i = 0; i < args.len(); i++) {
+      if (litFamily(c, args[i]) != litNone()) {
+        reportLiteral(c, recv, args[i], errBuiltinArg(), args[i].line, args[i].col);
+        continue;
+      }
+      string got = typeOfExpr(c, args[i]);
+      if (got != typeNone() && got != recv) {
+        c.reportWith(errBuiltinArg(), args[i].line, args[i].col, expectedFound(recv, got));
+      }
     }
     return;
   }

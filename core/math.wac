@@ -1,0 +1,672 @@
+// Mathematical functions on floats — `import { math } from "core"`, then `math.log(x)`.
+//
+// **Written in wac, not borrowed from the host.** wasm's float arithmetic is the same bits on every engine, so
+// these answer the same on every host and in the compiler's own evaluator (spec ch28), which runs this file
+// rather than imitating it. A host's `Math.log` or libm is free to differ in the last bit, and does.
+//
+// **Ported from FreeBSD's msun**, which is Sun's fdlibm maintained: each function is within one unit in the
+// last place of the true value, and `test/math_test.wac` measures that against values worked out to fifty
+// digits. The structure, the constants and the comments that explain them are fdlibm's; what is wac's is the
+// spelling. Three things in that spelling are not the C's, and each is a place a port goes wrong silently:
+//
+//   - **A conversion to an integer truncates by `.trunc()`.** `as~` from a float takes the *nearest* integer
+//     (spec ch24), where C's `(int)` drops the fraction.
+//   - **No arithmetic on a word can wrap.** fdlibm tests `((j - 0x40900000) | i) != 0` and relies on two's
+//     complement; an `i32` that overflows here traps, so those are written as the comparisons they mean.
+//   - **A constant is its bits**, `f64.fromBits(…)` of the pattern fdlibm's comments give, rather than a decimal
+//     the reader has to trust rounds to it.
+//
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunSoft, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+//
+// `scalbn` is musl's (MIT): Copyright © 2005-2020 Rich Felker, et al.
+
+// ── The words of a double, as fdlibm reads them ──────────────────────────────
+
+/** The high 32 bits of `x` — sign, exponent and the top of the fraction — as a signed word. */
+i32 hiWord(f64 x) { return ((f64.toBits(x) >> (32 as u64)) as~ u32) as@ i32; }
+
+/** The low 32 bits of `x`'s fraction. */
+u32 loWord(f64 x) { return (f64.toBits(x) & 0xFFFFFFFF) as~ u32; }
+
+/** `x` with its high word replaced. */
+f64 withHi(f64 x, i32 h) {
+  return f64.fromBits((((h as@ u32) as u64) << (32 as u64)) | (f64.toBits(x) & 0xFFFFFFFF));
+}
+
+/** `x` with its low word cleared — fdlibm's `SET_LOW_WORD(x, 0)`, which splits a value into a head and a tail. */
+f64 lowCleared(f64 x) { return f64.fromBits(f64.toBits(x) & 0xFFFFFFFF00000000); }
+
+/** The double whose high word is `h` and whose low word is zero. */
+f64 fromHi(i32 h) { return f64.fromBits(((h as@ u32) as u64) << (32 as u64)); }
+
+/** A word given as its bits, for the constants above `0x7fffffff` that fdlibm writes as negative `int32_t`s. */
+i32 word(u32 bits) { return bits as@ i32; }
+
+f64 inf() { return 1.0 / 0.0; }
+f64 nan() { return 0.0 / 0.0; }
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+static f64 LN2_HI = f64.fromBits(0x3FE62E42FEE00000);
+static f64 LN2_LO = f64.fromBits(0x3DEA39EF35793C76);
+static f64 TWO54 = f64.fromBits(0x4350000000000000);
+static f64 TWO53 = f64.fromBits(0x4340000000000000);
+
+// The polynomial for log(1+f) on [sqrt(2)/2 − 1, sqrt(2) − 1] (`k_log.h`, and log1p's `Lp1`… which are the same).
+static f64 LG1 = f64.fromBits(0x3FE5555555555593);
+static f64 LG2 = f64.fromBits(0x3FD999999997FA04);
+static f64 LG3 = f64.fromBits(0x3FD2492494229359);
+static f64 LG4 = f64.fromBits(0x3FCC71C51D8E78AF);
+static f64 LG5 = f64.fromBits(0x3FC7466496CB03DE);
+static f64 LG6 = f64.fromBits(0x3FC39A09D078C69F);
+static f64 LG7 = f64.fromBits(0x3FC2F112DF3E5244);
+
+static f64 IVLN2HI = f64.fromBits(0x3FF7154765200000);
+static f64 IVLN2LO = f64.fromBits(0x3DE705FC2EEFA200);
+static f64 IVLN10HI = f64.fromBits(0x3FDBCB7B15200000);
+static f64 IVLN10LO = f64.fromBits(0x3DBB9438CA9AADD5);
+static f64 LOG10_2HI = f64.fromBits(0x3FD34413509F6000);
+static f64 LOG10_2LO = f64.fromBits(0x3D59FEF311F12B36);
+
+// exp's: where it overflows and underflows, and the polynomial for R(r²) on [−0.3466, 0.3466].
+static f64 O_THRESHOLD = f64.fromBits(0x40862E42FEFA39EF);
+static f64 U_THRESHOLD = f64.fromBits(0xC0874910D52D3051);
+static f64 INVLN2 = f64.fromBits(0x3FF71547652B82FE);
+static f64 P1 = f64.fromBits(0x3FC555555555553E);
+static f64 P2 = f64.fromBits(0xBF66C16C16BEBD93);
+static f64 P3 = f64.fromBits(0x3F11566AAF25DE2C);
+static f64 P4 = f64.fromBits(0xBEBBBD41C5D26BF1);
+static f64 P5 = f64.fromBits(0x3E66376972BEA4D0);
+static f64 TWOM1000 = f64.fromBits(0x0170000000000000);
+static f64 TWOP1023 = f64.fromBits(0x7FE0000000000000);
+
+// expm1's scaled polynomial.
+static f64 Q1 = f64.fromBits(0xBFA11111111110F4);
+static f64 Q2 = f64.fromBits(0x3F5A01A019FE5585);
+static f64 Q3 = f64.fromBits(0xBF14CE199EAADBB7);
+static f64 Q4 = f64.fromBits(0x3ED0CFCA86E65239);
+static f64 Q5 = f64.fromBits(0xBE8AFDB76E09C32D);
+
+// pow's: log2(1.5) split, the polynomial for its log2, and the head-and-tail splits of the constants it
+// multiplies by so that products stay exact.
+static f64 DP_H1 = f64.fromBits(0x3FE2B80340000000);
+static f64 DP_L1 = f64.fromBits(0x3E4CFDEB43CFD006);
+static f64 THRD = f64.fromBits(0x3FD5555555555555);
+static f64 L1 = f64.fromBits(0x3FE3333333333303);
+static f64 L2 = f64.fromBits(0x3FDB6DB6DB6FABFF);
+static f64 L3 = f64.fromBits(0x3FD55555518F264D);
+static f64 L4 = f64.fromBits(0x3FD17460A91D4101);
+static f64 L5 = f64.fromBits(0x3FCD864A93C9DB65);
+static f64 L6 = f64.fromBits(0x3FCA7E284A454EEF);
+static f64 LG2F = f64.fromBits(0x3FE62E42FEFA39EF);
+static f64 LG2_H = f64.fromBits(0x3FE62E4300000000);
+static f64 LG2_L = f64.fromBits(0xBE205C610CA86C39);
+static f64 OVT = f64.fromBits(0x3C971547652B82FE);
+static f64 CP = f64.fromBits(0x3FEEC709DC3A03FD);
+static f64 CP_H = f64.fromBits(0x3FEEC709E0000000);
+static f64 CP_L = f64.fromBits(0xBE3E2FE0145B01F5);
+static f64 IVLN2_H = f64.fromBits(0x3FF7154760000000);
+static f64 IVLN2_L = f64.fromBits(0x3E54AE0BF85DDF44);
+
+// ── Logarithms ───────────────────────────────────────────────────────────────
+
+/**
+ * log(1+f) − f + f²/2 for `f` in [sqrt(2)/2 − 1, sqrt(2) − 1] — fdlibm's `k_log1p`, the shared core of `log2`
+ * and `log10`, which add the parts back in an order that keeps their own rounding small.
+ */
+f64 kLog1p(f64 f) {
+  f64 s = f / (2.0 + f);
+  f64 z = s * s;
+  f64 w = z * z;
+  f64 t1 = w * (LG2 + w * (LG4 + w * LG6));
+  f64 t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+  f64 r = t2 + t1;
+  f64 hfsq = 0.5 * f * f;
+  return s * (hfsq + r);
+}
+
+/**
+ * The natural logarithm of `x`.
+ *
+ * `x` is reduced to `2^k · (1+f)` with `1+f` in [sqrt(2)/2, sqrt(2)), and log(1+f) is a polynomial in
+ * `s = f/(2+f)`; `k · ln 2` is added in two parts so the product is exact. `log(0)` is −∞, the log of a
+ * negative is NaN, and `log(+∞)` is +∞.
+ */
+export f64 log(f64 x) {
+  i32 hx = hiWord(x);
+  u32 lx = loWord(x);
+  i32 k = 0;
+  if (hx < 0x00100000) {                              // x < 2^-1022
+    if (((hx & 0x7fffffff) as@ u32 | lx) == 0) { return 0.0 - inf(); }
+    if (hx < 0) { return nan(); }
+    k = k - 54;                                       // a subnormal: scale it up
+    x = x * TWO54;
+    hx = hiWord(x);
+  }
+  if (hx >= 0x7ff00000) { return x + x; }
+  k = k + ((hx >> 20) - 1023);
+  hx = hx & 0x000fffff;
+  i32 i = (hx + 0x95f64) & 0x100000;
+  x = withHi(x, hx | (i ^ 0x3ff00000));               // normalise x or x/2
+  k = k + (i >> 20);
+  f64 f = x - 1.0;
+  if ((0x000fffff & (2 + hx)) < 3) {                  // -2^-20 <= f < 2^-20
+    if (f == 0.0) {
+      if (k == 0) { return 0.0; }
+      f64 dk0 = k as f64;
+      return dk0 * LN2_HI + dk0 * LN2_LO;
+    }
+    f64 r0 = f * f * (0.5 - THRD * f);
+    if (k == 0) { return f - r0; }
+    f64 dk1 = k as f64;
+    return dk1 * LN2_HI - ((r0 - dk1 * LN2_LO) - f);
+  }
+  f64 s = f / (2.0 + f);
+  f64 dk = k as f64;
+  f64 z = s * s;
+  i32 ii = hx - 0x6147a;
+  f64 w = z * z;
+  i32 j = 0x6b851 - hx;
+  f64 t1 = w * (LG2 + w * (LG4 + w * LG6));
+  f64 t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+  ii = ii | j;
+  f64 r = t2 + t1;
+  if (ii > 0) {
+    f64 hfsq = 0.5 * f * f;
+    if (k == 0) { return f - (hfsq - s * (hfsq + r)); }
+    return dk * LN2_HI - ((hfsq - (s * (hfsq + r) + dk * LN2_LO)) - f);
+  }
+  if (k == 0) { return f - s * (f - r); }
+  return dk * LN2_HI - ((s * (f - r) - dk * LN2_LO) - f);
+}
+
+/** The reduction `log2` and `log10` share: `x = 2^k · (1+f)`, answered as `k` in `out[0]` and `f`. */
+f64 reduced(f64 x, i32[] out) {
+  i32 hx = hiWord(x);
+  i32 k = 0;
+  if (hx < 0x00100000) {
+    k = k - 54;
+    x = x * TWO54;
+    hx = hiWord(x);
+  }
+  k = k + ((hx >> 20) - 1023);
+  hx = hx & 0x000fffff;
+  i32 i = (hx + 0x95f64) & 0x100000;
+  x = withHi(x, hx | (i ^ 0x3ff00000));
+  k = k + (i >> 20);
+  out[0] = k;
+  return x - 1.0;
+}
+
+/**
+ * What `log2` and `log10` answer for the inputs that are not reduced: ±0, negatives, +∞, NaN and 1. Sets
+ * `out[0]` to 1 when `x` is one of them, and to 0 when it is to be reduced.
+ */
+f64 logSpecial(f64 x, i32[] out) {
+  i32 hx = hiWord(x);
+  u32 lx = loWord(x);
+  out[0] = 1;
+  if (hx < 0x00100000) {
+    if (((hx & 0x7fffffff) as@ u32 | lx) == 0) { return 0.0 - inf(); }
+    if (hx < 0) { return nan(); }
+  }
+  if (hx >= 0x7ff00000) { return x + x; }
+  if (hx == 0x3ff00000 && lx == 0) { return 0.0; }
+  out[0] = 0;
+  return 0.0;
+}
+
+/** The base-2 logarithm of `x`, exact at every power of two. */
+export f64 log2(f64 x) {
+  i32[] k = i32[].filled(1, 0);
+  f64 special = logSpecial(x, k);
+  if (k[0] == 1) { return special; }
+  f64 f = reduced(x, k);
+  f64 y = k[0] as f64;
+  f64 hfsq = 0.5 * f * f;
+  f64 r = kLog1p(f);
+  // `f − f²/2` split into a head with its low word cleared and a tail, so that the head times the high
+  // part of 1/ln 2 is exact; the sum is then put together tail first.
+  f64 hi = lowCleared(f - hfsq);
+  f64 lo = (f - hi) - hfsq + r;
+  f64 valHi = hi * IVLN2HI;
+  f64 valLo = (lo + hi) * IVLN2LO + lo * IVLN2HI;
+  f64 w = y + valHi;
+  valLo = valLo + ((y - w) + valHi);
+  valHi = w;
+  return valLo + valHi;
+}
+
+/** The base-10 logarithm of `x`. */
+export f64 log10(f64 x) {
+  i32[] k = i32[].filled(1, 0);
+  f64 special = logSpecial(x, k);
+  if (k[0] == 1) { return special; }
+  f64 f = reduced(x, k);
+  f64 y = k[0] as f64;
+  f64 hfsq = 0.5 * f * f;
+  f64 r = kLog1p(f);
+  f64 hi = lowCleared(f - hfsq);
+  f64 lo = (f - hi) - hfsq + r;
+  f64 valHi = hi * IVLN10HI;
+  f64 y2 = y * LOG10_2HI;
+  f64 valLo = y * LOG10_2LO + (lo + hi) * IVLN10LO + lo * IVLN10HI;
+  f64 w = y2 + valHi;
+  valLo = valLo + ((y2 - w) + valHi);
+  valHi = w;
+  return valLo + valHi;
+}
+
+/**
+ * `log(1 + x)`, accurate when `x` is near zero — where `log(1.0 + x)` has already lost what `x` held below
+ * the last bit of 1.
+ */
+export f64 log1p(f64 x) {
+  i32 hx = hiWord(x);
+  i32 ax = hx & 0x7fffffff;
+  i32 k = 1;
+  f64 f = 0.0;
+  f64 c = 0.0;
+  i32 hu = 0;
+  if (hx < 0x3FDA827A) {                              // 1 + x < sqrt(2)
+    if (ax >= 0x3ff00000) {                           // x <= -1
+      if (x == 0.0 - 1.0) { return 0.0 - inf(); }
+      return nan();
+    }
+    if (ax < 0x3e200000) {                            // |x| < 2^-29
+      if (ax < 0x3c900000) { return x; }              // |x| < 2^-54
+      return x - x * x * 0.5;
+    }
+    if (hx > 0 || hx <= word(0xbfd2bec4)) {           // sqrt(2)/2 − 1 <= x < sqrt(2) − 1
+      k = 0;
+      f = x;
+      hu = 1;
+    }
+  }
+  if (hx >= 0x7ff00000) { return x + x; }
+  if (k != 0) {
+    f64 u = 0.0;
+    if (hx < 0x43400000) {
+      u = 1.0 + x;
+      hu = hiWord(u);
+      k = (hu >> 20) - 1023;
+      c = k > 0 ? 1.0 - (u - x) : x - (u - 1.0);    // the rounding error of 1 + x
+      c = c / u;
+    } else {
+      u = x;
+      hu = hiWord(u);
+      k = (hu >> 20) - 1023;
+      c = 0.0;
+    }
+    hu = hu & 0x000fffff;
+    if (hu < 0x6a09e) {
+      u = withHi(u, hu | 0x3ff00000);                 // normalise u
+    } else {
+      k = k + 1;
+      u = withHi(u, hu | 0x3fe00000);                 // normalise u/2
+      hu = (0x00100000 - hu) >> 2;
+    }
+    f = u - 1.0;
+  }
+  f64 hfsq = 0.5 * f * f;
+  f64 dk = k as f64;
+  if (hu == 0) {                                      // |f| < 2^-20
+    if (f == 0.0) {
+      if (k == 0) { return 0.0; }
+      c = c + dk * LN2_LO;
+      return dk * LN2_HI + c;
+    }
+    f64 r0 = hfsq * (1.0 - 0.66666666666666666 * f);
+    if (k == 0) { return f - r0; }
+    return dk * LN2_HI - ((r0 - (dk * LN2_LO + c)) - f);
+  }
+  f64 s = f / (2.0 + f);
+  f64 z = s * s;
+  f64 r = z * (LG1 + z * (LG2 + z * (LG3 + z * (LG4 + z * (LG5 + z * (LG6 + z * LG7))))));
+  if (k == 0) { return f - (hfsq - s * (hfsq + r)); }
+  return dk * LN2_HI - ((hfsq - (s * (hfsq + r) + (dk * LN2_LO + c))) - f);
+}
+
+// ── Exponentials ─────────────────────────────────────────────────────────────
+
+/**
+ * `x · 2^n`, computed without an intermediate that overflows or underflows on the way — musl's `scalbn`.
+ * An exponent past the range is taken in steps, so a result that is a subnormal rounds once.
+ */
+f64 scalbn(f64 x, i32 n) {
+  f64 y = x;
+  if (n > 1023) {
+    y = y * TWOP1023;
+    n = n - 1023;
+    if (n > 1023) {
+      y = y * TWOP1023;
+      n = n - 1023;
+      if (n > 1023) { n = 1023; }
+    }
+  } else if (n < 0 - 1022) {
+    // 2^-1022 · 2^53, so the step leaves the value normal and rounds nothing.
+    f64 step = f64.fromBits(0x0010000000000000) * TWO53;
+    y = y * step;
+    n = n + (1022 - 53);
+    if (n < 0 - 1022) {
+      y = y * step;
+      n = n + (1022 - 53);
+      if (n < 0 - 1022) { n = 0 - 1022; }
+    }
+  }
+  return y * f64.fromBits((((1023 + n) as i64) as@ u64) << (52 as u64));
+}
+
+/**
+ * `e` to the power `x`.
+ *
+ * `x` is reduced to `k · ln 2 + r` with `|r| <= ln(2)/2`, `e^r` is a rational function of `r`, and `2^k` is
+ * put into the exponent. Overflows to +∞ above about 709.78 and underflows to 0 below about −745.13.
+ */
+export f64 exp(f64 x) {
+  f64 hi = 0.0;
+  f64 lo = 0.0;
+  i32 k = 0;
+  i32 hx = hiWord(x);
+  bool negative = hx < 0;
+  hx = hx & 0x7fffffff;
+  if (hx >= 0x40862E42) {                             // |x| >= 709.78…
+    if (hx >= 0x7ff00000) {
+      if (((hx & 0xfffff) as@ u32 | loWord(x)) != 0) { return x + x; }   // NaN
+      return negative ? 0.0 : x;                       // e^-inf = 0, e^+inf = +inf
+    }
+    if (x > O_THRESHOLD) { return inf(); }
+    if (x < U_THRESHOLD) { return 0.0; }
+  }
+  if (hx > 0x3fd62e42) {                              // |x| > 0.5 ln 2
+    if (hx < 0x3FF0A2B2) {                            // and |x| < 1.5 ln 2
+      hi = negative ? x + LN2_HI : x - LN2_HI;
+      lo = negative ? 0.0 - LN2_LO : LN2_LO;
+      k = negative ? 0 - 1 : 1;
+    } else {
+      k = (INVLN2 * x + (negative ? 0.0 - 0.5 : 0.5)).trunc() as~ i32;
+      f64 t0 = k as f64;
+      hi = x - t0 * LN2_HI;
+      lo = t0 * LN2_LO;
+    }
+    x = hi - lo;
+  } else if (hx < 0x3e300000) {                       // |x| < 2^-28
+    return 1.0 + x;
+  } else {
+    k = 0;
+  }
+  f64 t = x * x;
+  f64 twopk = k >= 0 - 1021 ? fromHi((0x3ff + k) << 20) : fromHi((0x3ff + (k + 1000)) << 20);
+  f64 c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+  if (k == 0) { return 1.0 - ((x * c) / (c - 2.0) - x); }
+  f64 y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+  if (k >= 0 - 1021) {
+    if (k == 1024) { return y * 2.0 * TWOP1023; }
+    return y * twopk;
+  }
+  return y * twopk * TWOM1000;
+}
+
+/**
+ * `e^x − 1`, accurate when `x` is near zero — where `exp(x) − 1.0` has cancelled away everything but the
+ * rounding error of the `exp`.
+ */
+export f64 expm1(f64 x) {
+  f64 hi = 0.0;
+  f64 lo = 0.0;
+  f64 c = 0.0;
+  i32 k = 0;
+  i32 hx = hiWord(x);
+  bool negative = hx < 0;
+  hx = hx & 0x7fffffff;
+  if (hx >= 0x4043687A) {                             // |x| >= 56 ln 2
+    if (hx >= 0x40862E42) {                           // |x| >= 709.78…
+      if (hx >= 0x7ff00000) {
+        if (((hx & 0xfffff) as@ u32 | loWord(x)) != 0) { return x + x; }
+        return negative ? 0.0 - 1.0 : x;
+      }
+      if (x > O_THRESHOLD) { return inf(); }
+    }
+    if (negative) { return 0.0 - 1.0; }               // x < -56 ln 2: e^x is below half an ulp of 1
+  }
+  if (hx > 0x3fd62e42) {                              // |x| > 0.5 ln 2
+    if (hx < 0x3FF0A2B2) {
+      if (!negative) {
+        hi = x - LN2_HI;
+        lo = LN2_LO;
+        k = 1;
+      } else {
+        hi = x + LN2_HI;
+        lo = 0.0 - LN2_LO;
+        k = 0 - 1;
+      }
+    } else {
+      k = (INVLN2 * x + (negative ? 0.0 - 0.5 : 0.5)).trunc() as~ i32;
+      f64 t0 = k as f64;
+      hi = x - t0 * LN2_HI;
+      lo = t0 * LN2_LO;
+    }
+    x = hi - lo;
+    c = (hi - x) - lo;
+  } else if (hx < 0x3c900000) {                       // |x| < 2^-54
+    return x;
+  } else {
+    k = 0;
+  }
+  f64 hfx = 0.5 * x;
+  f64 hxs = x * hfx;
+  f64 r1 = 1.0 + hxs * (Q1 + hxs * (Q2 + hxs * (Q3 + hxs * (Q4 + hxs * Q5))));
+  f64 t = 3.0 - r1 * hfx;
+  f64 e = hxs * ((r1 - t) / (6.0 - x * t));
+  if (k == 0) { return x - (x * e - hxs); }
+  f64 twopk = fromHi((0x3ff + k) << 20);
+  e = x * (e - c) - c;
+  e = e - hxs;
+  if (k == 0 - 1) { return 0.5 * (x - e) - 0.5; }
+  if (k == 1) {
+    if (x < 0.0 - 0.25) { return (0.0 - 2.0) * (e - (x + 0.5)); }
+    return 1.0 + 2.0 * (x - e);
+  }
+  if (k <= 0 - 2 || k > 56) {                         // suffices to return exp(x) − 1
+    f64 y0 = 1.0 - (e - x);
+    if (k == 1024) { y0 = y0 * 2.0 * TWOP1023; } else { y0 = y0 * twopk; }
+    return y0 - 1.0;
+  }
+  f64 y = 0.0;
+  if (k < 20) {
+    f64 t1 = fromHi(0x3ff00000 - (0x200000 >> k));    // 1 − 2^-k
+    y = t1 - (e - x);
+    y = y * twopk;
+  } else {
+    f64 t2 = fromHi((0x3ff - k) << 20);               // 2^-k
+    y = x - (e + t2);
+    y = y + 1.0;
+    y = y * twopk;
+  }
+  return y;
+}
+
+// ── Powers ───────────────────────────────────────────────────────────────────
+
+/**
+ * `x` to the power `y`.
+ *
+ * Computed as `2^(y · log2(x))` with `log2(x)` carried to about 64 bits in two parts, so that the product
+ * with `y` keeps the precision a large `y` needs. The special cases are C99's (Annex F): anything to the 0 is
+ * 1, 1 to anything is 1 — a NaN included — a negative base needs an integral exponent, and the sign of a zero
+ * base survives an odd one.
+ */
+export f64 pow(f64 x, f64 y) {
+  i32 hx = hiWord(x);
+  u32 lx = loWord(x);
+  i32 hy = hiWord(y);
+  u32 ly = loWord(y);
+  i32 ix = hx & 0x7fffffff;
+  i32 iy = hy & 0x7fffffff;
+
+  if ((iy as@ u32 | ly) == 0) { return 1.0; }                     // y = ±0
+  if (hx == 0x3ff00000 && lx == 0) { return 1.0; }                // x = 1
+  if (ix > 0x7ff00000 || (ix == 0x7ff00000 && lx != 0) || iy > 0x7ff00000 || (iy == 0x7ff00000 && ly != 0)) {
+    return x + y;                                                 // a NaN
+  }
+
+  // Whether `y` is an integer, for a negative `x`: 0 when it is not, 1 when odd, 2 when even.
+  i32 yisint = 0;
+  if (hx < 0) {
+    if (iy >= 0x43400000) {
+      yisint = 2;                                                 // |y| >= 2^53: even
+    } else if (iy >= 0x3ff00000) {
+      i32 ke = (iy >> 20) - 0x3ff;
+      if (ke > 20) {
+        u32 j = ly >> ((52 - ke) as@ u32);
+        if ((j << ((52 - ke) as@ u32)) == ly) { yisint = 2 - ((j & 1) as@ i32); }
+      } else if (ly == 0) {
+        i32 j = iy >> (20 - ke);
+        if ((j << (20 - ke)) == iy) { yisint = 2 - (j & 1); }
+      }
+    }
+  }
+
+  if (ly == 0) {
+    if (iy == 0x7ff00000) {                                       // y = ±∞
+      if (ix == 0x3ff00000 && lx == 0) { return 1.0; }            // (−1)^±∞ = 1
+      if (ix >= 0x3ff00000) { return hy >= 0 ? y : 0.0; }        // |x| > 1
+      return hy < 0 ? 0.0 - y : 0.0;                              // |x| < 1
+    }
+    if (iy == 0x3ff00000) { return hy < 0 ? 1.0 / x : x; }        // y = ±1
+    if (hy == 0x40000000) { return x * x; }                       // y = 2
+    if (hy == 0x3fe00000 && hx >= 0) { return x.sqrt(); }         // y = 0.5, x >= +0
+  }
+
+  f64 ax = x.abs();
+  if (lx == 0 && (ix == 0x7ff00000 || ix == 0 || ix == 0x3ff00000)) {   // x = ±0, ±∞ or ±1
+    f64 z0 = ax;
+    if (hy < 0) { z0 = 1.0 / z0; }
+    if (hx < 0) {
+      if (ix == 0x3ff00000 && yisint == 0) { z0 = nan(); }        // (−1)^non-integer
+      else if (yisint == 1) { z0 = -z0; }                    // (x < 0)^odd
+    }
+    return z0;
+  }
+
+  i32 n = ((hx as@ u32) >> (31 as u32)) as@ i32 - 1;              // 0 for a negative x, −1 otherwise
+  if ((n | yisint) == 0) { return nan(); }                        // (x < 0)^non-integer
+  f64 s = 1.0;                                                     // the sign of the result
+  if ((n | (yisint - 1)) == 0) { s = 0.0 - 1.0; }                  // (x < 0)^odd
+
+  f64 t1 = 0.0;
+  f64 t2 = 0.0;
+  if (iy > 0x41e00000) {                                          // |y| > 2^31
+    if (iy > 0x43f00000) {                                        // |y| > 2^64: overflows or underflows
+      if (ix <= 0x3fefffff) { return hy < 0 ? inf() : 0.0; }
+      if (ix >= 0x3ff00000) { return hy > 0 ? inf() : 0.0; }
+    }
+    if (ix < 0x3fefffff) { return hy < 0 ? s * inf() : s * 0.0; }
+    if (ix > 0x3ff00000) { return hy > 0 ? s * inf() : s * 0.0; }
+    // |1 − x| <= 2^-20: log(x) by a short series in t = x − 1.
+    f64 t = ax - 1.0;
+    f64 w = (t * t) * (0.5 - t * (THRD - t * 0.25));
+    f64 u = IVLN2_H * t;
+    f64 v = t * IVLN2_L - w * INVLN2;
+    t1 = lowCleared(u + v);
+    t2 = v - (t1 - u);
+  } else {
+    n = 0;
+    if (ix < 0x00100000) {                                        // a subnormal x
+      ax = ax * TWO53;
+      n = n - 53;
+      ix = hiWord(ax);
+    }
+    n = n + ((ix >> 20) - 0x3ff);
+    i32 j = ix & 0x000fffff;
+    ix = j | 0x3ff00000;                                          // normalise ix
+    i32 k = 0;
+    if (j <= 0x3988E) {
+      k = 0;                                                      // |x| < sqrt(3/2)
+    } else if (j < 0xBB67A) {
+      k = 1;                                                      // |x| < sqrt(3)
+    } else {
+      k = 0;
+      n = n + 1;
+      ix = ix - 0x00100000;
+    }
+    ax = withHi(ax, ix);
+    f64 bp = k == 0 ? 1.0 : 1.5;
+    f64 dpH = k == 0 ? 0.0 : DP_H1;
+    f64 dpL = k == 0 ? 0.0 : DP_L1;
+
+    // ss = s_h + s_l = (x − 1)/(x + 1) or (x − 1.5)/(x + 1.5).
+    f64 u = ax - bp;
+    f64 v = 1.0 / (ax + bp);
+    f64 ss = u * v;
+    f64 sH = lowCleared(ss);
+    f64 tH = fromHi(((ix >> 1) | 0x20000000) + 0x00080000 + (k << 18));   // t_h = ax + bp, high
+    f64 tL = ax - (tH - bp);
+    f64 sL = v * ((u - sH * tH) - sH * tL);
+    // log(ax)/log2 as a polynomial in ss.
+    f64 s2 = ss * ss;
+    f64 r = s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
+    r = r + sL * (sH + ss);
+    s2 = sH * sH;
+    tH = lowCleared(3.0 + s2 + r);
+    tL = r - ((tH - 3.0) - s2);
+    // u + v = ss · (1 + …)
+    u = sH * tH;
+    v = sL * tH + tL * ss;
+    f64 pH = lowCleared(u + v);
+    f64 pL = v - (pH - u);
+    f64 zH = CP_H * pH;                                           // cp_h + cp_l = 2/(3 log 2)
+    f64 zL = CP_L * pH + pL * CP + dpL;
+    // log2(ax) = (ss + …) · 2/(3 log 2) = n + dp_h + z_h + z_l
+    f64 tn = n as f64;
+    t1 = lowCleared(((zH + zL) + dpH) + tn);
+    t2 = zL - (((t1 - tn) - dpH) - zH);
+  }
+
+  // (y1 + y2) · (t1 + t2), with y1 the head of y.
+  f64 y1 = lowCleared(y);
+  f64 pl = (y - y1) * t1 + y * t2;
+  f64 ph = y1 * t1;
+  f64 z = pl + ph;
+  i32 jz = hiWord(z);
+  i32 iz = loWord(z) as@ i32;
+  if (jz >= 0x40900000) {                                         // z >= 1024
+    if (jz != 0x40900000 || iz != 0) { return s * inf(); }
+    if (pl + OVT > z - ph) { return s * inf(); }
+  } else if ((jz & 0x7fffffff) >= 0x4090cc00) {                   // z <= −1075
+    if (jz != word(0xc090cc00) || iz != 0) { return s * 0.0; }
+    if (pl <= z - ph) { return s * 0.0; }
+  }
+
+  // 2^(p_h + p_l): the integer part of z goes into the exponent.
+  i32 ia = jz & 0x7fffffff;
+  i32 ke2 = (ia >> 20) - 0x3ff;
+  n = 0;
+  if (ia > 0x3fe00000) {                                          // |z| > 0.5: n = [z + 0.5]
+    n = jz + (0x00100000 >> (ke2 + 1));
+    ke2 = ((n & 0x7fffffff) >> 20) - 0x3ff;                       // the new exponent of n
+    f64 tz = fromHi(n & ~(0x000fffff >> ke2));
+    n = ((n & 0x000fffff) | 0x00100000) >> (20 - ke2);
+    if (jz < 0) { n = 0 - n; }
+    ph = ph - tz;
+  }
+  f64 t = lowCleared(pl + ph);
+  f64 uu = t * LG2_H;
+  f64 vv = (pl - (t - ph)) * LG2F + t * LG2_L;
+  z = uu + vv;
+  f64 w2 = vv - (z - uu);
+  t = z * z;
+  t1 = z - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+  f64 rr = (z * t1) / (t1 - 2.0) - (w2 + z * w2);
+  z = 1.0 - (rr - z);
+  i32 jr = hiWord(z) + (n << 20);
+  if ((jr >> 20) <= 0) { z = scalbn(z, n); } else { z = withHi(z, jr); }
+  return s * z;
+}

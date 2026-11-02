@@ -1528,6 +1528,74 @@ f64 roundedBy(string nm, f64 x) {
   return r;
 }
 
+/** Every bit of an `f64` but its sign. */
+u64 signlessMask() { return ((1 as u64) << (63 as u64)) - (1 as u64); }
+
+/** `x` with the sign of `y` — `f64.copysign`, on the bits. */
+export f64 copySignOf(f64 x, f64 y) {
+  u64 sign = (1 as u64) << (63 as u64);
+  return f64.fromBits((f64.toBits(x) & signlessMask()) | (f64.toBits(y) & sign));
+}
+
+/**
+ * `f64.min` or `f64.max`: a NaN if either is one, and between the zeros `-0.0` is the lesser — which `<`
+ * cannot say, since the two compare equal. The NaN is the canonical one; which NaN an engine answers is not
+ * something wasm fixes, and only `toBits` could see the difference.
+ */
+export f64 minMaxOf(bool min, f64 x, f64 y) {
+  if (x != x || y != y) { return f64.fromBits((2047 as u64) << (52 as u64) | (1 as u64) << (51 as u64)); }
+  if (x == 0.0 && y == 0.0) {
+    bool xNeg = (f64.toBits(x) >> (63 as u64)) == (1 as u64);
+    bool yNeg = (f64.toBits(y) >> (63 as u64)) == (1 as u64);
+    bool neg = min ? (xNeg || yNeg) : (xNeg && yNeg);
+    return neg ? f64.fromBits((1 as u64) << (63 as u64)) : 0.0;
+  }
+  if (min) { return x < y ? x : y; }
+  return x > y ? x : y;
+}
+
+/**
+ * The correctly rounded square root of `x` — what `f64.sqrt` answers — with integers only, because the rung
+ * that compiles this file has no square root to call.
+ *
+ * The significand `m`, with the exponent made even, is a value `m · 2^(e−52)`; its root's first 54 bits are
+ * `⌊√(m · 2^54)⌋`, found two bits of the radicand at a time as on paper, and the remainder says whether
+ * anything was left over. The 54th bit is the rounding bit, and it can only be set with something left over —
+ * an odd root squared is odd, and `m · 2^54` is even — so rounding to nearest is adding it.
+ */
+export f64 exactSqrt(f64 x) {
+  if (x != x) { return x; }
+  if (x == 0.0) { return x; }
+  if (x < 0.0) { return f64.fromBits((2047 as u64) << (52 as u64) | (1 as u64) << (51 as u64)); }
+  u64 bits = f64.toBits(x);
+  i32 field = ((bits >> (52 as u64)) & (2047 as u64)) as~ i32;
+  if (field == 2047) { return x; }
+  u64 hidden = (1 as u64) << (52 as u64);
+  u64 m = bits & (hidden - (1 as u64));
+  i32 e = field - 1023;
+  if (field == 0) {
+    e = 0 - 1022;
+    while (m < hidden) { m = m << (1 as u64); e = e - 1; }
+  } else {
+    m = m | hidden;
+  }
+  if (e % 2 != 0) { m = m << (1 as u64); e = e - 1; }
+  // Pair `j` of the 108-bit radicand `m · 2^54`, from the top: bits `2j+1` and `2j`, which are `m`'s bits
+  // `2j−53` and `2j−54` — zero below the pair `m` starts in.
+  u64 q = 0 as u64;
+  u64 r = 0 as u64;
+  for (i32 j = 53; j >= 0; j--) {
+    u64 pair = j >= 27 ? (m >> (((2 * j - 54) as i64) as@ u64)) & (3 as u64) : 0 as u64;
+    r = (r << (2 as u64)) | pair;
+    u64 t = (q << (2 as u64)) | (1 as u64);
+    if (r >= t) { r = r - t; q = (q << (1 as u64)) | (1 as u64); } else { q = q << (1 as u64); }
+  }
+  u64 sig = (q >> (1 as u64)) + (q & (1 as u64));
+  i32 half = e / 2;
+  if (sig >= ((1 as u64) << (53 as u64))) { sig = sig >> (1 as u64); half = half + 1; }
+  return f64.fromBits(((((half + 1023) as i64) as@ u64) << (52 as u64)) | (sig & (hidden - (1 as u64))));
+}
+
 /**
  * A whole `f64` as an `i64`.
  *
@@ -1629,6 +1697,22 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       if ((o.kind == vF64() || o.kind == vF32()) && args.len() == 0
           && (nm == "trunc" || nm == "floor" || nm == "ceil" || nm == "round")) {
         f64 r = roundedBy(nm, o.fval);
+        if (o.kind == vF32()) { return f32Value(r as~ f32); }
+        return f64Value(r);
+      }
+      // And its other five, to the bit the instructions answer. An `f32`'s square root is the `f64` one
+      // rounded once more, which is exact: 53 bits hold twice 24 and two more, so the second rounding
+      // cannot land differently from a correctly rounded `f32` one.
+      if ((o.kind == vF64() || o.kind == vF32()) && args.len() == 0 && (nm == "sqrt" || nm == "abs")) {
+        f64 r = nm == "sqrt" ? exactSqrt(o.fval) : f64.fromBits(f64.toBits(o.fval) & signlessMask());
+        if (o.kind == vF32()) { return f32Value(r as~ f32); }
+        return f64Value(r);
+      }
+      if ((o.kind == vF64() || o.kind == vF32()) && args.len() == 1
+          && (nm == "min" || nm == "max" || nm == "copySign")) {
+        Value y = evalExpr(ev, cx, fi, args[0], o.kind == vF32() ? "f32" : "f64");
+        if (!evFinished(ev.status)) { return noneValue(); }
+        f64 r = nm == "copySign" ? copySignOf(o.fval, y.fval) : minMaxOf(nm == "min", o.fval, y.fval);
         if (o.kind == vF32()) { return f32Value(r as~ f32); }
         return f64Value(r);
       }

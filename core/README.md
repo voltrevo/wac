@@ -35,6 +35,13 @@ imports: `tools/wac/gencore.wac` concatenates them, in the order its `coreTree()
 `core`'s root (spec ch37), and a file of `core` reaches another file's declarations without
 importing it.
 
+**And modules of their own beside it.** A file `gencore.wac`'s `carriedTree()` lists — `math.wac` so far —
+is not concatenated: it is a module as any project's file is, with its own imports and its own scope, and
+`core` reaches it through an `export * as math from "./math.wac"` in one of the files above. The compiler
+carries it under the key `" core/math.wac"`, a path behind a space no file path starts with, and joins it to
+a program only when the program uses it (`packages/wacc/src/carried.wac`). That is how `core` has a namespace
+that is a module rather than a set of dotted names, which is what `operators` and `markup` still are.
+
 The embedding also records where each file starts, so a coverage point in the module is reported as
 `core/hash.wac:61` rather than as a line of the concatenation. The list of exported names is read off
 the declarations rather than kept by hand.
@@ -73,6 +80,7 @@ import { hashString, stringEq } from "core";
 | `number.wac` | `NumberLiteral` and the `fromNumber` symbol a type implements to be a literal's target |
 | `hash.wac` | ready-made hash and equality for `string`, `i32` and `i64` |
 | `hypothetical.wac` | `hypothetical<T>()`, an expression of any type for `typeof` to read, which traps if run |
+| `math.wac` | `math`: `log`, `log2`, `log10`, `log1p`, `exp`, `expm1` and `pow`, ported from fdlibm (spec ch43) |
 
 This package exists because wac gained generics ([wac issue
 0034](../issues/lang/closed/0034-generics.md)). Before that a container could only be

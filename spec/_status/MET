@@ -124,6 +124,8 @@ spec/2-types/08-primitives.md#17
 spec/2-types/08-primitives.md#18
 spec/2-types/08-primitives.md#19
 spec/2-types/08-primitives.md#20
+spec/2-types/08-primitives.md#21
+spec/2-types/08-primitives.md#22
 spec/2-types/09-numeric-literals.md#1
 spec/2-types/09-numeric-literals.md#2
 spec/2-types/09-numeric-literals.md#3
@@ -479,6 +481,10 @@ spec/7-library/42-buf.md#1
 spec/7-library/42-buf.md#2
 spec/7-library/42-buf.md#3
 spec/7-library/42-buf.md#4
+spec/7-library/43-math.md#1
+spec/7-library/43-math.md#2
+spec/7-library/43-math.md#3
+spec/7-library/43-math.md#4
 spec/7-library/44-std.md#1
 spec/7-library/44-std.md#2
 spec/7-library/44-std.md#3

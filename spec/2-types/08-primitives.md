@@ -180,6 +180,41 @@ takes a tie to the even neighbour, so `2.5.round()` is `2.0` and `3.5.round()` i
 Converting to an integer is then a cast: `x.trunc() as~ i32` truncates, and `x as~ i32` alone rounds
 ([24](../3-expressions/24-casts.md)).
 
+### A float's other instructions
+
+A float has five more methods, each one instruction and each answering the receiver's type: `sqrt()`,
+the square root correctly rounded; `abs()`, the magnitude; and `min(y)`, `max(y)` and `copySign(y)`, whose
+operand is a float of the receiver's own type. Anything that needs more than one instruction — a logarithm,
+a power, a sine — is a function of `core`'s `math` ([43](../7-library/43-math.md)), not a method.
+
+```wac
+// expect: root(2.25) = 1.5
+// expect: magnitude(-3.5) = 3.5
+// expect: lesser(1.0, -2.0) = -2.0
+// expect: greater(1.0, -2.0) = 1.0
+// expect: signed(3.0, -0.5) = -3.0
+export f64 root(f64 x) { return x.sqrt(); }
+export f64 magnitude(f64 x) { return x.abs(); }
+export f64 lesser(f64 x, f64 y) { return x.min(y); }
+export f64 greater(f64 x, f64 y) { return x.max(y); }
+export f64 signed(f64 x, f64 y) { return x.copySign(y); }
+```
+
+`[§wac-float-sqrt-abs-w4d6hp4]` `sqrt` answers the correctly rounded square root, so `2.25.sqrt()` is exactly `1.5`; the root of a
+negative is NaN and that of `-0.0` is `-0.0`. `abs` clears the sign bit and changes nothing else — a NaN
+included.
+
+`[§wac-float-min-max-gmjwrof]` `min` and `max` answer a NaN when either operand is one, and order `-0.0` below `0.0`, which `<`
+does not: `(-0.0).min(0.0)` is `-0.0`. A literal operand takes the receiver's type, and an operand of the
+other float type is refused.
+
+```wac
+// expect: refused
+export f32 mixed(f32 x, f64 y) { return x.min(y); }
+```
+
+`[§wac-float-copysign-ufi8gg8]` `copySign(y)` is the receiver's magnitude with `y`'s sign bit, so it can give a zero or a NaN a sign.
+
 ### A float's bits
 
 `f64.toBits(x)` is the IEEE 754 bit pattern of `x` as a `u64`, and `f64.fromBits(b)` is the reverse.

@@ -5,6 +5,7 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump the parser's own tests read.
 
+import { Joined, joinCarried } from "./carried.wac";
 import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kAs, kAsAt, kAsBang, kAssign, kAsTilde, kAsync, kAwait, kColon, kFor, kComma, kDot, kEnum, kExport, kGt, kIdent, kImport, kindName, kIs, kLbrace,
@@ -27,7 +28,7 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked, exportForwards, splitTabs } from "./emit.wac";
 import {
-  builtinEnumVariants, builtinTypeDefaults, builtinVariadicCallees, coreSource, isBuiltinSpec, stdSource,
+  builtinEnumVariants, builtinTypeDefaults, builtinVariadicCallees, coreSource, isBuiltinSpec, isCarriedKey, stdSource,
 } from "./coretext.wac";
 import { enumVariantsIn } from "./scans.wac";
 import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
@@ -911,6 +912,11 @@ Graph graphOf(string[] givenPaths, string[] givenSources, const Res res) {
   }
   // Namespaces are lowered first, so checking a project reads what a build would (spec ch03).
   string[] sources = lowerSources(paths, rawSources, res);
+  // **And the carried modules the lowered files import** — `math.log` is an import of `" core/math.wac"` by
+  // now — joined as files, so every closure below reaches them as it reaches any other (`carried.wac`).
+  Joined jc = joinCarried(paths, sources, false);
+  paths = jc.paths;
+  sources = jc.sources;
   // **Counted once for the whole graph.** Every closure overlaps almost every other, so letting each one size its
   // own tables parsed a widely-imported file once per importer — 54% of what a graph check cost, measured.
   // `issues/lang/0133`.
@@ -3281,8 +3287,8 @@ string moduleExportingType(Reads reads, string[] paths, string[] sources, i32 f,
     if (m == f || !exportsType(reads, sources[m], name)) { continue; }
     // A built-in reached under its own key — `"core"` as the CLI supplies it, `corePath()` as this
     // checker carries it — is imported by name, never by a path to it.
+    if (isCarriedKey(paths[m]) || paths[m] == corePath()) { return "core"; }
     if (isBuiltinSpec(paths[m])) { return paths[m]; }
-    if (paths[m] == corePath()) { return "core"; }
     return relativeSpec(paths[f], paths[m]);
   }
   if (exportsType(reads, coreSource(), name)) { return "core"; }

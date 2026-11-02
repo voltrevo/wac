@@ -247,6 +247,19 @@ export string test_the_builtin_test_answers_for_the_two_names() {
 }
 
 /**
+ * **And the keys of `core`'s carried modules**, which only the compiler writes — `math.log` lowers to an import
+ * of `" core/math.wac"` — so the resolver answers them as themselves rather than joining them to a directory.
+ * A path a user can write is still not one: the space in front is what no file path starts with.
+ */
+export string test_a_carried_key_is_a_builtin_and_a_path_like_it_is_not() {
+  T t = T.create();
+  t.isTrue(isBuiltinSpec(" core/math.wac"), "the carried key");
+  t.isTrue(!isBuiltinSpec("core/math.wac") && !isBuiltinSpec("./core/math.wac") && !isBuiltinSpec(" core"),
+           "and nothing a user writes for it");
+  return t.report();
+}
+
+/**
  * A path below a built-in says to import the package by its name.
  *
  * Written when `issues/system/0234a` stopped bare specifiers falling through to path arithmetic. That
