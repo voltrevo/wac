@@ -49,11 +49,11 @@ export string test_the_tree_is_there_and_says_who_gets_what(Sys sys) {
   // covers it — but this canary is what stops that check being vacuous, and a canary that names only
   // one of the two trees goes quiet about the other on the day somebody empties it.
   string[] files = [
-                            "core/read.wac", "core/text.wac", "core/README.md",
+                            "core/read.wac", "core/markup.wac", "core/README.md",
                             "std/platform.wac", "std/README.md"
   ];
   string[] holds = [
-                            "export enum Read", "export symbol @\"markup.text\"", "| `hash.wac` |",
+                            "export enum Read", "export symbol text;", "| `hash.wac` |",
                             "export struct Sys", "A capability, or the type of one"
   ];
   for (i32 i = 0; i < files.len(); i++) {

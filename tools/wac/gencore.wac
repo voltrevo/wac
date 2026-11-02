@@ -48,7 +48,7 @@ string[] carriedTree() {
   return [
     "core/read.wac", "core/result.wac", "core/hash.wac",
     "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac", "core/operators.wac",
-    "core/ticket.wac", "core/number.wac", "core/hypothetical.wac", "core/math.wac"
+    "core/ticket.wac", "core/number.wac", "core/hypothetical.wac", "core/math.wac", "core/markup.wac"
   ];
 }
 
@@ -265,6 +265,31 @@ string[] starsOf(string text) {
     if (close < 0) { continue; }
     found[n] = name + "|" + carriedKey("core/" + rest.slice(0, close));
     n = n + 1;
+  }
+  string[] out = string[].filled(n, "");
+  out.copyFrom(found, 0, 0, n);
+  return out;
+}
+
+/**
+ * Every symbol `core`'s files declare, under the name a program reaches it by: `toString` as it is, and one
+ * a namespace module declares behind its namespace — `operators.wac`'s `add` is `operators.add`.
+ */
+string[] qualifiedSymbols(Tree tree, string[] stars) {
+  string[] found = string[].filled(512, "");
+  i32 n = 0;
+  for (i32 i = 0; i < tree.carriedPaths.len(); i++) {
+    string key = carriedKey(tree.carriedPaths[i]);
+    string prefix = "";
+    for (i32 k = 0; k < stars.len(); k++) {
+      i32 bar = stars[k].indexOf("|");
+      if (stars[k].slice(bar + 1, stars[k].len()) == key) { prefix = stars[k].slice(0, bar) + "."; }
+    }
+    string[] own = symbolsOf(tree.carriedTexts[i]);
+    for (i32 j = 0; j < own.len() && n < found.len(); j++) {
+      found[n] = prefix + own[j];
+      n = n + 1;
+    }
   }
   string[] out = string[].filled(n, "");
   out.copyFrom(found, 0, 0, n);
@@ -588,7 +613,7 @@ string waccFile(Tree tree) {
     " * know a member named `[markup.text]` is named by one, with no files in hand to read it from.",
     " */",
     "export string[] coreSymbols() {",
-    "  return [" + quotedList(symbolsOf(carriedAll)) + "] as string[];",
+    "  return [" + quotedList(qualifiedSymbols(tree, stars)) + "] as string[];",
     "}",
     "",
     "/**",

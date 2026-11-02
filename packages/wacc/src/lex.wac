@@ -144,7 +144,7 @@ i64 p8(i32 a, i32 b, i32 c, i32 d, i32 e, i32 f, i32 g, i32 h) {
 }
 
 /** The keyword kind for an identifier span, or `kIdent` if it is not a keyword. */
-i32 keywordKind(u8[] src, i32 start, i32 len) {
+export i32 keywordKind(u8[] src, i32 start, i32 len) {
   if (len < 2 || len > 8) { return kIdent(); }
   i64 v = packSpan(src, start, len);
 

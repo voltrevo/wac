@@ -24,7 +24,7 @@
 // module reached only through a namespace re-export is imported directly, and the re-exporting file
 // is not needed at all.
 
-import { Lexed, tokenStride } from "./lex.wac";
+import { keywordKind, Lexed, tokenStride } from "./lex.wac";
 import {
   kAs, kComma, kConst, kDot, kEnum, kEof, kExport, kIdent, kImport, kLbrace, kLbrack, kLparen,
   kLt, kGt, kRbrace, kRbrack, kRparen, kSemi, kShr, kStar, kStatic, kString, kStruct,
@@ -985,7 +985,14 @@ string importItem(string name, string local) {
   return n + " as " + verbatimIfNeeded(local);
 }
 
-string verbatimIfNeeded(string name) { return name.indexOf(".") >= 0 ? "@\"" + name + "\"" : name; }
+/**
+ * `name` as an import item can write it: verbatim when it has a dot, or when it is a keyword — `core`'s
+ * `operators` declares its `not` as `@"not"`, and `import { not as … }` does not parse.
+ */
+string verbatimIfNeeded(string name) {
+  bool keyword = name.len() > 0 && keywordKind(name.toBytes(), 0, name.len()) != kIdent();
+  return name.indexOf(".") >= 0 || keyword ? "@\"" + name + "\"" : name;
+}
 
 string rewriteUses(Reads reads, string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f, bool loose,
                    bool settled) {

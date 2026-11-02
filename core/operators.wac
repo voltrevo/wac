@@ -1,62 +1,64 @@
 // The operator symbols — spec ch22. `a + b` on a type that is not built in calls `a.[operators.add](b)`.
 //
-// Core exports them as the namespace `operators` (ch37), and declares each member under the name a
-// namespace member has once lowered: a verbatim name with a dot in it (`src/namespaces.wac` says
-// why). So `import { operators } from "core"`, `import { operators.add } from "core"` and
-// `[operators.add]` all reach the declarations below. They are spelled this way because, until
-// 2026-11-02, the compiler read `core` without lowering it; the compiler still calls them by these names.
+// Core exports this file as the namespace `operators` (ch37): `export * as operators from
+// "./operators.wac"` in its entry. So `import { operators } from "core"`, `import { operators.add } from
+// "core"` and `[operators.add]` all reach the declarations below, and the compiler names each as
+// `operators.add` wherever it calls one. `not` is a keyword, so its symbol is written as a verbatim name.
+//
+// Until 2026-11-02 each was declared as `@"operators.add"`, the name a namespace member has once lowered,
+// because the compiler read `core` without lowering it.
 
-export symbol @"operators.add";
-export symbol @"operators.subtract";
-export symbol @"operators.multiply";
-export symbol @"operators.divide";
-export symbol @"operators.remainder";
-export symbol @"operators.negate";
-export symbol @"operators.equal";
-export symbol @"operators.notEqual";
-export symbol @"operators.lessThan";
-export symbol @"operators.lessThanOrEqual";
-export symbol @"operators.greaterThan";
-export symbol @"operators.greaterThanOrEqual";
-export symbol @"operators.not";
-export symbol @"operators.bitwiseNot";
-export symbol @"operators.bitwiseAnd";
-export symbol @"operators.bitwiseOr";
-export symbol @"operators.bitwiseXor";
-export symbol @"operators.shiftLeft";
-export symbol @"operators.shiftRight";
-export symbol @"operators.unsignedShiftRight";
-export symbol @"operators.addAssign";
-export symbol @"operators.subtractAssign";
-export symbol @"operators.multiplyAssign";
-export symbol @"operators.divideAssign";
-export symbol @"operators.remainderAssign";
-export symbol @"operators.bitwiseAndAssign";
-export symbol @"operators.bitwiseOrAssign";
-export symbol @"operators.bitwiseXorAssign";
-export symbol @"operators.shiftLeftAssign";
-export symbol @"operators.shiftRightAssign";
-export symbol @"operators.unsignedShiftRightAssign";
-export symbol @"operators.preIncrement";
-export symbol @"operators.postIncrement";
-export symbol @"operators.preDecrement";
-export symbol @"operators.postDecrement";
+export symbol add;
+export symbol subtract;
+export symbol multiply;
+export symbol divide;
+export symbol remainder;
+export symbol negate;
+export symbol equal;
+export symbol notEqual;
+export symbol lessThan;
+export symbol lessThanOrEqual;
+export symbol greaterThan;
+export symbol greaterThanOrEqual;
+export symbol @"not";
+export symbol bitwiseNot;
+export symbol bitwiseAnd;
+export symbol bitwiseOr;
+export symbol bitwiseXor;
+export symbol shiftLeft;
+export symbol shiftRight;
+export symbol unsignedShiftRight;
+export symbol addAssign;
+export symbol subtractAssign;
+export symbol multiplyAssign;
+export symbol divideAssign;
+export symbol remainderAssign;
+export symbol bitwiseAndAssign;
+export symbol bitwiseOrAssign;
+export symbol bitwiseXorAssign;
+export symbol shiftLeftAssign;
+export symbol shiftRightAssign;
+export symbol unsignedShiftRightAssign;
+export symbol preIncrement;
+export symbol postIncrement;
+export symbol preDecrement;
+export symbol postDecrement;
 
 // The reverses: `2.0 * v` on a `v` that is not a number calls `v.[operators.multiplyFromLeft](2.0)`.
-export symbol @"operators.addFromLeft";
-export symbol @"operators.subtractFromLeft";
-export symbol @"operators.multiplyFromLeft";
-export symbol @"operators.divideFromLeft";
-export symbol @"operators.remainderFromLeft";
-export symbol @"operators.equalFromLeft";
-export symbol @"operators.notEqualFromLeft";
-export symbol @"operators.lessThanFromLeft";
-export symbol @"operators.lessThanOrEqualFromLeft";
-export symbol @"operators.greaterThanFromLeft";
-export symbol @"operators.greaterThanOrEqualFromLeft";
-export symbol @"operators.bitwiseAndFromLeft";
-export symbol @"operators.bitwiseOrFromLeft";
-export symbol @"operators.bitwiseXorFromLeft";
-export symbol @"operators.shiftLeftFromLeft";
-export symbol @"operators.shiftRightFromLeft";
-export symbol @"operators.unsignedShiftRightFromLeft";
+export symbol addFromLeft;
+export symbol subtractFromLeft;
+export symbol multiplyFromLeft;
+export symbol divideFromLeft;
+export symbol remainderFromLeft;
+export symbol equalFromLeft;
+export symbol notEqualFromLeft;
+export symbol lessThanFromLeft;
+export symbol lessThanOrEqualFromLeft;
+export symbol greaterThanFromLeft;
+export symbol greaterThanOrEqualFromLeft;
+export symbol bitwiseAndFromLeft;
+export symbol bitwiseOrFromLeft;
+export symbol bitwiseXorFromLeft;
+export symbol shiftLeftFromLeft;
+export symbol shiftRightFromLeft;
+export symbol unsignedShiftRightFromLeft;

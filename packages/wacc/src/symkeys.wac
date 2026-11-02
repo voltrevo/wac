@@ -32,13 +32,17 @@ struct SymFile {
 /**
  * `sources` with every member named by a symbol spelled as that symbol's one spelling. A file of `core`'s is
  * left as it is: its symbols are spelled as the compiler calls them already. Answers `sources` itself when
- * no file could need it — none declares a symbol of its own and none renames one in an import.
+ * no file could need it — none declares a symbol of its own, renames one in an import, or imports one of
+ * `core`'s files.
  */
 export string[] canonicalSymbolMembers(string[] paths, string[] sources, const Res res) {
   bool any = false;
   for (i32 f = 0; f < paths.len() && f < sources.len(); f++) {
     if (inCore(paths[f])) { continue; }
-    if (sources[f].indexOf("symbol ") >= 0 || sources[f].indexOf(" as ") >= 0) { any = true; }
+    // A symbol of its own, a renaming import, or an import of one of `core`'s files — whose symbols' public
+    // names, `operators.multiplyFromLeft`, are not what the file wrote, `[multiplyFromLeft]`.
+    if (sources[f].indexOf("symbol ") >= 0 || sources[f].indexOf(" as ") >= 0
+        || sources[f].indexOf("\" core/") >= 0) { any = true; }
   }
   if (!any) { return sources; }
 

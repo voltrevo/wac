@@ -4357,6 +4357,16 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
           // the specifier, and a resolver that quietly returned something else would disagree with
           // it in the one place nothing compares them. `design/lang/0009` D5.
           if (target == "core") { target = " core"; }
+          // **A file of `core`'s brings `core` with it**, as importing it from `core` did: markup's symbols
+          // live in `markup.wac`, and a tree that builds text converts through `text.wac`, which only the
+          // entry reaches.
+          if (isCarriedKey(target) && !queuedAlready(queue, qn, " core")) {
+            if (qn >= queue.len()) { starts[0] = 2; return false; }
+            queue[qn] = " core";
+            queueSpec[qn] = "core";
+            queueFrom[qn] = path;
+            qn = qn + 1;
+          }
           if (!queuedAlready(queue, qn, target)) {
             if (qn >= queue.len()) { starts[0] = 2; return false; }
             queue[qn] = target;

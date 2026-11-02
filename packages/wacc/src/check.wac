@@ -32,7 +32,7 @@
 // Column 28 is the `"`, column 21 is the `r` of `return`. Every AST node here carries its own line
 // and column, so this is `e.line, e.col` and not arithmetic.
 
-import { Joined, joinAllCarried } from "./carried.wac";
+import { coreNamespaceOf, Joined, joinAllCarried } from "./carried.wac";
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
@@ -41,7 +41,7 @@ import { P, parseProgram, parseType } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
-import { coreExports, coreSymbols, isBuiltinSpec, stdSource } from "./coretext.wac";
+import { coreExports, coreSymbols, isBuiltinSpec, isCarriedKey, stdSource } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
 import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
@@ -14855,6 +14855,18 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // `core` is in hand to declare it: `string [toString](const this)` and `[markup.text]` named a
         // symbol nothing declared, and a file checked alone was refused for writing a conversion.
         // A namespace — `{ markup }` — brings each of its members.
+        // And from one of `core`'s namespace modules, which is where lowering imports a member it meets —
+        // `add as @"operators.add"` from `" core/operators.wac"`: its symbol is `operators.add`.
+        string space = isCarriedKey(bare) ? coreNamespaceOf(bare) : "";
+        if (space != "") {
+          string[] nsyms = coreSymbols();
+          for (i32 i = 0; i < items.len(); i++) {
+            if (items[i].nameTok < 0) { continue; }
+            string qualified = space + "." + tokenText(c, items[i].nameTok);
+            string alias = items[i].aliasTok < 0 ? qualified : tokenText(c, items[i].aliasTok);
+            for (i32 k = 0; k < nsyms.len(); k++) { if (nsyms[k] == qualified) { c.declareSymbol(alias); } }
+          }
+        }
         if (bare == "core") {
           string[] syms = coreSymbols();
           for (i32 i = 0; i < items.len(); i++) {

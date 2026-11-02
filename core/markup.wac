@@ -1,0 +1,20 @@
+// The markup symbols — `design/lang/0017`, spec ch23. Core exports this file as the namespace `markup`
+// (`export * as markup from "./markup.wac"` in its entry), so a tree type names its builders
+// `[markup.text]`, `[markup.element]` and so on, and the compiler calls them by those names.
+//
+// Until 2026-11-02 these were in `text.wac` as `@"markup.text"`, the name a namespace member has once
+// lowered, because the compiler read `core` without lowering it.
+
+// Markup names no tree: a tag's children are its `kids`
+// parameter's element type, and that type builds text, quoted tags and fragments itself with static
+// methods named by these. `K.[markup.text](string)`, `K.[markup.element](string tag, string[] names,
+// string[] values, K[] kids)` and `K.[markup.fragment](K[] kids)`, each answering a `K`.
+export symbol text;
+export symbol element;
+export symbol fragment;
+// A component tag — one naming a function whose first parameter's type `P` has a static
+// `[markup.component]` — is not called: it is `P.[markup.component](name, key, draw, snaps, same)`, with
+// `draw` the function applied to these attributes and `snaps` their `[markup.snapshot]`s, which `same`
+// compares with another instance's. A value is its own snapshot unless its type says otherwise.
+export symbol component;
+export symbol snapshot;

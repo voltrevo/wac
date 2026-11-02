@@ -15,29 +15,15 @@ export { hashBytes, bytesEq, hashString, stringEq, hashI32, i32Eq, hashI64, i64E
 export { Map } from "./map.wac";
 export { Vec } from "./vec.wac";
 export { Buf } from "./buf.wac";
-export { toString, @"markup.text", @"markup.element", @"markup.fragment", @"markup.component",
-  @"markup.snapshot" } from "./text.wac";
-export { @"operators.add", @"operators.subtract", @"operators.multiply", @"operators.divide",
-  @"operators.remainder", @"operators.negate", @"operators.equal", @"operators.notEqual",
-  @"operators.lessThan", @"operators.lessThanOrEqual", @"operators.greaterThan",
-  @"operators.greaterThanOrEqual", @"operators.not", @"operators.bitwiseNot", @"operators.bitwiseAnd",
-  @"operators.bitwiseOr", @"operators.bitwiseXor", @"operators.shiftLeft", @"operators.shiftRight",
-  @"operators.unsignedShiftRight", @"operators.addAssign", @"operators.subtractAssign",
-  @"operators.multiplyAssign", @"operators.divideAssign", @"operators.remainderAssign",
-  @"operators.bitwiseAndAssign", @"operators.bitwiseOrAssign", @"operators.bitwiseXorAssign",
-  @"operators.shiftLeftAssign", @"operators.shiftRightAssign", @"operators.unsignedShiftRightAssign",
-  @"operators.preIncrement", @"operators.postIncrement", @"operators.preDecrement", @"operators.postDecrement",
-  @"operators.addFromLeft", @"operators.subtractFromLeft", @"operators.multiplyFromLeft",
-  @"operators.divideFromLeft", @"operators.remainderFromLeft", @"operators.equalFromLeft",
-  @"operators.notEqualFromLeft", @"operators.lessThanFromLeft", @"operators.lessThanOrEqualFromLeft",
-  @"operators.greaterThanFromLeft", @"operators.greaterThanOrEqualFromLeft", @"operators.bitwiseAndFromLeft",
-  @"operators.bitwiseOrFromLeft", @"operators.bitwiseXorFromLeft", @"operators.shiftLeftFromLeft",
-  @"operators.shiftRightFromLeft", @"operators.unsignedShiftRightFromLeft" } from "./operators.wac";
+export { toString } from "./text.wac";
 export { Continuation, TicketBase, Stuck, Ticket, Values, AnyValue, Queue, Step, Coroutine, Generator,
   AsyncGenerator, __wacOrReady, __wacMachine, __wacScheduleTarget, __wacSetScheduleTarget } from "./ticket.wac";
 export { NumberLiteral, fromNumber, NotANumber, NotAnInteger, OutOfRange, numberLiteralToF64,
   numberLiteralToF32, numberLiteralToI64, numberLiteralToI32, literalValue } from "./number.wac";
 export { hypothetical } from "./hypothetical.wac";
 
-// **A namespace that is a module**, not a set of dotted names (spec ch03, ch43).
+// **The namespaces, each a module** (spec ch03): the operator symbols (ch22), the markup symbols (ch23), and the
+// mathematical functions (ch43).
+export * as operators from "./operators.wac";
+export * as markup from "./markup.wac";
 export * as math from "./math.wac";

@@ -5,7 +5,7 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump the parser's own tests read.
 
-import { coreEntry, Joined, joinAllCarried } from "./carried.wac";
+import { coreEntry, coreNamespaceOf, Joined, joinAllCarried } from "./carried.wac";
 import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kAs, kAsAt, kAsBang, kAssign, kAsTilde, kAsync, kAwait, kColon, kFor, kComma, kDot, kEnum, kExport, kGt, kIdent, kImport, kindName, kIs, kLbrace,
@@ -2248,8 +2248,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
       for (i32 k = 0; k < n; k++) {
         if (wantFrom[k] != paths[i]) { continue; }
         if (wantName[k] == "toString") { c.coreToString = c.renamed("toString"); }
-        // And every core symbol, which is how an operator finds the method its symbol names (ch22).
-        c.noteCoreSym(wantName[k], c.renamed(wantName[k]));
+        // And every core symbol, which is how an operator finds the method its symbol names (ch22) — under
+        // the name the compiler calls it by, `operators.add`, which a namespace module declares as `add`.
+        string space = coreNamespaceOf(paths[i]);
+        c.noteCoreSym(space == "" ? wantName[k] : space + "." + wantName[k], c.renamed(wantName[k]));
       }
     }
     // **Closed over what the wanted names reach**, so a type that arrives only through somebody
@@ -2308,6 +2310,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
           string itarget = ipathTok < 0 || iq.len() < 2
             ? corePath()
             : keyOf(resolveVia(res, paths, paths[i], iq.slice(1, iq.len() - 1)));
+          // **Not an import from one of `core`'s namespace modules**: `add as @"operators.add"` is how the
+          // lowering spells the symbol's public name, which is the name every file is checked by, so
+          // re-spelling it as `add` here left a struct of another file without its `[operators.add]`.
+          if (coreNamespaceOf(itarget) != "") { continue; }
           for (i32 j = 0; j < iitems.len(); j++) {
             if (iitems[j].nameTok < 0 || iitems[j].aliasTok < 0) { continue; }
             string orig = tokenTextOf(isrc, ilexed, iitems[j].nameTok);

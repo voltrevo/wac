@@ -39,10 +39,10 @@ behind a space — and the entry under `" core"`; `packages/wacc/src/carried.wac
 A coverage point in one is reported as `core/hash.wac:61`, the file somebody has open.
 
 Until 2026-11-02 the files were concatenated into one module with the imports between them blanked,
-and the compiler read that text without lowering it. That is why `operators` and `markup` are still
-written as dotted names, `@"operators.add"`, rather than as namespaces: nothing could lower one in
-`core`. Two of the files cannot declare one name: their names are emitted as written, and `gen:core`
-refuses the second.
+and the compiler read that text without lowering it — which is why `operators` and `markup` were
+dotted names written out by hand, `@"operators.add"`. They are namespace modules now, like `math`:
+[`operators.wac`](operators.wac) declares `add` and the entry says `export * as operators`. Two of the
+files cannot declare one name: their names are emitted as written, and `gen:core` refuses the second.
 
 **Run `wac task gen:core` after editing anything here.** The compiler reads the embedding and never
 this directory, and `./bootstrap.sh` does not regenerate it — so an edit has no effect at all until
@@ -78,6 +78,7 @@ import { hashString, stringEq } from "core";
 | `number.wac` | `NumberLiteral` and the `fromNumber` symbol a type implements to be a literal's target |
 | `hash.wac` | ready-made hash and equality for `string`, `i32` and `i64` |
 | `hypothetical.wac` | `hypothetical<T>()`, an expression of any type for `typeof` to read, which traps if run |
+| `operators.wac`, `markup.wac` | `operators` and `markup`: the symbols operators and markup call (spec ch22, ch23) |
 | `math.wac` | `math`: `log`, `log2`, `log10`, `log1p`, `exp`, `expm1` and `pow`, ported from fdlibm (spec ch43) |
 
 This package exists because wac gained generics ([wac issue
