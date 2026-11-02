@@ -9,8 +9,8 @@
   // work on it does not wait on this repository's gate; moving this pin is how a change there reaches here.
   // `wac.lock` holds the commit, and `tools/fill-cache.sh` puts it where a build looks (`CLAUDE.md`).
   imports: {
-    web: { git: 'https://git.voltrevo.com/web.git', ref: '6ff6b30ec7eaa2e06e0d87fe87a2b19912455177' },
-    webbuild: { git: 'https://git.voltrevo.com/web.git', ref: '6ff6b30ec7eaa2e06e0d87fe87a2b19912455177', subdir: './tools' },
+    web: { git: 'https://github.com/voltrevo/wac-web.git', ref: '6ff6b30ec7eaa2e06e0d87fe87a2b19912455177' },
+    webbuild: { git: 'https://github.com/voltrevo/wac-web.git', ref: '6ff6b30ec7eaa2e06e0d87fe87a2b19912455177', subdir: './tools' },
   },
   // **What `wac check` with no files means here: the packages and tools.** The rest is not a library a
   // project checks — `spec/` and `bootstrap/` hold examples that are invalid on purpose and drivers that

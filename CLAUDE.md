@@ -53,13 +53,14 @@ program that used to compile has stopped.
 and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac-mono 0103" means
 `issues/system/`. New issues continue whichever sequence they belong to.
 
-**`web` is not here: since 2026-10-29 it is `https://git.voltrevo.com/web.git`**, with its history,
-its app template (`templates/webapp` was here) and a gate of its own that runs in half a minute. The
-site and the page examples under `packages/` import it as `web`, pinned to one commit by `wac.json5`
-and `wac.lock`; moving that pin is how a change there reaches here, and it goes through this gate.
-`wac update` cannot fetch from that host (it answers wac's fetcher 401), so `sh tools/fill-cache.sh`
-puts the locked commit in the cache with `git` — the gate runs it, and a fresh checkout runs it once
-after `./bootstrap.sh`. A page is built from here with `tools/wac/buildpage.wac`.
+**`web` is not here: since 2026-10-29 it is a repository of its own — wac-web, `https://github.com/voltrevo/wac-web.git`
+(`web.git` on git.voltrevo.com until 2026-11-02)** — with its history, its app template (`templates/webapp` was
+here) and a gate of its own that runs in half a minute. The site and the page examples under `packages/` import it
+as `web`, pinned to one commit by `wac.json5` and `wac.lock`; moving that pin is how a change there reaches here,
+and it goes through this gate. **Pins name GitHub**, where the owner syncs the same commits; development fetches
+them from git.voltrevo.com, which has them first, through one git setting (`sh tools/use-mirror.sh`, once per
+machine — `wac update`'s own fetcher does not follow it). So `sh tools/fill-cache.sh` puts the locked commit in the
+cache with `git` — the gate runs it, and a fresh checkout runs it once after `./bootstrap.sh`. A page is built from here with `tools/wac/buildpage.wac`.
 
 ## Running things
 

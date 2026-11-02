@@ -205,8 +205,8 @@ if ! git pull --no-rebase --no-edit --quiet origin master; then
 fi
 
 # **The git imports `wac.lock` pins, in the cache, before anything compiles a page.** `web` is a
-# repository of its own since 2026-10-29, and `wac update` cannot fetch it (git.voltrevo.com answers its
-# fetcher 401), so `git` does. After the pull, because the pull is what moves the lock.
+# repository of its own since 2026-10-29, pinned on GitHub and fetched from git.voltrevo.com through `git`'s
+# setting (`tools/use-mirror.sh`), which `wac update`'s fetcher does not follow — so `git` does. After the pull, because the pull is what moves the lock.
 if ! sh tools/fill-cache.sh; then
   echo "== the locked git imports could not be fetched: nothing ran ==" >&2
   exit 1

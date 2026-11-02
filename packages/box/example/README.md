@@ -1,7 +1,7 @@
 # box examples — browser pages
 
 Whole applications, not snippets. Each is one `.wac` file with no TypeScript beside it: a
-[`web`](https://git.voltrevo.com/web.git) page, which is a wac program in a worker of its own that awaits
+[`web`](https://github.com/voltrevo/wac-web.git) page, which is a wac program in a worker of its own that awaits
 the browser rather than waiting for it. If you followed a link here from a page on the website, the
 file you can build below is byte for byte the file you were looking at.
 

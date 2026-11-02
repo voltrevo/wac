@@ -509,7 +509,7 @@ it can report instead of one protocol that works by accident. `box get`, `box ge
 
 ### Interactive pages
 
-**A page is built with [`web`](https://git.voltrevo.com/web.git)**: `export async i32 main(Page page)`, run in a
+**A page is built with [`web`](https://github.com/voltrevo/wac-web.git)**: `export async i32 main(Page page)`, run in a
 worker (or with `--in-page` on the page's own thread) and waiting with `await`, with no
 `SharedArrayBuffer` and no headers to serve — with `page.sys` holding what `--grant read,write` grants,
 whose files are the browser's own storage. `example/{life,pixels,ripple,notes,procs}.wac` are those, and
