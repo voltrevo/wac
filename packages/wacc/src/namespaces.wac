@@ -31,7 +31,7 @@ import {
 } from "./kinds.wac";
 import { Res, resolveVia } from "./path.wac";
 import { readLexed, readOf, Reads, readSrc } from "./frontend.wac";
-import { coreExports } from "./coretext.wac";
+import { carriedExports, carriedKeys, coreExports, coreStars, isCarriedKey } from "./coretext.wac";
 
 /** A growable list of strings. */
 struct NsStrs {
@@ -633,7 +633,20 @@ string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool
 /** Whether a source could hold anything this file lowers — a cheap test before any lexing. */
 bool mentionsNamespaces(string s) {
   return s.indexOf("namespace") >= 0 || starAs(s) || dottedSymbolName(s)
-      || dottedListItem(s) || (s.indexOf("struct") >= 0 && staticWord(s));
+      || dottedListItem(s) || (s.indexOf("struct") >= 0 && staticWord(s)) || namesCoreStar(s);
+}
+
+/**
+ * Whether a source may use one of `core`'s module namespaces — `math.log` after `import { math } from
+ * "core"`. Nothing else in the file set says so, since the module `core` re-exports is not in it.
+ */
+bool namesCoreStar(string s) {
+  if (s.indexOf("\"core\"") < 0) { return false; }
+  string[] st = coreStars();
+  for (i32 i = 0; i < st.len(); i++) {
+    if (s.indexOf(st[i].slice(0, st[i].indexOf("|"))) >= 0) { return true; }
+  }
+  return false;
 }
 
 /** Whether a space, tab or line break — the separators a declaration may have between its words. */
@@ -704,11 +717,16 @@ bool dottedListItem(string s) {
   return false;
 }
 
-/** The index of the file a specifier in file `f` names, -1 for a missing one, -2 for `core`. */
+/**
+ * The index of the file a specifier in file `f` names, -1 for a missing one, -2 for `core`, and -3 and
+ * below for `core`'s carried modules (`carriedModule`).
+ */
 i32 targetOf(string[] paths, const Res res, i32 f, string spec) {
   if (spec == "core") { return -2; }
   string key = resolveVia(res, paths, paths[f], spec);
   if (key == "core" || key == " core") { return -2; }
+  i32 cm = carriedModule(key);
+  if (cm != 0) { return cm; }
   for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == key) { return i; } }
   return -1;
 }
@@ -781,11 +799,44 @@ i32 listedExports(NsFile src, i32 open, NsStrs into) {
   return t;
 }
 
-/** Whether module `m` (or core, -2) exports a declaration called `name`. */
+/**
+ * **`core`'s carried modules, as modules with no index** — `-3` for the first of `carriedKeys()`, and down;
+ * 0 for a key that is not one. The compiler carries them (`coretext.wac`), so what they export is known
+ * whether or not the file set holds them yet, and a use is lowered to an import of the key itself.
+ */
+i32 carriedModule(string key) {
+  if (!isCarriedKey(key)) { return 0; }
+  string[] ks = carriedKeys();
+  for (i32 k = 0; k < ks.len(); k++) { if (ks[k] == key) { return -3 - k; } }
+  return 0;
+}
+
+/** The key of carried module `m`, which `carriedModule` numbered. */
+string carriedKeyOf(i32 m) { return carriedKeys()[-3 - m]; }
+
+/** The carried module `core` re-exports as namespace `name` (`export * as name from …`), or 0. */
+i32 coreStarModule(string name) {
+  string[] st = coreStars();
+  for (i32 i = 0; i < st.len(); i++) {
+    i32 bar = st[i].indexOf("|");
+    if (st[i].slice(0, bar) == name) { return carriedModule(st[i].slice(bar + 1, st[i].len())); }
+  }
+  return 0;
+}
+
+/** Whether module `m` (or core, -2, or a carried module) exports a declaration called `name`. */
 bool exportsDecl(NsExports[] exports, i32 m, string name) {
   if (m == -2) {
+    // A namespace `core` re-exports is listed among its exports, for an import of it to be checked —
+    // and is a namespace, not a declaration.
+    if (coreStarModule(name) != 0) { return false; }
     string[] ce = coreExports();
     for (i32 i = 0; i < ce.len(); i++) { if (ce[i] == name) { return true; } }
+    return false;
+  }
+  if (m <= -3) {
+    string[] ex = carriedExports(carriedKeyOf(m));
+    for (i32 i = 0; i < ex.len(); i++) { if (ex[i] == name) { return true; } }
     return false;
   }
   if (m < 0) { return false; }
@@ -796,8 +847,8 @@ bool exportsDecl(NsExports[] exports, i32 m, string name) {
 /** Whether `prefix` names a namespace of module `m`: some export is `prefix.something`. */
 bool isNamespaceOf(NsExports[] exports, i32 m, string prefix) {
   string p = prefix + ".";
-  if (m == -2) {
-    string[] ce = coreExports();
+  if (m == -2 || m <= -3) {
+    string[] ce = m == -2 ? coreExports() : carriedExports(carriedKeyOf(m));
     for (i32 i = 0; i < ce.len(); i++) { if (ce[i].len() > p.len() && ce[i].slice(0, p.len()) == p) { return true; } }
     return false;
   }
@@ -832,6 +883,10 @@ NsHit stepInto(NsExports[] exports, i32 module, string prefix, string m) {
   string name = prefix == "" ? m : prefix + "." + m;
   if (exportsDecl(exports, module, name)) { return NsHit(module, name, true, true); }
   if (isNamespaceOf(exports, module, name)) { return NsHit(module, name, false, true); }
+  if (prefix == "" && module == -2) {
+    i32 cs = coreStarModule(m);
+    if (cs != 0) { return NsHit(cs, "", false, true); }
+  }
   if (prefix == "") {
     string st = starTarget(exports, module, m);
     if (st != "") { return NsHit(atoiNs(st) - 2, "", false, true); }
@@ -1027,7 +1082,7 @@ string rewriteUses(Reads reads, string[] paths, string[] flat, const Res res, Ns
       if (wanted.modules[j] != m) { continue; }
       items = items + (items == "" ? "" : ", ") + wanted.items.items[j];
     }
-    string spec = m == -2 ? "core" : relativeSpec(paths[f], paths[m]);
+    string spec = m == -2 ? "core" : m <= -3 ? carriedKeyOf(m) : relativeSpec(paths[f], paths[m]);
     tail = tail + "\nimport { " + items + " } from \"" + spec + "\";";
   }
   return ed.apply(src.src, tail);

@@ -14,6 +14,7 @@ It is reached like any package — by its name, through its entry module — and
 | `operators` | namespace of the operator symbols, and their `FromLeft` reverses | [22](../3-expressions/22-operators.md) |
 | `toString` | the conversion symbol interpolation uses | [23](../3-expressions/23-interpolation-and-markup.md) |
 | `markup` | namespace of the symbols a markup tree builds itself with | [23](../3-expressions/23-interpolation-and-markup.md) |
+| `math` | namespace of the logarithms, the exponentials and the power | [43](43-math.md) |
 | `fromNumber`, `NumberLiteral` | literal conversion for a type of the program's own | [09](../2-types/09-numeric-literals.md) |
 | `Vec<T>` | a growable array | [38](38-vec.md) |
 | `Map<K, V>`, the hash and equality functions | a hash map | [39](39-map-and-hash.md) |
@@ -41,10 +42,10 @@ export i32 fromCoreRoot() {
 ```
 
 `[§wac-core-exports-markup-c3v8pwq]` Every name in the table above is exported by `core`'s entry module, at its root or — for
-`operators` and `markup` — as a namespace.
+`operators`, `markup` and `math` — as a namespace.
 
-Families of related names are namespaces — the operator symbols, the markup symbols — and everything else is at the
-root.
+Families of related names are namespaces — the operator symbols, the markup symbols, the mathematical functions — and
+everything else is at the root.
 
 ```wac
 // fragment — from core

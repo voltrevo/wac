@@ -1,0 +1,106 @@
+// The built-in files a file set may reach and its caller need not supply — `std`, and `core`'s carried
+// modules (`coretext.wac`'s `carriedKeys`).
+//
+// **One place, because there were four.** `graphOf`, `walkFor`, `buildStaticView` and the emitter's
+// `sourceOf` each joined `std` to the files they were handed, each with its own copy of the rule. A
+// carried module is joined by the same rule: the compiler supplies its text, and a file set that imports
+// it holds it from then on, an ordinary file under a key no path can spell. What `core` re-exports as a
+// namespace is imported by that key once lowered (`namespaces.wac`), so the key is what is looked for.
+
+import { carriedKeys, carriedText, isCarriedKey, stdSource } from "./coretext.wac";
+import { lowerNamespaces } from "./namespaces.wac";
+import { Res, resolveFrom } from "./path.wac";
+
+/** A file set with the built-ins it reaches joined to the end. */
+export struct Joined {
+  string[] paths;
+  string[] sources;
+}
+
+/**
+ * `paths` and `sources` with `std` joined when a source names it, and each carried module a source
+ * imports — and each one *those* import, transitively. Answers the arrays themselves when nothing joins.
+ *
+ * `withStd` is false for a caller that joins `std` its own way (`graphOf` asks before lowering, for
+ * namespaces in `std` to be lowered with the rest). A carried module's text is lowered on its own as it
+ * joins: it reaches nothing but `core` and other carried modules, which lowering knows without them.
+ */
+export Joined joinCarried(string[] paths, string[] sources, bool withStd) {
+  bool hasStd = false;
+  bool wantsStd = false;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "std") { hasStd = true; } }
+  if (withStd) {
+    for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf("\"std\"") >= 0) { wantsStd = true; } }
+  }
+  // As many as there are carried modules, which is as many as can join: each joins once.
+  i32 room = carriedKeys().len() < 1 ? 1 : carriedKeys().len();
+  string[] keys = string[].filled(room, "");
+  string[] texts = string[].filled(room, "");
+  i32 n = 0;
+  for (i32 i = 0; i < sources.len(); i++) { n = collectCarried(paths, i < paths.len() ? paths[i] : "", sources[i], keys, texts, n); }
+  // Transitively: a carried module's own imports, read as each one joins.
+  for (i32 k = 0; k < n; k++) { n = collectCarried(paths, keys[k], texts[k], keys, texts, n); }
+  bool joinStd = withStd && wantsStd && !hasStd;
+  if (n == 0 && !joinStd) { return Joined(paths, sources); }
+
+  i32 extra = n + (joinStd ? 1 : 0);
+  string[] outPaths = string[].filled(paths.len() + extra, "");
+  string[] outSources = string[].filled(paths.len() + extra, "");
+  for (i32 i = 0; i < paths.len(); i++) {
+    outPaths[i] = paths[i];
+    outSources[i] = i < sources.len() ? sources[i] : "";
+  }
+  i32 at = paths.len();
+  if (joinStd) {
+    outPaths[at] = "std";
+    outSources[at] = stdSource();
+    at = at + 1;
+  }
+  if (n > 0) {
+    string[] ks = string[].filled(n, "");
+    string[] ts = string[].filled(n, "");
+    for (i32 k = 0; k < n; k++) { ks[k] = keys[k]; ts[k] = texts[k]; }
+    string[] lowered = lowerNamespaces(ks, ts, Res.empty());
+    for (i32 k = 0; k < n; k++) {
+      outPaths[at + k] = ks[k];
+      outSources[at + k] = lowered[k];
+    }
+  }
+  return Joined(outPaths, outSources);
+}
+
+/**
+ * Every carried module `text` imports that neither `paths` nor `keys[0..n)` holds, appended with its text;
+ * answers the new count. An import is found by its quoted specifier: the key itself, as lowering writes it,
+ * or a relative one from a file that is itself carried.
+ */
+i32 collectCarried(string[] paths, string from, string text, string[] keys, string[] texts, i32 n) {
+  if (text.indexOf(" core/") < 0 && !isCarriedKey(from)) { return n; }
+  u8[] b = text.toBytes();
+  i32 count = n;
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (b[i] != '"') { continue; }
+    i32 close = i + 1;
+    while (close < b.len() && b[close] != '"' && b[close] != '\n') { close = close + 1; }
+    if (close >= b.len() || b[close] != '"') { continue; }
+    string spec = string.fromBytes(sliceBytes(b, i + 1, close));
+    string key = isCarriedKey(spec) ? spec
+               : (isCarriedKey(from) && spec.len() > 2 && spec.slice(0, 2) == "./") ? resolveFrom(from, spec) : "";
+    i = close;
+    if (key == "" || carriedText(key) == "") { continue; }
+    bool have = false;
+    for (i32 p = 0; p < paths.len(); p++) { if (paths[p] == key) { have = true; } }
+    for (i32 k = 0; k < count; k++) { if (keys[k] == key) { have = true; } }
+    if (have || count >= keys.len()) { continue; }
+    keys[count] = key;
+    texts[count] = carriedText(key);
+    count = count + 1;
+  }
+  return count;
+}
+
+u8[] sliceBytes(u8[] b, i32 from, i32 to) {
+  u8[] out = u8[].filled(to - from, 0);
+  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
+  return out;
+}

@@ -1,0 +1,81 @@
+// A float's methods that wasm has as instructions — `sqrt`, `abs`, `min`, `max`, `copySign` (spec ch08) —
+// against the compiler's own evaluator, which has to answer what the instructions answer to fold a static
+// that calls one (spec ch28).
+//
+// **`sqrt` is the one worth testing hard.** The others are a bit or two moved; the evaluator's square root is
+// an integer algorithm (`consteval.wac`'s `exactSqrt`), because the rung that compiles it has no instruction
+// to call, and a square root that is right in every case but one is the shape that would only ever show up
+// as a static folded to a value one bit away from what the same expression computes at run time.
+import { T } from "../../../wactest/src/assert.wac";
+import { copySignOf, exactSqrt, minMaxOf } from "../../src/consteval.wac";
+
+/** A 64-bit xorshift: the same sequence every run. */
+u64 next(u64[] s) {
+  u64 x = s[0];
+  x = x ^ (x << (13 as u64));
+  x = x ^ (x >> (7 as u64));
+  x = x ^ (x << (17 as u64));
+  s[0] = x;
+  return x;
+}
+
+export string test_the_evaluators_square_root_is_the_instructions_to_the_bit() {
+  T t = T.create();
+  u64[] s = u64[].filled(1, 0x9E3779B97F4A7C15);
+  i32 wrong = 0;
+  string first = "";
+  for (i32 i = 0; i < 200000; i++) {
+    u64 b = next(s);
+    // Half of them with a small exponent field, so subnormals and the smallest normals are well covered.
+    if (i % 4 == 0) { b = b & 0x801FFFFFFFFFFFFF; }
+    // And the sign off for most: a negative answers NaN either way, which is one case, not a quarter of them.
+    if (i % 8 != 0) { b = b & 0x7FFFFFFFFFFFFFFF; }
+    f64 x = f64.fromBits(b);
+    u64 want = f64.toBits(x.sqrt());
+    u64 got = f64.toBits(exactSqrt(x));
+    // Any NaN for a NaN: which one an engine answers is not something wasm fixes.
+    bool bothNan = x.sqrt() != x.sqrt() && exactSqrt(x) != exactSqrt(x);
+    if (want != got && !bothNan) {
+      wrong = wrong + 1;
+      if (first == "") { first = "sqrt of bits \{b}: the instruction says \{want}, the evaluator \{got}"; }
+    }
+  }
+  t.eqI32(wrong, 0, first);
+  return t.report();
+}
+
+export string test_the_special_square_roots() {
+  T t = T.create();
+  f64 inf = 1.0 / 0.0;
+  f64 negZero = f64.fromBits(0x8000000000000000);
+  t.isTrue(f64.toBits(exactSqrt(negZero)) == 0x8000000000000000, "the root of -0 is -0");
+  t.isTrue(exactSqrt(inf) == inf, "the root of +inf is +inf");
+  t.isTrue(exactSqrt(0.0 - 1.0) != exactSqrt(0.0 - 1.0), "the root of a negative is NaN");
+  t.isTrue(exactSqrt(4.0) == 2.0 && exactSqrt(2.0) == 2.0.sqrt(), "and the plain ones are plain");
+  return t.report();
+}
+
+export string test_min_max_and_copy_sign_are_the_instructions() {
+  T t = T.create();
+  f64 negZero = f64.fromBits(0x8000000000000000);
+  f64[] xs = [0.0, negZero, 1.5, 0.0 - 2.25, 1.0 / 0.0, 0.0 - 1.0 / 0.0, 5.0e-324] as f64[];
+  i32 wrong = 0;
+  string first = "";
+  for (i32 i = 0; i < xs.len(); i++) {
+    for (i32 j = 0; j < xs.len(); j++) {
+      f64 a = xs[i];
+      f64 b = xs[j];
+      bool ok = f64.toBits(minMaxOf(true, a, b)) == f64.toBits(a.min(b))
+             && f64.toBits(minMaxOf(false, a, b)) == f64.toBits(a.max(b))
+             && f64.toBits(copySignOf(a, b)) == f64.toBits(a.copySign(b));
+      if (!ok) {
+        wrong = wrong + 1;
+        if (first == "") { first = "\{a} and \{b}"; }
+      }
+    }
+  }
+  t.eqI32(wrong, 0, "min, max or copySign differ for " + first);
+  f64 nan = 0.0 / 0.0;
+  t.isTrue(minMaxOf(true, nan, 1.0) != minMaxOf(true, nan, 1.0) && 1.0.min(nan) != 1.0.min(nan), "a NaN wins min");
+  return t.report();
+}

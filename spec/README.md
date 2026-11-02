@@ -78,6 +78,7 @@ reference says so, and links.
 - 40 [Result](7-library/40-result.md)
 - 41 [Read](7-library/41-read.md)
 - 42 [Buf](7-library/42-buf.md)
+- 43 [Math](7-library/43-math.md)
 - 44 [Std](7-library/44-std.md)
 
 **8 — Tooling**
