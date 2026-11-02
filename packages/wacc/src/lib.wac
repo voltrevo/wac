@@ -14,6 +14,8 @@ export { diagnoseGraphIn } from "./api.wac";
 export { blockedFilesIn } from "./api.wac";
 export { emitFilesIn } from "./api.wac";
 export { emitFilesSelfDescribingIn } from "./api.wac";
+export { ProgramBuilt } from "./buildprogram.wac";
+export { buildProgramIn } from "./buildprogram.wac";
 export { PositionFacts } from "./api.wac";
 export { factsAt } from "./api.wac";
 export { lexTokensOf } from "./api.wac";

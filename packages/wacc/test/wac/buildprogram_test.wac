@@ -1,0 +1,38 @@
+// `buildProgramIn`: an entry built as `wac build` builds a program, for a program that builds programs itself.
+//
+// The wac IDE's Run built with `emitFilesSelfDescribingIn`, which neither adapts `main` nor prunes: a `main(Sys)` that
+// is `async` was declined ("a call to __wacHostOf"), and so was a program whose files import one it does not need. A
+// module that describes itself has bytes even when the emitter declined, so `why` is the answer to look at.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Res } from "../../src/path.wac";
+import { ProgramBuilt, buildProgramIn } from "../../src/buildprogram.wac";
+import { manifestIn } from "../../src/manifest.wac";
+
+export string test_an_async_main_taking_sys_is_built_with_its_adapter() {
+  T t = T.create();
+  string main = "import { Sys } from \"std\";\nexport async i32 main(Sys sys) { sys.stdout().line(\"hi\"); return 0; }\n";
+  ProgramBuilt b = buildProgramIn(["/p/main.wac"], [main], Res.empty(), "/p/main.wac", "main.wasm", 1);
+  t.eqStr(b.why, "", "built");
+  t.isTrue(manifestIn(b.wasm).indexOf("\"main.wasm\"") >= 0, "and it describes itself: \{manifestIn(b.wasm)}");
+  return t.report();
+}
+
+export string test_a_file_the_entry_does_not_need_is_not_compiled() {
+  T t = T.create();
+  // `lib.wac` imports a file that is not here: the entry uses only `one`, so the build never needs it.
+  string main = "import { one } from \"./lib.wac\";\nexport i32 main() { return one(); }\n";
+  string lib = "import { far } from \"./absent.wac\";\nexport i32 one() { return 1; }\nexport i32 two() { return far(); }\n";
+  ProgramBuilt b = buildProgramIn(["/p/main.wac", "/p/lib.wac"], [main, lib], Res.empty(), "/p/main.wac", "main.wasm", 0);
+  t.eqStr(b.why, "", "built without the file it does not need");
+  t.isTrue(b.wasm.len() > 0, "a module");
+  return t.report();
+}
+
+export string test_a_program_with_an_error_says_so_and_has_no_module() {
+  T t = T.create();
+  ProgramBuilt b = buildProgramIn(["/p/main.wac"], ["export i32 main() { return nope; }\n"], Res.empty(), "/p/main.wac", "main.wasm", 0);
+  t.isTrue(b.why != "", "a reason");
+  t.eqI32(b.wasm.len(), 0, "and no module");
+  return t.report();
+}

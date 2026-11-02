@@ -1,0 +1,47 @@
+// `buildProgramIn`: an entry built as `wac build` builds a program, for a program that builds programs itself.
+//
+// **A file of its own, not `api.wac`**, because `api.wac` is the root of the compiler the bootstrap's ladder builds
+// and reproduces byte for byte (`bootstrap/ts/selfhost.test.ts`), and importing `program.wac` there changed that
+// compiler — the ladder's wacc came out importing a module no host gives it. Reached only through wacc's library entry,
+// this costs the compiler nothing.
+
+import { Built, buildLinked } from "./emit.wac";
+import { Pruned } from "./reach.wac";
+import { Res } from "./path.wac";
+import { ProgramGraph, programGraph } from "./program.wac";
+import { describeSeparator, diagnoseGraphIn, lowerSources, pruneForBuild, wireHasErrors } from "./api.wac";
+import { manifestOf, withManifestSection } from "./manifest.wac";
+
+/** A program built: its module, describing itself; or, when there is none, why — and the module is empty. */
+export struct ProgramBuilt {
+  u8[] wasm;
+  string why;
+}
+
+/**
+ * **`entry` built as a program, as `wac build` builds one**, from files gathered as it gathers them (lazily): `main`
+ * given its contract and, where a host cannot call it as written, its adapter (`programGraph`); what the entry does
+ * not reach pruned away, so a file read that imports one not read is no matter (`pruneForBuild`); refused on an
+ * error; and the module wrapped in the manifest a host reads, naming `wasmName` and `grants`. For a program building
+ * programs itself — the wac IDE's Run and Build — which `emitFilesSelfDescribingIn` alone does not do: it neither
+ * adapts nor prunes, and a lazily gathered graph needs both.
+ */
+export ProgramBuilt buildProgramIn(string[] paths, string[] sources, Res res, string entry, string wasmName, i32 grants) {
+  ProgramGraph pg = programGraph(paths, lowerSources(paths, sources, res), entry);
+  if (pg.why != "") { return ProgramBuilt(u8[](), "cannot build \{entry} as a program — \{pg.why}"); }
+  Pruned p = pruneForBuild(paths, pg.sources, res, entry);
+  if (wireHasErrors(diagnoseGraphIn(p.paths, p.sources, p.res, entry))) {
+    return ProgramBuilt(u8[](), "it has errors");
+  }
+  Built b = buildLinked(p.paths, lowerSources(p.paths, p.sources, p.res), p.res, entry);
+  string sep = describeSeparator();
+  i32 first = b.described.indexOf(sep);
+  string blocked = first < 0 ? b.described : b.described.slice(0, first);
+  if (blocked != "") { return ProgramBuilt(u8[](), blocked); }
+  if (b.wasm.len() == 0) { return ProgramBuilt(u8[](), "the compiler made nothing"); }
+  string rest = first < 0 ? "" : b.described.slice(first + sep.len(), b.described.len());
+  i32 second = rest.indexOf(sep);
+  string sigs = second < 0 ? rest : rest.slice(0, second);
+  string types = second < 0 ? "" : rest.slice(second + sep.len(), rest.len());
+  return ProgramBuilt(withManifestSection(b.wasm, manifestOf(b.wasm, types, sigs, entry, wasmName, grants)), "");
+}
