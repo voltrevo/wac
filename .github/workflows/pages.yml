@@ -40,6 +40,13 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # **The git imports `wac.lock` pins, before anything builds.** `web` stopped being `packages/web` on
+      # 2026-10-29 and is a git dependency, and `wac` resolves one only from its package cache — which on a
+      # fresh runner is empty, so the demos failed at `import { buildPage } from "webbuild"` and nothing
+      # deployed after 2026-10-28. The pins name GitHub, where these repositories are public, so plain
+      # `git` fetches them with no credentials; the script skips a commit already cached.
+      - name: Fill the package cache
+        run: sh tools/fill-cache.sh
       # The demos are build output from `packages/box` and `packages/platform`, not source, so they
       # are built here rather than committed — a megabyte of generated HTML in git was stale by the
       # next day. Both of these used to take the path of a sibling checkout; the merge made them
