@@ -16,7 +16,7 @@ import { binaryPath } from "../../packages/wactest/src/host.wac";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { coreFileNames, stdSource } from "../../packages/wacc/src/coretext.wac";
+import { carriedKeys, stdSource } from "../../packages/wacc/src/coretext.wac";
 import { Clock, Exec, ChildEnv, Env, Files, Launch, Procs, Sys } from "std";
 import { flatten } from "core";
 
@@ -87,7 +87,10 @@ export string test_core_passes_the_checker(Sys sys) {
   Env env = sys.env();
   Procs procs = sys.procs();
   T t = T.create();
-  string[] files = coreFileNames();
+  // `core`'s files as the compiler carries them, behind their space, and its entry.
+  string[] keys = carriedKeys();
+  string[] files = string[].filled(keys.len() + 1, "core/core.wac");
+  for (i32 i = 0; i < keys.len(); i++) { files[i + 1] = keys[i].slice(1, keys[i].len()); }
   string[] args = string[].filled(files.len() + 2, "check");
   args.copyFrom(files, 0, 1, files.len());
   args[files.len() + 1] = "std/platform.wac";

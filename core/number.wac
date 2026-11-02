@@ -172,5 +172,3 @@ export T literalValue<T, E>(Result<T, E> converted, string literal) {
   }
 }
 
-// **`math` is a module of its own**, carried beside these files (`core/math.wac`).
-export * as math from "./math.wac";

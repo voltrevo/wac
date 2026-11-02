@@ -3,8 +3,8 @@
 // Core exports them as the namespace `operators` (ch37), and declares each member under the name a
 // namespace member has once lowered: a verbatim name with a dot in it (`src/namespaces.wac` says
 // why). So `import { operators } from "core"`, `import { operators.add } from "core"` and
-// `[operators.add]` all reach the declarations below, and nothing here needs namespace syntax —
-// which matters, because the compiler carries this text and never lowers it.
+// `[operators.add]` all reach the declarations below. They are spelled this way because, until
+// 2026-11-02, the compiler read `core` without lowering it; the compiler still calls them by these names.
 
 export symbol @"operators.add";
 export symbol @"operators.subtract";

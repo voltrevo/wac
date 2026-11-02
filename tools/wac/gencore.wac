@@ -10,10 +10,9 @@
 // module has no filesystem. So it keeps a literal, and de-duplicating means generating that literal
 // from the tree rather than teaching the compiler to open a file.
 //
-// **`core` is one module and `std` is another**, each reached by its name alone — spec ch02,
-// `§wac-no-subpath-wqatc72`. `core`'s files are a way of keeping it readable on disk, not a structure
-// anyone imports: they are concatenated into the one module, with the imports between them dropped,
-// so everything they export is at `core`'s root (spec ch37). `std` is `std/platform.wac`.
+// **`core` and `std` are each reached by their name alone** — spec ch02, `§wac-no-subpath-wqatc72`.
+// `core`'s name reaches its entry, `core/core.wac`, which re-exports from the rest of its files; each of
+// those is carried as a module of its own (`carriedTree`). `std` is `std/platform.wac`.
 //
 // There were two outputs until 2026-08-28: this also wrote the TypeScript reference's copy of the
 // same declarations, and generating both from one tree was how they were kept from drifting. There
@@ -31,25 +30,26 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { flatten } from "core";
 import { enumVariantsOfText, variadicCalleesIn } from "../../packages/wacc/src/scans.wac";
 
-/** Every file of `core`, in the order the module carries them. */
-string[] coreTree() {
+/** `core`'s entry: the module `import { … } from "core"` reaches, which says which of the files' names are core's. */
+string coreEntry() { return "core/core.wac"; }
+
+/**
+ * **Every other file of `core`, each a module of its own** — carried by the compiler beside the entry.
+ *
+ * Each is a file as any project writes one: its imports are kept, its names are its own, and it is reached
+ * the way any module is, through the entry's `export { … } from` and `export * as`. The compiler carries each
+ * under a key no file path can spell, `" core/vec.wac"`, and reads it from there as it reads any file.
+ *
+ * Until 2026-11-02 the files were concatenated into one module with their imports blanked, which the
+ * compiler read without lowering: so `core` could not say `export * as`, its namespaces were dotted names
+ * written out by hand, and its files' own scopes were a fiction the concatenation did not keep.
+ */
+string[] carriedTree() {
   return [
     "core/read.wac", "core/result.wac", "core/hash.wac",
     "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac", "core/operators.wac",
-    "core/ticket.wac", "core/number.wac", "core/hypothetical.wac"
+    "core/ticket.wac", "core/number.wac", "core/hypothetical.wac", "core/math.wac"
   ];
-}
-
-/**
- * `core`'s files that are **modules of their own**, carried by the compiler beside the one `coreTree` makes.
- *
- * Each is a file as any project writes one: its imports are kept, its names are its own, and it is reached
- * the way any module is — through an `export * as` in a file of `coreTree` (`export * as math from
- * "./math.wac"` makes `import { math } from "core"`). The compiler carries each under a key no file path can
- * spell, `" core/math.wac"`, and joins it to a program only when something the program reaches imports it.
- */
-string[] carriedTree() {
-  return ["core/math.wac"];
 }
 
 /** The key the compiler carries a file of `carriedTree` under: its path, behind a space no file path has. */
@@ -89,66 +89,20 @@ struct Tree {
 
   bool ok(const this) { return this.why == ""; }
 
-  /** `core` as one module: its files in order, each without its imports of the others. */
-  string coreText(const this) {
-    string[] out = string[].filled(this.paths.len() - 1, "");
-    for (i32 i = 0; i < out.len(); i++) { out[i] = withoutSiblingImports(this.texts[i]); }
-    return joined(out, "\n");
-  }
+  /** `core`'s entry, as written. */
+  string coreText(const this) { return this.texts[0]; }
 
-  /** Every `export * as X from "./f.wac"` in `core`'s files, as `X|<key>` — see `starsOf`. */
-  string[] stars(const this) {
-    string all = "";
-    for (i32 i = 0; i < this.paths.len() - 1; i++) { all = all + this.texts[i]; }
-    return starsOf(all);
-  }
+  /** Every `export * as X from "./f.wac"` in the entry, as `X|<key>` — see `starsOf`. */
+  string[] stars(const this) { return starsOf(this.texts[0]); }
 
   string stdText(const this) { return this.texts[this.paths.len() - 1]; }
 
-  /**
-   * The line of `coreText` each of `core`'s files starts on, counting from 1.
-   *
-   * Each file ends in exactly one newline (`readTree` makes it so) and the join adds another, so a file
-   * of `k` lines takes `k + 1`.
-   */
-  string starts(const this) {
+  /** Every carried file's text, one after another — for the tables that are about `core` as a whole. */
+  string carriedAll(const this) {
     string out = "";
-    i32 at = 1;
-    for (i32 i = 0; i < this.paths.len() - 1; i++) {
-      out = out + (i == 0 ? "" : ", ") + itoa(at);
-      at = at + splitKeepingEmpty(this.texts[i]).len();
-    }
+    for (i32 i = 0; i < this.carriedTexts.len(); i++) { out = out + "\n" + this.carriedTexts[i]; }
     return out;
   }
-}
-
-/**
- * A `core` file's text with its imports of `core` blanked: in one module they name nothing new.
- *
- * Blanked rather than removed, so every line keeps its number and `coreFileStarts` can say where a
- * line of the module came from. Only an import of `core` itself, by any of its spellings, goes. Anything
- * else is a `core` file reaching outside `core`, which a built-in cannot do, so it is left in to be
- * refused where it is.
- */
-string withoutSiblingImports(string text) {
-  string[] ls = splitKeepingEmpty(text);
-  string[] kept = string[].filled(ls.len(), "");
-  i32 n = 0;
-  for (i32 i = 0; i < ls.len(); i++) {
-    string l = ls[i];
-    bool sibling = startsWith(l, "import ")
-        && (l.indexOf("from \"core\"") >= 0 || l.indexOf("from \"./") >= 0
-            || l.indexOf("from \"core/") >= 0);
-    // **And a namespace re-export of a carried file**, which `coreStars` states instead: the files of
-    // `coreTree` are one module that the compiler reads without lowering, and the re-export is the
-    // lowering's to follow (`namespaces.wac` takes `core`'s from that table).
-    if (startsWith(l, "export * as ") && l.indexOf("from \"./") >= 0) { sibling = true; }
-    kept[n] = sibling ? "" : l;
-    n = n + 1;
-  }
-  string[] out = string[].filled(n, "");
-  out.copyFrom(kept, 0, 0, n);
-  return joined(out, "\n");
 }
 
 bool startsWith(string s, string prefix) {
@@ -207,6 +161,93 @@ string[] exportsOf(string text) {
 }
 
 /**
+ * The names `core`'s entry exports through its lists, `export { a, b as c } from "./f.wac";` — each item's
+ * name after `as`, or else its own, a verbatim name as its text (spec ch01). A list may run over lines.
+ */
+string[] entryListNames(string text) {
+  string[] found = string[].filled(text.len() / 4 + 1, "");
+  i32 n = 0;
+  i32 at = text.indexOf("export {");
+  while (at >= 0) {
+    string rest = text.slice(at + 8, text.len());
+    i32 close = rest.indexOf("}");
+    if (close < 0) { break; }
+    string[] items = splitOn(rest.slice(0, close), ",");
+    for (i32 i = 0; i < items.len(); i++) {
+      string item = trimmed(items[i]);
+      i32 rename = item.indexOf(" as ");
+      if (rename >= 0) { item = trimmed(item.slice(rename + 4, item.len())); }
+      if (item.len() > 3 && item.slice(0, 2) == "@\"") { item = item.slice(2, item.len() - 1); }
+      if (item != "") { found[n] = item; n = n + 1; }
+    }
+    i32 next = rest.slice(close, rest.len()).indexOf("export {");
+    at = next < 0 ? 0 - 1 : at + 8 + close + next;
+  }
+  string[] out = string[].filled(n, "");
+  out.copyFrom(found, 0, 0, n);
+  return out;
+}
+
+/** `s` cut at every `sep`. */
+string[] splitOn(string s, string sep) {
+  string[] parts = string[].filled(s.len() + 1, "");
+  i32 n = 0;
+  i32 from = 0;
+  i32 at = s.indexOf(sep);
+  while (at >= 0) {
+    parts[n] = s.slice(from, from + at);
+    n = n + 1;
+    from = from + at + sep.len();
+    at = s.slice(from, s.len()).indexOf(sep);
+  }
+  parts[n] = s.slice(from, s.len());
+  string[] out = string[].filled(n + 1, "");
+  out.copyFrom(parts, 0, 0, n + 1);
+  return out;
+}
+
+/**
+ * The names declared at the top of a file — its own, exported or not: what the emitter will name
+ * unqualified for a carried file, so two of `core`'s files must not share one (`duplicateNames`).
+ */
+string[] topLevelNamesOf(string text) {
+  string[] ls = splitKeepingEmpty(text);
+  string[] found = string[].filled(ls.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    string l = ls[i];
+    if (l.len() == 0 || l.slice(0, 1) == " " || l.slice(0, 1) == "/" || l.slice(0, 1) == "*"
+        || l.slice(0, 1) == "}" || l.slice(0, 1) == ")" || startsWith(l, "import ")
+        || startsWith(l, "export {") || startsWith(l, "export *")) { continue; }
+    string decl = startsWith(l, "export ") ? l : "export " + l;
+    string[] one = exportsOf(decl);
+    if (one.len() == 1) { found[n] = one[0]; n = n + 1; }
+  }
+  string[] out = string[].filled(n, "");
+  out.copyFrom(found, 0, 0, n);
+  return out;
+}
+
+/** "" when no two of `core`'s carried files declare one top-level name; otherwise the first such, said. */
+string duplicateNames(string[] paths, string[] texts) {
+  for (i32 a = 0; a < paths.len(); a++) {
+    string[] mine = topLevelNamesOf(texts[a]);
+    for (i32 b = a + 1; b < paths.len(); b++) {
+      string[] theirs = topLevelNamesOf(texts[b]);
+      for (i32 i = 0; i < mine.len(); i++) {
+        for (i32 j = 0; j < theirs.len(); j++) {
+          if (mine[i] == theirs[j]) {
+            return paths[a] + " and " + paths[b] + " both declare `" + mine[i] + "`, and a carried file's names are "
+                 + "emitted as they are written — rename one";
+          }
+        }
+      }
+    }
+  }
+  return "";
+}
+
+/**
  * `core`'s namespace re-exports, `export * as X from "./f.wac";` one to a line, as `X|<key of core/f.wac>`.
  */
 string[] starsOf(string text) {
@@ -257,10 +298,9 @@ string[] symbolsOf(string text) {
  * a file is the file, and only the ragged blank lines a text editor leaves are normalised away.
  */
 Tree readTree(Files fs) {
-  string[] tree = coreTree();
-  string[] paths = string[].filled(tree.len() + 1, "");
-  paths.copyFrom(tree, 0, 0, tree.len());
-  paths[tree.len()] = stdPath();
+  string[] paths = string[].filled(2, "");
+  paths[0] = coreEntry();
+  paths[1] = stdPath();
 
   string[] texts = string[].filled(paths.len(), "");
   string[] why = string[].filled(1, "");
@@ -481,11 +521,11 @@ string waccFile(Tree tree) {
   string[] stars = tree.stars();
   string[] starNames = string[].filled(stars.len(), "");
   for (i32 i = 0; i < stars.len(); i++) { starNames[i] = stars[i].slice(0, stars[i].indexOf("|")); }
-  string[] exported = string[].filled(exportsOf(core).len() + stars.len(), "");
-  exported.copyFrom(exportsOf(core), 0, 0, exportsOf(core).len());
-  exported.copyFrom(starNames, 0, exportsOf(core).len(), stars.len());
-  string carriedAll = "";
-  for (i32 i = 0; i < tree.carriedTexts.len(); i++) { carriedAll = carriedAll + "\n" + tree.carriedTexts[i]; }
+  string[] listed = entryListNames(core);
+  string[] exported = string[].filled(listed.len() + stars.len(), "");
+  exported.copyFrom(listed, 0, 0, listed.len());
+  exported.copyFrom(starNames, 0, listed.len(), stars.len());
+  string carriedAll = tree.carriedAll();
   string[] keys = string[].filled(tree.carriedPaths.len(), "");
   for (i32 i = 0; i < keys.len(); i++) { keys[i] = carriedKey(tree.carriedPaths[i]); }
   string[] inputs = string[].filled(tree.paths.len() + keys.len(), "");
@@ -498,7 +538,7 @@ string waccFile(Tree tree) {
     "// only the text, kept apart from `emit.wac` so that a generator owns a whole file rather than splicing",
     "// into one that is also in the seed.",
     "",
-    "/** `core`, as the one module `import { … } from \"core\"` reaches: its files, concatenated. */",
+    "/** `core`'s entry, the module `import { … } from \"core\"` reaches: re-exports of its carried files. */",
     "export string coreSource() {",
     asWac(core),
     "}",
@@ -508,21 +548,8 @@ string waccFile(Tree tree) {
     asWac(tree.stdText()),
     "}",
     "",
-    "/** `core`'s files, in the order `coreSource` carries them. */",
-    "export string[] coreFileNames() {",
-    "  return [" + quotedList(coreTree()) + "] as string[];",
-    "}",
-    "",
     "/**",
-    " * The line of `coreSource` each of `core`'s files starts on, counting from 1 — so a line of the",
-    " * module can be reported as the file and line a reader has open.",
-    " */",
-    "export i32[] coreFileStarts() {",
-    "  return [" + tree.starts() + "] as i32[];",
-    "}",
-    "",
-    "/**",
-    " * Every name `core` exports, read from its declarations — so a check with no files in hand can still",
+    " * Every name `core` exports, read from its entry — so a check with no files in hand can still",
     " * say *no such export* about a name `core` does not have.",
     " */",
     "export string[] coreExports() {",
@@ -561,7 +588,7 @@ string waccFile(Tree tree) {
     " * know a member named `[markup.text]` is named by one, with no files in hand to read it from.",
     " */",
     "export string[] coreSymbols() {",
-    "  return [" + quotedList(symbolsOf(core)) + "] as string[];",
+    "  return [" + quotedList(symbolsOf(carriedAll)) + "] as string[];",
     "}",
     "",
     "/**",
@@ -569,7 +596,7 @@ string waccFile(Tree tree) {
     " * so `lowerTypeDefaults` need not lex the whole of both on every compile (spec ch19).",
     " */",
     "export string builtinTypeDefaults() {",
-    "  return " + typeDefaultsWac(typeDefaultsTable(core + "\n" + tree.stdText() + carriedAll)) + ";",
+    "  return " + typeDefaultsWac(typeDefaultsTable(carriedAll + "\n" + tree.stdText())) + ";",
     "}",
     "",
     "/**",
@@ -577,13 +604,12 @@ string waccFile(Tree tree) {
     " * run here once, so `lowerUnqualifiedVariants` need not parse both on every compile.",
     " */",
     "export string builtinEnumVariants() {",
-    "  return " + oneLiteral(enumVariantsOfText(core) + enumVariantsOfText(tree.stdText())
-                            + enumVariantsOfText(carriedAll)) + ";",
+    "  return " + oneLiteral(enumVariantsOfText(carriedAll) + enumVariantsOfText(tree.stdText())) + ";",
     "}",
     "",
     "/** The names of `core`'s variadic functions and methods, as `|a|b|` — `variadicCalleesIn` from `scans.wac`. */",
     "export string builtinVariadicCallees() {",
-    "  return " + oneLiteral(variadicCalleesIn(core + carriedAll)) + ";",
+    "  return " + oneLiteral(variadicCalleesIn(carriedAll)) + ";",
     "}",
     "",
     "/**",
@@ -610,6 +636,11 @@ export i32 main(Sys sys) {
   Tree tree = readTree(fs);
   if (!tree.ok()) {
     err.line("gen:core: " + tree.why);
+    return 1;
+  }
+  string dup = duplicateNames(tree.carriedPaths, tree.carriedTexts);
+  if (dup != "") {
+    err.line("gen:core: " + dup);
     return 1;
   }
   string want = waccFile(tree);

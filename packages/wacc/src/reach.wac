@@ -30,7 +30,7 @@ import { kAsync, kConst, kExport, kIdent, kString } from "./kinds.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Decl, DeclKind, ImportItem } from "./ast.wac";
-import { stdSource } from "./coretext.wac";
+import { isCarriedKey, stdSource } from "./coretext.wac";
 
 /** The build's view of a graph: the files it needs, dropped declarations blanked. */
 export struct Pruned {
@@ -229,7 +229,7 @@ Unit unitOf(Parsed parsed, string path, string source) {
  * to 727 KB and `wac` itself outgrew the emitter's signature table.
  */
 bool builtinKey(string key) {
-  return key == "core" || key == " core";
+  return key == "core" || key == " core" || isCarriedKey(key);
 }
 
 /** Whether a key names `std`, served from the compiler like `core` but reached like a file. */

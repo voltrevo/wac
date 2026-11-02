@@ -5,7 +5,7 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump the parser's own tests read.
 
-import { Joined, joinCarried } from "./carried.wac";
+import { coreEntry, Joined, joinAllCarried } from "./carried.wac";
 import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kAs, kAsAt, kAsBang, kAssign, kAsTilde, kAsync, kAwait, kColon, kFor, kComma, kDot, kEnum, kExport, kGt, kIdent, kImport, kindName, kIs, kLbrace,
@@ -28,14 +28,15 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked, exportForwards, splitTabs } from "./emit.wac";
 import {
-  builtinEnumVariants, builtinTypeDefaults, builtinVariadicCallees, coreSource, isBuiltinSpec, isCarriedKey, stdSource,
+  builtinEnumVariants, builtinTypeDefaults, builtinVariadicCallees, carriedKeys, carriedText, coreSource, isBuiltinSpec,
+  isCarriedKey, stdSource,
 } from "./coretext.wac";
 import { enumVariantsIn } from "./scans.wac";
 import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsLexed } from "./files.wac";
-import { endsWith, isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
+import { endsWith, inCoreTree, isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf, readLexed, readOf, readParsedLexed, readProgram, Reads, readSrc } from "./frontend.wac";
 import { Parsed, Pruned, neededMissing, pruneFor } from "./reach.wac";
 import {
@@ -912,9 +913,11 @@ Graph graphOf(string[] givenPaths, string[] givenSources, const Res res) {
   }
   // Namespaces are lowered first, so checking a project reads what a build would (spec ch03).
   string[] sources = lowerSources(paths, rawSources, res);
-  // **And the carried modules the lowered files import** — `math.log` is an import of `" core/math.wac"` by
-  // now — joined as files, so every closure below reaches them as it reaches any other (`carried.wac`).
-  Joined jc = joinCarried(paths, sources, false);
+  // **And `core`'s files**, every one: the entry every closure carries re-exports from all of them, and the
+  // compiler reaches some without any import at all — an interpolation converts through `text.wac`, an
+  // `async` body builds `ticket.wac`'s machine. Joined as files, so a closure reaches them as it reaches any
+  // other, lexed and parsed once for the graph as `core`'s one text used to be (`carried.wac`).
+  Joined jc = joinAllCarried(paths, sources);
   paths = jc.paths;
   sources = jc.sources;
   // **Counted once for the whole graph.** Every closure overlaps almost every other, so letting each one size its
@@ -929,7 +932,7 @@ Graph graphOf(string[] givenPaths, string[] givenSources, const Res res) {
   // own 718 files — closures summing to 10,904 — that is around 11,000 import-list scans and tens of millions of
   // string comparisons, to walk a graph with a few thousand edges in it. Taken once, a closure is an integer walk.
   Edges edges = edgesOfIn(paths, sources, res, lexes);
-  return Graph(paths, sources, lexes, progs, fronts, counts, edges, coreSource());
+  return Graph(paths, sources, lexes, progs, fronts, counts, edges, coreEntry());
 }
 
 /** One file's closure of a `Graph`, as the checker takes it: its files, and `core`'s in the last slot of each table. */
@@ -950,6 +953,14 @@ struct Closure {
  */
 Closure closureOf(Graph g, const Res res, i32 i, i32[] seen) {
   i32 n = closureFrom(g.edges, i, seen);
+  // `core`'s files, in every closure as `core`'s entry is: nothing in the edges says a file needs them when
+  // all it does is interpolate, and the entry's own re-exports are not edges of the graph.
+  for (i32 at = 0; at < g.paths.len(); at++) {
+    if (!isCarriedKey(g.paths[at])) { continue; }
+    bool have = false;
+    for (i32 j = 0; j < n; j++) { if (seen[j] == at) { have = true; } }
+    if (!have && n < seen.len()) { seen[n] = at; n = n + 1; }
+  }
   string[] subPaths = string[].filled(n, "");
   // One longer, like the three below: `core`'s text, built once for the whole graph.
   string[] subSources = string[].filled(n + 1, "");
@@ -1797,7 +1808,7 @@ i32[] declCountsAndFronts(string[] paths, string[] sources, Lexed?[] lexes, Prog
     if (i < lexes.len()) { lexes[i] = clexed; }
     if (i < progs.len()) { progs[i] = cprog; }
   }
-  u8[] ksrc = coreSource().toBytes();
+  u8[] ksrc = coreEntry().toBytes();
   Lexed klexed = lex(ksrc);
   P kp = P.create(ksrc, klexed);
   Program kprog = parseProgram(kp);
@@ -1822,7 +1833,7 @@ export i32[] checkTallied(string[] paths, string[] sources, string entry, bool h
     counts = declCountsInto(paths, sources, lexes, progs);
     carried = string[].filled(paths.len() + 1, "");
     for (i32 i = 0; i < paths.len(); i++) { carried[i] = i < sources.len() ? sources[i] : ""; }
-    carried[paths.len()] = coreSource();
+    carried[paths.len()] = coreEntry();
   }
   C c = checkFilesWithIn(paths, carried, Res.empty(), entry, counts, lexes, progs);
   // Two slots filled one by one: wac-L5, which builds this file, has no array literal.
@@ -1887,7 +1898,13 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // **Carried by the caller where it has it**, one past its files, as it carries core's count, tokens and
   // tree: building the text is a few hundred microseconds, once per closure (`issues/lang/0398b`).
   bool coreCarried = callerSources.len() > callerPaths.len() && callerSources[callerPaths.len()] != "";
-  sources[callerPaths.len()] = coreCarried ? callerSources[callerPaths.len()] : coreSource();
+  sources[callerPaths.len()] = coreCarried ? callerSources[callerPaths.len()] : coreEntry();
+  // **And the files `core`'s entry re-exports from**, for a caller that did not hand them over — a graph does
+  // (`graphOf`), with their counts and trees; one that did not pays a parse of each here.
+  i32 joinedFrom = paths.len();
+  Joined jcore = joinAllCarried(paths, sources);
+  paths = jcore.paths;
+  sources = jcore.sources;
 
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   // **The entry, too.** `issues/lang/0133` stopped the loop below re-reading each *imported* file
@@ -1922,6 +1939,13 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // measurement in `0133`: a fixed cap makes `diagnoseGraph` six times slower).
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
+    if (i >= joinedFrom) {
+      // A carried file this call joined itself: counted the way `declCountsAndFronts` counts a graph's.
+      u8[] jsrc = sources[i].toBytes();
+      Lexed jlx = lex(jsrc);
+      declCap = declCap + declarationsIn(jsrc, jlx, parseProgram(P.create(jsrc, jlx)));
+      continue;
+    }
     declCap = declCap + (i < counts.len() ? counts[i] : 0);
   }
   C c = C.create(esrc, elexed.tokens, elexed.tokenCount, declCap);
@@ -2087,7 +2111,9 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   for (i32 round = 0; round < 32 && more; round++) {
     more = false;
     for (i32 i = 0; i < paths.len(); i++) {
-      if (paths[i] == entry || paths[i] == corePath() || isBuiltinSpec(paths[i])) { continue; }
+      // **Not `core`'s entry or `std`**, whose bodies are fixed when the compiler is built. A file of `core`'s
+      // is followed like any other: `Ticket`'s signatures reach `Result`, which `result.wac` declares.
+      if (paths[i] == entry || paths[i] == corePath() || paths[i] == "core" || paths[i] == "std") { continue; }
       i32 asked = 0;
       for (i32 k = 0; k < n; k++) {
         if (wantFrom[k] == paths[i]) { asked = asked + 1; }
@@ -2108,12 +2134,12 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
         string[] parts = splitTabs(reached[j]);
         string rfrom = parts[0];
         string rname = parts[1];
-        if (rfrom != corePath()) {
-          string[] got = followExport(paths, sources, lexes, progs, res, rfrom, rname);
-          rfrom = got[0];
-          rname = got[1];
-          if (indexOfPath(paths, rfrom) < 0) { continue; }
-        }
+        // Followed to the file that declares it — `core`'s entry included, which declares nothing and
+        // re-exports everything.
+        string[] got = followExport(paths, sources, lexes, progs, res, rfrom, rname);
+        rfrom = got[0];
+        rname = got[1];
+        if (indexOfPath(paths, rfrom) < 0) { continue; }
         bool have = false;
         // **Two types of one spelling are left unknown rather than made one.** A reached name the
         // entry declares, or wants from somewhere else, would collide with it — and a false alarm is
@@ -2121,11 +2147,11 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
         bool clash = false;
         for (i32 k = 0; k < n; k++) {
           if (wantFrom[k] == rfrom && wantName[k] == rname) { have = true; }
-          if (rfrom != corePath() && wantFrom[k] != rfrom && (wantName[k] == rname || wantAlias[k] == rname)) {
+          if (!inCoreTree(rfrom) && wantFrom[k] != rfrom && (wantName[k] == rname || wantAlias[k] == rname)) {
             clash = true;
           }
         }
-        if (rfrom != corePath() && listHas(own, on, rname)) { clash = true; }
+        if (!inCoreTree(rfrom) && listHas(own, on, rname)) { clash = true; }
         if (have || clash || n >= wantFrom.len()) { continue; }
         wantFrom[n] = rfrom;
         wantName[n] = rname;
@@ -3291,7 +3317,11 @@ string moduleExportingType(Reads reads, string[] paths, string[] sources, i32 f,
     if (isBuiltinSpec(paths[m])) { return paths[m]; }
     return relativeSpec(paths[f], paths[m]);
   }
-  if (exportsType(reads, coreSource(), name)) { return "core"; }
+  // `core`'s types are declared in its files, which the entry re-exports: imported from `core` by name.
+  string[] coreFiles = carriedKeys();
+  for (i32 k = 0; k < coreFiles.len(); k++) {
+    if (exportsType(reads, carriedText(coreFiles[k]), name)) { return "core"; }
+  }
   if (exportsType(reads, stdSource(), name)) { return "std"; }
   return "";
 }
@@ -3337,8 +3367,11 @@ string unionOfList(string list) {
  * file declares it, the built-ins included.
  */
 string variantFieldsOfLetter(Reads reads, string[] sources, string tmpl, i32 index) {
-  for (i32 i = 0; i <= sources.len() + 1; i++) {
-    string text = i < sources.len() ? sources[i] : i == sources.len() ? coreSource() : stdSource();
+  // The program's files, then `core`'s — each of its files, which is where its enums are declared — then `std`.
+  string[] coreFiles = carriedKeys();
+  for (i32 i = 0; i <= sources.len() + coreFiles.len(); i++) {
+    string text = i < sources.len() ? sources[i]
+                : i < sources.len() + coreFiles.len() ? carriedText(coreFiles[i - sources.len()]) : stdSource();
     if (text.indexOf("enum " + tmpl) < 0) { continue; }
     i32 srcRead = readOf(reads, text);
     u8[] src = readSrc(reads, srcRead);
@@ -3529,11 +3562,12 @@ string[] lowerVariadics(Reads reads, string[] sources) {
   string names = "|";
   string fixed = "|";
   // Where each file's markers are, as `file:offset;` — blanked once read, so lowering is idempotent.
-  // `core`'s, at index `sources.len()`, are read for their names and never written back.
+  // `core`'s files, from index `sources.len()`, are read for their names and never written back.
   string markers = ";";
-  i32 scanned = sources.len() + (coreToo ? 1 : 0);
+  string[] coreFiles = coreToo ? carriedKeys() : string[]();
+  i32 scanned = sources.len() + coreFiles.len();
   for (i32 f = 0; f < scanned; f++) {
-    string text = f < sources.len() ? sources[f] : coreSource();
+    string text = f < sources.len() ? sources[f] : carriedText(coreFiles[f - sources.len()]);
     if (!hasVariadicMarker(text)) { continue; }
     i32 srcRead = readOf(reads, text);
     u8[] src = readSrc(reads, srcRead);

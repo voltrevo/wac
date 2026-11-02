@@ -25,26 +25,24 @@ unresolvable rather than merely awkward, so `core` has to be one thing everywher
 with the compiler makes its version the compiler's version, which is the only story that has no
 diamond in it. See `design/0001` for the whole argument.
 
-## One module, several files
+## Files that are modules
 
-`core` is one module, named whole — `import { Vec, Map, Read } from "core"` — and a path below it
-(`"core/vec.wac"`) is refused, since a package is named whole (spec ch02,
-`§wac-no-subpath-wqatc72`). The files here are how it is kept readable, not a structure anybody
-imports: `tools/wac/gencore.wac` concatenates them, in the order its `coreTree()` lists, into
-`packages/wacc/src/coretext.wac`, blanking the imports between them. So everything they export is at
-`core`'s root (spec ch37), and a file of `core` reaches another file's declarations without
-importing it.
+`core` is named whole — `import { Vec, Map, Read } from "core"` — and a path below it (`"core/vec.wac"`)
+is refused, since a package is named whole (spec ch02, `§wac-no-subpath-wqatc72`). What the name reaches
+is [`core.wac`](core.wac), the entry, which re-exports from the files beside it and says `export * as
+math from "./math.wac"` for a namespace that is a module.
 
-**And modules of their own beside it.** A file `gencore.wac`'s `carriedTree()` lists — `math.wac` so far —
-is not concatenated: it is a module as any project's file is, with its own imports and its own scope, and
-`core` reaches it through an `export * as math from "./math.wac"` in one of the files above. The compiler
-carries it under the key `" core/math.wac"`, a path behind a space no file path starts with, and joins it to
-a program only when the program uses it (`packages/wacc/src/carried.wac`). That is how `core` has a namespace
-that is a module rather than a set of dotted names, which is what `operators` and `markup` still are.
+**Every file here is a module as any project's file is**: its own imports, its own scope, read by the
+same lowering, checker, reachability and emitter as every other file. `tools/wac/gencore.wac` embeds
+them in `packages/wacc/src/coretext.wac`, each under a key no path can spell — `" core/vec.wac"`, a path
+behind a space — and the entry under `" core"`; `packages/wacc/src/carried.wac` joins them to a program.
+A coverage point in one is reported as `core/hash.wac:61`, the file somebody has open.
 
-The embedding also records where each file starts, so a coverage point in the module is reported as
-`core/hash.wac:61` rather than as a line of the concatenation. The list of exported names is read off
-the declarations rather than kept by hand.
+Until 2026-11-02 the files were concatenated into one module with the imports between them blanked,
+and the compiler read that text without lowering it. That is why `operators` and `markup` are still
+written as dotted names, `@"operators.add"`, rather than as namespaces: nothing could lower one in
+`core`. Two of the files cannot declare one name: their names are emitted as written, and `gen:core`
+refuses the second.
 
 **Run `wac task gen:core` after editing anything here.** The compiler reads the embedding and never
 this directory, and `./bootstrap.sh` does not regenerate it — so an edit has no effect at all until

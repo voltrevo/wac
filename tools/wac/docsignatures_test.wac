@@ -50,7 +50,7 @@ import { kIdent } from "../../packages/wacc/src/kinds.wac";
 import { Program, Decl, DeclKind, Field, Method, Variant, Param } from "../../packages/wacc/src/ast.wac";
 import { P, parseProgram } from "../../packages/wacc/src/parse.wac";
 import { tokenTextOf } from "../../packages/wacc/src/emit.wac";
-import { coreSource, stdSource } from "../../packages/wacc/src/coretext.wac";
+import { carriedKeys, carriedText, stdSource } from "../../packages/wacc/src/coretext.wac";
 
 /** Read a file, or "". */
 string readAll(Files fs, string path) {
@@ -216,7 +216,10 @@ Decls declarations(Output err, Files fs, Procs procs) {
   // `sleepMillis(ms)` and `Data(bytes)` are named by READMEs all over this repository and are the most
   // real names here. Collecting only `core`'s root once left thirteen of them looking like inventions,
   // which is how this port found out it was reading a narrower tree than the file it replaces.
-  collect(d, coreSource().toBytes());
+  //
+  // `core` is its files: the entry declares nothing and re-exports from them (2026-11-02).
+  string[] coreFiles = carriedKeys();
+  for (i32 i = 0; i < coreFiles.len(); i++) { collect(d, carriedText(coreFiles[i]).toBytes()); }
   collect(d, stdSource().toBytes());
   return d;
 }

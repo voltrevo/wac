@@ -1577,7 +1577,7 @@ export async i32 main(Sys sys) {
       // that it worked, rather than trusting that it did.
       if (!hasFlag(argv, argc, "--quiet")) {
         out.line("\{stemHit}.wasm: \{hit!.len()} bytes from cache, "
-                 + "\{src.n} file(s) unchanged");
+                 + "\{filesCounted(src.paths, src.n)} file(s) unchanged");
       }
       return 0;
     }
@@ -2018,7 +2018,7 @@ export async i32 main(Sys sys) {
     // caller reads for that — `wac run` compiles into a temporary file and then runs the program,
     // and a compiler announcing the file it wrote would land in the middle of that program's output.
     if (!hasFlag(argv, argc, "--quiet")) {
-      out.line("\{stem}.wasm: \{whole.len()} bytes from \{src.n} file(s)");
+      out.line("\{stem}.wasm: \{whole.len()} bytes from \{filesCounted(src.paths, src.n)} file(s)");
     }
     return 0;
   }
@@ -2029,7 +2029,7 @@ export async i32 main(Sys sys) {
     err.line("wacc: cannot write \{dest} — \{wrote.isErr() ? "\{wrote.err()!}" : ""}");
     return 1;
   }
-  out.line("\{dest}: \{wasm.len()} bytes from \{src.n} file(s)");
+  out.line("\{dest}: \{wasm.len()} bytes from \{filesCounted(src.paths, src.n)} file(s)");
   return 0;
 }
 
@@ -2151,9 +2151,23 @@ i32 auditReport(Output err, Output out, const Sources src, string entry, bool ve
 }
 
 /** Whether `path` is the platform's own code — `std` and `core`, bundled or on disk. */
+/**
+ * How many of the first `n` of `paths` a summary counts: all but `core`'s carried files, which are `core`
+ * as the compiler holds it — counted once, as `core`, the way a reader thinks of it.
+ */
+i32 filesCounted(string[] paths, i32 n) {
+  i32 k = 0;
+  for (i32 i = 0; i < n && i < paths.len(); i++) {
+    if (!(paths[i].len() > 6 && paths[i].slice(0, 6) == " core/")) { k = k + 1; }
+  }
+  return k;
+}
+
 bool isBuiltinPath(string path) {
+  // And `core`'s files as the compiler carries them, behind a space: `" core"` and `" core/vec.wac"`.
   return path == "core" || path == "std" || (path.len() > 4 && path.slice(0, 4) == "std/")
-      || (path.len() > 5 && path.slice(0, 5) == "core/");
+      || (path.len() > 5 && path.slice(0, 5) == "core/")
+      || path == " core" || (path.len() > 6 && path.slice(0, 6) == " core/");
 }
 
 /** The package directory a file arrived under, or "" for the project's own. */
@@ -2532,7 +2546,7 @@ async i32 checkCommand(Output err, Output out, Env env, Files fs, string[] given
   string wire = diagnoseGraphIn(paths, texts, res, normalisePath(roots[0]));
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { err.line(diags); }
-  out.line("\{label}: \{paths.len()} file(s), \{diagnosticCount(wire)}");
+  out.line("\{label}: \{filesCounted(paths, paths.len())} file(s), \{diagnosticCount(wire)}");
   return wireHasErrors(wire) ? 1 : 0;
 }
 

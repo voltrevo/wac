@@ -2384,6 +2384,36 @@ export Decls declsOfProgram(u8[] src, Lexed lexed, Decl[] decls) {
 }
 
 /**
+ * The file that declares what file `to` exports as `named[0]`, following each `export { … } from` the name
+ * passes — and the name it is declared under, written back to `named[0]`. `to` itself when it is not
+ * re-exported, and after sixteen hops, which no program needs and a cycle would otherwise take for ever.
+ */
+i32 throughReexports(Decls cx, Decl[] all, i32[] files, i32 n, string[] paths, i32 to, string[] named) {
+  for (i32 hop = 0; hop < 16; hop++) {
+    i32 next = 0 - 1;
+    for (i32 k = 0; k < n && next < 0; k++) {
+      if (files[k] != to) { continue; }
+      match (all[k].kind) {
+        ExportList(pathTok, items): {
+          if (pathTok < 0) { continue; }
+          for (i32 it = 0; it < items.len(); it++) {
+            if (tokText(cx.srcOf(to), cx.lexOf(to), items[it].aliasTok) != named[0]) { continue; }
+            string spec = string.fromBytes(stringLiteralBytes(cx.srcOf(to), cx.lexOf(to), pathTok));
+            string target = resolveFrom(to < paths.len() ? paths[to] : "", spec);
+            for (i32 q = 0; q < paths.len(); q++) { if (paths[q] == target) { next = q; } }
+            if (next >= 0) { named[0] = tokText(cx.srcOf(to), cx.lexOf(to), items[it].nameTok); }
+          }
+        }
+        default: { }
+      }
+    }
+    if (next < 0) { return to; }
+    to = next;
+  }
+  return to;
+}
+
+/**
  * A `Decls` over every file, for the checker.
  *
  * `declsOfProgram` sees one, which is what `checkModule` is handed — and a `static_if` whose
@@ -2472,11 +2502,15 @@ export Decls declsOfFiles(string[] paths, string[] sources, Lexed?[] lexes, Prog
         }
         if (to < 0) { continue; }
         for (i32 it = 0; it < items.len(); it++) {
+          // Through the re-exports the name passes, to the file that declares it: `core`'s entry declares
+          // nothing and re-exports every name `import { … } from "core"` can ask for.
+          string[] named = string[].filled(1, tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].nameTok));
+          i32 home = throughReexports(cx, all, files, n, paths, to, named);
           cx.impFrom[cx.impCount] = ifi;
           cx.impName[cx.impCount] = tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].aliasTok);
           keyAdd(cx.impIndex, cx.impName[cx.impCount], cx.impCount);
-          cx.impTo[cx.impCount] = to;
-          cx.impDecl[cx.impCount] = tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].nameTok);
+          cx.impTo[cx.impCount] = home;
+          cx.impDecl[cx.impCount] = named[0];
           cx.impCount = cx.impCount + 1;
         }
       }

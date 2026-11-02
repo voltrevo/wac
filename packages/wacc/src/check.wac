@@ -32,7 +32,7 @@
 // Column 28 is the `"`, column 21 is the `r` of `return`. Every AST node here carries its own line
 // and column, so this is `e.line, e.col` and not arithmetic.
 
-import { Joined, joinCarried } from "./carried.wac";
+import { Joined, joinAllCarried } from "./carried.wac";
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
@@ -1293,8 +1293,9 @@ export void buildStaticView(C c, ViewInputs v) {
     paths = p2;
     sources = s2;
   }
-  // And `core`'s carried modules, which a static may read as it may read `std` (`carried.wac`).
-  Joined jc = joinCarried(paths, sources, false);
+  // And `core`'s files, which a static may read as it may read `std` — every one, since the entry this view
+  // holds re-exports from all of them (`carried.wac`).
+  Joined jc = joinAllCarried(paths, sources);
   paths = jc.paths;
   sources = jc.sources;
   Lexed?[] alx = Lexed?[].filled(paths.len() < 1 ? 1 : paths.len(), null);

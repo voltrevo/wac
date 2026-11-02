@@ -16,8 +16,8 @@
 //     `import * as lib` and `import { shapes.area as a }` are rewritten to the imports they mean.
 //
 // After the first pass, "a namespace" is just *a dotted name*: a module exporting `@"operators.add"`
-// has a namespace `operators`. That is what lets core declare its operator symbols directly in that
-// spelling — the embedded copy of core is never lowered — and be read exactly like a lowered module.
+// has a namespace `operators`. That is how core's operator symbols are declared, in that spelling, from the
+// days when the embedded copy of core was never lowered; it is lowered like any file now (`carried.wac`).
 //
 // Lines are kept, so a diagnostic names the line it always did; a column after a qualified name moves
 // by the three characters `@""` adds. Lazy loading falls out (ch05 `§wac-reach-namespace-lazy-pxz4t63`): a

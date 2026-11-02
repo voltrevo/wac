@@ -16,7 +16,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { checkTallied, diagnoseGraph, diagnoseGraphTallied, lowerSources } from "../../src/api.wac";
 import { lex, Lexed } from "../../src/lex.wac";
 import { importSpecs } from "../../src/files.wac";
-import { builtinEnumVariants, builtinVariadicCallees, coreSource, stdSource } from "../../src/coretext.wac";
+import { builtinEnumVariants, builtinVariadicCallees, carriedKeys, carriedText, coreSource, stdSource }
+  from "../../src/coretext.wac";
 import { enumVariantsOfText, variadicCalleesIn } from "../../src/scans.wac";
 import { Res } from "../../src/path.wac";
 import { Clock, Sys } from "std";
@@ -155,7 +156,7 @@ export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Sys sys
   T t = T.create();
   string[] paths = ["/t/m.wac"] as string[];
   string[] texts = ["export i32 f(i32 n) { return n; }\n"] as string[];
-  u8[] c = coreSource().toBytes();
+  u8[] c = allOfCore().toBytes();
   lowerSources(paths, texts, Res.empty());
   i64 lexing = 0 as i64;
   i64 lowering = 0 as i64;
@@ -174,13 +175,24 @@ export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Sys sys
   return t.report();
 }
 
+/**
+ * All of `core`'s files, one after another, as `gen:core` reads them for its tables. `coreSource()` is the
+ * entry alone since `core` became files (2026-11-02), and a baseline of "lexing core once" means all of it.
+ */
+string allOfCore() {
+  string out = "";
+  string[] ks = carriedKeys();
+  for (i32 i = 0; i < ks.len(); i++) { out = out + "\n" + carriedText(ks[i]); }
+  return out;
+}
+
 /** The tables `gen:core` wrote are what the lowering would have read off the embedded text. */
 export string test_the_built_tables_are_what_the_text_says(Sys sys) {
   Clock clock = sys.clock();
   T t = T.create();
-  t.eqStr(builtinEnumVariants(), enumVariantsOfText(coreSource()) + enumVariantsOfText(stdSource()),
+  t.eqStr(builtinEnumVariants(), enumVariantsOfText(allOfCore()) + enumVariantsOfText(stdSource()),
           "the enums of core and std");
-  t.eqStr(builtinVariadicCallees(), variadicCalleesIn(coreSource()), "core's variadic functions");
+  t.eqStr(builtinVariadicCallees(), variadicCalleesIn(allOfCore()), "core's variadic functions");
   t.isTrue(builtinVariadicCallees().indexOf("|all|") >= 0, "Ticket.all is among them");
   return t.report();
 }

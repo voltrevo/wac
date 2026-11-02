@@ -91,6 +91,7 @@ export string relativeTo(string base, string abs) {
 
 /** `resolveFromIn` with the directory every relative key is measured from — see `relativeTo`. */
 export string resolveFromAt(string fromPath, string spec, string root, string base) {
+  if (inCoreTree(fromPath)) { return inCoreTreeFrom(fromPath, spec); }
   if (isBuiltinSpec(spec)) { return spec; }
   if (isProjectSpec(spec)) {
     if (root == "") { return ""; }
@@ -149,7 +150,32 @@ export bool isBareSpecifier(string spec) {
   return !isBuiltinSpec(spec);
 }
 
+/**
+ * Whether a key is `core`'s entry or one of its carried files — `"core"` as a caller spells it, `" core"` as
+ * the compiler carries it, and `" core/vec.wac"`.
+ */
+export bool inCoreTree(string key) {
+  return key == "core" || key == " core" || (key.len() > 6 && key.slice(0, 6) == " core/");
+}
+
+/**
+ * **A specifier written in `core` resolves inside `core`'s tree**, which is where its files are: the entry's
+ * `export { Vec } from "./vec.wac"` names `" core/vec.wac"`, and a file's own `import { Buf } from
+ * "./buf.wac"` names its sibling. Without this the join went to a directory beside the program, and found
+ * whatever was there. Anything else a `core` file names is a built-in by its name, `"core"` included.
+ */
+string inCoreTreeFrom(string fromPath, string spec) {
+  if (spec.len() < 2 || (spec.slice(0, 2) != "./" && (spec.len() < 3 || spec.slice(0, 3) != "../"))) {
+    return isBuiltinSpec(spec) ? spec : "";
+  }
+  string from = fromPath == "core" || fromPath == " core" ? " core/core.wac" : fromPath;
+  i32 cut = from.len() - 1;
+  while (cut > 0 && from.slice(cut, cut + 1) != "/") { cut = cut - 1; }
+  return normalisePath(from.slice(0, cut) + "/" + spec);
+}
+
 export string resolveFromIn(string fromPath, string spec, string root) {
+  if (inCoreTree(fromPath)) { return inCoreTreeFrom(fromPath, spec); }
   // **A built-in is its own key, decided before any path arithmetic.** `core/result.wac` names a
   // module inside the compiler, so joining it to the importing file's directory looks for
   // packages/std/src/core/result.wac. Both callers get the reservation from here — `gather` in

@@ -7,9 +7,18 @@
 // it holds it from then on, an ordinary file under a key no path can spell. What `core` re-exports as a
 // namespace is imported by that key once lowered (`namespaces.wac`), so the key is what is looked for.
 
-import { carriedKeys, carriedText, isCarriedKey, stdSource } from "./coretext.wac";
+import { carriedKeys, carriedText, coreSource, isCarriedKey, stdSource } from "./coretext.wac";
 import { lowerNamespaces } from "./namespaces.wac";
 import { Res, resolveFrom } from "./path.wac";
+
+/**
+ * `core`'s entry as every reader takes it: **lowered**, like any file. Its `export * as math from
+ * "./math.wac"` is a line nothing needs once the importers reach `math.wac` themselves, and a reader that
+ * met it unlowered met a declaration no other file can have.
+ */
+export string coreEntry() {
+  return lowerNamespaces(string[].filled(1, " core"), string[].filled(1, coreSource()), Res.empty())[0];
+}
 
 /** A file set with the built-ins it reaches joined to the end. */
 export struct Joined {
@@ -65,6 +74,44 @@ export Joined joinCarried(string[] paths, string[] sources, bool withStd) {
       outPaths[at + k] = ks[k];
       outSources[at + k] = lowered[k];
     }
+  }
+  return Joined(outPaths, outSources);
+}
+
+/**
+ * `paths` and `sources` with **every** carried file of `core`'s joined — for a file set that has `core`'s entry
+ * in it, which re-exports from all of them, so any import of `core` may reach any one. Answers the arrays
+ * themselves when every one is there already.
+ */
+export Joined joinAllCarried(string[] paths, string[] sources) {
+  string[] ks = carriedKeys();
+  bool[] have = bool[].filled(ks.len(), false);
+  i32 missing = ks.len();
+  for (i32 i = 0; i < paths.len(); i++) {
+    for (i32 k = 0; k < ks.len(); k++) {
+      if (!have[k] && paths[i] == ks[k]) { have[k] = true; missing = missing - 1; }
+    }
+  }
+  if (missing == 0) { return Joined(paths, sources); }
+  string[] keys = string[].filled(missing, "");
+  string[] texts = string[].filled(missing, "");
+  i32 m = 0;
+  for (i32 k = 0; k < ks.len(); k++) {
+    if (have[k]) { continue; }
+    keys[m] = ks[k];
+    texts[m] = carriedText(ks[k]);
+    m = m + 1;
+  }
+  string[] lowered = lowerNamespaces(keys, texts, Res.empty());
+  string[] outPaths = string[].filled(paths.len() + missing, "");
+  string[] outSources = string[].filled(paths.len() + missing, "");
+  for (i32 i = 0; i < paths.len(); i++) {
+    outPaths[i] = paths[i];
+    outSources[i] = i < sources.len() ? sources[i] : "";
+  }
+  for (i32 k = 0; k < missing; k++) {
+    outPaths[paths.len() + k] = keys[k];
+    outSources[paths.len() + k] = lowered[k];
   }
   return Joined(outPaths, outSources);
 }
