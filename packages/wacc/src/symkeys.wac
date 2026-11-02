@@ -1,0 +1,268 @@
+// A symbol-named member's spelling, made the symbol's own — `issues/lang/0423d`.
+//
+// **A symbol is nominal** (spec ch21): two symbols declared `tag` in two files are two symbols, so a struct
+// may have a member named by each, and the checker keeps them apart. The emitter keys members by their
+// spelling, `S.[tag]`, and the parser used to bring a member written through an import alias round to the
+// declaring file's spelling (`resolveSymbolAliases`) so that `[ta]` in one file and `[tag]` in another met —
+// which also made `[ta]` and `[tb]` one member when both aliases named a `tag`, and the program called the
+// wrong method without a word.
+//
+// So every member is written, before the emitter reads it, with **one spelling per symbol**: the symbol's
+// own name while no other symbol of the program shares it, its name and its declaring file's place when one
+// does, and for `core`'s symbols the name the compiler calls them by — `toString`, `operators.add` — whatever
+// the file that declares them called them.
+
+import { Lexed, lex, tokenStride } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+import { Decl, DeclKind, ImportItem, Program } from "./ast.wac";
+import { kSymName } from "./kinds.wac";
+import { Res, resolveVia } from "./path.wac";
+import { stringLiteralBytes } from "./strlit.wac";
+import { coreSymbols, isCarriedKey } from "./coretext.wac";
+import { coreNamespaceOf } from "./carried.wac";
+
+/** One file of the program as this pass reads it: its text, tokens and tree, and the symbols it declares. */
+struct SymFile {
+  u8[] src;
+  Lexed lx;
+  Program prog;
+  string[] declared;
+}
+
+/**
+ * `sources` with every member named by a symbol spelled as that symbol's one spelling. A file of `core`'s is
+ * left as it is: its symbols are spelled as the compiler calls them already. Answers `sources` itself when
+ * no file could need it — none declares a symbol of its own and none renames one in an import.
+ */
+export string[] canonicalSymbolMembers(string[] paths, string[] sources, const Res res) {
+  bool any = false;
+  for (i32 f = 0; f < paths.len() && f < sources.len(); f++) {
+    if (inCore(paths[f])) { continue; }
+    if (sources[f].indexOf("symbol ") >= 0 || sources[f].indexOf(" as ") >= 0) { any = true; }
+  }
+  if (!any) { return sources; }
+
+  i32 n = paths.len() < sources.len() ? paths.len() : sources.len();
+  SymFile?[] files = SymFile?[].defaulted(n < 1 ? 1 : n);
+  for (i32 f = 0; f < n; f++) { files[f] = readFile(sources[f]); }
+
+  // How many of the program's files declare each spelling — and `core`'s symbols, which take theirs first.
+  string[] spelt = string[].filled(256, "");
+  i32[] count = i32[].filled(256, 0);
+  i32 sn = 0;
+  for (i32 f = 0; f < n; f++) {
+    if (files[f] is null || inCore(paths[f])) { continue; }
+    string[] ds = files[f]!.declared;
+    for (i32 i = 0; i < ds.len(); i++) {
+      i32 at = 0 - 1;
+      for (i32 k = 0; k < sn; k++) { if (spelt[k] == ds[i]) { at = k; } }
+      if (at < 0 && sn < spelt.len()) { spelt[sn] = ds[i]; count[sn] = isCoreSymbol(ds[i]) ? 1 : 0; at = sn; sn = sn + 1; }
+      if (at >= 0) { count[at] = count[at] + 1; }
+    }
+  }
+
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 f = 0; f < sources.len(); f++) { out[f] = sources[f]; }
+  for (i32 f = 0; f < n; f++) {
+    if (files[f] is null || inCore(paths[f])) { continue; }
+    SymFile sf = files[f]!;
+    // What each spelling this file can use for a symbol means: its own, then what it imports.
+    string[] local = string[].filled(sf.declared.len() + 64, "");
+    string[] canon = string[].filled(sf.declared.len() + 64, "");
+    i32 ln = 0;
+    for (i32 i = 0; i < sf.declared.len(); i++) {
+      local[ln] = sf.declared[i];
+      canon[ln] = canonicalOf(paths, f, sf.declared[i], spelt, count, sn);
+      ln = ln + 1;
+    }
+    for (i32 d = 0; d < sf.prog.decls.len(); d++) {
+      match (sf.prog.decls[d].kind) {
+        Import(pathTok, prefixTok, items): {
+          if (pathTok < 0) { continue; }
+          string spec = string.fromBytes(stringLiteralBytes(sf.src, sf.lx, pathTok));
+          for (i32 i = 0; i < items.len(); i++) {
+            if (items[i].nameTok < 0 || items[i].aliasTok < 0) { continue; }
+            string name = textAt(sf.src, sf.lx, items[i].nameTok);
+            string alias = textAt(sf.src, sf.lx, items[i].aliasTok);
+            string c = importedCanonical(paths, files, res, f, spec, name, spelt, count, sn);
+            if (c == "") { continue; }
+            if (ln >= local.len()) {
+              string[] l2 = string[].filled(local.len() * 2, "");
+              string[] c2 = string[].filled(local.len() * 2, "");
+              for (i32 k = 0; k < ln; k++) { l2[k] = local[k]; c2[k] = canon[k]; }
+              local = l2;
+              canon = c2;
+            }
+            local[ln] = alias;
+            canon[ln] = c;
+            ln = ln + 1;
+          }
+        }
+        default: { }
+      }
+    }
+    out[f] = rewritten(sf, local, canon, ln);
+  }
+  return out;
+}
+
+/** Whether a key is `core`'s entry or one of its carried files. */
+bool inCore(string key) { return key == "core" || key == " core" || isCarriedKey(key); }
+
+/** Whether `name` is one of `core`'s symbols, under the name a program reaches it by. */
+bool isCoreSymbol(string name) {
+  string[] syms = coreSymbols();
+  for (i32 i = 0; i < syms.len(); i++) { if (syms[i] == name) { return true; } }
+  return false;
+}
+
+/** A file lexed and parsed, and the symbols it declares at the top level. */
+SymFile? readFile(string text) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  string[] declared = string[].filled(prog.decls.len() + 1, "");
+  i32 dn = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      SymbolDecl(nameTok, exported): {
+        declared[dn] = textAt(src, lx, nameTok);
+        dn = dn + 1;
+      }
+      default: { }
+    }
+  }
+  string[] exact = string[].filled(dn, "");
+  for (i32 i = 0; i < dn; i++) { exact[i] = declared[i]; }
+  return SymFile(src, lx, prog, exact);
+}
+
+/**
+ * The one spelling of the symbol file `f` declares as `name`: the name itself while it is the only symbol
+ * spelled so — counting `core`'s — and otherwise the name with the file's place, which no source spells.
+ */
+string canonicalOf(string[] paths, i32 f, string name, string[] spelt, i32[] count, i32 sn) {
+  for (i32 k = 0; k < sn; k++) {
+    if (spelt[k] == name && count[k] > 1) { return name + "$" + itoaSym(f); }
+  }
+  return name;
+}
+
+/**
+ * The one spelling of the symbol file `f`'s import of `name` from `spec` names, following re-exports to the
+ * file that declares it, or `""` when what it imports is not a symbol.
+ */
+string importedCanonical(string[] paths, SymFile?[] files, const Res res, i32 f, string spec, string name,
+                         string[] spelt, i32[] count, i32 sn) {
+  if (spec == "core") { return isCoreSymbol(name) ? name : ""; }
+  string at = resolveVia(res, paths, paths[f], spec);
+  string nm = name;
+  for (i32 hop = 0; hop < 16; hop++) {
+    // A file of `core`'s, joined or not: its symbol is called by its public name.
+    if (isCarriedKey(at)) {
+      string space = coreNamespaceOf(at);
+      string pub = space == "" ? nm : space + "." + nm;
+      return isCoreSymbol(pub) ? pub : "";
+    }
+    i32 t = 0 - 1;
+    for (i32 q = 0; q < paths.len(); q++) { if (paths[q] == at) { t = q; } }
+    if (t < 0 || t >= files.len() || files[t] is null) { return ""; }
+    SymFile tf = files[t]!;
+    for (i32 i = 0; i < tf.declared.len(); i++) {
+      if (tf.declared[i] == nm) { return canonicalOf(paths, t, nm, spelt, count, sn); }
+    }
+    // Not declared there: an `export { … } from` that forwards it, or nothing.
+    string next = "";
+    string nextName = "";
+    for (i32 d = 0; d < tf.prog.decls.len() && next == ""; d++) {
+      match (tf.prog.decls[d].kind) {
+        ExportList(pathTok, items): {
+          if (pathTok < 0) { continue; }
+          for (i32 i = 0; i < items.len(); i++) {
+            if (items[i].aliasTok < 0 || textAt(tf.src, tf.lx, items[i].aliasTok) != nm) { continue; }
+            next = resolveVia(res, paths, paths[t], string.fromBytes(stringLiteralBytes(tf.src, tf.lx, pathTok)));
+            nextName = textAt(tf.src, tf.lx, items[i].nameTok);
+          }
+        }
+        default: { }
+      }
+    }
+    if (next == "") { return ""; }
+    at = next;
+    nm = nextName;
+  }
+  return "";
+}
+
+/**
+ * `sf`'s text with each member a symbol names — every `[…]` the parser made a member name of — written as the
+ * symbol's one spelling. A bare name becomes a verbatim one (`[tag]` → `[@"tag$1"]`); a verbatim
+ * one has its quoted text replaced. Nothing moves to another line.
+ */
+string rewritten(SymFile sf, string[] local, string[] canon, i32 ln) {
+  i32 st = tokenStride();
+  i32 first = sf.lx.tokenCount;
+  i32 last = sf.lx.tokenCount + sf.lx.synthCount;
+  // The edits, in source order: a member's token span and what replaces it.
+  i32[] starts = i32[].filled(last - first + 1, 0);
+  i32[] lens = i32[].filled(last - first + 1, 0);
+  string[] texts = string[].filled(last - first + 1, "");
+  i32 en = 0;
+  for (i32 t = first; t < last; t++) {
+    if (sf.lx.tokens[t * st] != kSymName()) { continue; }
+    i32 start = sf.lx.tokens[t * st + 1];
+    i32 len = sf.lx.tokens[t * st + 2];
+    string spelled = bytesOf(sf.src, start, start + len);
+    string want = "";
+    for (i32 k = 0; k < ln; k++) { if (local[k] == spelled) { want = canon[k]; } }
+    if (want == "" || want == spelled) { continue; }
+    // Always verbatim: a canonical spelling may be a keyword, or hold a `$`, and `@"n"` is the binding `n` is.
+    bool verbatim = start >= 2 && sf.src[start - 1] == '"' && sf.src[start - 2] == '@';
+    starts[en] = start;
+    lens[en] = len;
+    texts[en] = verbatim ? want : "@\"" + want + "\"";
+    en = en + 1;
+  }
+  if (en == 0) { return string.fromBytes(sf.src); }
+  // Synthesised tokens are made in parse order, which is source order; sorted anyway, since an edit out of
+  // order would cut the text wrongly rather than fail.
+  for (i32 a = 1; a < en; a++) {
+    i32 b = a;
+    while (b > 0 && starts[b - 1] > starts[b]) {
+      i32 s0 = starts[b]; starts[b] = starts[b - 1]; starts[b - 1] = s0;
+      i32 l0 = lens[b]; lens[b] = lens[b - 1]; lens[b - 1] = l0;
+      string x0 = texts[b]; texts[b] = texts[b - 1]; texts[b - 1] = x0;
+      b = b - 1;
+    }
+  }
+  string out = "";
+  i32 from = 0;
+  for (i32 e = 0; e < en; e++) {
+    if (starts[e] < from) { continue; }
+    out = out + bytesOf(sf.src, from, starts[e]) + texts[e];
+    from = starts[e] + lens[e];
+  }
+  return out + bytesOf(sf.src, from, sf.src.len());
+}
+
+string textAt(u8[] src, Lexed lx, i32 t) {
+  i32 st = tokenStride();
+  return bytesOf(src, lx.tokens[t * st + 1], lx.tokens[t * st + 1] + lx.tokens[t * st + 2]);
+}
+
+string bytesOf(u8[] src, i32 from, i32 to) {
+  u8[] out = u8[].filled(to - from, 0);
+  for (i32 i = from; i < to; i++) { out[i - from] = src[i]; }
+  return string.fromBytes(out);
+}
+
+string itoaSym(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) {
+    out = string.fromCodepoint(48 + v % 10) + out;
+    v = v / 10;
+  }
+  return out;
+}

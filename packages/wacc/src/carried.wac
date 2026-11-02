@@ -7,7 +7,7 @@
 // it holds it from then on, an ordinary file under a key no path can spell. What `core` re-exports as a
 // namespace is imported by that key once lowered (`namespaces.wac`), so the key is what is looked for.
 
-import { carriedKeys, carriedText, coreSource, isCarriedKey, stdSource } from "./coretext.wac";
+import { carriedKeys, carriedText, coreSource, coreStars, isCarriedKey, stdSource } from "./coretext.wac";
 import { lowerNamespaces } from "./namespaces.wac";
 import { Res, resolveFrom } from "./path.wac";
 
@@ -18,6 +18,19 @@ import { Res, resolveFrom } from "./path.wac";
  */
 export string coreEntry() {
   return lowerNamespaces(string[].filled(1, " core"), string[].filled(1, coreSource()), Res.empty())[0];
+}
+
+/**
+ * The namespace `core` re-exports a carried file as — `"math"` for `" core/math.wac"` — or `""` for a file that
+ * is not one. A symbol such a file declares as `add` is reached as `math.add` from outside it.
+ */
+export string coreNamespaceOf(string key) {
+  string[] st = coreStars();
+  for (i32 i = 0; i < st.len(); i++) {
+    i32 bar = st[i].indexOf("|");
+    if (st[i].slice(bar + 1, st[i].len()) == key) { return st[i].slice(0, bar); }
+  }
+  return "";
 }
 
 /** A file set with the built-ins it reaches joined to the end. */

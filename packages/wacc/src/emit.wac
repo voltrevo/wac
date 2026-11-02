@@ -16,6 +16,7 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
+import { canonicalSymbolMembers } from "./symkeys.wac";
 import { coreEntry } from "./carried.wac";
 import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import {
@@ -4179,6 +4180,9 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
   // route built it. Idempotent, so a caller that already applied it changes nothing; refusing a `main`
   // of the wrong shape is the build's, not every emit's.
   sources = programGraph(paths, sources, entry).sources;
+  // **And every member a symbol names spelled as that symbol** (`symkeys.wac`): this emitter keys members by
+  // spelling, so two symbols of one spelling have to be given two (`issues/lang/0423d`).
+  sources = canonicalSymbolMembers(paths, sources, res);
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named

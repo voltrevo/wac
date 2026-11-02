@@ -1,0 +1,16 @@
+// expect: f() = 12
+// why: a symbol is nominal, so two symbols declared `tag` in two files name two members of one struct —
+//      the emitter once keyed members by spelling and both calls ran the first
+// from: issues/lang/0423d
+// ---- a.wac ----
+export symbol tag;
+// ---- b.wac ----
+export symbol tag;
+// ---- main.wac ----
+import { tag as ta } from "./a.wac";
+import { tag as tb } from "./b.wac";
+struct S {
+  i32 [ta](const this) { return 1; }
+  i32 [tb](const this) { return 2; }
+}
+export i32 f() { S s = S(); return s.[ta]() * 10 + s.[tb](); }
