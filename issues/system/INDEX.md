@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0376w](open/0376w-p256-verification-pays-for-constant-time-it-does-not-need.md) | `p256VerifyDigest` runs the constant-time `jacMul` twice — 512 doublings and 512 masked additions — for a verification whose inputs are all public; a variable-time joint wNAF (wacuum's `p256.wac`) is 0.44 ms against 7 | performance | 7 ms a verification |
 | [0375w](open/0375w-bls-fpinvert-is-three-times-slower-than-its-algorithm-needs.md) | `bls`'s `fpInvert` is the right algorithm at three times its cost: a fresh modulus array per wrapping subtraction, a call per limb, `u32` conversions. wacuum's `blsinv.wac` does the same in 18 µs against 56, and could replace it; and `g1AffineX` plus `g1AffineY` invert z twice | performance | 56 µs an inversion |
 | [0371a](open/0371a-a-stopped-spawn-self-child-never-exits-on-the-v8-host.md) | `wac run packages/platform/example/stop.wac` hangs on v8: after `kid.stop()` the child's `exit()` never resolves; the pre-port `Cli` version hangs the same way | bug | hang |
 | [0370a](closed/0370a-cancelling-a-host-ticket-another-wait-already-settled-leaks-its-resource.md) | Any wait that dispatches settles every registered host ticket, so a `connect` abandoned after its answer arrived holds a `Socket` nobody has and `cancel` does nothing: the peer holds the line. Blocks deleting `Cli` — `lostbytes_test`'s connect arm stays on it | bug | wrong answer |
@@ -136,7 +137,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-354 issues, 256 closed.
+355 issues, 256 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
