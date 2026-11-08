@@ -1,0 +1,244 @@
+// Markdown, as a timer's description is written in it: what autonag's client rendered with react-markdown, to the
+// view's nodes rather than to HTML — so nothing in a description is ever markup the browser reads.
+//
+// The common part of CommonMark: paragraphs (lines joined, a line ending in two spaces breaking), ATX headings,
+// bullet and numbered lists, fenced code, block quotes and rules; inline code, strong and emphasis, and links —
+// to http, https and mailto addresses only, which is also all the page's policy would let one go to.
+
+import { Vec } from "core";
+import { Node, html.a, html.blockquote, html.br, html.code, html.div, html.em, html.h1, html.h2, html.h3, html.h4, html.h5,
+         html.h6, html.hr, html.li, html.ol, html.p, html.pre, html.span, html.strong, html.ul } from "web";
+
+export Node markdown(string source) {
+  Vec<string> lines = Vec.create();
+  string rest = source;
+  while (true) {
+    i32 nl = rest.indexOf("\n");
+    if (nl < 0) { lines.push(chomp(rest)); break; }
+    lines.push(chomp(rest.slice(0, nl)));
+    rest = rest.slice(nl + 1, rest.len());
+  }
+  return <div>{blocks(lines, 0, lines.len())}</div>;
+}
+
+string chomp(string s) { return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\r" ? s.slice(0, s.len() - 1) : s; }
+
+bool blank(string s) { return trimmed(s) == ""; }
+
+string trimmed(string s) {
+  i32 a = 0;
+  i32 z = s.len();
+  while (a < z && (s.slice(a, a + 1) == " " || s.slice(a, a + 1) == "\t")) { a++; }
+  while (z > a && (s.slice(z - 1, z) == " " || s.slice(z - 1, z) == "\t")) { z--; }
+  return s.slice(a, z);
+}
+
+i32 indentOf(string s) {
+  i32 n = 0;
+  while (n < s.len() && s.slice(n, n + 1) == " ") { n++; }
+  return n;
+}
+
+i32 headingLevel(string s) {
+  i32 n = 0;
+  while (n < s.len() && n < 7 && s.slice(n, n + 1) == "#") { n++; }
+  if (n == 0 || n > 6) { return 0; }
+  if (n < s.len() && s.slice(n, n + 1) != " ") { return 0; }
+  return n;
+}
+
+// The text after a list item's marker, or null when the line is not one: "- x", "* x", "+ x", "1. x", "1) x".
+string? bullet(string s) {
+  string t = trimmed(s);
+  if (t.len() >= 2 && (t.slice(0, 2) == "- " || t.slice(0, 2) == "* " || t.slice(0, 2) == "+ ")) { return t.slice(2, t.len()); }
+  return null;
+}
+
+string? numbered(string s) {
+  string t = trimmed(s);
+  i32 n = 0;
+  while (n < t.len() && n < 9 && t.slice(n, n + 1) >= "0" && t.slice(n, n + 1) <= "9") { n++; }
+  if (n == 0 || n + 1 >= t.len()) { return null; }
+  string mark = t.slice(n, n + 1);
+  if ((mark != "." && mark != ")") || t.slice(n + 1, n + 2) != " ") { return null; }
+  return t.slice(n + 2, t.len());
+}
+
+bool rule(string s) {
+  string t = trimmed(s);
+  if (t.len() < 3) { return false; }
+  string c = t.slice(0, 1);
+  if (c != "-" && c != "*" && c != "_") { return false; }
+  for (i32 i = 0; i < t.len(); i++) { string x = t.slice(i, i + 1); if (x != c && x != " ") { return false; } }
+  return true;
+}
+
+bool startsBlock(string s) {
+  string t = trimmed(s);
+  return headingLevel(t) > 0 || bullet(s) is not null || numbered(s) is not null || rule(s)
+      || (t.len() >= 3 && t.slice(0, 3) == "```") || (t.len() > 0 && t.slice(0, 1) == ">");
+}
+
+Node[] blocks(Vec<string> lines, i32 from, i32 to) {
+  Vec<Node> out = Vec.create();
+  i32 i = from;
+  while (i < to) {
+    string line = lines.get(i);
+    string t = trimmed(line);
+    if (t == "") { i++; continue; }
+    if (t.len() >= 3 && t.slice(0, 3) == "```") {
+      string code = "";
+      i++;
+      bool first = true;
+      while (i < to && !(trimmed(lines.get(i)).len() >= 3 && trimmed(lines.get(i)).slice(0, 3) == "```")) {
+        code = code + (first ? "" : "\n") + lines.get(i);
+        first = false;
+        i++;
+      }
+      i++;
+      out.push(<pre><code>{code}</code></pre>);
+      continue;
+    }
+    i32 level = headingLevel(t);
+    if (level > 0) {
+      string body = trimmed(t.slice(level, t.len()));
+      while (body.len() > 0 && body.slice(body.len() - 1, body.len()) == "#") { body = trimmed(body.slice(0, body.len() - 1)); }
+      Node[] kids = inline(body);
+      out.push(level == 1 ? <h1>{kids}</h1> : level == 2 ? <h2>{kids}</h2> : level == 3 ? <h3>{kids}</h3>
+             : level == 4 ? <h4>{kids}</h4> : level == 5 ? <h5>{kids}</h5> : <h6>{kids}</h6>);
+      i++;
+      continue;
+    }
+    if (rule(line)) { out.push(<hr/>); i++; continue; }
+    if (t.slice(0, 1) == ">") {
+      Vec<string> quoted = Vec.create();
+      while (i < to && trimmed(lines.get(i)).len() > 0 && trimmed(lines.get(i)).slice(0, 1) == ">") {
+        string q = trimmed(lines.get(i)).slice(1, trimmed(lines.get(i)).len());
+        quoted.push(q.len() > 0 && q.slice(0, 1) == " " ? q.slice(1, q.len()) : q);
+        i++;
+      }
+      out.push(<blockquote>{blocks(quoted, 0, quoted.len())}</blockquote>);
+      continue;
+    }
+    if (bullet(line) is not null || numbered(line) is not null) {
+      bool ordered = bullet(line) is null;
+      Vec<Node> items = Vec.create();
+      while (i < to) {
+        string? item = ordered ? numbered(lines.get(i)) : bullet(lines.get(i));
+        if (item is null) { break; }
+        i32 depth = indentOf(lines.get(i));
+        Vec<string> body = Vec.create();
+        body.push(item!);
+        i++;
+        // The item's own lines: more deeply indented ones, a nested list among them, until a blank line or the next item.
+        while (i < to && !blank(lines.get(i)) && indentOf(lines.get(i)) > depth) {
+          body.push(lines.get(i).slice(depth + 2 > lines.get(i).len() ? indentOf(lines.get(i)) : depth + 2, lines.get(i).len()));
+          i++;
+        }
+        while (i < to && blank(lines.get(i))) {
+          if (i + 1 < to && indentOf(lines.get(i + 1)) > depth && !blank(lines.get(i + 1))) { body.push(""); i++; } else { break; }
+        }
+        Node[] kids = body.len() == 1 ? inline(body.get(0)) : blocks(body, 0, body.len());
+        items.push(<li>{kids}</li>);
+        if (i < to && blank(lines.get(i))) {
+          i32 j = i;
+          while (j < to && blank(lines.get(j))) { j++; }
+          if (j < to && (ordered ? numbered(lines.get(j)) : bullet(lines.get(j))) is not null && indentOf(lines.get(j)) == depth) { i = j; }
+        }
+      }
+      out.push(ordered ? <ol>{items.toArray()}</ol> : <ul>{items.toArray()}</ul>);
+      continue;
+    }
+    // A paragraph: lines until a blank one or the start of another block.
+    Vec<Node> para = Vec.create();
+    bool first = true;
+    while (i < to && !blank(lines.get(i)) && (first || !startsBlock(lines.get(i)))) {
+      string l = lines.get(i);
+      bool hard = l.len() >= 2 && l.slice(l.len() - 2, l.len()) == "  ";
+      if (!first) { para.push(Node.Text(" ")); }
+      Node[] kids = inline(trimmed(l));
+      for (Node k in kids) { para.push(k); }
+      if (hard && i + 1 < to && !blank(lines.get(i + 1))) { para.push(<br/>); }
+      first = false;
+      i++;
+    }
+    out.push(<p>{para.toArray()}</p>);
+  }
+  return out.toArray();
+}
+
+/** Inline code, links, strong and emphasis, in that order of precedence; everything else is text. */
+Node[] inline(string s) {
+  Vec<Node> out = Vec.create();
+  string text = "";
+  i32 i = 0;
+  while (i < s.len()) {
+    string c = s.slice(i, i + 1);
+    if (c == "\\" && i + 1 < s.len()) { text = text + s.slice(i + 1, i + 2); i += 2; continue; }
+    if (c == "`") {
+      i32 end = s.slice(i + 1, s.len()).indexOf("`");
+      if (end >= 0) {
+        flush(out, text);
+        text = "";
+        out.push(<code>{s.slice(i + 1, i + 1 + end)}</code>);
+        i = i + end + 2;
+        continue;
+      }
+    }
+    if (c == "[") {
+      i32 close = s.slice(i + 1, s.len()).indexOf("](");
+      if (close >= 0) {
+        i32 at = i + 1 + close;
+        i32 paren = s.slice(at + 2, s.len()).indexOf(")");
+        if (paren >= 0) {
+          string label = s.slice(i + 1, at);
+          string href = trimmed(s.slice(at + 2, at + 2 + paren));
+          if (safeLink(href)) {
+            flush(out, text);
+            text = "";
+            out.push(<a href={href} target="_blank" rel="noopener noreferrer">{inline(label)}</a>);
+            i = at + 3 + paren;
+            continue;
+          }
+        }
+      }
+    }
+    if (c == "*" || c == "_") {
+      bool strong = i + 1 < s.len() && s.slice(i + 1, i + 2) == c;
+      string mark = strong ? c + c : c;
+      i32 from = i + mark.len();
+      i32 end = from < s.len() ? s.slice(from, s.len()).indexOf(mark) : -1;
+      if (end > 0 && s.slice(from, from + 1) != " ") {
+        flush(out, text);
+        text = "";
+        Node[] kids = inline(s.slice(from, from + end));
+        out.push(strong ? <strong>{kids}</strong> : <em>{kids}</em>);
+        i = from + end + mark.len();
+        continue;
+      }
+    }
+    if (c == "<") {
+      // An autolink: <https://example.com>.
+      i32 end = s.slice(i + 1, s.len()).indexOf(">");
+      if (end > 0 && safeLink(s.slice(i + 1, i + 1 + end))) {
+        flush(out, text);
+        text = "";
+        string href = s.slice(i + 1, i + 1 + end);
+        out.push(<a href={href} target="_blank" rel="noopener noreferrer">{href}</a>);
+        i = i + end + 2;
+        continue;
+      }
+    }
+    text = text + c;
+    i++;
+  }
+  flush(out, text);
+  return out.toArray();
+}
+
+void flush(Vec<Node> out, string text) { if (text != "") { out.push(Node.Text(text)); } }
+
+bool safeLink(string href) {
+  string h = href;
+  return (h.len() > 8 && h.slice(0, 8) == "https://") || (h.len() > 7 && h.slice(0, 7) == "http://") || (h.len() > 7 && h.slice(0, 7) == "mailto:");
+}

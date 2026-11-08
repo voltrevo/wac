@@ -1,0 +1,54 @@
+// Time zones in the page. A browser has no tz database a program can read, so the server that served the page
+// serves its own (`/zoneinfo/<name>`, TZif, links followed), and each zone is fetched once, when first wanted —
+// the reader's own at the start, and each recurrence's as timers arrive. After that the same synchronous time
+// code the server runs (src/time/) answers, where autonag's client asked the browser's Intl.
+
+import { Map, Result, hashString, stringEq } from "core";
+import { Origin, Reply } from "web";
+import { TimeZone, Zones, parseTzif } from "../src/time/tz.wac";
+
+export struct ClientZones {
+  Origin origin;
+  Map<string, TimeZone> loaded;
+  Map<string, bool> asked;
+  /** Called when a zone arrives, so whatever showed a time in it renders again. */
+  fn<void()> arrived;
+
+  ClientZones create(Origin origin, fn<void()> arrived) {
+    return ClientZones(origin, Map.create(hashString, stringEq), Map.create(hashString, stringEq), arrived);
+  }
+
+  /** The zone, if it has arrived. */
+  TimeZone? get(this, string name) { return this.loaded.get(name); }
+
+  /** The zone, or UTC until it arrives (and for a name that is not a zone). */
+  TimeZone orUtc(this, string name) {
+    TimeZone? z = this.loaded.get(name);
+    return z ?? TimeZone("UTC", i64[](), i32[](), [0 as i64], null);
+  }
+
+  /** Fetches the zone unless it was asked for already; `arrived` is called once it is here. */
+  void want(this, string name) {
+    if (name == "" || this.asked.has(name)) { return; }
+    this.asked.set(name, true);
+    this.fetch(name);
+  }
+
+  async void fetch(this, string name) {
+    Result<Reply, string> got = await this.origin.request("GET", "/zoneinfo/" + name, string[](), u8[]());
+    if (got.isErr() || got.unwrap().status != 200) { return; }
+    match (parseTzif(name, got.unwrap().body)) {
+      Ok(z): {
+        this.loaded.set(name, z);
+        this.arrived();
+      }
+      Err(e): {}
+    }
+  }
+
+  /** The zones that have arrived, as the time code's `Zones`: a name not here is not a zone, for now. */
+  Zones zones(this) {
+    ClientZones self = this;
+    return Zones.over((string name) => null, () => string[](), (string name) => null);
+  }
+}

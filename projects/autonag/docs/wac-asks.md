@@ -26,3 +26,23 @@ call, or the type system could refuse to drop one.
 `wac run --allow-read --allow-write --allow-net --allow-env cmd/server.wac` sat at 100% CPU for over ten
 minutes without starting, while `wac build` of the same file finished in six seconds and the built module
 runs correctly. **Worked around** by building first (tools/integration.ts does).
+
+## A declaration without an initializer, after an `await`, is the same object every pass
+
+```wac
+async i32 loop(Sys sys, Holder h) {
+  for (i32 i = 0; i < 3; i++) {
+    await sys.sleepMillis(1);
+    h.t.resolve(i);
+    Ticket<i32> fresh;          // the second time round, `fresh` is the ticket assigned the first time
+    sys.log("\{fresh.settled()}");
+    h.t = fresh;
+  }
+  return 0;
+}
+```
+
+prints `false`, then `true` (and traps resolving it twice). Outside an async function, or before the first `await`, each
+pass gets a new ticket. **Worked around** in `client/conn.wac` with a function that declares and returns one
+(`newWake()`); the web client's connection loop otherwise spun on a wake that was already settled. Reproduction:
+`/tmp/claude-0/repro/fresh2.wac` above, as written.

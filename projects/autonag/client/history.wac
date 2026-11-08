@@ -1,0 +1,130 @@
+// The instance's event log, newest first, each event undoable (skipped) and redoable: autonag's
+// client/src/pages/EventHistory.tsx. autonag virtualises the list and fetches a page as it nears the end; a page here
+// cannot read how far it is scrolled, so the rows fetched are drawn and the next page is fetched whenever the list
+// is scrolled — the same effect for the reader.
+
+import { Result, Vec } from "core";
+import { json.JsonValue, json.JsonArray } from "wac";
+import { ElementEvent, Node, Ui, html.button, html.div, html.h2 } from "web";
+import { App } from "./store.wac";
+import { ApiError } from "./api.wac";
+import { number, text, nothing } from "./app.wac";
+import { localeString } from "./fmt.wac";
+import { TimeZone } from "../src/time/tz.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+static i32 PAGE_SIZE = 50;
+
+string shortId(string id) { return id.len() > 8 ? id.slice(0, 8) : id; }
+
+string timerLabel(App app, string id) {
+  JsonValue? t = app.timer(id);
+  string name = text(t, "name");
+  return t is not null && name != "" ? "\"" + name + "\"" : "timer " + shortId(id);
+}
+
+string formatRecurrence(JsonValue? r) {
+  f64 p = r?.member("periodDays")?.number() ?? 0.0;
+  string freq = p == 1.0 ? "daily" : p == 7.0 ? "weekly" : "every \{jsNumber(p)} days";
+  bool skip = r?.member("skipWeekends")?.boolean() ?? false;
+  return freq + " at " + text(r, "anchorTime") + (skip ? ", skipping weekends" : "");
+}
+
+/** How autonag's history describes an event. */
+string describe(App app, string type, JsonValue? p, TimeZone tz) {
+  string id = text(p, "id");
+  if (type == "TimerAdded") { return "Added \"" + text(p, "name") + "\""; }
+  if (type == "TimerExpiryUpdated") { return "Snoozed " + timerLabel(app, id) + " to " + localeString(number(p, "newExpiry"), tz); }
+  if (type == "TimerCompleted") { return "Completed " + timerLabel(app, id) + " (" + text(p, "closeReason") + ")"; }
+  if (type == "TimerRemoved") { return "Removed " + timerLabel(app, id); }
+  if (type == "Shushed") { return "Shushed all timers until " + localeString(number(p, "expiry"), tz); }
+  if (type == "ShushCleared") { return "Cleared shush"; }
+  if (type == "TimerRecurred") {
+    return "Recurred " + timerLabel(app, id) + " (" + text(p, "closeReason") + "), next due " + localeString(number(p, "newExpiry"), tz);
+  }
+  if (type == "TimerCompletionLogged") {
+    return "Logged past completion of " + timerLabel(app, id) + " (" + text(p, "closeReason") + ") at " + localeString(number(p, "occurredAt"), tz);
+  }
+  if (type == "TimerRecurrenceUpdated") { return "Set recurrence for " + timerLabel(app, id) + ": " + formatRecurrence(p?.member("recurrence")); }
+  if (type == "TimerRecurrenceRemoved") { return "Removed recurrence from " + timerLabel(app, id); }
+  if (type == "TimerDescriptionUpdated") { return "Updated description of " + timerLabel(app, id); }
+  if (type == "TimerNameUpdated") { return "Renamed timer " + shortId(id) + " to \"" + text(p, "newName") + "\""; }
+  return type;
+}
+
+/** The events fetched so far, newest first, and where the next page starts. */
+struct Loaded {
+  Vec<JsonValue> events;
+  Vec<bool> skipped;
+  f64? cursor;
+  bool exhausted;
+  bool loading;
+}
+
+export Node EventHistory(Ui ui, App app) {
+  auto loaded = ui.state(Loaded(Vec.create(), Vec.create(), null, false, true));
+  auto version = ui.state(0);
+  fn<void()> changed = () => { version.set(version.get() + 1); };
+  ui.effect(app.selectedInstanceId ?? "", () => {
+    Loaded l = Loaded(Vec.create(), Vec.create(), null, false, true);
+    loaded.set(l);
+    fetchPage(app, l, 9007199254740991.0, changed);
+    return () => { };
+  });
+  Loaded l = loaded.get();
+  fn<void()> more = () => {
+    if (l.loading || l.exhausted || l.cursor is null) { return; }
+    l.loading = true;
+    changed();
+    fetchPage(app, l, l.cursor!, changed);
+  };
+  TimeZone tz = app.zone();
+  Vec<Node> rows = Vec.create();
+  for (i32 i = 0; i < l.events.len(); i++) {
+    JsonValue ev = l.events.get(i);
+    bool skipped = l.skipped.get(i);
+    i32 at = i;
+    string eid = text(ev, "id");
+    // Each row in a box of its own, as autonag's virtualised list has them, so their margins do not collapse.
+    rows.push(<div key={eid} style="display: flow-root"><div class={skipped ? "ev-row skipped" : "ev-row"}>
+      <div class="ev-seq">#{jsNumber(number(ev, "seq"))}</div>
+      <div class="ev-info">
+        <div class="ev-type">{describe(app, text(ev, "type"), ev.member("payload"), tz)}</div>
+        <div class="ev-meta">{text(ev, "type") + " · " + localeString(number(ev, "timestamp"), tz)}</div>
+      </div>
+      <button class={skipped ? "skip-btn skipped" : "skip-btn"} onclick={(ElementEvent e) => {
+        toggleSkip(app, eid, skipped, () => { l.skipped.set(at, !skipped); changed(); });
+      }}>{skipped ? "Redo" : "Undo"}</button>
+    </div></div>);
+  }
+  Node body = l.loading && l.events.len() == 0 ? <div class="ev-note">Loading…</div>
+    : l.events.len() == 0 ? <div class="ev-note">No events yet.</div>
+    : <div>{rows.toArray()}{l.loading ? <div class="ev-more">Loading…</div> : nothing()}</div>;
+  return <div class="ev-page">
+    <div class="ev-header">
+      <button class="back-btn" onclick={(ElementEvent e) => { app.back(); }}>←</button>
+      <h2 class="ev-title">Event History</h2>
+    </div>
+    <div class="ev-scroll" onscroll={(ElementEvent e) => { more(); }}>{body}</div>
+  </div>;
+}
+
+async void fetchPage(App app, Loaded l, f64 before, fn<void()> changed) {
+  Result<JsonValue, ApiError> r = await app.act("GET", "/events?before=\{jsNumber(before)}&limit=\{PAGE_SIZE}", null);
+  l.loading = false;
+  if (r.isErr()) { l.exhausted = true; changed(); return; }
+  JsonArray evs = r.unwrap().member("events")?.array() ?? JsonArray.create();
+  for (i32 i = 0; i < evs.len(); i++) {
+    l.events.push(evs.get(i));
+    l.skipped.push(evs.get(i).member("skipped")?.boolean() ?? false);
+  }
+  JsonValue? prev = r.unwrap().member("prevCursor");
+  l.cursor = prev is null || prev!.isNull() ? null : prev!.number();
+  if (l.cursor is null) { l.exhausted = true; }
+  changed();
+}
+
+async void toggleSkip(App app, string id, bool skipped, fn<void()> done) {
+  if (skipped) { await app.unskipEvent(id); } else { await app.skipEvent(id); }
+  done();
+}

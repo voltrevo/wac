@@ -63,6 +63,10 @@ await sleep(500);
 
 const me = await api.getMe(token);
 if (me.device.id !== "dev") errors.push("getMe");
+// A second message on a followed socket (reconnectNow pings it): the server once spun forever growing an
+// emptied WebSocket buffer by doubling zero.
+early.conn.reconnectNow();
+await sleep(300);
 const ids: string[] = [];
 const now = Date.now();
 for (let i = 0; i < 25; i++) {

@@ -1,0 +1,209 @@
+// How times and durations are written on screen, and how what is typed as a due date is read: autonag's
+// client/src/timeFormat.ts and timeUtils.ts. Where those ask the browser (`toLocaleTimeString`, `new Date(…)` in
+// local time) this asks the reader's zone, and writes en-US, as Chromium does for an en-US reader.
+
+import { TimeZone } from "../src/time/tz.wac";
+import { LocalDate, localDateParts, localToUtc, DEFAULT_ANCHOR_TIME } from "../src/time/anchor.wac";
+import { AnchorSpec, parseDuration, resolveDuration, jsTrim } from "../src/time/duration.wac";
+import { parseNaturalTime } from "../src/time/natural.wac";
+import { civilOf, Civil, floorDiv, floorMod, weekdayOfDays } from "../src/time/civil.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+static f64 MIN = 60000.0;
+static f64 HOUR = 3600000.0;
+static f64 DAY = 86400000.0;
+static f64 DECIMAL_BELOW = 10.0;
+
+string pad2(i64 n) { return n < 10 ? "0\{n}" : "\{n}"; }
+
+f64 abs(f64 x) { return x < 0.0 ? -x : x; }
+
+// Math.round: halves up.
+f64 round(f64 x) { return (x + 0.5).floor(); }
+
+// One decimal, but "2" rather than "2.0".
+string trim1(f64 n) {
+  f64 r = round(n * 10.0) / 10.0;
+  if (r == r.floor()) { return jsNumber(r); }
+  i64 tenths = round(r * 10.0) as~ i64;
+  return "\{tenths / 10}.\{floorMod(tenths, 10)}";
+}
+
+/** "How long": a magnitude, unsigned — seconds and minutes whole, hours and days to a tenth below ten. */
+export string formatDuration(f64 ms) {
+  f64 a = abs(ms);
+  i64 seconds = (a / 1000.0).floor() as~ i64;
+  if (seconds < 60) { return "\{seconds}s"; }
+  i64 minutes = (a / MIN).floor() as~ i64;
+  if (minutes < 60) { return "\{minutes}m"; }
+  f64 hours = a / HOUR;
+  if (hours < 24.0) {
+    string label = hours < DECIMAL_BELOW ? trim1(hours) : jsNumber(round(hours));
+    if (label != "24") { return label + "h"; }
+  }
+  f64 days = a / DAY;
+  return (days < DECIMAL_BELOW ? trim1(days) : jsNumber(round(days))) + "d";
+}
+
+/** An exact clock, signed: "1:02:03", or "2:03" under an hour. */
+export string formatCountdown(f64 ms) {
+  string sign = ms < 0.0 ? "-" : "";
+  i64 total = (abs(ms) / 1000.0).floor() as~ i64;
+  i64 h = total / 3600;
+  i64 m = (total % 3600) / 60;
+  i64 s = total % 60;
+  return h > 0 ? "\{sign}\{h}:\{pad2(m)}:\{pad2(s)}" : "\{sign}\{m}:\{pad2(s)}";
+}
+
+// ── the reader's calendar ──
+
+/** Local midnight of the day `ms` falls on. */
+export f64 startOfDay(f64 ms, TimeZone tz) {
+  LocalDate d = localDateParts(ms as~ i64, tz);
+  return localToUtc(d.year, d.month, d.day, 0, 0, tz) as~ f64;
+}
+
+/** Whole calendar days from `from` to `to`, in the reader's zone: 11pm to 1am is one. */
+export i64 calendarDaysBetween(f64 from, f64 to, TimeZone tz) {
+  return round((startOfDay(to, tz) - startOfDay(from, tz)) / DAY) as~ i64;
+}
+
+/** The local wall clock at an instant: its civil date and its time of day. */
+export struct Local {
+  i64 year;
+  i64 month;
+  i64 day;
+  i64 hour;
+  i64 minute;
+  i64 second;
+  i32 weekday;   // 0 Sunday
+}
+
+export Local localAt(f64 ms, TimeZone tz) {
+  i64 t = ms.floor() as~ i64;
+  i64 local = t + tz.offsetAt(floorDiv(t, 1000)) * 1000;
+  Civil c = civilOf(local);
+  i64 secs = floorMod(floorDiv(local, 1000), 86400);
+  return Local(c.year, c.month, c.day, secs / 3600, (secs / 60) % 60, secs % 60, weekdayOfDays(floorDiv(local, 86400000)));
+}
+
+static string[] WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+static string[] MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }): "8:05 PM". */
+export string timeOfDay(f64 ms, TimeZone tz) {
+  Local l = localAt(ms, tz);
+  i64 h12 = l.hour % 12 == 0 ? 12 : l.hour % 12;
+  return "\{h12}:\{pad2(l.minute)} \{l.hour < 12 ? "AM" : "PM"}";
+}
+
+/** toLocaleDateString(undefined, { weekday: "short" }): "Thu". */
+export string weekday(f64 ms, TimeZone tz) { return WEEKDAYS[localAt(ms, tz).weekday]; }
+
+/** toLocaleDateString(undefined, { day: "numeric", month: "short" }): "Aug 12". */
+export string shortDate(f64 ms, TimeZone tz) {
+  Local l = localAt(ms, tz);
+  return "\{MONTHS[(l.month - 1) as! i32]} \{l.day}";
+}
+
+/** toLocaleString(): "8/12/2026, 8:05:09 PM". */
+export string localeString(f64 ms, TimeZone tz) {
+  Local l = localAt(ms, tz);
+  i64 h12 = l.hour % 12 == 0 ? 12 : l.hour % 12;
+  return "\{l.month}/\{l.day}/\{l.year}, \{h12}:\{pad2(l.minute)}:\{pad2(l.second)} \{l.hour < 12 ? "AM" : "PM"}";
+}
+
+/** toLocaleDateString(): "8/12/2026". */
+export string localeDate(f64 ms, TimeZone tz) {
+  Local l = localAt(ms, tz);
+  return "\{l.month}/\{l.day}/\{l.year}";
+}
+
+/** "When", for a timer not yet due: a countdown or duration today, then "Tmr 8:00 AM", "Thu 8:00 AM", "Aug 12". */
+export string formatDueAt(f64 expiry, f64 now, TimeZone tz) {
+  i64 days = calendarDaysBetween(now, expiry, tz);
+  if (days <= 0) {
+    return expiry - now < 3.0 * HOUR ? formatCountdown(expiry - now) : formatDuration(expiry - now);
+  }
+  if (days == 1) { return "Tmr " + timeOfDay(expiry, tz); }
+  if (days < 7) { return weekday(expiry, tz) + " " + timeOfDay(expiry, tz); }
+  return shortDate(expiry, tz);
+}
+
+// ── reading a due date ──
+
+i64? digits(string s) {
+  if (s.len() == 0) { return null; }
+  i64 v = 0;
+  for (u8 c in s.toBytes()) {
+    if (c < '0' || c > '9') { return null; }
+    v = v * 10 + (c - '0') as i64;
+  }
+  return v;
+}
+
+// /^(\d{1,2}):?(\d{2})?(am|pm)$/ on lower-cased input: hours, minutes (or -1), and whether pm.
+struct ClockTime { i64 hours; i64 minutes; bool pm; }
+
+ClockTime? clockTime(string s) {
+  if (s.len() < 3) { return null; }
+  string period = s.slice(s.len() - 2, s.len());
+  if (period != "am" && period != "pm") { return null; }
+  string rest = s.slice(0, s.len() - 2);
+  // The hours are the leading one or two digits; a colon may follow; then two digits of minutes, or none.
+  for (i32 hl = 1; hl <= 2 && hl <= rest.len(); hl++) {
+    i64? h = digits(rest.slice(0, hl));
+    if (h is null) { break; }
+    string after = rest.slice(hl, rest.len());
+    if (after.len() > 0 && after.slice(0, 1) == ":") { after = after.slice(1, after.len()); }
+    if (after.len() == 0) { return ClockTime(h!, 0, period == "pm"); }
+    if (after.len() == 2) {
+      i64? m = digits(after);
+      if (m is not null) { return ClockTime(h!, m!, period == "pm"); }
+    }
+  }
+  return null;
+}
+
+/**
+ * parseTimeInput: "tomorrow", "fri", "thu morning", "tmr @ 3pm", a bare "3pm" (next time it comes round, in the
+ * reader's zone), or a duration — "3d", "1w", "1d12h", "30m" — with day and week durations landing on the anchor.
+ */
+export f64? parseTimeInput(string raw, f64 base, AnchorSpec anchor, TimeZone anchorZone, TimeZone local) {
+  string input = lower(jsTrim(raw));
+  i64? natural = parseNaturalTime(input, base as~ i64, anchor, anchorZone);
+  if (natural is not null) { return natural! as~ f64; }
+  ClockTime? ct = clockTime(input);
+  if (ct is not null) {
+    i64 hours = ct!.pm && ct!.hours < 12 ? ct!.hours + 12 : ct!.hours;
+    if (!ct!.pm && ct!.hours == 12) { hours = 0; }
+    LocalDate d = localDateParts(base as~ i64, local);
+    i64 target = localToUtc(d.year, d.month, d.day, hours, ct!.minutes, local);
+    if ((target as~ f64) <= base) {
+      Local t = localAt(target as~ f64, local);
+      target = localToUtc(t.year, t.month, t.day + 1, t.hour, t.minute, local);
+    }
+    return target as~ f64;
+  }
+  auto parsed = parseDuration(input);
+  if (parsed is null) { return null; }
+  return resolveDuration(parsed!, base, anchor, anchorZone);
+}
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
+
+/** formatParsedTime: "in 20m (3:05 PM)", "in ~2h (5:00 PM)", "today at …", "tomorrow at …", "Thu, Aug 12 at …". */
+export string formatParsedTime(f64 ts, f64 now, TimeZone tz) {
+  f64 diffMins = round((ts - now) / 60000.0);
+  string time = timeOfDay(ts, tz);
+  if (diffMins < 60.0) { return "in \{jsNumber(diffMins)}m (\{time})"; }
+  if (diffMins < 120.0) { return "in ~\{jsNumber(round(diffMins / 60.0))}h (\{time})"; }
+  i64 days = calendarDaysBetween(now, ts, tz);
+  if (days == 0) { return "today at " + time; }
+  if (days == 1) { return "tomorrow at " + time; }
+  return weekday(ts, tz) + ", " + shortDate(ts, tz) + " at " + time;
+}

@@ -1,0 +1,11 @@
+// Each argument as QR modules (client/qr.wac), for tools/check_qr.ts to compare with qrcode.react's.
+import { Sys } from "std";
+import { encode, modules } from "../client/qr.wac";
+
+export i32 main(Sys sys) {
+  for (string a in sys.args()) {
+    auto q = encode(a);
+    sys.log(q is null ? "none" : modules(q!));
+  }
+  return 0;
+}

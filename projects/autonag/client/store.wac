@@ -1,0 +1,416 @@
+// The app's state, and what changes it: autonag's client/src/AppContext.tsx and LayoutContext.tsx.
+//
+// **One object, passed down.** Its snapshot is the object and how many times it has changed, so every component
+// handed it renders again when anything here changes — as every consumer of autonag's context did — and a
+// component's own state (what is typed into a field, a sheet being open) stays its own.
+//
+// **Where the reader is lives in the address**: `#add-timer`, `#view-timer/<id>`, nothing for the list. Going
+// somewhere adds to the browser's history, and the app's own back buttons are the browser's Back, so the two
+// histories never differ. The token and the chosen instance are kept in the page's store under autonag's own
+// keys, so a device that used autonag's client is still signed in here.
+
+import { Result, Ticket, flatten, markup } from "core";
+import { json.JsonValue, json.JsonArray } from "wac";
+import { Origin, Page, Site } from "web";
+import { Api, ApiError, addTimerBody } from "./api.wac";
+import { Conn, ConnHandlers } from "./conn.wac";
+import { ClientZones } from "./zones.wac";
+import { Obj, num, str } from "../src/model/jsonkit.wac";
+import { RecurrenceSpec, recurrenceFrom } from "../src/model/events.wac";
+import { TimeZone } from "../src/time/tz.wac";
+import { nextRecurrenceExpiry } from "../src/time/duration.wac";
+
+static string TOKEN_KEY = "autonag2.token";
+static string INSTANCE_KEY = "autonag2.instanceId";
+static string LAYOUT_KEY = "autonag2.layoutMode";
+static string COLOR_SCHEME_KEY = "autonag2.colorScheme";
+static string NOTIF_DISABLED_KEY = "autonag2.notificationsDisabled";
+
+export struct App {
+  Page page;
+  Origin origin;
+  Api api;
+  ClientZones zones;
+  /** Milliseconds since the epoch, as `Date.now()`. */
+  fn<f64()> wall;
+  /** The reader's zone by name, as Intl names it. */
+  string zoneName;
+  /** `?join=<instance>` in the address the page was opened at, or "". */
+  string joinCode;
+
+  string? token;
+  JsonValue? device;
+  /** "unknown", "unauthenticated", "pending-approval" or "authenticated". */
+  string authStatus;
+  JsonArray instances;
+  bool instancesLoaded;
+  string? selectedInstanceId;
+
+  string connectionStatus;
+  JsonValue? state;
+  JsonValue? latestComment;
+  Conn? conn;
+  string connFor;
+
+  /** "timers", "add-timer", "view-timer", "events", "daily-results", "instances" or "alarm". */
+  string pageName;
+  string? selectedTimerId;
+
+  string layoutMode;
+  string colorSchemeMode;
+  bool notificationsDisabled;
+  /** Whether the reader has tapped or typed: before that, a browser plays no sound. */
+  bool interacted;
+  /** Where the timer list was last scrolled to, for when it is drawn again. */
+  f64 savedScrollTop;
+
+  i32 version;
+  fn<void()> rerender;
+
+  (App, i32) [markup.snapshot](this) { return (this, this.version); }
+
+  /** Something here changed: whoever shows it renders again. */
+  void changed(this) {
+    this.version = this.version + 1;
+    this.rerender();
+  }
+
+  // ── starting ──
+
+  async App start(Page page, fn<void()> rerender) {
+    Origin origin = (await Origin.of(page.sys)).unwrap();
+    auto read = await page.sys.clock().nowMillis();
+    f64 epoch = read.orElse(0 as i64) as~ f64;
+    f64 mono = page.now();
+    fn<f64()> wall = () => epoch + (page.now() - mono);
+    string join = "";
+    Result<Site, string> site = await Site.of(page.sys);
+    if (site.isOk()) { join = queryParam(site.unwrap().address, "join"); }
+    App[] self = App[]();
+    ClientZones zones = ClientZones.create(origin, () => { if (self.len() > 0) { self[0].changed(); } });
+    App app = App(page, origin, Api(origin), zones, wall, page.zoneName(), join,
+                  await page.stored(TOKEN_KEY), null, "unknown", JsonArray.create(), false, await page.stored(INSTANCE_KEY),
+                  "disconnected", null, null, null, "", "timers", null,
+                  layoutOf(await page.stored(LAYOUT_KEY)), schemeOf(await page.stored(COLOR_SCHEME_KEY)),
+                  (await page.stored(NOTIF_DISABLED_KEY) ?? "") == "true", false, 0.0, 0, rerender);
+    self = [app];
+    zones.want(app.zoneName);
+    app.located(page.location());
+    page.onLocation((string where) => { app.located(where); });
+    page.onVisible((bool seen) => { if (seen && app.conn is not null) { app.conn!.reconnectNow(); } });
+    app.checkToken();
+    return app;
+  }
+
+  /** The reader's own zone, or UTC until it has arrived. */
+  TimeZone zone(this) { return this.zones.orUtc(this.zoneName); }
+
+  // ── where the reader is ──
+
+  void located(this, string where) {
+    string page = "timers";
+    string? timer = null;
+    if (where.len() > 11 && where.slice(0, 11) == "view-timer/") { page = "view-timer"; timer = where.slice(11, where.len()); }
+    else if (where == "add-timer" || where == "events" || where == "daily-results" || where == "alarm" || where == "instances") { page = where; }
+    if (page == this.pageName && (timer ?? "") == (this.selectedTimerId ?? "")) { return; }
+    this.pageName = page;
+    this.selectedTimerId = timer;
+    this.changed();
+  }
+
+  /** Go to `page` (and, for "view-timer", `timer`), as a new place in the browser's history. */
+  void go(this, string page, string? timer) {
+    string hash = page == "view-timer" && timer is not null ? "view-timer/" + timer! : (page == "timers" ? "" : page);
+    if (timer is not null) { this.selectedTimerId = timer; }
+    this.pageName = page;
+    if (hash != this.page.location()) { this.page.go(hash, true); }
+    this.changed();
+  }
+
+  /** The app's own back button: the browser's Back, so the history is left as it was. */
+  void back(this) { this.page.back(); }
+
+  // ── auth ──
+
+  async void checkToken(this) {
+    if (this.token is null || this.token!.len() == 0) {
+      this.authStatus = "unauthenticated";
+      this.changed();
+      return;
+    }
+    Result<JsonValue, ApiError> me = await this.api.get("/devices/me", this.token);
+    if (me.isErr()) {
+      // Anything but a 401 leaves it undecided, as autonag's client does: the server is down, not the token bad.
+      if (me.err()!.status == 401) { this.authStatus = "unauthenticated"; this.changed(); }
+      return;
+    }
+    this.device = me.unwrap().member("device");
+    JsonValue? approved = this.device?.member("approvedAt");
+    this.authStatus = approved is not null && !approved!.isNull() ? "authenticated" : "pending-approval";
+    this.changed();
+    if (this.authStatus == "authenticated") { await this.refreshInstances(); }
+  }
+
+  async Result<void, ApiError> register(this, string nickname) {
+    Result<JsonValue, ApiError> r = await this.api.registerDevice(nickname);
+    if (r.isErr()) { return Result.Err(r.err()!); }
+    string token = r.unwrap().member("token")?.text() ?? "";
+    this.page.store(TOKEN_KEY, token);
+    this.token = token;
+    this.device = r.unwrap().member("device");
+    this.authStatus = "pending-approval";
+    this.changed();
+    return Result.Ok();
+  }
+
+  void logout(this) {
+    this.page.unstore(TOKEN_KEY);
+    this.page.unstore(INSTANCE_KEY);
+    this.token = null;
+    this.device = null;
+    this.authStatus = "unauthenticated";
+    this.instances = JsonArray.create();
+    this.selectedInstanceId = null;
+    this.connect();
+    this.changed();
+  }
+
+  async void refreshInstances(this) {
+    if (this.token is null || this.authStatus != "authenticated") { return; }
+    Result<JsonValue, ApiError> r = await this.api.get("/instances", this.token);
+    if (r.isErr()) { return; }
+    this.instances = r.unwrap().member("instances")?.array() ?? JsonArray.create();
+    this.instancesLoaded = true;
+    this.redirect();
+    this.connect();
+    this.changed();
+  }
+
+  void selectInstance(this, string id) {
+    this.page.store(INSTANCE_KEY, id);
+    this.selectedInstanceId = id;
+    this.connect();
+    this.changed();
+  }
+
+  /** Without an approved instance chosen, the instance list is the only place to be (outside the join flow). */
+  void redirect(this) {
+    if (this.joinCode != "" || this.authStatus != "authenticated" || !this.instancesLoaded) { return; }
+    if (this.selectedInstanceId is null || !this.approved(this.selectedInstanceId!)) {
+      if (this.pageName != "instances") { this.go("instances", null); }
+    }
+  }
+
+  bool approved(this, string id) {
+    for (i32 i = 0; i < this.instances.len(); i++) {
+      JsonValue inst = this.instances.get(i);
+      JsonValue? at = inst.member("approvedAt");
+      if ((inst.member("id")?.text() ?? "") == id && at is not null && !at!.isNull()) { return true; }
+    }
+    return false;
+  }
+
+  string instanceName(this) {
+    if (this.selectedInstanceId is null) { return "…"; }
+    for (i32 i = 0; i < this.instances.len(); i++) {
+      if ((this.instances.get(i).member("id")?.text() ?? "") == this.selectedInstanceId!) {
+        return this.instances.get(i).member("nickname")?.text() ?? this.selectedInstanceId!;
+      }
+    }
+    return this.selectedInstanceId!;
+  }
+
+  // ── the connection ──
+
+  /** The connection to the chosen instance, opened or closed to match who is signed in and what is chosen. */
+  void connect(this) {
+    string want = this.authStatus == "authenticated" && this.selectedInstanceId is not null && this.token is not null
+      ? this.selectedInstanceId! + "\n" + this.token! : "";
+    if (want == this.connFor) { return; }
+    if (this.conn is not null) { this.conn!.close(); }
+    this.conn = null;
+    this.connFor = want;
+    this.state = null;
+    this.connectionStatus = "disconnected";
+    if (want == "") { return; }
+    App self = this;
+    this.conn = Conn.open(this.page, this.origin, this.wall, this.selectedInstanceId!, this.token!, ConnHandlers(
+      (string s) => { self.connectionStatus = s; self.changed(); },
+      (JsonValue st, i64 seq) => { self.state = st; self.wantZones(); self.changed(); },
+      (JsonValue c) => { self.latestComment = c; self.changed(); }));
+  }
+
+  /** Each recurrence's zone, fetched as its timers arrive. */
+  void wantZones(this) {
+    JsonArray ts = this.timers();
+    for (i32 i = 0; i < ts.len(); i++) {
+      string? z = ts.get(i).member("recurrence")?.member("timezone")?.text();
+      if (z is not null) { this.zones.want(z!); }
+    }
+  }
+
+  JsonArray timers(this) { return this.state?.member("timers")?.array() ?? JsonArray.create(); }
+
+  JsonValue? timer(this, string id) {
+    JsonArray ts = this.timers();
+    for (i32 i = 0; i < ts.len(); i++) { if ((ts.get(i).member("id")?.text() ?? "") == id) { return ts.get(i); } }
+    return null;
+  }
+
+  // ── what the reader does to the instance ──
+
+  /** `method` on the instance's `sub`-path: and, since it worked, the network is up — the socket reconnects now. */
+  async Result<JsonValue, ApiError> act(this, string method, string sub, JsonValue? body) {
+    if (this.selectedInstanceId is null || this.token is null) { return Result.Err(ApiError(0, "No instance selected")); }
+    Result<JsonValue, ApiError> r = await this.api.call(method, "/instances/\{this.selectedInstanceId!}" + sub, body, this.token);
+    if (r.isOk() && this.conn is not null) { this.conn!.reconnectNow(); }
+    return r;
+  }
+
+  async Result<JsonValue, ApiError> batch(this, JsonValue action) {
+    if (this.selectedInstanceId is null || this.token is null) { return Result.Err(ApiError(0, "No instance selected")); }
+    Result<JsonValue, ApiError> r = await this.api.batch(this.selectedInstanceId!, this.token!, action);
+    if (r.isOk() && this.conn is not null) { this.conn!.reconnectNow(); }
+    return r;
+  }
+
+  async Result<string, ApiError> addTimer(this, string name, f64 expiry, RecurrenceSpec? recurrence, string? description) {
+    Result<JsonValue, ApiError> r = await this.act("POST", "/timers", addTimerBody(name, expiry, recurrence, description));
+    if (r.isErr()) { return Result.Err(r.err()!); }
+    return Result.Ok(r.unwrap().member("timer")?.member("id")?.text() ?? "");
+  }
+
+  async Result<JsonValue, ApiError> renameTimer(this, string id, string name) {
+    return await this.act("PATCH", "/timers/\{id}/name", Obj.create().put("name", str(name)).done());
+  }
+
+  async Result<JsonValue, ApiError> updateExpiry(this, string id, f64 expiry) {
+    return await this.act("PATCH", "/timers/\{id}/expiry", Obj.create().put("expiry", num(expiry)).done());
+  }
+
+  async Result<JsonValue, ApiError> completeTimer(this, string id, string reason) {
+    return await this.act("POST", "/timers/\{id}/complete", Obj.create().put("closeReason", str(reason)).done());
+  }
+
+  async Result<JsonValue, ApiError> removeTimer(this, string id) { return await this.act("DELETE", "/timers/\{id}", null); }
+
+  async Result<JsonValue, ApiError> shush(this, f64 expiry) {
+    return await this.act("POST", "/shush", Obj.create().put("expiry", num(expiry)).done());
+  }
+
+  async Result<JsonValue, ApiError> clearShush(this) { return await this.act("DELETE", "/shush", null); }
+
+  async Result<JsonValue, ApiError> skipEvent(this, string id) { return await this.act("POST", "/events/\{id}/skip", null); }
+
+  async Result<JsonValue, ApiError> unskipEvent(this, string id) { return await this.act("DELETE", "/events/\{id}/skip", null); }
+
+  /**
+   * Completes a recurring timer, computing its next due date here — as autonag's client does, so a manual "+1d" and
+   * an automatic recurrence go through the same anchor rule. Without the timer's recurrence (or its zone, not yet
+   * arrived) the server computes it.
+   */
+  async Result<JsonValue, ApiError> recurTimer(this, string id, string reason) {
+    Obj action = Obj.create().put("type", str("recurTimer")).put("timerId", str(id)).put("closeReason", str(reason));
+    JsonValue? t = this.timer(id);
+    JsonValue? rec = t is null ? null : t!.member("recurrence");
+    if (rec is not null) {
+      Result<RecurrenceSpec, string> spec = recurrenceFrom(rec!);
+      if (spec.isOk()) {
+        TimeZone? z = this.zones.get(spec.unwrap().timezone);
+        if (z is not null) { action.put("newExpiry", num(nextRecurrenceExpiry(spec.unwrap(), this.wall() as~ i64, z!) as~ f64)); }
+      }
+    }
+    return await this.batch(action.done());
+  }
+
+  async Result<JsonValue, ApiError> setTimerAnchor(this, string id, string? anchorTime) {
+    return await this.batch(Obj.create().put("type", str("setTimerAnchor")).put("timerId", str(id))
+      .put("anchorTime", anchorTime is null ? JsonValue.Null : str(anchorTime!)).done());
+  }
+
+  async Result<JsonValue, ApiError> setDefaultAnchor(this, string anchorTime) {
+    return await this.batch(Obj.create().put("type", str("setDefaultAnchor")).put("anchorTime", str(anchorTime)).done());
+  }
+
+  async Result<JsonValue, ApiError> updateRecurrence(this, string id, RecurrenceSpec r) {
+    return await this.batch(Obj.create().put("type", str("updateRecurrence")).put("timerId", str(id)).put("recurrence", r.toJson()).done());
+  }
+
+  async Result<JsonValue, ApiError> removeRecurrence(this, string id) {
+    return await this.batch(Obj.create().put("type", str("removeRecurrence")).put("timerId", str(id)).done());
+  }
+
+  async Result<JsonValue, ApiError> updateDescription(this, string id, string description) {
+    return await this.batch(Obj.create().put("type", str("updateDescription")).put("timerId", str(id))
+      .put("description", str(description)).done());
+  }
+
+  // ── settings ──
+
+  void setLayoutMode(this, string mode) {
+    this.page.store(LAYOUT_KEY, mode);
+    this.layoutMode = mode;
+    this.changed();
+  }
+
+  void setColorSchemeMode(this, string mode) {
+    this.page.store(COLOR_SCHEME_KEY, mode);
+    this.colorSchemeMode = mode;
+    this.changed();
+  }
+
+  void toggleNotifications(this) {
+    this.notificationsDisabled = !this.notificationsDisabled;
+    if (this.notificationsDisabled) { this.page.store(NOTIF_DISABLED_KEY, "true"); } else { this.page.unstore(NOTIF_DISABLED_KEY); }
+    this.changed();
+  }
+}
+
+string layoutOf(string? stored) { return stored is not null && (stored! == "mobile" || stored! == "desktop") ? stored! : "auto"; }
+
+string schemeOf(string? stored) { return stored is not null && (stored! == "light" || stored! == "dark") ? stored! : "system"; }
+
+/** The value of `name` in an address's query, decoded as URLSearchParams decodes it (`+` a space), or "". */
+export string queryParam(string address, string name) {
+  i32 q = address.indexOf("?");
+  if (q < 0) { return ""; }
+  string rest = address.slice(q + 1, address.len());
+  i32 hash = rest.indexOf("#");
+  if (hash >= 0) { rest = rest.slice(0, hash); }
+  while (rest.len() > 0) {
+    i32 amp = rest.indexOf("&");
+    string pair = amp < 0 ? rest : rest.slice(0, amp);
+    rest = amp < 0 ? "" : rest.slice(amp + 1, rest.len());
+    i32 eq = pair.indexOf("=");
+    string k = eq < 0 ? pair : pair.slice(0, eq);
+    if (k == name) { return decode(eq < 0 ? "" : pair.slice(eq + 1, pair.len())); }
+  }
+  return "";
+}
+
+string decode(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[].filled(b.len(), 0);
+  i32 n = 0;
+  string hex = "0123456789abcdef";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '+') { out[n] = ' '; n++; continue; }
+    if (b[i] == '%' && i + 2 < b.len()) {
+      i32 hi = hexVal(b[i + 1]);
+      i32 lo = hexVal(b[i + 2]);
+      if (hi >= 0 && lo >= 0) { out[n] = (hi * 16 + lo) as! u8; n++; i += 2; continue; }
+    }
+    out[n] = b[i];
+    n++;
+  }
+  u8[] t = u8[].filled(n, 0);
+  t.copyFrom(out, 0, 0, n);
+  return string.fromBytes(t);
+}
+
+i32 hexVal(u8 c) {
+  if (c >= '0' && c <= '9') { return (c - '0') as i32; }
+  if (c >= 'a' && c <= 'f') { return (c - 'a') as i32 + 10; }
+  if (c >= 'A' && c <= 'F') { return (c - 'A') as i32 + 10; }
+  return -1;
+}

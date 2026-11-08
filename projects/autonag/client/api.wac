@@ -1,0 +1,57 @@
+// The server's API from the page: autonag's client/src/api/client.ts and shared/apiClient.ts, over `wac.origin` —
+// the page's own origin, where the wac server serves both the page and the API.
+
+import { Result } from "core";
+import { json.JsonValue, json.JsonArray, json.parse, json.stringify } from "wac";
+import { Origin, Reply } from "web";
+import { Obj, num, str } from "../src/model/jsonkit.wac";
+import { RecurrenceSpec } from "../src/model/events.wac";
+
+/** autonag's ApiError: the status, and the server's `error`, or `HTTP <status>` when it said none. */
+export struct ApiError {
+  i32 status;
+  string message;
+}
+
+export struct Api {
+  Origin origin;
+
+  /** `method` on `path` with `body`, as `token`'s device: the answer's JSON, or why not. */
+  async Result<JsonValue, ApiError> call(this, string method, string path, JsonValue? body, string? token) {
+    string[] headers = ["Content-Type: application/json"];
+    if (token is not null && token!.len() > 0) { headers = ["Content-Type: application/json", "Authorization: Bearer \{token!}"]; }
+    u8[] payload = body is null ? u8[]() : stringify(body!);
+    Result<Reply, string> got = await this.origin.request(method, path, headers, payload);
+    if (got.isErr()) { return Result.Err(ApiError(0, got.err()!)); }
+    Reply r = got.unwrap();
+    JsonValue? parsed = parse(r.body).ok();
+    if (r.status < 200 || r.status > 299) {
+      string message = "HTTP \{r.status}";
+      string? said = parsed is null ? null : parsed!.member("error")?.text();
+      if (said is not null && said!.len() > 0) { message = said!; }
+      return Result.Err(ApiError(r.status, message));
+    }
+    if (parsed is null) { return Result.Err(ApiError(r.status, "the answer is not JSON")); }
+    return Result.Ok(parsed!);
+  }
+
+  async Result<JsonValue, ApiError> get(this, string path, string? token) { return await this.call("GET", path, null, token); }
+
+  async Result<JsonValue, ApiError> registerDevice(this, string nickname) {
+    return await this.call("POST", "/devices/request", Obj.create().put("nickname", str(nickname)).done(), null);
+  }
+
+  async Result<JsonValue, ApiError> batch(this, string instanceId, string token, JsonValue action) {
+    JsonArray a = JsonArray.create();
+    a.push(action);
+    return await this.call("POST", "/instances/\{instanceId}/actions", Obj.create().put("actions", JsonValue.Array(a)).done(), token);
+  }
+}
+
+/** The body of addTimer: name, expiry, then a description and a recurrence when there are. */
+export JsonValue addTimerBody(string name, f64 expiry, RecurrenceSpec? recurrence, string? description) {
+  Obj o = Obj.create().put("name", str(name)).put("expiry", num(expiry));
+  if (description is not null && description!.len() > 0) { o.put("description", str(description!)); }
+  if (recurrence is not null) { o.put("recurrence", recurrence!.toJson()); }
+  return o.done();
+}

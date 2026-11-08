@@ -1,0 +1,100 @@
+// A day's results — passed, failed, other, and deferred — with the day before and after a tap away: autonag's
+// client/src/pages/DailyResults.tsx.
+
+import { Result, Vec } from "core";
+import { json.JsonValue, json.JsonArray } from "wac";
+import { ElementEvent, Node, Ui, html.button, html.div, html.h2, html.span } from "web";
+import { App } from "./store.wac";
+import { ApiError } from "./api.wac";
+import { number, text, urgStyle, nothing } from "./app.wac";
+import { localeString, startOfDay, timeOfDay, weekday, shortDate } from "./fmt.wac";
+import { TimeZone } from "../src/time/tz.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+static f64 DAY_MS = 86400000.0;
+
+string shortId(string id) { return id.len() > 8 ? id.slice(0, 8) : id; }
+
+f64 round(f64 x) { return (x + 0.5).floor(); }
+
+string dayLabel(f64 dayStart, f64 now, TimeZone tz) {
+  f64 diff = round((dayStart - startOfDay(now, tz)) / DAY_MS);
+  if (diff == 0.0) { return "Today"; }
+  if (diff == -1.0) { return "Yesterday"; }
+  if (diff == 1.0) { return "Tomorrow"; }
+  return weekday(dayStart, tz) + ", " + shortDate(dayStart, tz);
+}
+
+string timerName(JsonValue e) {
+  JsonValue? n = e.member("name");
+  return n is null || n!.isNull() ? "timer " + shortId(text(e, "timerId")) : n!.text() ?? "";
+}
+
+export Node DailyResults(Ui ui, App app) {
+  TimeZone tz = app.zone();
+  auto dayStart = ui.state(startOfDay(app.wall(), tz));
+  auto loading = ui.state(true);
+  auto error = ui.state("");
+  auto result = ui.state<JsonValue>(JsonValue.Null);
+  f64 day = dayStart.get();
+  ui.effect("\{jsNumber(day)}|\{app.selectedInstanceId ?? ""}", () => {
+    loading.set(true);
+    error.set("");
+    loadDay(app, day, (JsonValue? r) => {
+      if (r is null) { error.set("Failed to load results."); } else { result.set(r!); }
+      loading.set(false);
+    });
+    return () => { };
+  });
+  string label = dayLabel(day, app.wall(), tz);
+  JsonValue r = result.get();
+  JsonArray passed = r.member("passed")?.array() ?? JsonArray.create();
+  JsonArray failed = r.member("failed")?.array() ?? JsonArray.create();
+  JsonArray other = r.member("other")?.array() ?? JsonArray.create();
+  JsonArray deferred = r.member("deferred")?.array() ?? JsonArray.create();
+  bool empty = passed.len() + failed.len() + other.len() + deferred.len() == 0;
+  Vec<Node> parts = Vec.create();
+  section(parts, "Passed", passed, "green", tz, false);
+  section(parts, "Failed", failed, "red", tz, false);
+  section(parts, "Other", other, "blue", tz, false);
+  section(parts, "Deferred", deferred, "yellow", tz, true);
+  return <div class="ev-page">
+    <div class="ev-header" style="gap: 0.5rem">
+      <button class="back-btn" onclick={(ElementEvent e) => { app.back(); }}>←</button>
+      <button class="nav-btn" onclick={(ElementEvent e) => { dayStart.set(day - DAY_MS); }}>‹</button>
+      <div class="title-block">
+        <h2 class="dr-title">{label}</h2>
+        {label != "Today" ? <button class="today-btn" onclick={(ElementEvent e) => { dayStart.set(startOfDay(app.wall(), tz)); }}>Jump to today</button> : nothing()}
+      </div>
+      <button class="nav-btn" onclick={(ElementEvent e) => { dayStart.set(day + DAY_MS); }}>›</button>
+    </div>
+    <div class="list">
+      {loading.get() ? <div class="empty-msg">Loading…</div>
+        : error.get() != "" ? <div class="empty-msg">{error.get()}</div>
+        : empty ? <div class="empty-msg">Nothing happened this day.</div>
+        : <div>{parts.toArray()}</div>}
+    </div>
+  </div>;
+}
+
+void section(Vec<Node> out, string title, JsonArray entries, string color, TimeZone tz, bool deferred) {
+  if (entries.len() == 0) { return; }
+  out.push(<div class="segment-header" key={title}>{title} <span class="count-badge">{"\{entries.len()}"}</span></div>);
+  for (i32 i = 0; i < entries.len(); i++) {
+    JsonValue e = entries.get(i);
+    out.push(<div class="timer-row urg" style={urgStyle(color) + " cursor: default"} key={title + text(e, "timerId") + jsNumber(number(e, "occurredAt"))}>
+      <div class="name-col">
+        <div class="timer-name">{timerName(e)}</div>
+        {deferred ? <span/> : <div class="timer-description">{text(e, "closeReason")}</div>}
+      </div>
+      <div style="flex-shrink: 0">
+        <div class="time-left">{deferred ? "→ " + localeString(number(e, "newExpiry"), tz) : timeOfDay(number(e, "occurredAt"), tz)}</div>
+      </div>
+    </div>);
+  }
+}
+
+async void loadDay(App app, f64 day, fn<void(JsonValue?)> done) {
+  Result<JsonValue, ApiError> r = await app.act("GET", "/daily-results?from=\{jsNumber(day)}&to=\{jsNumber(day + DAY_MS)}", null);
+  done(r.isOk() ? r.unwrap() : null);
+}

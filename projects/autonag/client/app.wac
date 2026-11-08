@@ -1,0 +1,866 @@
+// autonag's web client, in wac: client/src/App.tsx and its pages, drawn with wac-web's components.
+//
+//     wac run --allow-read --allow-write --allow-run tools/build_client.wac client/app.wac dist/client --title "Autonag 2"
+//
+// The wac server serves the page it builds at `/`, beside the API — the page's own origin, which is all `wac.origin`
+// reaches. The screens keep autonag's structure, wording and look; `client/style.wac` holds the look.
+
+import { Result, Ticket, Vec } from "core";
+import { json.JsonValue, json.JsonArray } from "wac";
+import { Element, ElementEvent, Listen, Node, Page, Ref, Ui, html.a, html.b, html.br, html.button, html.div, html.form, html.h1, html.h2,
+         html.img, html.input, html.label, html.p, html.span, html.strong, html.style, html.textarea } from "web";
+import { App } from "./store.wac";
+import { ApiError } from "./api.wac";
+import { CSS } from "./style.wac";
+import { MASCOT } from "./mascot.wac";
+import { formatDuration, formatCountdown, formatDueAt, formatParsedTime, parseTimeInput, startOfDay } from "./fmt.wac";
+import { TimerView } from "./view.wac";
+import { EventHistory } from "./history.wac";
+import { DailyResults } from "./results.wac";
+import { JoinInstance } from "./join.wac";
+import { QrCode } from "./qr.wac";
+import { calculateColor, resolveColor } from "../src/model/color.wac";
+import { RecurrenceSpec } from "../src/model/events.wac";
+import { TimeZone } from "../src/time/tz.wac";
+import { DEFAULT_ANCHOR_TIME, LocalDate, localDateParts, localToUtc } from "../src/time/anchor.wac";
+import { Obj, str } from "../src/model/jsonkit.wac";
+import { AnchorSpec, resolveAnchor } from "../src/time/duration.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+// ── small shared pieces ──
+
+/** The style attribute an urgency colour needs: both schemes' colours, which `.urg` chooses between. */
+export string urgStyle(string color) { return "--u-l: " + resolveColor(color, "light") + "; --u-d: " + resolveColor(color, "dark") + ";"; }
+
+/** Nothing at all, where a part is absent: an element left in its place would still count in a flex container's gaps. */
+export Node nothing() { return Node.Fragment(Node[]()); }
+
+/** Focuses the element `r` names once it is drawn, as React's `autoFocus` does. */
+export void focusWhenDrawn(Ui ui, Ref r, string dep) {
+  ui.effect(dep, () => {
+    Element? el = r.element();
+    if (el is not null) { el!.focus(); }
+    return () => { };
+  });
+}
+
+/** "pass" → "Pass". */
+export string capitalised(string s) {
+  if (s.len() == 0) { return s; }
+  u8[] b = s.toBytes();
+  if (b[0] >= 'a' && b[0] <= 'z') { b[0] = b[0] - 32; }
+  return string.fromBytes(b);
+}
+
+export string text(JsonValue? v, string key) { return v?.member(key)?.text() ?? ""; }
+export f64 number(JsonValue? v, string key) { return v?.member(key)?.number() ?? 0.0; }
+
+/** Tapping on what is behind a sheet closes it; tapping the sheet does not. */
+export bool outside(ElementEvent e, Element overlay) { return e.target.id == overlay.id; }
+
+static string[] SUGGESTIONS = ["Clean up", "Exercise", "Laundry", "Go to bed", "Cook dinner"];
+static string[] PRESET_REASONS = ["pass", "fail", "dismissed"];
+static string[] DUE_CHIPS = ["Today", "Tomorrow", "20m", "1h", "3h", "1d", "1w", "1mo"];
+static i32 LONG_PRESS_MS = 500;
+static f64 SHUSH_TAP_MS = 3600000.0;
+static string SHUSH_TAP_LABEL = "1 hour";
+static string[] SHUSH_LABELS = ["15 minutes", "30 minutes", "1 hour", "1.5 hours", "2 hours", "3 hours"];
+static f64[] SHUSH_MS = [900000.0, 1800000.0, 3600000.0, 5400000.0, 7200000.0, 10800000.0];
+static string NEW_ISSUE_URL = "https://github.com/voltrevo/autonag/issues/new";
+
+// ── the root ──
+
+/** The app: who is signed in decides the screen; then the layout, which is a phone's or a desktop's. */
+Node Root(Ui ui, App app, fn<void()>[] rerender) {
+  auto tick = ui.state(0);
+  rerender[0] = () => { tick.set(tick.get() + 1); };
+  auto width = ui.state(0.0);
+  Ref root = ui.ref();
+  ui.effect("", () => {
+    Element? el = root.element();
+    if (el is not null) {
+      el!.on("resize", Listen.none(), (ElementEvent e) => {
+        f64 scale = parseNumber(e.value);
+        width.set(scale > 0.0 ? (e.x as f64) / scale : e.x as f64);
+      });
+    }
+    // Any tap or key: from now on the page may play sound.
+    if (el is not null) {
+      el!.on("pointerdown", Listen.none(), (ElementEvent e) => { if (!app.interacted) { app.interacted = true; app.changed(); } });
+    }
+    return () => { };
+  });
+  bool desktop = app.layoutMode == "desktop" || (app.layoutMode == "auto" && width.get() >= 900.0);
+  string scheme = app.colorSchemeMode == "system" ? "" : app.colorSchemeMode;
+  return <div class={scheme == "" ? "app" : "app scheme-" + scheme} ref={root}>
+    <style>{CSS}</style>
+    <Screen app={app} desktop={desktop}/>
+  </div>;
+}
+
+f64 parseNumber(string s) {
+  f64 v = 0.0;
+  f64 frac = 0.0;
+  bool point = false;
+  for (u8 c in s.toBytes()) {
+    if (c == '.') { point = true; continue; }
+    if (c < '0' || c > '9') { break; }
+    if (point) { frac = frac == 0.0 ? 0.1 : frac / 10.0; v = v + ((c - '0') as f64) * frac; }
+    else { v = v * 10.0 + ((c - '0') as f64); }
+  }
+  return v;
+}
+
+Node Screen(Ui ui, App app, bool desktop) {
+  if (app.joinCode != "" && app.authStatus != "unknown") { return <JoinInstance app={app} instanceId={app.joinCode}/>; }
+  if (app.authStatus == "unknown") { return <div class="centered">Loading…</div>; }
+  if (app.authStatus == "unauthenticated") { return <Login app={app}/>; }
+  if (app.authStatus == "pending-approval") {
+    return <div class="pending">
+      <div style="font-size: 1.5rem">⏳</div>
+      <h2 style="margin: 0">Waiting for approval</h2>
+      <p style="color: var(--text-muted); margin: 0">Your device registration is pending admin approval. Check back soon.</p>
+    </div>;
+  }
+  string p = app.pageName;
+  if (desktop && p != "instances") {
+    Node right = p == "add-timer" ? <AddTimer app={app}/>
+      : p == "view-timer" ? <TimerView app={app} desktop={true}/>
+      : p == "events" ? <EventHistory app={app}/>
+      : p == "daily-results" ? <DailyResults app={app}/>
+      : p == "alarm" ? <Alarm app={app}/>
+      : <div class="right-placeholder">
+          <div style="font-size: 2rem">←</div>
+          <div>Select a timer to view details</div>
+          <div style="font-size: 0.85rem">or press <strong>+</strong> to add one</div>
+        </div>;
+    return <div class="desktop-shell">
+      <div class="left-panel"><TimerList app={app} desktop={true}/></div>
+      <div class="right-panel">{right}</div>
+    </div>;
+  }
+  return p == "instances" ? <InstanceSelect app={app}/>
+    : p == "add-timer" ? <AddTimer app={app}/>
+    : p == "view-timer" ? <TimerView app={app} desktop={false}/>
+    : p == "events" ? <EventHistory app={app}/>
+    : p == "daily-results" ? <DailyResults app={app}/>
+    : p == "alarm" ? <Alarm app={app}/>
+    : <TimerList app={app} desktop={false}/>;
+}
+
+// ── signing in ──
+
+Node Login(Ui ui, App app) {
+  auto nickname = ui.state("");
+  auto loading = ui.state(false);
+  auto error = ui.state("");
+  Ref field = ui.ref();
+  focusWhenDrawn(ui, field, "");
+  fn<void()> submit = () => {
+    string name = trim(nickname.get());
+    if (name == "" || loading.get()) { return; }
+    loading.set(true);
+    error.set("");
+    registering(app, name, (string err) => {
+      loading.set(false);
+      if (err != "") { error.set(err); }
+    });
+  };
+  string name = trim(nickname.get());
+  return <div class="login">
+    <div class="login-card">
+      <img class="login-logo" src={MASCOT} alt="Autonag"/>
+      <h1 class="login-title">Autonag</h1>
+      <p class="login-subtitle">Let this parrot nag you</p>
+      <form class="login-form" prevent="*" onsubmit={(ElementEvent e) => { submit(); }}>
+        <input class="login-input" type="text" placeholder="Device nickname (e.g. my-phone)" value={nickname.get()} ref={field}
+               oninput={(ElementEvent e) => { nickname.set(e.value); }}/>
+        {error.get() != "" ? <p class="login-error">{error.get()}</p> : nothing()}
+        <button class="login-button" type="submit" disabled={loading.get() || name == "" ? "true" : null}>
+          {loading.get() ? "Registering…" : "Register"}
+        </button>
+      </form>
+      <p class="login-note">An admin must approve your device before you can access instances.</p>
+    </div>
+  </div>;
+}
+
+async void registering(App app, string name, fn<void(string)> done) {
+  Result<void, ApiError> r = await app.register(name);
+  done(r.isErr() ? r.err()!.message : "");
+}
+
+/** JavaScript's trim, for what is typed. */
+export string trim(string s) {
+  u8[] b = s.toBytes();
+  i32 a = 0;
+  i32 z = b.len();
+  while (a < z && (b[a] == ' ' || b[a] == '\t' || b[a] == '\n' || b[a] == '\r')) { a++; }
+  while (z > a && (b[z - 1] == ' ' || b[z - 1] == '\t' || b[z - 1] == '\n' || b[z - 1] == '\r')) { z--; }
+  return s.slice(a, z);
+}
+
+// ── instances ──
+
+Node InstanceSelect(Ui ui, App app) {
+  auto newName = ui.state("");
+  auto requesting = ui.state(false);
+  auto requestedName = ui.state("");
+  auto joinId = ui.state("");
+  auto joining = ui.state(false);
+  auto joinResult = ui.state("");
+  Vec<Node> cards = Vec.create();
+  for (i32 i = 0; i < app.instances.len(); i++) {
+    JsonValue inst = app.instances.get(i);
+    JsonValue? at = inst.member("approvedAt");
+    if (at is null || at!.isNull()) { continue; }
+    string id = text(inst, "id");
+    cards.push(<button class="instance-card" key={id} onclick={(ElementEvent e) => { app.selectInstance(id); app.go("timers", null); }}>
+      <div class="instance-name">{text(inst, "nickname")}</div>
+      <div class="instance-status">{id}</div>
+    </button>);
+  }
+  fn<void()> request = () => {
+    string name = trim(newName.get());
+    if (name == "" || app.token is null) { return; }
+    requesting.set(true);
+    requestingInstance(app, name, () => {
+      requestedName.set(name);
+      newName.set("");
+      requesting.set(false);
+    });
+  };
+  fn<void()> join = () => {
+    string id = trim(joinId.get());
+    if (id == "" || app.token is null) { return; }
+    joining.set(true);
+    joinResult.set("");
+    requestingAccess(app, id, (string said) => {
+      joinResult.set(said);
+      joinId.set("");
+      joining.set(false);
+    });
+  };
+  return <div class="instances">
+    <div style="display: flex; justify-content: space-between; align-items: center">
+      <h1 class="instances-title">Instances</h1>
+      <button class="logout" onclick={(ElementEvent e) => { app.logout(); }}>Sign out ({text(app.device, "nickname")})</button>
+    </div>
+    {cards.len() > 0 ? <div class="instance-list">{cards.toArray()}</div>
+                     : <p class="pending-note">No approved instances yet. Request one below and ask an admin to approve it.</p>}
+    <div class="divider"/>
+    <div>
+      <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.75rem">Join existing instance</div>
+      <form class="request-row" prevent="*" onsubmit={(ElementEvent e) => { join(); }}>
+        <input class="request-input" type="text" placeholder="Instance ID" value={joinId.get()} oninput={(ElementEvent e) => { joinId.set(e.value); }}/>
+        <button class="blue-button" type="submit" disabled={joining.get() || trim(joinId.get()) == "" ? "true" : null}>{joining.get() ? "…" : "Request"}</button>
+      </form>
+      {joinResult.get() != "" ? <p class="pending-note" style="margin-top: 0.5rem">{joinResult.get()}</p> : nothing()}
+    </div>
+    <div class="divider"/>
+    <div>
+      <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.75rem">Request new instance</div>
+      <form class="request-row" prevent="*" onsubmit={(ElementEvent e) => { request(); }}>
+        <input class="request-input" type="text" placeholder="Instance name" value={newName.get()} oninput={(ElementEvent e) => { newName.set(e.value); }}/>
+        <button class="blue-button" type="submit" disabled={requesting.get() || trim(newName.get()) == "" ? "true" : null}>{requesting.get() ? "…" : "Request"}</button>
+      </form>
+      {requestedName.get() != "" ? <p class="pending-note" style="margin-top: 0.5rem">Requested "{requestedName.get()}". Waiting for admin approval.</p> : nothing()}
+    </div>
+  </div>;
+}
+
+async void requestingInstance(App app, string name, fn<void()> done) {
+  await app.api.call("POST", "/instances/request", Obj.create().put("nickname", str(name)).done(), app.token);
+  await app.refreshInstances();
+  done();
+}
+
+async void requestingAccess(App app, string id, fn<void(string)> done) {
+  Result<JsonValue, ApiError> r = await app.api.call("POST", "/instances/\{id}/access/request", Obj.create().done(), app.token);
+  if (r.isErr()) { done("Instance not found or unavailable."); return; }
+  if (text(r.unwrap(), "status") == "already_member") {
+    await app.refreshInstances();
+    done("You already have access to this instance.");
+    return;
+  }
+  done("Access requested. Waiting for admin approval.");
+}
+
+// ── the timer list ──
+
+/** Due, today, tomorrow, later: which group a timer's expiry puts it in, by the reader's calendar. */
+string segmentOf(f64 expiry, f64 now, TimeZone tz) {
+  if (expiry <= now) { return "due"; }
+  // new Date(now).setHours(23, 59, 59, 999): today's last millisecond, locally; tomorrow's is a day of milliseconds on.
+  LocalDate d = localDateParts(now as~ i64, tz);
+  f64 endToday = (localToUtc(d.year, d.month, d.day, 23, 59, tz) + 59999) as~ f64;
+  if (expiry <= endToday) { return "today"; }
+  if (expiry <= endToday + 86400000.0) { return "tomorrow"; }
+  return "later";
+}
+
+Node TimerList(Ui ui, App app, bool desktop) {
+  auto now = ui.state(app.wall());
+  ui.every(1000, () => { now.set(app.wall()); });
+  auto searchText = ui.state("");
+  auto showSearch = ui.state(false);
+  auto showMenu = ui.state(false);
+  auto showShush = ui.state(false);
+  auto showShare = ui.state(false);
+  auto copied = ui.state(false);
+  auto press = ui.state(0);
+  auto pressFired = ui.state(false);
+  Ref list = ui.ref();
+  Ref add = ui.ref();
+  Ref search = ui.ref();
+  focusWhenDrawn(ui, search, showSearch.get() ? "open" : "");
+  // Names the markup cannot carry — they are not among a tag's attributes — set on the elements once drawn.
+  ui.effect("", () => {
+    Element? l = list.element();
+    if (l is not null) { l!.attr("data-testid", "timer-list-scroll"); }
+    Element? a = add.element();
+    if (a is not null) { a!.attr("aria-label", "Add timer"); }
+    return () => { };
+  });
+  // Back where the reader left it, once the timers are drawn — as autonag restores it, from the last place a scroll
+  // was heard at, kept across the list being taken off the page while another screen is open.
+  ui.effect(app.state is null ? "" : "drawn", () => {
+    Element? l = list.element();
+    if (app.state is not null && l is not null) { l!.prop("scrollTop", jsNumber(app.savedScrollTop)); }
+    return () => { };
+  });
+  Ref menuOverlay = ui.ref();
+  Ref shushOverlay = ui.ref();
+  Ref shareOverlay = ui.ref();
+  f64 t = now.get();
+  TimeZone tz = app.zone();
+
+  JsonArray all = app.timers();
+  // Filtered while the search box is open; sorted by expiry, keeping order among equals as Array.sort does.
+  Vec<JsonValue> sorted = Vec.create();
+  string q = lower(searchText.get());
+  for (i32 i = 0; i < all.len(); i++) {
+    JsonValue tm = all.get(i);
+    if (showSearch.get() && q != "" && lower(text(tm, "name")).indexOf(q) < 0) { continue; }
+    f64 e = number(tm, "currentExpiry");
+    i32 k = sorted.len();
+    sorted.push(tm);
+    while (k > 0 && number(sorted.get(k - 1), "currentExpiry") > e) { sorted.set(k, sorted.get(k - 1)); k--; }
+    sorted.set(k, tm);
+  }
+  JsonValue? shush = app.state?.member("shush");
+  f64 shushExpiry = shush is null || shush!.isNull() ? 0.0 : number(shush, "expiry");
+  bool shushActive = shushExpiry > t;
+  string shushRemaining = shushActive ? formatDuration(shushExpiry - t) : "";
+  string name = app.instanceName();
+
+  Vec<Node> groups = Vec.create();
+  string[] segs = ["due", "today", "tomorrow", "later"];
+  string[] labels = ["Due", "Today", "Tomorrow", "Later"];
+  for (i32 s = 0; s < 4; s++) {
+    Vec<Node> rows = Vec.create();
+    for (i32 i = 0; i < sorted.len(); i++) {
+      JsonValue tm = sorted.get(i);
+      if (segmentOf(number(tm, "currentExpiry"), t, tz) != segs[s]) { continue; }
+      string id = text(tm, "id");
+      bool recurring = tm.member("recurrence") is not null && !tm.member("recurrence")!.isNull();
+      rows.push(<TimerItem key={id} app={app} timer={tm} now={t}
+        onComplete={(string reason) => { if (recurring) { app.recurTimer(id, reason); } else { app.completeTimer(id, reason); } }}
+        onRemove={recurring ? null : () => { app.removeTimer(id); }}
+        onClick={() => {
+          if (desktop && app.pageName == "view-timer" && (app.selectedTimerId ?? "") == id) { app.go("timers", null); return; }
+          app.go("view-timer", id);
+        }}/>);
+    }
+    if (rows.len() == 0) { continue; }
+    groups.push(<div key={segs[s]}>
+      <div class="segment-header"><span>{labels[s]}</span><span class="count-badge">{"\{rows.len()}"}</span></div>
+      {rows.toArray()}
+    </div>);
+  }
+
+  Node listBody = sorted.len() == 0
+    ? <div class="empty-msg">{app.connectionStatus != "connected" ? <span>Connecting…</span>
+        : all.len() == 0 ? <span>Use <b>+</b> to add your first timer ^</span> : <span>No matching timers.</span>}</div>
+    : <div>{groups.toArray()}</div>;
+
+  fn<void()> openShushSheet = () => { press.set(press.get() + 1); pressFired.set(true); showShush.set(true); };
+  string joinUrl = app.selectedInstanceId is null ? "" : app.origin.address + "?join=" + app.selectedInstanceId!;
+
+  return <div class={desktop ? "list-page desktop" : "list-page"}>
+    <div class="big-buttons">
+      <button class="big-btn menu-btn" onclick={(ElementEvent e) => { showMenu.set(true); }}>
+        <img src={MASCOT} alt="mascot" style="height: 52px; padding: 4px"/>
+        <div style="display: flex; align-items: center; gap: 4px; font-size: 0.75rem; color: #444">
+          <div class={"status-dot " + app.connectionStatus}/>
+          <span>{name}</span>
+        </div>
+      </button>
+      <button class={shushActive ? "big-btn shh-btn active" : "big-btn shh-btn"} prevent="contextmenu"
+              title={shushActive ? "Snoozed \{shushRemaining} — tap to clear, long press for options" : "Tap to snooze 1 hour, long press for options"}
+              onpointerdown={(ElementEvent e) => {
+                pressFired.set(false);
+                i32 mine = press.get() + 1;
+                press.set(mine);
+                longPress(app.page, () => press.get() == mine, () => { pressFired.set(true); showShush.set(true); });
+              }}
+              onpointerup={(ElementEvent e) => { press.set(press.get() + 1); }}
+              onpointercancel={(ElementEvent e) => { press.set(press.get() + 1); }}
+              oncontextmenu={(ElementEvent e) => { openShushSheet(); }}
+              onclick={(ElementEvent e) => {
+                if (pressFired.get()) { pressFired.set(false); return; }
+                if (shushActive) { app.clearShush(); return; }
+                app.shush(app.wall() + SHUSH_TAP_MS);
+              }}>
+        <div>Shh</div>
+        {shushActive ? <div style="font-size: 0.75rem">{shushRemaining}</div> : nothing()}
+      </button>
+      <button class="big-btn" title="Search" onclick={(ElementEvent e) => {
+        if (showSearch.get()) { searchText.set(""); }
+        showSearch.set(!showSearch.get());
+      }}>
+        <"svg" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <"circle" cx="45.8%" cy="45.8%" r="33.3%"/>
+          <"line" x1="87.5%" y1="87.5%" x2="69.4%" y2="69.4%"/>
+        </"svg">
+      </button>
+      <button class="big-btn add-btn" title="Add timer" ref={add} onclick={(ElementEvent e) => { app.go("add-timer", null); }}>+</button>
+    </div>
+    {showSearch.get() ? <input class="search-bar" ref={search} placeholder="Search timers…" value={searchText.get()}
+                                oninput={(ElementEvent e) => { searchText.set(e.value); }}/> : nothing()}
+    <div class="list" ref={list} onscroll={(ElementEvent e) => { app.savedScrollTop = parseNumber(e.value); }}>{listBody}</div>
+
+    {showMenu.get() ? <div class="overlay" ref={menuOverlay} onclick={(ElementEvent e) => { if (e.target.id == menuOverlay.element()!.id) { showMenu.set(false); } }}>
+      <div class="sheet">
+        <div class="sheet-title">Menu</div>
+        <button class="sheet-btn" onclick={(ElementEvent e) => { showMenu.set(false); app.go("instances", null); }}>Switch instance</button>
+        <button class="sheet-btn" onclick={(ElementEvent e) => { showMenu.set(false); showShare.set(true); }}>Share "{name}"</button>
+        <button class="sheet-btn" onclick={(ElementEvent e) => { showMenu.set(false); app.go("events", null); }}>Event history</button>
+        <button class="sheet-btn" onclick={(ElementEvent e) => { showMenu.set(false); app.go("daily-results", null); }}>Daily results</button>
+        <button class="sheet-btn" onclick={(ElementEvent e) => { showMenu.set(false); app.go("alarm", null); }}>Alarm view</button>
+        <div class="sheet-rule"/>
+        <div class="sheet-subtitle">Anchor time</div>
+        <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.4rem">Whole days, weeks and months ("1d", "1w", "1mo") come due at this time.</div>
+        <input class="time-input" type="time" value={app.state?.member("defaultAnchorTime")?.text() ?? DEFAULT_ANCHOR_TIME}
+               onchange={(ElementEvent e) => { if (e.value != "") { app.setDefaultAnchor(e.value); } }}/>
+        <div class="sheet-rule"/>
+        <div class="sheet-subtitle">Layout</div>
+        <div style="display: flex; gap: 0.5rem">{choices(["mobile", "auto", "desktop"], app.layoutMode, (string m) => { app.setLayoutMode(m); })}</div>
+        <div class="sheet-subtitle">Theme</div>
+        <div style="display: flex; gap: 0.5rem">{choices(["light", "system", "dark"], app.colorSchemeMode, (string m) => { app.setColorSchemeMode(m); })}</div>
+        <div class="sheet-subtitle">Notifications</div>
+        <div style="font-size: 0.9rem; color: var(--text-muted)">Not supported in this browser.</div>
+        <div class="sheet-rule"/>
+        <a class="sheet-btn" href={NEW_ISSUE_URL} target="_blank" rel="noopener noreferrer" style="text-decoration: none"
+           onclick={(ElementEvent e) => { showMenu.set(false); }}>Report an issue</a>
+        <button class="sheet-btn muted" onclick={(ElementEvent e) => { showMenu.set(false); }}>Cancel</button>
+      </div>
+    </div> : nothing()}
+
+    {showShush.get() ? <div class="overlay" ref={shushOverlay} onclick={(ElementEvent e) => { if (e.target.id == shushOverlay.element()!.id) { showShush.set(false); } }}>
+      <div class="sheet">
+        <div class="sheet-title">Snooze alarms</div>
+        {shushChoices(app, () => { showShush.set(false); })}
+        {shushActive ? <button class="sheet-btn danger" onclick={(ElementEvent e) => { app.clearShush(); showShush.set(false); }}>Clear snooze ({shushRemaining} remaining)</button> : nothing()}
+        <button class="sheet-btn muted" onclick={(ElementEvent e) => { showShush.set(false); }}>Cancel</button>
+      </div>
+    </div> : nothing()}
+
+    {showShare.get() && joinUrl != "" ? <div class="overlay" ref={shareOverlay} onclick={(ElementEvent e) => { if (e.target.id == shareOverlay.element()!.id) { showShare.set(false); } }}>
+      <div class="sheet">
+        <div class="sheet-title">Share "{name}"</div>
+        <div style="display: flex; justify-content: center; padding: 0.5rem 0"><QrCode value={joinUrl} size={200}/></div>
+        <div style="font-family: monospace; font-size: 0.7rem; word-break: break-all; color: var(--text-muted); text-align: center; user-select: all">{joinUrl}</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); text-align: center">Share this link — an admin must approve the access request</div>
+        <button class="sheet-btn muted" onclick={(ElementEvent e) => { showShare.set(false); }}>Done</button>
+      </div>
+    </div> : nothing()}
+  </div>;
+}
+
+async void longPress(Page page, fn<bool()> still, fn<void()> fire) {
+  await page.sleep(LONG_PRESS_MS);
+  if (still()) { fire(); }
+}
+
+Node[] choices(string[] options, string chosen, fn<void(string)> pick) {
+  Node[] out = Node[].filled(options.len(), Node.Text(""));
+  for (i32 i = 0; i < options.len(); i++) {
+    string m = options[i];
+    out[i] = <button key={m} class={m == chosen ? "sheet-btn choice chosen" : "sheet-btn choice"} onclick={(ElementEvent e) => { pick(m); }}>{capitalised(m)}</button>;
+  }
+  return out;
+}
+
+Node[] shushChoices(App app, fn<void()> done) {
+  Node[] out = Node[].filled(SHUSH_LABELS.len(), Node.Text(""));
+  for (i32 i = 0; i < SHUSH_LABELS.len(); i++) {
+    f64 ms = SHUSH_MS[i];
+    out[i] = <button key={SHUSH_LABELS[i]} class="sheet-btn" onclick={(ElementEvent e) => { shushFor(app, ms, done); }}>{SHUSH_LABELS[i]}</button>;
+  }
+  return out;
+}
+
+async void shushFor(App app, f64 ms, fn<void()> done) {
+  await app.shush(app.wall() + ms);
+  done();
+}
+
+export string lower(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
+
+/** One timer's row: its urgency colour, how long until it is due, and — on a right-click — the sheet that closes it. */
+Node TimerItem(Ui ui, App app, JsonValue timer, f64 now, fn<void(string)> onComplete, fn<void()>? onRemove, fn<void()> onClick) {
+  auto showClose = ui.state(false);
+  auto customReason = ui.state("");
+  Ref overlay = ui.ref();
+  f64 remaining = number(timer, "currentExpiry") - now;
+  string color = calculateColor(remaining).color;
+  bool overdue = remaining < 0.0;
+  string delay = overdue && -remaining >= 3600000.0 ? formatDuration(remaining) + " late" : "";
+  string desc = text(timer, "description");
+  string tname = text(timer, "name");
+  fn<void(string)> close = (string reason) => {
+    onComplete(reason);
+    showClose.set(false);
+    customReason.set("");
+  };
+  Vec<Node> reasons = Vec.create();
+  for (string r in PRESET_REASONS) {
+    reasons.push(<button key={r} class="reason-btn" onclick={(ElementEvent e) => { close(r); }}>{capitalised(r)}</button>);
+  }
+  string custom = trim(customReason.get());
+  return <div>
+    <div class="timer-row urg" style={urgStyle(color)} prevent="contextmenu"
+         onclick={(ElementEvent e) => { onClick(); }}
+         oncontextmenu={(ElementEvent e) => { showClose.set(true); }}>
+      <div class="name-col">
+        <div class="timer-name">{tname}</div>
+        {desc != "" ? <div class="timer-description">{desc}</div> : nothing()}
+        {delay != "" ? <div class="delay-label">{delay}</div> : nothing()}
+      </div>
+      <div class="time-col">
+        <div class="time-left">{overdue ? formatDuration(remaining) + " overdue" : formatDueAt(number(timer, "currentExpiry"), now, app.zone())}</div>
+        {timer.member("recurrence") is not null && !timer.member("recurrence")!.isNull() ? <span class="recur-badge">↻</span> : nothing()}
+      </div>
+    </div>
+    {showClose.get() ? <div class="overlay" ref={overlay} onclick={(ElementEvent e) => { if (e.target.id == overlay.element()!.id) { showClose.set(false); } }}>
+      <div class="sheet">
+        <div class="sheet-title">Close "{tname}"</div>
+        {reasons.toArray()}
+        <div style="display: flex; gap: 0.5rem">
+          <input class="custom-input" placeholder="Custom reason…" value={customReason.get()}
+                 oninput={(ElementEvent e) => { customReason.set(e.value); }}
+                 onkeydown={(ElementEvent e) => { if (e.value == "Enter" && trim(customReason.get()) != "") { close(trim(customReason.get())); } }}/>
+          <button class="close-btn" disabled={custom == "" ? "true" : null} onclick={(ElementEvent e) => { if (custom != "") { close(custom); } }}>Close</button>
+        </div>
+        {onRemove is not null ? <button class="delete-btn" onclick={(ElementEvent e) => { onRemove!(); showClose.set(false); }}>Delete timer</button> : nothing()}
+        <button class="cancel-btn" onclick={(ElementEvent e) => { showClose.set(false); }}>Cancel</button>
+      </div>
+    </div> : nothing()}
+  </div>;
+}
+
+// ── adding a timer ──
+
+Node AddTimer(Ui ui, App app) {
+  auto name = ui.state("");
+  auto description = ui.state("");
+  auto expiryInput = ui.state("");
+  auto error = ui.state("");
+  auto loading = ui.state(false);
+  auto recurring = ui.state(false);
+  auto periodDays = ui.state(1);
+  auto anchorTime = ui.state(app.state?.member("defaultAnchorTime")?.text() ?? DEFAULT_ANCHOR_TIME);
+  auto timezone = ui.state(app.zoneName);
+  auto skipWeekends = ui.state(false);
+  Ref nameField = ui.ref();
+  focusWhenDrawn(ui, nameField, "");
+  // Typing ticks nothing, so the preview is read again each second: "in 20m" stays true while the reader hesitates.
+  auto now = ui.state(app.wall());
+  ui.every(1000, () => { now.set(app.wall()); });
+
+  if (recurring.get()) { app.zones.want(timezone.get()); }
+  AnchorSpec anchor = recurring.get() ? AnchorSpec(anchorTime.get(), timezone.get())
+                                      : resolveAnchor(null, app.state?.member("defaultAnchorTime")?.text(), app.zoneName);
+  TimeZone anchorZone = app.zones.orUtc(anchor.timezone);
+  f64? parsed = trim(expiryInput.get()) == "" ? null : parseTimeInput(expiryInput.get(), now.get(), anchor, anchorZone, app.zone());
+  bool valid = trim(name.get()) != "" && parsed is not null;
+
+  fn<void()> submit = () => {
+    if (!valid || loading.get()) { return; }
+    loading.set(true);
+    error.set("");
+    f64? expiry = parseTimeInput(expiryInput.get(), app.wall(), anchor, anchorZone, app.zone());
+    if (expiry is null) { error.set("Can't parse the due date"); loading.set(false); return; }
+    RecurrenceSpec? rec = recurring.get() ? RecurrenceSpec(periodDays.get() as f64, anchorTime.get(), timezone.get(), skipWeekends.get()) : null;
+    string desc = trim(description.get());
+    adding(app, trim(name.get()), expiry!, rec, desc == "" ? null : desc, (string err) => {
+      loading.set(false);
+      if (err != "") { error.set(err); }
+    });
+  };
+
+  Vec<Node> nameChips = Vec.create();
+  for (string s in SUGGESTIONS) {
+    nameChips.push(<button key={s} type="button" class={name.get() == s ? "chip on" : "chip"} onclick={(ElementEvent e) => { name.set(s); }}>{s}</button>);
+  }
+  Vec<Node> dueChips = Vec.create();
+  for (string s in DUE_CHIPS) {
+    string l = lower(s);
+    dueChips.push(<button key={s} type="button" class={lower(expiryInput.get()) == l ? "chip on" : "chip"} onclick={(ElementEvent e) => { expiryInput.set(l); }}>{s}</button>);
+  }
+  string[] periodLabels = ["Daily", "Weekly", "Biweekly", "Monthly"];
+  i32[] periodValues = [1, 7, 14, 30];
+  Vec<Node> periods = Vec.create();
+  for (i32 i = 0; i < 4; i++) {
+    i32 v = periodValues[i];
+    periods.push(<button key={periodLabels[i]} type="button" class={periodDays.get() == v ? "chip on" : "chip"} onclick={(ElementEvent e) => { periodDays.set(v); }}>{periodLabels[i]}</button>);
+  }
+  string preview = trim(expiryInput.get()) == "" ? ""
+    : parsed is not null ? "→ " + formatParsedTime(parsed!, now.get(), app.zone())
+    : "Can't parse — try: tomorrow, 1d, 1w, 3h, fri morning, tmr @ 3pm";
+
+  return <div class="form-page">
+    <div class="header">
+      <button class="back-btn" onclick={(ElementEvent e) => { app.back(); }}>←</button>
+      <h2 class="page-title">Add Timer</h2>
+    </div>
+    <form class="form" prevent="*" onsubmit={(ElementEvent e) => { submit(); }}>
+      <div>
+        <label class="label">Name</label>
+        <input class="input" type="text" placeholder="Timer name" value={name.get()} ref={nameField} style="margin-top: 0.35rem"
+               oninput={(ElementEvent e) => { name.set(e.value); }}/>
+        <div class="chips">{nameChips.toArray()}</div>
+      </div>
+      <div>
+        <label class="label">Description <span style="font-weight: 400; color: #aaa">(optional)</span></label>
+        <textarea class="textarea" placeholder="Notes, context, details…" value={description.get()} style="margin-top: 0.35rem"
+                  oninput={(ElementEvent e) => { description.set(e.value); }}/>
+      </div>
+      <div>
+        <label class="label">First due</label>
+        <input class="input" type="text" placeholder="e.g. tomorrow, 1w, thu morning, 3h, tmr @ 3pm" value={expiryInput.get()} style="margin-top: 0.35rem"
+               oninput={(ElementEvent e) => { expiryInput.set(e.value); }}/>
+        <div class={parsed is not null ? "parse-preview valid" : "parse-preview"}>{preview}</div>
+        <div class="chips" style="margin-top: 0.4rem">{dueChips.toArray()}</div>
+      </div>
+      <div>
+        <div class="toggle-row" onclick={(ElementEvent e) => { recurring.set(!recurring.get()); }}>
+          <input type="checkbox" checked={recurring.get() ? "true" : null} style="cursor: pointer"/>
+          <label class="label" style="cursor: pointer">Recurring</label>
+        </div>
+        {recurring.get() ? <div class="recurrence-box">
+          <div>
+            <label class="label">Repeat every</label>
+            <div class="chips" style="margin-top: 0.35rem">{periods.toArray()}</div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem">
+              <input class="input" type="number" min="1" value={"\{periodDays.get()}"} style="width: 80px; padding: 0.4rem 0.6rem"
+                     oninput={(ElementEvent e) => { i32 v = parseNumber(e.value) as~ i32; if (v >= 1) { periodDays.set(v); } }}/>
+              <span style="font-size: 0.9rem; color: var(--text-muted)">days</span>
+            </div>
+          </div>
+          <div class="row2">
+            <div>
+              <label class="label">At time</label>
+              <input class="input" type="time" value={anchorTime.get()} style="margin-top: 0.25rem; padding: 0.5rem 0.75rem"
+                     oninput={(ElementEvent e) => { anchorTime.set(e.value); }}/>
+            </div>
+            <div>
+              <label class="label">Timezone</label>
+              <input class="input" type="text" value={timezone.get()} placeholder="e.g. America/New_York" style="margin-top: 0.25rem; padding: 0.5rem 0.75rem"
+                     oninput={(ElementEvent e) => { timezone.set(e.value); }}/>
+            </div>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" checked={skipWeekends.get() ? "true" : null} onchange={(ElementEvent e) => { skipWeekends.set(!skipWeekends.get()); }}/>
+            Skip weekends
+          </label>
+        </div> : nothing()}
+      </div>
+      {error.get() != "" ? <p class="error-msg">{error.get()}</p> : nothing()}
+      <button class="submit-btn" type="submit" disabled={!valid || loading.get() ? "true" : null}>{loading.get() ? "Adding…" : "Add Timer"}</button>
+    </form>
+  </div>;
+}
+
+async void adding(App app, string name, f64 expiry, RecurrenceSpec? rec, string? desc, fn<void(string)> done) {
+  Result<string, ApiError> r = await app.addTimer(name, expiry, rec, desc);
+  if (r.isErr()) { done(r.err()!.message); return; }
+  done("");
+  // Onto the timer just made, rather than back to the list where it would have to be found again.
+  app.go("view-timer", r.unwrap());
+}
+
+// ── the alarm ──
+
+/** The timers the alarm cycles through: every overdue one, else the soonest and those due within five minutes of it in its colour. */
+Vec<JsonValue> displayGroup(JsonArray timers, f64 now) {
+  Vec<JsonValue> out = Vec.create();
+  if (timers.len() == 0) { return out; }
+  for (i32 i = 0; i < timers.len(); i++) { if (number(timers.get(i), "currentExpiry") <= now) { out.push(timers.get(i)); } }
+  if (out.len() > 0) { return out; }
+  f64 first = number(timers.get(0), "currentExpiry");
+  for (i32 i = 1; i < timers.len(); i++) { f64 e = number(timers.get(i), "currentExpiry"); if (e < first) { first = e; } }
+  string bucket = calculateColor(first - now).color;
+  // In expiry order, as autonag sorts them.
+  Vec<JsonValue> sorted = Vec.create();
+  for (i32 i = 0; i < timers.len(); i++) {
+    JsonValue t = timers.get(i);
+    f64 e = number(t, "currentExpiry");
+    if (e > first + 300000.0 || calculateColor(e - now).color != bucket) { continue; }
+    i32 k = sorted.len();
+    sorted.push(t);
+    while (k > 0 && number(sorted.get(k - 1), "currentExpiry") > e) { sorted.set(k, sorted.get(k - 1)); k--; }
+    sorted.set(k, t);
+  }
+  return sorted;
+}
+
+Node Alarm(Ui ui, App app) {
+  auto now = ui.state(app.wall());
+  ui.every(250, () => { now.set(app.wall()); });
+  auto shown = ui.state("");
+  f64 t = now.get();
+  JsonValue? alarm = app.state?.member("alarm");
+  JsonValue? shush = app.state?.member("shush");
+  f64 shushExpiry = shush is null || shush!.isNull() ? 0.0 : number(shush, "expiry");
+  bool silenced = shushExpiry > t;
+  JsonValue? startsAt = alarm?.member("startsAt");
+  f64 urgentRemaining = startsAt is null || startsAt!.isNull() ? 1.0 / 0.0 : startsAt!.number()! - t;
+  bool flashing = calculateColor(urgentRemaining).color == "flashing";
+  bool isRinging = flashing && !silenced;
+
+  Vec<JsonValue> group = displayGroup(app.timers(), t);
+  string groupKey = "";
+  for (i32 i = 0; i < group.len(); i++) { groupKey = groupKey + text(group.get(i), "id") + ","; }
+  // When the group changes, the timer shown stays if it is still in it; otherwise one of them, at random.
+  ui.effect(groupKey, () => {
+    bool still = false;
+    for (i32 i = 0; i < group.len(); i++) { if (text(group.get(i), "id") == shown.get()) { still = true; } }
+    if (!still) { shown.set(group.len() == 0 ? "" : text(group.get(randomIndex(group.len(), app.wall())), "id")); }
+    return () => { };
+  });
+  // Every two minutes, another of them.
+  ui.every(120000, () => {
+    Vec<JsonValue> g = displayGroup(app.timers(), app.wall());
+    if (g.len() <= 1) { return; }
+    Vec<string> others = Vec.create();
+    for (i32 i = 0; i < g.len(); i++) { if (text(g.get(i), "id") != shown.get()) { others.push(text(g.get(i), "id")); } }
+    if (others.len() > 0) { shown.set(others.get(randomIndex(others.len(), app.wall()))); }
+  });
+  JsonValue? displayed = null;
+  for (i32 i = 0; i < group.len(); i++) { if (text(group.get(i), "id") == shown.get()) { displayed = group.get(i); } }
+  if (displayed is null && group.len() > 0) { displayed = group.get(0); }
+  f64 remaining = displayed is null ? 1.0 / 0.0 : number(displayed, "currentExpiry") - t;
+  string bgClass = displayed is null ? "alarm plain" : "alarm urg";
+  if (isRinging) { bgClass = bgClass + " flashing"; }
+
+  // The jingle: once as the alarm starts ringing, then looping a minute later, while it rings.
+  ui.effect(isRinging && app.interacted ? "ring" : "quiet", () => {
+    if (!isRinging || !app.interacted) { return () => { }; }
+    return startJingle(app.page);
+  });
+
+  return <div>
+    {!app.interacted ? <div class="unlock-overlay">
+      <button class="unlock-btn" onclick={(ElementEvent e) => { app.interacted = true; app.changed(); }}>Tap to enable alarm audio</button>
+    </div> : nothing()}
+    <div class={bgClass} style={displayed is null ? "" : urgStyle(calculateColor(remaining).color)}>
+      <div class="top-bar">
+        <button class="alarm-back" onclick={(ElementEvent e) => { app.back(); }}>←</button>
+        <div class={app.connectionStatus == "connected" ? "alarm-dot connected" : "alarm-dot"}/>
+      </div>
+      <div class="center">
+        {displayed is not null
+          ? <div style="display: contents">
+              <div class="urgent-name">{text(displayed, "name")}</div>
+              <div class="countdown">{formatCountdown(remaining)}</div>
+              {group.len() > 1 ? <div class="hint">cycling {"\{group.len()}"} timers</div> : nothing()}
+            </div>
+          : <div class="hint big">{app.connectionStatus == "connected" ? "No active timers" : "Connecting…"}</div>}
+      </div>
+      <div class="bottom-bar">
+        {flashing ? <button class={silenced ? "shush-btn active" : "shush-btn"} onclick={(ElementEvent e) => {
+            if (silenced) { app.clearShush(); } else { app.shush(app.wall() + SHUSH_TAP_MS); }
+          }}>{silenced ? "Silenced (\{formatCountdown(shushExpiry - t)} left)" : "Shush (\{SHUSH_TAP_LABEL})"}</button> : nothing()}
+      </div>
+    </div>
+  </div>;
+}
+
+i32 randomIndex(i32 n, f64 seed) {
+  if (n <= 1) { return 0; }
+  i64 s = (seed as~ i64) * 2654435761;
+  i64 v = s < 0 ? -s : s;
+  return (v % (n as i64)) as! i32;
+}
+
+// ── the jingle ──
+
+/** sin, by a Taylor series on the angle brought into [-π, π]. */
+f64 sine(f64 x) {
+  f64 pi = 3.141592653589793;
+  f64 turns = ((x + pi) / (2.0 * pi)).floor();
+  f64 r = x - turns * 2.0 * pi;
+  f64 term = r;
+  f64 sum = r;
+  for (i32 k = 1; k < 12; k++) {
+    term = -term * r * r / (((2 * k) * (2 * k + 1)) as f64);
+    sum = sum + term;
+  }
+  return sum;
+}
+
+/** C4 E4 G4 C5 G4 E4 C4 F4 E4, as autonag synthesises it: sine notes at 0.6, with 50 ms ramps in and out. */
+f64[] jingleSamples(i32 rate) {
+  f64[] freqs = [262.0, 330.0, 392.0, 523.0, 392.0, 330.0, 262.0, 349.0, 330.0];
+  f64[] durs = [0.25, 0.25, 0.25, 0.5, 0.25, 0.25, 0.5, 0.75, 0.25];
+  f64 total = 0.0;
+  for (f64 d in durs) { total = total + d; }
+  i32 n = (total * (rate as f64)) as~ i32;
+  f64[] out = f64[].filled(n, 0.0);
+  i32 at = 0;
+  for (i32 k = 0; k < freqs.len(); k++) {
+    i32 len = (durs[k] * (rate as f64)) as~ i32;
+    for (i32 i = 0; i < len && at < n; i++) {
+      f64 t = (i as f64) / (rate as f64);
+      f64 env = 0.6;
+      if (t < 0.05) { env = 0.6 * t / 0.05; }
+      if (t > durs[k] - 0.05) { env = 0.6 * (durs[k] - t) / 0.05; }
+      out[at] = sine(2.0 * 3.141592653589793 * freqs[k] * t) * env;
+      at++;
+    }
+  }
+  return out;
+}
+
+/** Plays the jingle once now, then on a loop from a minute on; answers what stops it. */
+fn<void()> startJingle(Page page) {
+  bool[] stopped = [false];
+  playing(page, stopped);
+  return () => { stopped[0] = true; };
+}
+
+async void playing(Page page, bool[] stopped) {
+  auto sound = page.sound(jingleSamples(22050), 22050);
+  sound.play(1.0);
+  await page.sleep(60000);
+  while (!stopped[0]) {
+    sound.play(1.0);
+    await page.sleep((sound.seconds * 1000.0) as~ i32 + 1000);
+  }
+}
+
+// ── the page ──
+
+export async i32 main(Page page) {
+  page.title("Autonag 2");
+  fn<void()>[] rerender = [() => { }];
+  App app = await App.start(page, () => { rerender[0](); });
+  page.mount((Ui ui) => <Root app={app} rerender={rerender}/>);
+  return 0;
+}

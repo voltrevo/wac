@@ -14,7 +14,8 @@ import { Vec, Map, hashString, stringEq, flatten } from "core";
 import { json.JsonValue, url.parseUrl, url.pathname, url.Url } from "wac";
 import { Ctx } from "../src/store/db.wac";
 import { App, Hooks, Request, Response, RateLimiter, handle } from "../src/server/api.wac";
-import { Head, headEnd, parseHead, writeResponse } from "../src/server/http.wac";
+import { Head, headEnd, parseHead, writeResponse, writeRaw } from "../src/server/http.wac";
+import { TimeZone } from "../src/time/tz.wac";
 import { Hub, Conn, Frame, readFrame, frame, acceptResponse, onMessage } from "../src/server/ws.wac";
 import { hostZones } from "../src/time/hostzones.wac";
 import { Setup, setup, env, nowMs } from "./common.wac";
@@ -25,6 +26,8 @@ struct Settings {
   string host;
   string origin;
   i64 maxBody;
+  /** Where the built web client is (`clientDir`): served at `/` beside the API, which is the page's own origin. */
+  string clientDir;
 }
 
 export async i32 main(Sys sys) {
@@ -38,7 +41,8 @@ export async i32 main(Sys sys) {
                   hooks: Hooks((string i, StoredEvent e, string sum) => { hub.event(i, e, sum); }, (string i, JsonValue cm) => { hub.comment(i, cm); }),
                   limits: RateLimiter.create(), limited: env(sys, "NODE_ENV") != "test" };
   Settings s = Settings((config.member("port")?.number() ?? 3000.0) as~ i32, config.member("host")?.text() ?? "127.0.0.1",
-                        config.member("corsOrigin")?.text() ?? "*", (config.member("maxBodySize")?.number() ?? 10485760.0) as~ i64);
+                        config.member("corsOrigin")?.text() ?? "*", (config.member("maxBodySize")?.number() ?? 10485760.0) as~ i64,
+                        config.member("clientDir")?.text() ?? "dist/client");
   match (await sys.net().listen(s.host, s.port)) {
     Err(e): { sys.warn("cannot listen on \{s.host}:\{s.port}: \{e}"); return 1; }
     Ok(listener): {
@@ -79,7 +83,8 @@ async void sweep(Sys sys, App app, Hub hub, Vec<Conn> sockets) {
 u8[] grow(u8[] buf, i32 len, const u8[] more) {
   u8[] b = buf;
   if (len + more.len() > b.len()) {
-    i32 cap = b.len() * 2;
+    // From at least 64: a buffer a frame emptied has no length to double, and doubling zero never ends.
+    i32 cap = b.len() * 2 < 64 ? 64 : b.len() * 2;
     while (cap < len + more.len()) { cap *= 2; }
     u8[] g = u8[].filled(cap, 0);
     g.copyFrom(b, 0, 0, len);
@@ -94,6 +99,42 @@ u8[] slice(const u8[] b, i32 from, i32 to) {
   out.copyFrom(b, from, 0, to - from);
   return out;
 }
+
+// **The web client and the zones it reads**, for a GET the API does not answer: `/` is the client's page, any other
+// path a file of the client's directory, and `/zoneinfo/<name>` a time zone's TZif — the page has no tz database of
+// its own (client/zones.wac). A path with `..` in it, or naming the API's own routes, is the API's to answer.
+async u8[]? clientFile(Sys sys, App app, Settings s, string path) {
+  if (path.len() > 10 && path.slice(0, 10) == "/zoneinfo/") {
+    string name = path.slice(10, path.len());
+    TimeZone? z = app.zones.zone(name);
+    if (z is null) { return null; }
+    u8[]? b = app.zones.read(z!.name);
+    return b is null ? null : writeRaw(200, "application/octet-stream", b!, "public, max-age=86400");
+  }
+  if (path.indexOf("..") >= 0 || startsWith(path, "/devices") || startsWith(path, "/instances")) { return null; }
+  string file = path == "/" ? "/index.html" : path;
+  match (flatten(sys.files().readFile(s.clientDir + file).wait())) {
+    Ok(b): { return writeRaw(200, contentType(file), b, "no-cache"); }
+    Err(e): { return null; }
+  }
+}
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+
+string contentType(string file) {
+  if (endsWith(file, ".html")) { return "text/html; charset=utf-8"; }
+  if (endsWith(file, ".js") || endsWith(file, ".mjs")) { return "text/javascript"; }
+  if (endsWith(file, ".css")) { return "text/css"; }
+  if (endsWith(file, ".svg")) { return "image/svg+xml"; }
+  if (endsWith(file, ".ico")) { return "image/x-icon"; }
+  if (endsWith(file, ".txt")) { return "text/plain; charset=utf-8"; }
+  if (endsWith(file, ".json") || endsWith(file, ".webmanifest")) { return "application/manifest+json"; }
+  if (endsWith(file, ".png")) { return "image/png"; }
+  if (endsWith(file, ".wasm")) { return "application/wasm"; }
+  return "application/octet-stream";
+}
+
+bool endsWith(string s, string p) { return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p; }
 
 // One connection: requests answered in turn while it is kept alive, or a WebSocket from the upgrade on.
 async void serve(Sys sys, App app, Hub hub, Socket sock, Settings s, Vec<Conn> sockets) {
@@ -138,6 +179,14 @@ async void serve(Sys sys, App app, Hub hub, Socket sock, Settings s, Vec<Conn> s
         if (path.len() >= 3 && path.slice(path.len() - 3, path.len()) == "/ws") {
           await websocket(sys, app, hub, sock, h, path, buf, len, sockets);
           return;
+        }
+        if (h.method == "GET" || h.method == "HEAD") {
+          u8[]? served = await clientFile(sys, app, s, path);
+          if (served is not null) {
+            await sock.send(served!);
+            if (!h.keepAlive) { sock.close(); return; }
+            continue;
+          }
         }
         Response res = handle(app, Request(h.method, url, h.headers, body, sock.peer));
         await sock.send(writeResponse(res.status, res.body, s.origin, h.keepAlive));

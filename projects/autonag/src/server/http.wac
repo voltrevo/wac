@@ -125,3 +125,14 @@ export u8[] writeResponse(i32 status, JsonValue? body, string origin, bool keepA
   b.pushAll(payload);
   return b.take();
 }
+
+// A response that is not JSON — the web client's files, a time zone's — with how long it may be cached.
+export u8[] writeRaw(i32 status, string contentType, const u8[] payload, string cacheControl) {
+  Buf b = Buf.create();
+  b.pushStr("HTTP/1.1 \{status} \{reason(status)}\r\n");
+  b.pushStr("Content-Type: \{contentType}\r\n");
+  b.pushStr("Cache-Control: \{cacheControl}\r\n");
+  b.pushStr("Content-Length: \{payload.len()}\r\n\r\n");
+  b.pushAll(payload);
+  return b.take();
+}

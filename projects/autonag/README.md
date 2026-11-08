@@ -12,6 +12,25 @@ rewritten in [wac](https://git.voltrevo.com/wac). Work in progress: see the plan
 It reads autonag's configuration (`config.json5`, or `CONFIG_PATH`; `DB_PATH` overrides `dbPath`) and
 serves the same API on the same port, over the same database file.
 
+## The web client
+
+    wac task build:client          # client/app.wac → dist/client (index.html, the worker, the wasm)
+
+The server serves `dist/client` (or the config's `clientDir`) at `/`, and the time zones the client asks for
+at `/zoneinfo/<name>`. The client is written with [wac-web](https://git.voltrevo.com/wac-web): it runs in a
+worker and draws through the page, and it follows an instance over the same WebSocket protocol as
+autonag's `shared/wsClient.ts` (`client/conn.wac` is a port of it), re-deriving and checksum-verifying.
+
+autonag's own Playwright specs (`client/e2e`) pass against it: `tools/e2e/run.sh` runs them against a
+server you start. Screens compare with the React client's to within a row of pixels, except where it
+differs on purpose or for now:
+
+- Notifications are not implemented: the menu shows "Not supported" (wac-web has no Notification API yet).
+- The alarm's sound asks for a tap ("Tap to enable alarm audio") rather than probing whether audio is
+  allowed.
+- A join link's code is cleared from memory rather than from the history entry; event history loads its
+  next page when scrolled to the end.
+
 ## The CLI and the admin tool
 
     wac build --allow-read --allow-write --allow-net --allow-env cmd/cli.wac -o dist/autonag
@@ -39,7 +58,7 @@ existing React client is the integration test for the new server. The web client
 | 4 | The HTTP API: every route, batch actions, import, auth, rate limits | done |
 | 5 | The WebSocket protocol | done |
 | 6 | The CLI and admin tools | done |
-| 7 | The web client | |
+| 7 | The web client | done (notifications to come) |
 | 8 | Switch-over: the wac server on a copy of production data, checksums compared per instance | |
 
 Storage needs no migration: wac-sqlite reads and writes autonag's database file as it is.

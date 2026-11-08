@@ -6,6 +6,8 @@
   // autonag's `autonag` command and `autonag-admin`.
   "build:cli": "wac build --allow-read --allow-write --allow-net --allow-env cmd/cli.wac -o dist/autonag",
   "build:admin": "wac build --allow-read --allow-write --allow-env cmd/admin.wac -o dist/autonag-admin",
+  // The web client (client/app.wac) as static files, which the server serves from `clientDir`.
+  "build:client": "wac run --allow-read --allow-write --allow-run tools/build_client.wac client/app.wac dist/client --title \"Autonag 2\"",
   // The locked imports into wac's package cache with `git` (git.voltrevo.com refuses `wac update`'s fetcher).
   deps: "wac run --allow-read --allow-write --allow-env --allow-run tools/deps.wac",
 }

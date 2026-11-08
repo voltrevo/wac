@@ -6,5 +6,8 @@
     wac: { git: 'https://git.voltrevo.com/wac.git', ref: 'master' },
     // SQLite in wac: the server keeps autonag's own schema and database file.
     sqlite: { git: 'https://git.voltrevo.com/wac-sqlite.git', ref: 'main' },
+    // The web client's page — `import { Page, Ui } from "web"` — and the builder that makes it one index.html.
+    web: { git: 'https://git.voltrevo.com/wac-web.git', ref: 'master' },
+    webbuild: { git: 'https://git.voltrevo.com/wac-web.git', ref: 'master', subdir: './tools' },
   },
 }

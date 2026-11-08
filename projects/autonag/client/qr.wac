@@ -1,0 +1,409 @@
+// A QR code, for the invite link the share sheet shows: what autonag drew with qrcode.react's QRCodeSVG at its
+// defaults — level L, no margin — encoded here as qrcode.react's own encoder (Nayuki's) does, and drawn as one path.
+//
+// Byte mode, any version; the level is L, raised to the highest one the same version still holds (qrcode.react's
+// `boostLevel`). The data and its Reed–Solomon check codewords are split into blocks and interleaved, placed around
+// the function patterns, and the mask chosen that scores lowest by Nayuki's penalty. tools/check_qr.ts compares the
+// modules with that encoder's.
+
+import { Buf, Vec } from "core";
+import { Node, Ui } from "web";
+
+// Check codewords per block and the number of blocks, by level (L, M, Q, H) and version: Nayuki's tables.
+static i32[][] ECC_PER_BLOCK = [
+  [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+  [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+  [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+  [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30]];
+static i32[][] NUM_BLOCKS = [
+  [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+  [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+  [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+  [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81]];
+// The format bits each level is written with: L 01, M 00, Q 11, H 10.
+static i32[] FORMAT_BITS = [1, 0, 3, 2];
+
+/** How many modules carry data (and remainder bits), for a version. */
+i32 rawDataModules(i32 v) {
+  i32 result = (16 * v + 128) * v + 64;
+  if (v >= 2) {
+    i32 numAlign = v / 7 + 2;
+    result -= (25 * numAlign - 10) * numAlign - 55;
+    if (v >= 7) { result -= 36; }
+  }
+  return result;
+}
+
+i32 dataCodewords(i32 v, i32 ecl) { return rawDataModules(v) / 8 - ECC_PER_BLOCK[ecl][v] * NUM_BLOCKS[ecl][v]; }
+
+/** The alignment patterns' centres, on each axis. */
+i32[] alignments(i32 v) {
+  if (v == 1) { return i32[](); }
+  i32 numAlign = v / 7 + 2;
+  i32 size = 17 + 4 * v;
+  i32 step = v == 32 ? 26 : ((v * 4 + 4 + numAlign * 2 - 3) / (numAlign * 2 - 2)) * 2;
+  i32[] out = i32[].filled(numAlign, 0);
+  out[0] = 6;
+  i32 pos = size - 7;
+  for (i32 i = numAlign - 1; i >= 1; i--) { out[i] = pos; pos -= step; }
+  return out;
+}
+
+// ── GF(256) and Reed–Solomon ──
+
+struct Gf {
+  i32[] exp;
+  i32[] log;
+
+  Gf create() {
+    i32[] e = i32[].filled(512, 0);
+    i32[] l = i32[].filled(256, 0);
+    i32 x = 1;
+    for (i32 i = 0; i < 255; i++) {
+      e[i] = x;
+      l[x] = i;
+      x = x << 1;
+      if (x >= 256) { x = x ^ 0x11D; }
+    }
+    for (i32 i = 255; i < 512; i++) { e[i] = e[i - 255]; }
+    return Gf(e, l);
+  }
+
+  i32 mul(this, i32 a, i32 b) { return a == 0 || b == 0 ? 0 : this.exp[this.log[a] + this.log[b]]; }
+}
+
+/** The check codewords for `data`: the remainder of data·xⁿ by the generator of degree n. */
+i32[] reedSolomon(Gf gf, i32[] data, i32 n) {
+  // (x − α⁰)(x − α¹)…(x − αⁿ⁻¹), the highest coefficient (1) first.
+  i32[] g = i32[].filled(n + 1, 0);
+  g[0] = 1;
+  for (i32 i = 0; i < n; i++) {
+    for (i32 j = i + 1; j >= 1; j--) { g[j] = g[j] ^ gf.mul(g[j - 1], gf.exp[i]); }
+  }
+  i32[] rem = i32[].filled(n, 0);
+  for (i32 d in data) {
+    i32 factor = d ^ rem[0];
+    for (i32 k = 0; k < n - 1; k++) { rem[k] = rem[k + 1] ^ gf.mul(g[k + 1], factor); }
+    rem[n - 1] = gf.mul(g[n], factor);
+  }
+  return rem;
+}
+
+// ── encoding ──
+
+struct Bits {
+  Vec<i32> bits;
+  void put(this, i32 value, i32 n) { for (i32 i = n - 1; i >= 0; i--) { this.bits.push((value >> i) & 1); } }
+}
+
+/** The modules, row by row (true dark), and how many to a side. */
+export struct Qr {
+  i32 size;
+  bool[] dark;
+}
+
+/** `text` as a QR code, or null when no version holds it. */
+export Qr? encode(string text) {
+  u8[] bytes = text.toBytes();
+  i32 v = 0;
+  i32 used = 0;
+  for (i32 cand = 1; cand <= 40; cand++) {
+    used = 4 + (cand < 10 ? 8 : 16) + 8 * bytes.len();
+    if (used <= dataCodewords(cand, 0) * 8) { v = cand; break; }
+  }
+  if (v == 0) { return null; }
+  i32 ecl = 0;
+  for (i32 e = 1; e < 4; e++) { if (used <= dataCodewords(v, e) * 8) { ecl = e; } }
+  i32 capacity = dataCodewords(v, ecl);
+
+  Bits b = Bits(Vec.create());
+  b.put(4, 4);
+  b.put(bytes.len(), v < 10 ? 8 : 16);
+  for (u8 c in bytes) { b.put(c as i32, 8); }
+  i32 cap = capacity * 8;
+  i32 term = cap - b.bits.len() < 4 ? cap - b.bits.len() : 4;
+  b.put(0, term);
+  while (b.bits.len() % 8 != 0) { b.bits.push(0); }
+  i32[] data = i32[].filled(capacity, 0);
+  i32 n = b.bits.len() / 8;
+  for (i32 i = 0; i < n; i++) {
+    i32 x = 0;
+    for (i32 k = 0; k < 8; k++) { x = (x << 1) | b.bits.get(i * 8 + k); }
+    data[i] = x;
+  }
+  for (i32 i = n; i < capacity; i++) { data[i] = (i - n) % 2 == 0 ? 0xEC : 0x11; }
+
+  // The blocks — short ones first, a long one a data codeword longer — each with its check codewords, interleaved a
+  // column at a time; a short block skips the column only the long ones have.
+  Gf gf = Gf.create();
+  i32 blocks = NUM_BLOCKS[ecl][v];
+  i32 ec = ECC_PER_BLOCK[ecl][v];
+  i32 raw = rawDataModules(v) / 8;
+  i32 shortBlocks = blocks - raw % blocks;
+  i32 shortLen = raw / blocks;
+  Vec<i32[]> all = Vec.create();
+  i32 at = 0;
+  for (i32 i = 0; i < blocks; i++) {
+    i32 len = shortLen - ec + (i < shortBlocks ? 0 : 1);
+    i32[] d = i32[].filled(len, 0);
+    for (i32 k = 0; k < len; k++) { d[k] = data[at + k]; }
+    at += len;
+    i32[] check = reedSolomon(gf, d, ec);
+    i32[] block = i32[].filled(shortLen + 1, 0);
+    for (i32 k = 0; k < len; k++) { block[k] = d[k]; }
+    for (i32 k = 0; k < ec; k++) { block[shortLen + 1 - ec + k] = check[k]; }
+    all.push(block);
+  }
+  Vec<i32> stream = Vec.create();
+  for (i32 k = 0; k <= shortLen; k++) {
+    for (i32 i = 0; i < blocks; i++) {
+      if (k != shortLen - ec || i >= shortBlocks) { stream.push(all.get(i)[k]); }
+    }
+  }
+
+  i32 size = 17 + 4 * v;
+  Grid base = Grid.create(size);
+  base.functionPatterns(v);
+  // Data, two columns at a time from the right, up then down in turn, stepping over the timing column.
+  i32 bit = 0;
+  i32 right = size - 1;
+  while (right >= 1) {
+    if (right == 6) { right = 5; }
+    bool upward = ((right + 1) & 2) == 0;
+    for (i32 vert = 0; vert < size; vert++) {
+      for (i32 j = 0; j < 2; j++) {
+        i32 x = right - j;
+        i32 y = upward ? size - 1 - vert : vert;
+        if (!base.reserved[y * size + x] && bit < stream.len() * 8) {
+          base.dark[y * size + x] = ((stream.get(bit / 8) >> (7 - bit % 8)) & 1) == 1;
+          bit++;
+        }
+      }
+    }
+    right -= 2;
+  }
+
+  Qr? best = null;
+  i32 bestScore = 2147483647;
+  for (i32 mask = 0; mask < 8; mask++) {
+    Grid g = base.copy();
+    g.applyMask(mask);
+    g.formatBits(FORMAT_BITS[ecl], mask);
+    if (v >= 7) { g.versionBits(v); }
+    i32 score = g.penalty();
+    if (score < bestScore) { bestScore = score; best = Qr(size, g.dark); }
+  }
+  return best;
+}
+
+struct Grid {
+  i32 size;
+  bool[] dark;
+  bool[] reserved;
+
+  Grid create(i32 size) { return Grid(size, bool[].filled(size * size, false), bool[].filled(size * size, false)); }
+
+  Grid copy(this) {
+    bool[] d = bool[].filled(this.dark.len(), false);
+    for (i32 i = 0; i < d.len(); i++) { d[i] = this.dark[i]; }
+    return Grid(this.size, d, this.reserved);
+  }
+
+  void set(this, i32 row, i32 col, bool on) {
+    this.dark[row * this.size + col] = on;
+    this.reserved[row * this.size + col] = true;
+  }
+
+  bool at(this, i32 r, i32 c) { return this.dark[r * this.size + c]; }
+
+  void finder(this, i32 row, i32 col) {
+    for (i32 r = -1; r <= 7; r++) {
+      for (i32 c = -1; c <= 7; c++) {
+        i32 y = row + r;
+        i32 x = col + c;
+        if (y < 0 || y >= this.size || x < 0 || x >= this.size) { continue; }
+        bool on = (r >= 0 && r <= 6 && (c == 0 || c == 6)) || (c >= 0 && c <= 6 && (r == 0 || r == 6)) || (r >= 2 && r <= 4 && c >= 2 && c <= 4);
+        this.set(y, x, on);
+      }
+    }
+  }
+
+  void functionPatterns(this, i32 v) {
+    i32 s = this.size;
+    for (i32 i = 0; i < s; i++) {
+      this.set(6, i, i % 2 == 0);
+      this.set(i, 6, i % 2 == 0);
+    }
+    this.finder(0, 0);
+    this.finder(0, s - 7);
+    this.finder(s - 7, 0);
+    i32[] al = alignments(v);
+    for (i32 i = 0; i < al.len(); i++) {
+      for (i32 j = 0; j < al.len(); j++) {
+        if ((i == 0 && j == 0) || (i == 0 && j == al.len() - 1) || (i == al.len() - 1 && j == 0)) { continue; }
+        for (i32 dy = -2; dy <= 2; dy++) {
+          for (i32 dx = -2; dx <= 2; dx++) {
+            i32 d = dy < 0 ? -dy : dy;
+            i32 e = dx < 0 ? -dx : dx;
+            this.set(al[i] + dy, al[j] + dx, (d > e ? d : e) != 1);
+          }
+        }
+      }
+    }
+    // The format areas, written once the mask is chosen, and the dark module.
+    for (i32 i = 0; i < 9; i++) { this.set(8, i, false); this.set(i, 8, false); }
+    for (i32 i = 0; i < 8; i++) { this.set(8, s - 1 - i, false); this.set(s - 1 - i, 8, false); }
+    this.set(s - 8, 8, true);
+    // The timing patterns run through the format area's row and column 6: drawn again over it.
+    this.set(6, 8, true);
+    this.set(8, 6, true);
+    if (v >= 7) {
+      for (i32 i = 0; i < 6; i++) {
+        for (i32 j = 0; j < 3; j++) { this.set(i, s - 11 + j, false); this.set(s - 11 + j, i, false); }
+      }
+    }
+  }
+
+  void applyMask(this, i32 mask) {
+    i32 s = this.size;
+    for (i32 y = 0; y < s; y++) {
+      for (i32 x = 0; x < s; x++) {
+        if (this.reserved[y * s + x]) { continue; }
+        bool flip = false;
+        if (mask == 0) { flip = (x + y) % 2 == 0; }
+        else if (mask == 1) { flip = y % 2 == 0; }
+        else if (mask == 2) { flip = x % 3 == 0; }
+        else if (mask == 3) { flip = (x + y) % 3 == 0; }
+        else if (mask == 4) { flip = (x / 3 + y / 2) % 2 == 0; }
+        else if (mask == 5) { flip = x * y % 2 + x * y % 3 == 0; }
+        else if (mask == 6) { flip = (x * y % 2 + x * y % 3) % 2 == 0; }
+        else { flip = ((x + y) % 2 + x * y % 3) % 2 == 0; }
+        if (flip) { this.dark[y * s + x] = !this.dark[y * s + x]; }
+      }
+    }
+  }
+
+  /** The level and the mask, BCH(15,5)-coded and masked with 0x5412, in both copies. */
+  void formatBits(this, i32 level, i32 mask) {
+    i32 d = (level << 3) | mask;
+    i32 rem = d;
+    for (i32 i = 0; i < 10; i++) { rem = (rem << 1) ^ (((rem >> 9) & 1) * 0x537); }
+    i32 bits = ((d << 10) | (rem & 0x3FF)) ^ 0x5412;
+    i32 s = this.size;
+    for (i32 i = 0; i <= 5; i++) { this.dark[i * s + 8] = ((bits >> i) & 1) == 1; }
+    this.dark[7 * s + 8] = ((bits >> 6) & 1) == 1;
+    this.dark[8 * s + 8] = ((bits >> 7) & 1) == 1;
+    this.dark[8 * s + 7] = ((bits >> 8) & 1) == 1;
+    for (i32 i = 9; i < 15; i++) { this.dark[8 * s + 14 - i] = ((bits >> i) & 1) == 1; }
+    for (i32 i = 0; i < 8; i++) { this.dark[8 * s + s - 1 - i] = ((bits >> i) & 1) == 1; }
+    for (i32 i = 8; i < 15; i++) { this.dark[(s - 15 + i) * s + 8] = ((bits >> i) & 1) == 1; }
+    this.dark[(s - 8) * s + 8] = true;
+  }
+
+  /** The version, BCH(18,6)-coded, in the two 6×3 blocks beside the finders. */
+  void versionBits(this, i32 v) {
+    i32 rem = v;
+    for (i32 i = 0; i < 12; i++) { rem = (rem << 1) ^ (((rem >> 11) & 1) * 0x1F25); }
+    i32 bits = (v << 12) | (rem & 0xFFF);
+    i32 s = this.size;
+    for (i32 i = 0; i < 18; i++) {
+      bool on = ((bits >> i) & 1) == 1;
+      i32 a = s - 11 + i % 3;
+      i32 b = i / 3;
+      this.dark[b * s + a] = on;
+      this.dark[a * s + b] = on;
+    }
+  }
+
+  /** Nayuki's score of a masked symbol: runs, two-by-two blocks, finder-like patterns, and the dark share. */
+  i32 penalty(this) {
+    i32 s = this.size;
+    i32 result = 0;
+    for (i32 pass = 0; pass < 2; pass++) {
+      for (i32 y = 0; y < s; y++) {
+        bool runColor = false;
+        i32 runX = 0;
+        i32[] history = i32[].filled(7, 0);
+        for (i32 x = 0; x < s; x++) {
+          bool here = pass == 0 ? this.at(y, x) : this.at(x, y);
+          if (here == runColor) {
+            runX++;
+            if (runX == 5) { result += 3; } else if (runX > 5) { result++; }
+          } else {
+            this.addHistory(runX, history);
+            if (!runColor) { result += this.countPatterns(history) * 40; }
+            runColor = here;
+            runX = 1;
+          }
+        }
+        // The light border beyond the symbol ends the last run.
+        if (runColor) { this.addHistory(runX, history); runX = 0; }
+        runX += s;
+        this.addHistory(runX, history);
+        result += this.countPatterns(history) * 40;
+      }
+    }
+    for (i32 y = 0; y < s - 1; y++) {
+      for (i32 x = 0; x < s - 1; x++) {
+        bool c = this.at(y, x);
+        if (c == this.at(y, x + 1) && c == this.at(y + 1, x) && c == this.at(y + 1, x + 1)) { result += 3; }
+      }
+    }
+    i32 dark = 0;
+    for (bool d in this.dark) { if (d) { dark++; } }
+    i32 total = s * s;
+    i32 diff = dark * 20 - total * 10;
+    if (diff < 0) { diff = -diff; }
+    result += ((diff + total - 1) / total - 1) * 10;
+    return result;
+  }
+
+  void addHistory(this, i32 run, i32[] history) {
+    i32 r = run;
+    // The light border before the symbol joins its first run.
+    if (history[0] == 0) { r += this.size; }
+    for (i32 i = 6; i > 0; i--) { history[i] = history[i - 1]; }
+    history[0] = r;
+  }
+
+  i32 countPatterns(this, i32[] h) {
+    i32 n = h[1];
+    bool core = n > 0 && h[2] == n && h[3] == n * 3 && h[4] == n && h[5] == n;
+    return (core && h[0] >= n * 4 && h[6] >= n ? 1 : 0) + (core && h[6] >= n * 4 && h[0] >= n ? 1 : 0);
+  }
+}
+
+/** The modules as rows of "0" and "1", for tools/check_qr.ts. */
+export string modules(Qr q) {
+  Buf b = Buf.create();
+  for (i32 r = 0; r < q.size; r++) {
+    for (i32 c = 0; c < q.size; c++) { b.pushStr(q.dark[r * q.size + c] ? "1" : "0"); }
+    b.pushStr("\n");
+  }
+  return b.toStr();
+}
+
+string num(f64 x) {
+  i64 thousandths = (x * 1000.0 + 0.5).floor() as~ i64;
+  i64 frac = thousandths % 1000;
+  string f = frac < 10 ? "00\{frac}" : frac < 100 ? "0\{frac}" : "\{frac}";
+  return "\{thousandths / 1000}.\{f}";
+}
+
+/** The code, `size` pixels square: a white square, and every dark module one square of a single path. */
+export Node QrCode(Ui ui, string value, i32 size) {
+  Qr? q = encode(value);
+  if (q is null) { return <"svg" width={"\{size}"} height={"\{size}"}/>; }
+  f64 m = (size as f64) / (q!.size as f64);
+  Buf d = Buf.create();
+  for (i32 r = 0; r < q!.size; r++) {
+    for (i32 c = 0; c < q!.size; c++) {
+      if (!q!.dark[r * q!.size + c]) { continue; }
+      d.pushStr("M" + num((c as f64) * m) + " " + num((r as f64) * m) + "h" + num(m) + "v" + num(m) + "h-" + num(m) + "z");
+    }
+  }
+  return <"svg" width={"\{size}"} height={"\{size}"} shape-rendering="crispEdges">
+    <"rect" width="100%" height="100%" fill="#FFFFFF"/>
+    <"path" fill="#000000" d={d.toStr()}/>
+  </"svg">;
+}

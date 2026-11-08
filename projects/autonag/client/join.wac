@@ -1,0 +1,103 @@
+// Opening an invite link (`?join=<instance>`): register if need be, and ask for access — autonag's
+// client/src/pages/JoinInstance.tsx. autonag read the code once and kept showing this screen until a reload; here
+// Cancel and a sent request leave it for the instance list.
+
+import { Result } from "core";
+import { json.JsonValue } from "wac";
+import { ElementEvent, Node, Ref, Ui, html.button, html.div, html.form, html.h1, html.img, html.input, html.p } from "web";
+import { App } from "./store.wac";
+import { ApiError } from "./api.wac";
+import { focusWhenDrawn, nothing, trim } from "./app.wac";
+import { MASCOT } from "./mascot.wac";
+import { Obj } from "../src/model/jsonkit.wac";
+
+export Node JoinInstance(Ui ui, App app, string instanceId) {
+  auto nickname = ui.state("");
+  auto loading = ui.state(false);
+  auto error = ui.state("");
+  auto done = ui.state(false);
+  Ref field = ui.ref();
+  focusWhenDrawn(ui, field, app.authStatus);
+  // After registering, the access request goes at once.
+  ui.effect(app.authStatus, () => {
+    if (!done.get() && app.token is not null && app.authStatus == "pending-approval") {
+      requesting(app, instanceId, (string err) => { if (err == "") { done.set(true); } loading.set(false); });
+    }
+    return () => { };
+  });
+  if (done.get()) {
+    return <div class="join">
+      <div class="join-card">
+        <img class="join-logo" src={MASCOT} alt="Autonag"/>
+        <h1 class="join-title">Request sent!</h1>
+        <div class="join-success">Waiting for admin approval.</div>
+      </div>
+    </div>;
+  }
+  if (app.authStatus == "authenticated" || app.authStatus == "pending-approval") {
+    bool pending = app.authStatus == "pending-approval";
+    return <div class="join">
+      <div class="join-card">
+        <img class="join-logo" src={MASCOT} alt="Autonag"/>
+        <h1 class="join-title">Join instance</h1>
+        <div class="join-box"><div class="join-id">{instanceId}</div></div>
+        <p class="join-note">You'll request access. An admin must approve before you can use it.</p>
+        {error.get() != "" ? <p class="join-error">{error.get()}</p> : nothing()}
+        <button class="join-button" disabled={loading.get() || pending ? "true" : null} onclick={(ElementEvent e) => {
+          loading.set(true);
+          error.set("");
+          requesting(app, instanceId, (string err) => {
+            loading.set(false);
+            if (err != "") { error.set(err); return; }
+            done.set(true);
+            leaveAfter(app);
+          });
+        }}>{loading.get() ? "Requesting…" : pending ? "Device pending approval…" : "Request access"}</button>
+        <button class="join-button" style="background: transparent; border: 1px solid #374151; color: #9ca3af"
+                onclick={(ElementEvent e) => { app.joinCode = ""; app.go("instances", null); }}>Cancel</button>
+      </div>
+    </div>;
+  }
+  string name = trim(nickname.get());
+  return <div class="join">
+    <div class="join-card">
+      <img class="join-logo" src={MASCOT} alt="Autonag"/>
+      <h1 class="join-title">Join instance</h1>
+      <div class="join-box">
+        <div class="join-id">{instanceId}</div>
+        <p class="join-note" style="margin-top: 0.5rem">Register your device to request access.</p>
+      </div>
+      <form style="display: flex; flex-direction: column; gap: 0.75rem" prevent="*" onsubmit={(ElementEvent e) => {
+        if (name == "") { return; }
+        loading.set(true);
+        error.set("");
+        registering(app, name, (string err) => { if (err != "") { error.set(err); loading.set(false); } });
+      }}>
+        <input class="join-input" type="text" placeholder="Device nickname (e.g. my-phone)" value={nickname.get()} ref={field}
+               oninput={(ElementEvent e) => { nickname.set(e.value); }}/>
+        {error.get() != "" ? <p class="join-error">{error.get()}</p> : nothing()}
+        <button class="join-button" type="submit" disabled={loading.get() || name == "" ? "true" : null}>{loading.get() ? "Registering…" : "Register & request access"}</button>
+      </form>
+      <p class="join-note">An admin must approve both your device and instance access.</p>
+    </div>
+  </div>;
+}
+
+async void requesting(App app, string instanceId, fn<void(string)> done) {
+  Result<JsonValue, ApiError> r = await app.api.call("POST", "/instances/\{instanceId}/access/request", Obj.create().done(), app.token);
+  if (r.isErr()) { done(r.err()!.message); return; }
+  await app.refreshInstances();
+  done("");
+}
+
+async void registering(App app, string name, fn<void(string)> done) {
+  Result<void, ApiError> r = await app.register(name);
+  done(r.isErr() ? r.err()!.message : "");
+}
+
+/** A moment to read "Request sent!", then the instance list. */
+async void leaveAfter(App app) {
+  await app.page.sleep(1500);
+  app.joinCode = "";
+  app.go("instances", null);
+}

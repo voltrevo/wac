@@ -1,0 +1,580 @@
+// One timer, open: autonag's client/src/pages/ViewTimer.tsx. Its name (edited in place), a progress bar counting
+// down, the quick extends and a typed reschedule, recurrence, expiry, anchor and description, the history calendar,
+// the close buttons, and the comment thread. A timer that has been closed is read back out of the log and shown as
+// it stood when it closed, with Undo.
+
+import { Map, Result, Vec, hashString, stringEq } from "core";
+import { json.JsonValue, json.JsonArray } from "wac";
+import { ElementEvent, Node, Ref, Ui, html.button, html.div, html.input, html.label, html.span, html.textarea } from "web";
+import { App } from "./store.wac";
+import { ApiError } from "./api.wac";
+import { capitalised, focusWhenDrawn, nothing, number, text, trim, urgStyle } from "./app.wac";
+import { formatCountdown, formatDuration, formatParsedTime, localeString, localAt, Local, parseTimeInput } from "./fmt.wac";
+import { markdown } from "./markdown.wac";
+import { Obj, str } from "../src/model/jsonkit.wac";
+import { calculateColor, ColorInfo, resolveColor } from "../src/model/color.wac";
+import { RecurrenceSpec, Timer, timerFrom } from "../src/model/events.wac";
+import { TimeZone } from "../src/time/tz.wac";
+import { DEFAULT_ANCHOR_TIME, localToUtc } from "../src/time/anchor.wac";
+import { AnchorSpec, parseDuration, resolveAnchor, resolveDuration } from "../src/time/duration.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+static string[] PERIOD_LABELS = ["Daily", "Weekly", "Biweekly", "Monthly"];
+static i32[] PERIOD_VALUES = [1, 7, 14, 30];
+
+string pad2(i64 n) { return n < 10 ? "0\{n}" : "\{n}"; }
+
+/** The value a datetime-local field shows for an instant: "2026-08-12T20:05", in the reader's zone. */
+string toDatetimeLocal(f64 ms, TimeZone tz) {
+  Local l = localAt(ms, tz);
+  return "\{l.year}-\{pad2(l.month)}-\{pad2(l.day)}T\{pad2(l.hour)}:\{pad2(l.minute)}";
+}
+
+i64? digitsAt(string s, i32 from, i32 n) {
+  if (from + n > s.len()) { return null; }
+  i64 v = 0;
+  for (u8 c in s.slice(from, from + n).toBytes()) {
+    if (c < '0' || c > '9') { return null; }
+    v = v * 10 + (c - '0') as i64;
+  }
+  return v;
+}
+
+/** new Date("2026-08-12T20:05").getTime(): a datetime-local value as an instant, in the reader's zone. */
+f64? fromDatetimeLocal(string v, TimeZone tz) {
+  if (v.len() < 16 || v.slice(4, 5) != "-" || v.slice(7, 8) != "-" || v.slice(10, 11) != "T" || v.slice(13, 14) != ":") { return null; }
+  i64? y = digitsAt(v, 0, 4);
+  i64? mo = digitsAt(v, 5, 2);
+  i64? d = digitsAt(v, 8, 2);
+  i64? h = digitsAt(v, 11, 2);
+  i64? mi = digitsAt(v, 14, 2);
+  if (y is null || mo is null || d is null || h is null || mi is null) { return null; }
+  return localToUtc(y!, mo!, d!, h!, mi!, tz) as~ f64;
+}
+
+/** The bar's label: a ticking clock within three hours, a duration beyond. */
+string formatProgressLabel(f64 ms) {
+  f64 a = ms < 0.0 ? -ms : ms;
+  if (a < 3.0 * 3600000.0) { return formatCountdown(ms); }
+  return ms < 0.0 ? formatDuration(ms) + " overdue" : formatDuration(ms);
+}
+
+string formatRecurrence(JsonValue r) {
+  f64 p = number(r, "periodDays");
+  string period = p == 1.0 ? "daily" : p == 7.0 ? "weekly" : p == 14.0 ? "biweekly" : p == 30.0 ? "monthly" : "every \{jsNumber(p)}d";
+  bool weekdays = r.member("skipWeekends")?.boolean() ?? false;
+  return period + " at " + text(r, "anchorTime") + (weekdays ? " (weekdays)" : "");
+}
+
+bool has(JsonValue? v, string key) {
+  JsonValue? m = v?.member(key);
+  return m is not null && !m!.isNull();
+}
+
+/** The timer view, or "not found" while there is no timer to show. */
+export Node TimerView(Ui ui, App app, bool desktop) {
+  auto now = ui.state(app.wall());
+  ui.every(1000, () => { now.set(app.wall()); });
+  string id = app.selectedTimerId ?? "";
+  JsonValue? live = app.timer(id);
+  auto closed = ui.state<JsonValue>(JsonValue.Null);
+  auto closedFor = ui.state("");
+  auto closedLoading = ui.state(false);
+  // Closing removes a timer from the state, so a view opened on one — including one just closed — reads it back
+  // out of the log.
+  ui.effect((live is null ? "closed:" : "live:") + id, () => {
+    if (live is not null || id == "") { closed.set(JsonValue.Null); closedFor.set(""); return () => { }; }
+    closedLoading.set(true);
+    fetchClosed(app, id, (JsonValue v) => { closed.set(v); closedFor.set(id); closedLoading.set(false); });
+    return () => { };
+  });
+  JsonValue? closedNow = closedFor.get() == id && !closed.get().isNull() ? closed.get() : null;
+  JsonValue? timer = live ?? closedNow?.member("timer");
+  if (timer is null) {
+    return <div class="vt" style="background: var(--bg)">
+      <div class="vt-top">
+        <button class="vt-back" onclick={(ElementEvent e) => { app.back(); }}>←</button>
+        <input class="vt-name" value={closedLoading.get() ? "Loading…" : "Timer not found"} readonly="true"/>
+      </div>
+    </div>;
+  }
+  return <TimerDetail key={id} app={app} timer={timer!} closed={live is null ? closedNow : null} now={now.get()}/>;
+}
+
+async void fetchClosed(App app, string id, fn<void(JsonValue)> done) {
+  Result<JsonValue, ApiError> r = await app.act("GET", "/timers/\{id}/closed", null);
+  done(r.isOk() ? r.unwrap() : JsonValue.Null);
+}
+
+Node TimerDetail(Ui ui, App app, JsonValue timer, JsonValue? closed, f64 now) {
+  bool isClosed = closed is not null;
+  string id = text(timer, "id");
+  string name = text(timer, "name");
+  TimeZone tz = app.zone();
+  auto editName = ui.state(name);
+  auto lastName = ui.state(name);
+  ui.effect(name, () => { if (lastName.get() != name) { lastName.set(name); editName.set(name); } return () => { }; });
+  auto showCustomClose = ui.state(false);
+  auto customReason = ui.state("");
+  auto showEditExpiry = ui.state(false);
+  auto rescheduleInput = ui.state("");
+  auto editExpiryValue = ui.state("");
+  auto showEditRecurrence = ui.state(false);
+  auto showHistory = ui.state(false);
+  auto editPeriodDays = ui.state(1);
+  auto editAnchorTime = ui.state("09:00");
+  auto editTimezone = ui.state(app.zoneName);
+  auto editSkipWeekends = ui.state(false);
+  auto editingDescription = ui.state(false);
+  auto editDescriptionValue = ui.state("");
+  Ref descField = ui.ref();
+  focusWhenDrawn(ui, descField, editingDescription.get() ? "editing" : "");
+  Ref reasonField = ui.ref();
+  focusWhenDrawn(ui, reasonField, showCustomClose.get() ? "open" : "");
+  auto comments = ui.state(JsonArray.create());
+  auto commentInput = ui.state("");
+  auto commentPosting = ui.state(false);
+  ui.effect(id, () => {
+    loadComments(app, id, (JsonArray cs) => { comments.set(cs); });
+    return () => { };
+  });
+
+  f64 closedAt = isClosed ? number(closed!.member("closedBy"), "at") : now;
+  f64 remaining = number(timer, "currentExpiry") - closedAt;
+  ColorInfo info = calculateColor(remaining);
+  bool nearFlash = info.color == "flashing" || info.nextColor == "flashing";
+  string fillVars = nearFlash ? "--u-l: hsla(0, 70%, 40%, 0.7); --u-d: hsla(0, 70%, 55%, 0.8);"
+                              : "--u-l: " + resolveColor(info.nextColor, "light") + "; --u-d: " + resolveColor(info.nextColor, "dark") + ";";
+  f64 pct = info.color == "flashing" ? 1.0 : info.colorProgress;
+
+  JsonValue? recurrence = timer.member("recurrence");
+  bool recurring = recurrence is not null && !recurrence!.isNull();
+  string? defaultAnchor = app.state?.member("defaultAnchorTime")?.text();
+  string instanceAnchorTime = defaultAnchor ?? DEFAULT_ANCHOR_TIME;
+  Timer? asTimer = timerFrom(timer).ok();
+  AnchorSpec anchor = resolveAnchor(asTimer, defaultAnchor, app.zoneName);
+  app.zones.want(anchor.timezone);
+  TimeZone anchorZone = app.zones.orUtc(anchor.timezone);
+  f64 expiry = number(timer, "currentExpiry");
+
+  fn<f64(string)> extendTarget = (string d) => {
+    f64 base = app.wall() > expiry ? app.wall() : expiry;
+    auto p = parseDuration(d);
+    return p is null ? base : resolveDuration(p!, base, anchor, anchorZone);
+  };
+  fn<void(string)> close = (string reason) => {
+    if (recurring) { app.recurTimer(id, reason); } else { app.completeTimer(id, reason); }
+  };
+  fn<void(string)> submitCustomClose = (string reason) => {
+    string r = trim(reason);
+    if (r == "") { return; }
+    showCustomClose.set(false);
+    customReason.set("");
+    close(r);
+  };
+  f64? rescheduleTarget = trim(rescheduleInput.get()) == "" ? null : parseTimeInput(rescheduleInput.get(), now, anchor, anchorZone, tz);
+  fn<void()> reschedule = () => {
+    f64? target = parseTimeInput(rescheduleInput.get(), app.wall(), anchor, anchorZone, tz);
+    if (target is null) { return; }
+    app.updateExpiry(id, target!);
+    rescheduleInput.set("");
+  };
+  fn<void()> rename = () => {
+    string t = trim(editName.get());
+    if (t != "" && t != name) { app.renameTimer(id, t); } else { editName.set(name); }
+  };
+  fn<void()> openEditRecurrence = () => {
+    if (isClosed) { return; }
+    if (recurring) {
+      editPeriodDays.set(number(recurrence, "periodDays") as~ i32);
+      editAnchorTime.set(text(recurrence, "anchorTime"));
+      editTimezone.set(text(recurrence, "timezone"));
+      editSkipWeekends.set(recurrence!.member("skipWeekends")?.boolean() ?? false);
+    } else {
+      editPeriodDays.set(1);
+      editAnchorTime.set(instanceAnchorTime);
+      editTimezone.set(app.zoneName);
+      editSkipWeekends.set(false);
+    }
+    showEditRecurrence.set(true);
+  };
+  fn<void()> postComment = () => {
+    string t = trim(commentInput.get());
+    if (t == "" || commentPosting.get()) { return; }
+    commentPosting.set(true);
+    postingComment(app, id, t, (JsonValue? c) => {
+      if (c is not null) {
+        comments.set(withComment(comments.get(), c!));
+        commentInput.set("");
+      }
+      commentPosting.set(false);
+    });
+  };
+
+  // The thread: what was fetched, and a comment that has arrived since on the socket; newest first.
+  JsonArray thread = comments.get();
+  if (app.latestComment is not null && text(app.latestComment, "threadId") == id) { thread = withComment(thread, app.latestComment!); }
+  Vec<Node> commentNodes = Vec.create();
+  for (i32 i = thread.len() - 1; i >= 0; i--) {
+    JsonValue c = thread.get(i);
+    commentNodes.push(<div class="vt-comment" key={text(c, "id")}>
+      <div class="vt-comment-text">{text(c, "text")}</div>
+      <div class="vt-comment-meta">{localeString(number(c, "createdAt"), tz)}</div>
+    </div>);
+  }
+
+  Vec<Node> periods = Vec.create();
+  for (i32 i = 0; i < 4; i++) {
+    i32 v = PERIOD_VALUES[i];
+    periods.push(<button key={PERIOD_LABELS[i]} type="button" class={editPeriodDays.get() == v ? "chip small on" : "chip small"}
+                         onclick={(ElementEvent e) => { editPeriodDays.set(v); }}>{PERIOD_LABELS[i]}</button>);
+  }
+  string closedBy = isClosed ? text(closed!.member("closedBy"), "type") : "";
+  string closedReason = isClosed ? text(closed!.member("closedBy"), "closeReason") : "";
+  string mark = recurring ? " ↻" : "";
+  string timerAnchor = text(timer, "anchorTime");
+  bool hasTimerAnchor = has(timer, "anchorTime");
+
+  return <div class="vt urg" style={urgStyle(info.color)}>
+    <div class="vt-top">
+      <button class="vt-back" onclick={(ElementEvent e) => { app.back(); }}>←</button>
+      <input class="vt-name" value={editName.get()} readonly={isClosed ? "true" : null}
+             oninput={(ElementEvent e) => { editName.set(e.value); }}
+             onblur={(ElementEvent e) => { rename(); }}
+             onkeydown={(ElementEvent e) => { if (e.value == "Enter") { rename(); } }}/>
+      <div class="vt-back" style="visibility: hidden; pointer-events: none">←</div>
+    </div>
+    <div class="vt-progress">
+      <div class="vt-fill urg" style={fillVars + " width: \{jsNumber(pct * 100.0)}%;"}/>
+      <div class="vt-progress-text">{formatProgressLabel(remaining)}</div>
+    </div>
+    <div class="vt-content">
+      {isClosed
+        ? <div class="vt-closed">
+            <div>
+              <div style="font-weight: 600">{closedBy == "TimerRemoved" ? "Deleted" : "Closed"}{closedReason != "" ? " — " + closedReason : ""}</div>
+              <div style="font-size: 0.78rem; color: var(--on-urg-muted)">{localeString(number(closed!.member("closedBy"), "at"), tz)}</div>
+            </div>
+            <button class="flat primary boxed" style="flex: none; padding: 0.45rem 0.9rem"
+                    onclick={(ElementEvent e) => { app.skipEvent(text(closed!.member("closedBy"), "eventId")); }}>Undo</button>
+          </div>
+        : <div style="display: contents">
+            <div class="btn-row">
+              <button class="flat" title={localeString(expiry + 3600000.0, tz)} onclick={(ElementEvent e) => { app.updateExpiry(id, expiry + 3600000.0); }}>+1h</button>
+              <button class="flat" title={localeString(extendTarget("1d"), tz)} onclick={(ElementEvent e) => { app.updateExpiry(id, extendTarget("1d")); }}>+1d</button>
+              <button class="flat" title={localeString(extendTarget("1w"), tz)} onclick={(ElementEvent e) => { app.updateExpiry(id, extendTarget("1w")); }}>+1w</button>
+            </div>
+            <div>
+              <div style="display: flex; gap: 0.4rem">
+                <input class="vt-input" style="flex: 1" placeholder="Reschedule: 1d, 1w, tomorrow, fri morning, 3h…" value={rescheduleInput.get()}
+                       oninput={(ElementEvent e) => { rescheduleInput.set(e.value); }}
+                       onkeydown={(ElementEvent e) => { if (e.value == "Enter" && rescheduleTarget is not null) { reschedule(); } }}/>
+                <button class="flat primary boxed" style="flex: none; padding: 0.4rem 0.9rem" disabled={rescheduleTarget is null ? "true" : null}
+                        onclick={(ElementEvent e) => { reschedule(); }}>Set</button>
+              </div>
+              <div class={rescheduleTarget is not null ? "vt-hint valid" : "vt-hint"}>
+                {trim(rescheduleInput.get()) == "" ? "" : rescheduleTarget is not null ? "→ " + formatParsedTime(rescheduleTarget!, now, tz)
+                  : "Can't parse — try: 1d, 1w, tomorrow, fri morning, 3h"}
+              </div>
+            </div>
+          </div>}
+
+      <div class="vt-info">
+        <div>
+          <div class="vt-label">Recurrence</div>
+          {recurring
+            ? <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.2rem">
+                <span class="vt-badge">↻ {formatRecurrence(recurrence!)}</span>
+                {!isClosed ? <button class="vt-link" onclick={(ElementEvent e) => { openEditRecurrence(); }}>Edit</button> : nothing()}
+              </div>
+            : isClosed ? <div class="vt-value" style="color: var(--on-urg-muted)">None</div>
+            : <button class="vt-link" style="padding: 0.2rem 0; text-align: left" onclick={(ElementEvent e) => { openEditRecurrence(); }}>Add recurrence</button>}
+        </div>
+        <div>
+          <div class="vt-label">Expires</div>
+          {!showEditExpiry.get()
+            ? (isClosed ? <div class="vt-value">{localeString(expiry, tz)}</div>
+                : <div class="vt-editable" title="Click to edit" onclick={(ElementEvent e) => {
+                    editExpiryValue.set(toDatetimeLocal(expiry, tz));
+                    showEditExpiry.set(true);
+                  }}>{localeString(expiry, tz)}<span style="font-size: 0.75rem; color: var(--on-urg-muted)">✎</span></div>)
+            : <div style="display: flex; gap: 0.4rem; margin-top: 0.2rem">
+                <input class="vt-input" type="datetime-local" style="flex: 1" value={editExpiryValue.get()} oninput={(ElementEvent e) => { editExpiryValue.set(e.value); }}/>
+                <button class="flat primary" style="flex: none; padding: 0.4rem 0.75rem" onclick={(ElementEvent e) => {
+                  f64? ms = fromDatetimeLocal(editExpiryValue.get(), tz);
+                  if (ms is not null) { app.updateExpiry(id, ms!); }
+                  showEditExpiry.set(false);
+                }}>Set</button>
+                <button class="flat" style="flex: none; padding: 0.4rem 0.75rem" onclick={(ElementEvent e) => { showEditExpiry.set(false); }}>✕</button>
+              </div>}
+        </div>
+        {!recurring ? <div>
+          <div class="vt-label">Anchor time</div>
+          <div style="font-size: 0.78rem; color: var(--on-urg-muted); margin-bottom: 0.3rem">When "1d" / "1w" land for this timer.</div>
+          <div style="display: flex; gap: 0.4rem; align-items: center">
+            <input class="vt-input" type="time" style="flex: 1" value={hasTimerAnchor ? timerAnchor : instanceAnchorTime} disabled={isClosed ? "true" : null}
+                   onchange={(ElementEvent e) => { if (e.value != "" && !isClosed) { app.setTimerAnchor(id, e.value); } }}/>
+            {hasTimerAnchor ? <button class="flat" style="flex: none; padding: 0.4rem 0.75rem" title={"Use the instance default (" + instanceAnchorTime + ")"}
+                                      onclick={(ElementEvent e) => { app.setTimerAnchor(id, null); }}>Reset</button> : nothing()}
+          </div>
+          <div style="font-size: 0.72rem; color: var(--on-urg-muted); margin-top: 0.25rem">
+            {hasTimerAnchor ? "Set for this timer only." : "Using the instance default (" + instanceAnchorTime + ")."}
+          </div>
+        </div> : nothing()}
+        <div>
+          <div class="vt-label">Description
+            {!editingDescription.get() ? <button class="vt-pencil" title="Edit description" onclick={(ElementEvent e) => {
+              if (isClosed) { return; }
+              editDescriptionValue.set(text(timer, "description"));
+              editingDescription.set(true);
+            }}>✎</button> : nothing()}
+          </div>
+          {editingDescription.get()
+            ? <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.2rem">
+                <textarea class="vt-desc-input" rows="4" ref={descField} value={editDescriptionValue.get()} oninput={(ElementEvent e) => { editDescriptionValue.set(e.value); }}/>
+                <div style="display: flex; gap: 0.4rem">
+                  <button class="flat primary" style="flex: none; padding: 0.3rem 0.75rem" onclick={(ElementEvent e) => {
+                    app.updateDescription(id, trim(editDescriptionValue.get()));
+                    editingDescription.set(false);
+                  }}>Save</button>
+                  <button class="flat" style="flex: none; padding: 0.3rem 0.75rem" onclick={(ElementEvent e) => { editingDescription.set(false); }}>Cancel</button>
+                </div>
+              </div>
+            : <div style="margin-top: 0.2rem; min-height: 1.5rem">
+                {has(timer, "description") && text(timer, "description") != ""
+                  ? <div class="markdown">{markdown(text(timer, "description"))}</div>
+                  : <span style="color: var(--on-urg-muted); font-size: 0.85rem">Add description…</span>}
+              </div>}
+        </div>
+        <div>
+          <div class="vt-label">Created</div>
+          <div class="vt-value">{localeString(number(timer, "created"), tz)}</div>
+        </div>
+      </div>
+
+      {showEditRecurrence.get() ? <div class="vt-recur-edit">
+        <div style="font-weight: 600; font-size: 0.9rem">{recurring ? "Edit recurrence" : "Add recurrence"}</div>
+        <div>
+          <div class="vt-small-label">Repeat every</div>
+          <div class="chips" style="margin-top: 0.3rem; gap: 0.35rem">{periods.toArray()}</div>
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem">
+            <input class="vt-input" type="number" min="1" value={"\{editPeriodDays.get()}"} style="width: 72px; padding: 0.35rem 0.5rem"
+                   oninput={(ElementEvent e) => { i32 v = intOf(e.value); if (v >= 1) { editPeriodDays.set(v); } }}/>
+            <span style="font-size: 0.85rem; color: var(--text-muted)">days</span>
+          </div>
+        </div>
+        <div class="row2">
+          <div>
+            <div class="vt-small-label">At time</div>
+            <input class="vt-input" type="time" style="width: 100%" value={editAnchorTime.get()} oninput={(ElementEvent e) => { editAnchorTime.set(e.value); }}/>
+          </div>
+          <div>
+            <div class="vt-small-label">Timezone</div>
+            <input class="vt-input" type="text" style="width: 100%" value={editTimezone.get()} oninput={(ElementEvent e) => { editTimezone.set(e.value); }}/>
+          </div>
+        </div>
+        <label class="check-row">
+          <input type="checkbox" checked={editSkipWeekends.get() ? "true" : null} onchange={(ElementEvent e) => { editSkipWeekends.set(!editSkipWeekends.get()); }}/>
+          Skip weekends
+        </label>
+        <div class="btn-row">
+          <button class="flat primary" onclick={(ElementEvent e) => {
+            app.updateRecurrence(id, RecurrenceSpec(editPeriodDays.get() as f64, editAnchorTime.get(), editTimezone.get(), editSkipWeekends.get()));
+            showEditRecurrence.set(false);
+          }}>Save</button>
+          <button class="flat" onclick={(ElementEvent e) => { showEditRecurrence.set(false); }}>Cancel</button>
+          {recurring ? <button class="flat danger" onclick={(ElementEvent e) => { app.removeRecurrence(id); showEditRecurrence.set(false); }}>Remove</button> : nothing()}
+        </div>
+      </div> : nothing()}
+
+      <div>
+        <button class="cal-toggle" onclick={(ElementEvent e) => { showHistory.set(!showHistory.get()); }}>{showHistory.get() ? "▾ History" : "▸ History"}</button>
+        {showHistory.get() ? <div style="margin-top: 0.5rem"><Calendar app={app} timerId={id}/></div> : nothing()}
+      </div>
+
+      {!isClosed ? <div style="display: flex; flex-direction: column; gap: 0.5rem">
+        <div class="btn-row">
+          <button class="flat danger" onclick={(ElementEvent e) => { close("fail"); }}>Fail{mark}</button>
+          <button class="flat" onclick={(ElementEvent e) => { showCustomClose.set(!showCustomClose.get()); customReason.set(""); }}>Custom…{mark}</button>
+          <button class="flat success" onclick={(ElementEvent e) => { close("pass"); }}>Pass{mark}</button>
+        </div>
+        {showCustomClose.get() ? <div style="display: flex; gap: 0.4rem">
+          <input class="vt-input" style="flex: 1" placeholder="Close reason…" ref={reasonField} value={customReason.get()}
+                 oninput={(ElementEvent e) => { customReason.set(e.value); }}
+                 onkeydown={(ElementEvent e) => { if (e.value == "Enter") { submitCustomClose(customReason.get()); } }}/>
+          <button class="flat primary boxed" style="flex: none; padding: 0.4rem 0.75rem" disabled={trim(customReason.get()) == "" ? "true" : null}
+                  onclick={(ElementEvent e) => { submitCustomClose(customReason.get()); }}>{recurring ? "↻" : "Close"}</button>
+          <button class="flat" style="flex: none; padding: 0.4rem 0.75rem" onclick={(ElementEvent e) => { showCustomClose.set(false); }}>✕</button>
+        </div> : nothing()}
+      </div> : nothing()}
+
+      <div class="vt-comments" style="padding-bottom: 1rem">
+        <div class="vt-label">Comments</div>
+        <div class="vt-comment-row">
+          <textarea class="vt-comment-input" rows="1" placeholder="Add a comment…" value={commentInput.get()} prevent="Enter"
+                    oninput={(ElementEvent e) => { commentInput.set(e.value); }}
+                    onkeydown={(ElementEvent e) => { if (e.value == "Enter" && (e.mods & 1) == 0) { postComment(); } }}/>
+          <button class="flat primary boxed" style="flex: none; align-self: flex-end; padding: 0.5rem 0.75rem"
+                  disabled={trim(commentInput.get()) == "" || commentPosting.get() ? "true" : null}
+                  onclick={(ElementEvent e) => { postComment(); }}>{commentPosting.get() ? "…" : "Post"}</button>
+        </div>
+        {commentNodes.toArray()}
+      </div>
+    </div>
+  </div>;
+}
+
+i32 intOf(string s) {
+  i32 v = 0;
+  for (u8 c in s.toBytes()) {
+    if (c < '0' || c > '9') { break; }
+    v = v * 10 + (c - '0') as i32;
+  }
+  return v;
+}
+
+JsonArray withComment(JsonArray cs, JsonValue c) {
+  string cid = text(c, "id");
+  JsonArray out = JsonArray.create();
+  for (i32 i = 0; i < cs.len(); i++) {
+    if (text(cs.get(i), "id") == cid) { return cs; }
+    out.push(cs.get(i));
+  }
+  out.push(c);
+  return out;
+}
+
+async void loadComments(App app, string id, fn<void(JsonArray)> done) {
+  Result<JsonValue, ApiError> r = await app.act("GET", "/threads/\{id}/comments", null);
+  if (r.isOk()) { done(r.unwrap().member("comments")?.array() ?? JsonArray.create()); }
+}
+
+async void postingComment(App app, string id, string body, fn<void(JsonValue?)> done) {
+  Result<JsonValue, ApiError> r = await app.act("POST", "/threads/\{id}/comments", Obj.create().put("text", str(body)).done());
+  done(r.isOk() ? r.unwrap().member("comment") : null);
+}
+
+// ── the history calendar ──
+
+static string[] MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+                               "November", "December"];
+
+/** A year's closes, once fetched: each a day and the reason it closed with. */
+struct YearEntries {
+  Vec<f64> dates;
+  Vec<string> reasons;
+}
+
+struct CalCache {
+  Map<string, YearEntries> years;
+  Map<string, bool> loading;
+}
+
+string reasonColor(string r) {
+  string l = r;
+  u8[] b = l.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  string low = string.fromBytes(b);
+  if (low == "pass") { return "#28a745"; }
+  if (low == "fail") { return "#dc3545"; }
+  return "#007bff";
+}
+
+Node Calendar(Ui ui, App app, string timerId) {
+  TimeZone tz = app.zone();
+  Local today = localAt(app.wall(), tz);
+  auto year = ui.state(today.year);
+  auto month = ui.state(today.month);   // 1–12
+  auto cache = ui.state(CalCache(Map.create(hashString, stringEq), Map.create(hashString, stringEq)));
+  auto version = ui.state(0);
+  i64 y = year.get();
+  string yk = "\{y}";
+  YearEntries? entries = cache.get().years.get(yk);
+  if (entries is null && !cache.get().loading.has(yk)) {
+    cache.get().loading.set(yk, true);
+    f64 from = localToUtc(y, 1, 1, 0, 0, tz) as~ f64;
+    f64 to = localToUtc(y + 1, 1, 1, 0, 0, tz) as~ f64;
+    loadYear(app, timerId, from, to, (YearEntries got) => {
+      cache.get().years.set(yk, got);
+      cache.get().loading.remove(yk);
+      version.set(version.get() + 1);
+    });
+  }
+  // The colour of each day: the reason it closed with most often.
+  Map<string, string> dayColors = Map.create(hashString, stringEq);
+  if (entries is not null) {
+    Map<string, Map<string, i32>> counts = Map.create(hashString, stringEq);
+    Vec<string> order = Vec.create();
+    for (i32 i = 0; i < entries!.dates.len(); i++) {
+      Local d = localAt(entries!.dates.get(i), tz);
+      string k = "\{d.year}-\{d.month}-\{d.day}";
+      Map<string, i32>? m = counts.get(k);
+      if (m is null) { m = Map<string, i32>.create(hashString, stringEq); counts.set(k, m!); order.push(k); }
+      string r = entries!.reasons.get(i);
+      m!.set(r, (m!.get(r) ?? 0) + 1);
+    }
+    for (i32 i = 0; i < order.len(); i++) {
+      Map<string, i32> m = counts.get(order.get(i))!;
+      string best = "";
+      i32 most = -1;
+      for (string r in m.keys()) { if (m.get(r)! > most) { most = m.get(r)!; best = r; } }
+      dayColors.set(order.get(i), reasonColor(best));
+    }
+  }
+  i64 mon = month.get();
+  // The grid: the month's days, led by the end of the month before and filled to six weeks with the next.
+  f64 first = localToUtc(y, mon, 1, 12, 0, tz) as~ f64;
+  i32 firstDay = localAt(first, tz).weekday;
+  i64 daysInMonth = localAt(localToUtc(y, mon + 1, 0, 12, 0, tz) as~ f64, tz).day;
+  Vec<Node> cells = Vec.create();
+  for (string h in ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]) { cells.push(<div class="cal-day-header" key={h}>{h}</div>); }
+  for (i32 i = 0; i < 42; i++) {
+    Local d = localAt(localToUtc(y, mon, (i - firstDay + 1) as i64, 12, 0, tz) as~ f64, tz);
+    string k = "\{d.year}-\{d.month}-\{d.day}";
+    string? color = dayColors.get(k);
+    bool other = d.month != mon;
+    string cls = "cal-day" + (other ? " other" : "") + (color is not null ? " colored" : "");
+    cells.push(<div key={"d\{i}"} class={cls} style={color is null ? "" : "background: " + color!}>{"\{d.day}"}</div>);
+  }
+  bool loading = entries is null;
+  return <div style="display: flex; flex-direction: column; gap: 0.5rem">
+    <div class="cal-nav">
+      <button class="cal-nav-btn" onclick={(ElementEvent e) => { if (mon == 1) { year.set(y - 1); month.set(12); } else { month.set(mon - 1); } }}>‹</button>
+      <div class="cal-title">{MONTH_NAMES[(mon - 1) as! i32] + " \{y}"}</div>
+      <button class="cal-nav-btn" onclick={(ElementEvent e) => { if (mon == 12) { year.set(y + 1); month.set(1); } else { month.set(mon + 1); } }}>›</button>
+    </div>
+    {loading ? <div class="cal-note">Loading…</div>
+      : entries!.dates.len() == 0 ? <div class="cal-note">No history yet.</div>
+      : <div style="display: flex; flex-direction: column; gap: 0.5rem">
+          <div class="cal-grid">{cells.toArray()}</div>
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: 0.72rem">
+            <span class="cal-key"><span class="cal-swatch" style="background: #28a745"/>pass</span>
+            <span class="cal-key"><span class="cal-swatch" style="background: #dc3545"/>fail</span>
+            <span class="cal-key"><span class="cal-swatch" style="background: #007bff"/>other</span>
+          </div>
+        </div>}
+  </div>;
+}
+
+/** Every close of the timer in [from, to), page by page. */
+async void loadYear(App app, string timerId, f64 from, f64 to, fn<void(YearEntries)> done) {
+  YearEntries out = YearEntries(Vec.create(), Vec.create());
+  f64? cursor = 0.0;
+  while (cursor is not null) {
+    Result<JsonValue, ApiError> r = await app.act("GET",
+      "/timers/\{timerId}/history?after=\{jsNumber(cursor!)}&limit=200&from=\{jsNumber(from)}&to=\{jsNumber(to)}", null);
+    if (r.isErr()) { break; }
+    JsonArray events = r.unwrap().member("events")?.array() ?? JsonArray.create();
+    for (i32 i = 0; i < events.len(); i++) {
+      JsonValue ev = events.get(i);
+      JsonValue? p = ev.member("payload");
+      f64 date = number(ev, "timestamp");
+      if (text(ev, "type") == "TimerRecurred" && has(p, "occurredAt")) { date = number(p, "occurredAt"); }
+      out.dates.push(date);
+      out.reasons.push(text(p, "closeReason"));
+    }
+    JsonValue? next = r.unwrap().member("nextCursor");
+    cursor = next is null || next!.isNull() ? null : next!.number();
+  }
+  done(out);
+}

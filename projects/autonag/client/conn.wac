@@ -1,0 +1,337 @@
+// The connection to an instance: a replica of its event log over the server's WebSocket — autonag's
+// shared/wsClient.ts and client/src/api/useInstanceConnection.ts.
+//
+// **A replica of the log, not a cache of the server's answer.** `base` is one of the server's fixed-cadence
+// snapshots, `suffix` the events after it — kept so a retroactive skip is honoured by folding again rather than
+// fetching — and `current` the two folded. Every event the server sends carries the checksum of the state after
+// it; a mismatch, a gap, or an event this cannot fold throws the state away and syncs fresh.
+//
+// **One loop per connection, racing the socket against its clocks**: the handshake's timeout (no `synced` within
+// ten seconds and it gives up), the keepalive ping every five minutes, the liveness probe when the reader comes
+// back, and the backoff between attempts. `reconnectNow` and `close` wake it from whatever it is waiting on.
+
+import { Result, Ticket, Vec } from "core";
+import { json.JsonValue, json.parse, json.stringify } from "wac";
+import { Message, Origin, OriginSocket, Page } from "web";
+import { StoredEvent, storedEventFrom } from "../src/model/events.wac";
+import { ProjectedState, applyEvent, foldEvents, fromWire, toWire, checksum, SKIP_DEPTH_LIMIT } from "../src/model/state.wac";
+import { Obj, num, str } from "../src/model/jsonkit.wac";
+
+static i32 CONNECT_TIMEOUT_MS = 10000;
+static i32 PING_INTERVAL_MS = 300000;
+static i32 PROBE_TIMEOUT_MS = 3000;
+
+static i32 WAKE_NOW = 1;
+static i32 WAKE_CLOSE = 2;
+
+/** What the connection tells whoever shows it. */
+export struct ConnHandlers {
+  fn<void(string)> status;                  // "connecting", "connected", "disconnected"
+  fn<void(JsonValue, i64)> state;           // the state on the wire, and the seq it is at
+  fn<void(JsonValue)> comment;
+}
+
+/** What handling one message decided. */
+enum Next { Go, Resync }
+
+export struct Conn {
+  Page page;
+  Origin origin;
+  fn<f64()> wall;           // milliseconds since the epoch
+  string instanceId;
+  string token;
+  ConnHandlers on;
+
+  ProjectedState? base;
+  i64 baseSeq;
+  Vec<StoredEvent> suffix;
+  ProjectedState? current;
+  i64 latestSeq;
+  bool replayingOntoSnapshot;
+  i32 resyncStreak;
+  i32 reconnectDelay;
+  bool stopped;
+  bool connected;
+  OriginSocket? ws;
+  Ticket<i32> wake;
+  u64 seed;
+
+  Conn open(Page page, Origin origin, fn<f64()> wall, string instanceId, string token, ConnHandlers on) {
+    Ticket<i32> wake;
+    Conn c = Conn(page, origin, wall, instanceId, token, on, null, 0, Vec.create(), null, 0, false, 0, 1000, false, false, null, wake,
+                  (page.now() * 1000.0) as~ u64 | 1);
+    c.run();
+    return c;
+  }
+
+  /** The reader is back (the page seen again, or a request just worked): reconnect now, or probe a quiet socket. */
+  void reconnectNow(this) {
+    if (!this.wake.settled()) { this.wake.resolve(WAKE_NOW); }
+  }
+
+  void close(this) {
+    this.stopped = true;
+    if (!this.wake.settled()) { this.wake.resolve(WAKE_CLOSE); }
+  }
+
+  // ±25% around `ms`, so a server restart is not met by every client at once.
+  i32 jitter(this, i32 ms) {
+    this.seed = this.seed ^ (this.seed << 13);
+    this.seed = this.seed ^ (this.seed >> 7);
+    this.seed = this.seed ^ (this.seed << 17);
+    f64 r = ((this.seed >> 11) as~ f64) / 9007199254740992.0;
+    return ((ms as f64) * (0.75 + r * 0.5)) as~ i32;
+  }
+
+  void send(this, JsonValue v) {
+    if (this.ws is null) { return; }
+    this.ws!.send(string.fromBytes(stringify(v)));
+  }
+
+  void teardown(this) {
+    if (this.ws is not null) { this.ws!.close(); }
+    this.ws = null;
+    this.connected = false;
+  }
+
+  /** Waits `ms`, or until woken; true when woken to close. */
+  async bool rest(this, i32 ms) {
+    Ticket<f64> slept = this.page.sleep(ms);
+    await Ticket.any(slept, this.wake);
+    if (this.wake.settled()) {
+      i32 why = this.wake.value();
+      this.wake = newWake();
+      if (why == WAKE_CLOSE) { return true; }
+      // Woken to reconnect: the backoff is cut short and starts again.
+      this.reconnectDelay = 1000;
+    }
+    return this.stopped;
+  }
+
+  async void run(this) {
+    i32 waitBefore = 0;
+    while (!this.stopped) {
+      if (waitBefore > 0) {
+        if (await this.rest(waitBefore)) { break; }
+        waitBefore = 0;
+      }
+      this.on.status("connecting");
+      f64 deadline = this.page.now() + (CONNECT_TIMEOUT_MS as f64);
+      Ticket<Result<OriginSocket, string>> opening = this.origin.open("/instances/\{this.instanceId}/ws");
+      Ticket<f64> timeout = this.page.sleep(CONNECT_TIMEOUT_MS);
+      await Ticket.any(opening, timeout, this.wake);
+      if (this.stopped) { break; }
+      if (!opening.settled() || opening.value().isErr()) {
+        if (opening.settled() && opening.value().isOk()) { opening.value().unwrap().close(); }
+        this.on.status("disconnected");
+        waitBefore = this.jitter(this.reconnectDelay);
+        this.reconnectDelay = this.reconnectDelay * 2 > 30000 ? 30000 : this.reconnectDelay * 2;
+        if (this.wake.settled()) { waitBefore = 1; }
+        continue;
+      }
+      this.ws = opening.value().unwrap();
+      this.connected = true;
+      this.send(Obj.create().put("type", str("auth")).put("token", str(this.token))
+        .put("since", num(this.current is not null ? this.latestSeq as~ f64 : 0.0)).done());
+      this.on.status("connected");
+      this.reconnectDelay = 1000;
+      i32 after = await this.talk(deadline);
+      if (this.stopped) { break; }
+      waitBefore = after;
+    }
+    this.teardown();
+    this.on.status("disconnected");
+  }
+
+  /**
+   * One open socket, until it ends: how long to wait before the next attempt — 0 for at once — once it closes,
+   * times out, is found dead, or the state has to be fetched fresh.
+   */
+  async i32 talk(this, f64 deadline) {
+    bool synced = false;
+    f64 pingAt = this.page.now() + (PING_INTERVAL_MS as f64);
+    f64 probeBy = -1.0;
+    Ticket<Message> msg = this.ws!.next();
+    while (true) {
+      f64 now = this.page.now();
+      f64 due = pingAt;
+      if (!synced && deadline < due) { due = deadline; }
+      if (probeBy >= 0.0 && probeBy < due) { due = probeBy; }
+      i32 ms = due - now < 1.0 ? 1 : (due - now) as~ i32;
+      Ticket<f64> timer = this.page.sleep(ms);
+      await Ticket.any(msg, timer, this.wake);
+      if (this.wake.settled()) {
+        i32 why = this.wake.value();
+        this.wake = newWake();
+        if (why == WAKE_CLOSE) { this.teardown(); return 0; }
+        // Back in front of the reader: a quiet socket may be dead though it reports open, so ask it something.
+        if (probeBy < 0.0) {
+          this.send(Obj.create().put("type", str("ping")).done());
+          probeBy = this.page.now() + (PROBE_TIMEOUT_MS as f64);
+        }
+        continue;
+      }
+      if (msg.settled()) {
+        Message m = msg.value();
+        msg = this.ws!.next();
+        match (m) {
+          Closed(code, why): {
+            this.ws = null;
+            this.connected = false;
+            this.on.status("disconnected");
+            i32 wait = this.jitter(this.reconnectDelay);
+            this.reconnectDelay = this.reconnectDelay * 2 > 30000 ? 30000 : this.reconnectDelay * 2;
+            return wait;
+          }
+          Binary(b): { continue; }
+          Text(t): {
+            // Anything heard proves the socket alive.
+            probeBy = -1.0;
+            JsonValue? v = parse(t.toBytes()).ok();
+            if (v is null) { continue; }
+            string type = v!.member("type")?.text() ?? "";
+            if (type == "synced") { synced = true; }
+            match (this.handle(type, v!)) {
+              Go: {}
+              Resync: { return this.resync(); }
+            }
+          }
+        }
+        continue;
+      }
+      // A clock came due.
+      now = this.page.now();
+      if (!synced && now >= deadline) {
+        this.teardown();
+        this.on.status("disconnected");
+        i32 wait = this.jitter(this.reconnectDelay);
+        this.reconnectDelay = this.reconnectDelay * 2 > 30000 ? 30000 : this.reconnectDelay * 2;
+        return wait;
+      }
+      if (probeBy >= 0.0 && now >= probeBy) {
+        // Silence: dead despite reporting open. Straight back, with the backoff reset.
+        this.teardown();
+        this.on.status("disconnected");
+        this.reconnectDelay = 1000;
+        return 0;
+      }
+      if (now >= pingAt) {
+        this.send(Obj.create().put("type", str("ping")).done());
+        pingAt = now + (PING_INTERVAL_MS as f64);
+      }
+    }
+  }
+
+  /** The state thrown away: back at once the first time, then backing off while it keeps happening. */
+  i32 resync(this) {
+    this.base = null;
+    this.suffix = Vec.create();
+    this.current = null;
+    this.latestSeq = 0;
+    this.replayingOntoSnapshot = false;
+    this.resyncStreak++;
+    this.teardown();
+    this.on.status("disconnected");
+    if (this.resyncStreak == 1) {
+      this.reconnectDelay = 1000;
+      return 0;
+    }
+    i32 d = 1000;
+    for (i32 i = 2; i < this.resyncStreak && d < 30000; i++) { d = d * 2; }
+    return d > 30000 ? 30000 : d;
+  }
+
+  void publish(this) {
+    if (this.current is null) { return; }
+    this.on.state(toWire(this.current!, this.wall()), this.latestSeq);
+  }
+
+  bool verify(this, JsonValue msg) {
+    string? expected = msg.member("stateChecksum")?.text();
+    if (expected is null || this.current is null) { return true; }
+    return checksum(this.current!) == expected!;
+  }
+
+  void evict(this) {
+    if (this.base is null) { return; }
+    i64 keepFrom = this.latestSeq - (SKIP_DEPTH_LIMIT as i64);
+    if (keepFrom <= this.baseSeq) { return; }
+    Vec<StoredEvent> over = Vec.create();
+    Vec<StoredEvent> keep = Vec.create();
+    for (i32 i = 0; i < this.suffix.len(); i++) {
+      if (this.suffix.get(i).seq <= keepFrom) { over.push(this.suffix.get(i)); } else { keep.push(this.suffix.get(i)); }
+    }
+    if (over.len() == 0) { return; }
+    this.base = foldEvents(this.base!, over);
+    this.baseSeq = keepFrom;
+    this.suffix = keep;
+  }
+
+  Next handle(this, string type, JsonValue msg) {
+    if (type == "snapshot") {
+      Result<ProjectedState, string> seeded = fromWire(orNull(msg.member("state")));
+      if (seeded.isErr()) { return Next.Resync; }
+      this.base = seeded.unwrap();
+      this.baseSeq = (msg.member("seq")?.number() ?? 0.0) as~ i64;
+      this.suffix = Vec.create();
+      this.current = seeded.unwrap().copy();
+      this.latestSeq = this.baseSeq;
+      this.replayingOntoSnapshot = true;
+      if (!this.verify(msg)) { return Next.Resync; }
+      this.publish();
+      return Next.Go;
+    }
+    if (type == "event") {
+      if (this.current is null || this.base is null) { return Next.Resync; }
+      Result<StoredEvent, string> got = storedEventFrom(orNull(msg.member("event")));
+      // An event this cannot read — from a newer server — is a reason to fetch the state, not to guess.
+      if (got.isErr()) { return Next.Resync; }
+      StoredEvent e = got.unwrap();
+      if (e.seq <= this.latestSeq) { return Next.Go; }
+      if (e.seq != this.latestSeq + 1) { return Next.Resync; }
+      if (e.type == "EventSkipped" || e.type == "EventUnskipped") {
+        string target = orNull(msg.member("event")).member("payload")?.member("targetEventId")?.text() ?? "";
+        bool known = false;
+        for (i32 i = 0; i < this.suffix.len(); i++) { if (this.suffix.get(i).id == target) { known = true; } }
+        // Older than the snapshot, which already reflects it, during the handshake; out of reach otherwise.
+        if (!known && !this.replayingOntoSnapshot) { return Next.Resync; }
+        this.suffix.push(e);
+        this.latestSeq = e.seq;
+        this.current = foldEvents(this.base!, this.suffix);
+      } else {
+        if (!e.skipped) { applyEvent(this.current!, e.payload); }
+        this.suffix.push(e);
+        this.latestSeq = e.seq;
+      }
+      if (!this.verify(msg)) { return Next.Resync; }
+      this.evict();
+      // While the handshake replays the log onto its base, the state is shown once, at `synced`: drawn after every
+      // replayed event, the list grows under the reader a row at a time.
+      if (!this.replayingOntoSnapshot) { this.publish(); }
+      return Next.Go;
+    }
+    if (type == "synced") {
+      this.latestSeq = (msg.member("seq")?.number() ?? 0.0) as~ i64;
+      this.replayingOntoSnapshot = false;
+      if (!this.verify(msg)) { return Next.Resync; }
+      this.resyncStreak = 0;
+      this.evict();
+      this.publish();
+      return Next.Go;
+    }
+    if (type == "comment") {
+      this.on.comment(orNull(msg.member("comment")));
+    }
+    return Next.Go;
+  }
+}
+
+JsonValue orNull(JsonValue? v) { return v ?? JsonValue.Null; }
+
+// A ticket nothing has settled. A function rather than `Ticket<i32> t;` in the loops above: in an async function,
+// such a declaration made after an `await` is the same ticket on every pass (docs/wac-asks.md), so the loop would
+// find its new wake already settled and spin.
+Ticket<i32> newWake() {
+  Ticket<i32> t;
+  return t;
+}
