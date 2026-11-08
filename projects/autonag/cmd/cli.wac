@@ -1,0 +1,70 @@
+// autonag's command-line client, in wac: src/cli/cli.wac over this machine's network, files and zones.
+//
+//     wac build --allow-read --allow-write --allow-net --allow-env cmd/cli.wac -o dist/autonag
+//     wac dist/autonag.wasm timers list
+//
+// HTTPS goes through wac's own TLS (the `fetch` package), verified against SSL_CERT_FILE or the system's
+// bundle, and through HTTPS_PROXY when that is set. The local time zone is TZ, or /etc/timezone, as Bun
+// would take it from /etc/localtime; TZDIR says where the zones are.
+
+import { Sys } from "std";
+import { Result, flatten } from "core";
+import { url.parseUrl, url.serialize, fetch.fetch, fetch.Caps } from "wac";
+import { CliHost, CliResult, Reply, runCli } from "../src/cli/cli.wac";
+import { hostZones } from "../src/time/hostzones.wac";
+import { jsTrim } from "../src/time/duration.wac";
+
+string env(Sys sys, string name) {
+  match (flatten(sys.env().get(name).wait())) {
+    Ok(v): { return v is null ? "" : string.fromBytes(v!); }
+    Err(e): { return ""; }
+  }
+}
+
+bool envSet(Sys sys, string name) {
+  match (flatten(sys.env().get(name).wait())) {
+    Ok(v): { return v is not null; }
+    Err(e): { return false; }
+  }
+}
+
+// What fetch() does with the URL first: the WHATWG parse, which encodes what a path cannot hold.
+Result<Reply, string> request(Sys sys, string method, string url, string[] headers, u8[] body) {
+  auto parsed = parseUrl(url.toBytes(), null);
+  if (parsed is null) { return Result.Err("Invalid URL: \{url}"); }
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+  match (fetch(caps, method, string.fromBytes(serialize(parsed!)), headers, body)) {
+    Ok(r): { return Result.Ok(Reply(r.status, r.body)); }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+export i32 main(Sys sys) {
+  string tz = env(sys, "TZ");
+  if (!envSet(sys, "TZ")) {
+    u8[]? etc = flatten(sys.files().readFile("/etc/timezone").wait()).ok();
+    tz = etc is null ? "" : jsTrim(string.fromBytes(etc!));
+  }
+  string tzdir = env(sys, "TZDIR");
+  CliHost h = CliHost {
+    now: () => flatten(sys.clock().nowMillis().wait()).orElse(0 as i64),
+    http: (string method, string url, string[] headers, u8[] body) => request(sys, method, url, headers, body),
+    zones: hostZones(sys.files(), tzdir == "" ? "/usr/share/zoneinfo" : tzdir),
+    tz: tz,
+    home: env(sys, "HOME"),
+    readFile: (string path) => flatten(sys.files().readFile(path).wait()).ok(),
+    writeFile: (string path, u8[] bytes) => {
+      i32 slash = -1;
+      for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { slash = i; } }
+      if (slash > 0) { flatten(sys.files().mkdir(path.slice(0, slash), true).wait()); }
+      match (flatten(sys.files().writeFile(path, bytes).wait())) {
+        Ok(v): { return null; }
+        Err(e): { return "cannot write \{path}: \{e}"; }
+      }
+    },
+  };
+  CliResult r = runCli(h, sys.args());
+  if (r.stdout.len() > 0) { sys.stdout().write(r.stdout.toBytes()).wait(); }
+  if (r.stderr.len() > 0) { sys.stderr().write(r.stderr.toBytes()).wait(); }
+  return r.code;
+}

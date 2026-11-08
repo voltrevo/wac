@@ -35,17 +35,60 @@ export struct Timer {
   RecurrenceSpec? recurrence;
   // A non-recurring timer's own anchor ("HH:MM"); a recurring timer's anchor is its recurrence's.
   string? anchorTime;
+  // The order its keys have in autonag's object, one letter each (i n d c e r a), which JSON shows: a key
+  // added later goes last, as `{ ...existing, description }` puts it. Empty means the order a new timer
+  // is built in.
+  string order = "";
 
   Timer copy(this) {
-    return Timer(this.id, this.name, this.description, this.created, this.currentExpiry, this.recurrence, this.anchorTime);
+    return Timer(this.id, this.name, this.description, this.created, this.currentExpiry, this.recurrence, this.anchorTime, this.order);
+  }
+
+  bool present(this, string k) {
+    if (k == "d") { return this.description is not null; }
+    if (k == "r") { return this.recurrence is not null; }
+    if (k == "a") { return this.anchorTime is not null; }
+    return true;
+  }
+
+  // The keys in order: those the order names and the timer has, then any it has and the order lacks.
+  string keys(this) {
+    string out = "";
+    for (i32 i = 0; i < this.order.len(); i++) {
+      string k = this.order.slice(i, i + 1);
+      if (this.present(k) && out.indexOf(k) < 0) { out += k; }
+    }
+    string all = "indcera";
+    for (i32 i = 0; i < all.len(); i++) {
+      string k = all.slice(i, i + 1);
+      if (this.present(k) && out.indexOf(k) < 0) { out += k; }
+    }
+    return out;
+  }
+
+  // After a key was set or dropped: kept where it was, put last when new, gone when dropped. Call before
+  // changing the field, with whether it will be there after.
+  void place(this, string k, bool after) {
+    string now = this.keys();
+    i32 at = now.indexOf(k);
+    if (after && at < 0) { this.order = now + k; }
+    else if (!after && at >= 0) { this.order = now.slice(0, at) + now.slice(at + 1, now.len()); }
+    else { this.order = now; }
   }
 
   JsonValue toJson(this) {
-    Obj o = Obj.create().put("id", str(this.id)).put("name", str(this.name));
-    if (this.description is not null) { o.put("description", str(this.description!)); }
-    o.put("created", num(this.created)).put("currentExpiry", num(this.currentExpiry));
-    if (this.recurrence is not null) { o.put("recurrence", this.recurrence!.toJson()); }
-    if (this.anchorTime is not null) { o.put("anchorTime", str(this.anchorTime!)); }
+    Obj o = Obj.create();
+    string ks = this.keys();
+    for (i32 i = 0; i < ks.len(); i++) {
+      string k = ks.slice(i, i + 1);
+      if (k == "i") { o.put("id", str(this.id)); }
+      else if (k == "n") { o.put("name", str(this.name)); }
+      else if (k == "d") { o.put("description", str(this.description!)); }
+      else if (k == "c") { o.put("created", num(this.created)); }
+      else if (k == "e") { o.put("currentExpiry", num(this.currentExpiry)); }
+      else if (k == "r") { o.put("recurrence", this.recurrence!.toJson()); }
+      else { o.put("anchorTime", str(this.anchorTime!)); }
+    }
     return o.done();
   }
 }
@@ -60,8 +103,16 @@ export Result<Timer, string> timerFrom(JsonValue v) {
   if (r is not null) { rec = try recurrenceFrom(r!); }
   string? anchor = null;
   if (v.member("anchorTime") is not null) { anchor = try textOf(v, "anchorTime"); }
+  string order = "";
+  JsonObject o = v.object()!;
+  for (i32 i = 0; i < o.len(); i++) {
+    string k = o.at(i).keyStr();
+    if (k == "id") { order += "i"; } else if (k == "name") { order += "n"; } else if (k == "description") { order += "d"; }
+    else if (k == "created") { order += "c"; } else if (k == "currentExpiry") { order += "e"; }
+    else if (k == "recurrence") { order += "r"; } else if (k == "anchorTime") { order += "a"; }
+  }
   return Result.Ok(Timer(try textOf(v, "id"), try textOf(v, "name"), description, try numOf(v, "created"),
-                         try numOf(v, "currentExpiry"), rec, anchor));
+                         try numOf(v, "currentExpiry"), rec, anchor, order));
 }
 
 export enum AppEvent {

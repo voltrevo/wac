@@ -114,23 +114,24 @@ export void applyEvent(ProjectedState s, const AppEvent e) {
     TimerRecurrenceUpdated(id, r, x): {
       Timer? t = s.timers.get(id);
       // Gaining a recurrence supersedes a per-timer anchor: the recurrence's anchor is now the timer's.
-      if (t is not null) { Timer n = t!.copy(); n.anchorTime = null; n.recurrence = r; n.currentExpiry = x; s.timers.set(n); }
+      if (t is not null) { Timer n = t!.copy(); n.place("a", false); n.place("r", true); n.anchorTime = null; n.recurrence = r; n.currentExpiry = x; s.timers.set(n); }
     }
     TimerRecurrenceRemoved(id): {
       Timer? t = s.timers.get(id);
-      if (t is not null) { Timer n = t!.copy(); n.recurrence = null; s.timers.set(n); }
+      if (t is not null) { Timer n = t!.copy(); n.place("r", false); n.recurrence = null; s.timers.set(n); }
     }
     TimerDescriptionUpdated(id, d): {
       Timer? t = s.timers.get(id);
       if (t is not null) {
         Timer n = t!.copy();
+        n.place("d", d != "");
         if (d == "") { n.description = null; } else { n.description = d; }
         s.timers.set(n);
       }
     }
     TimerAnchorUpdated(id, a): {
       Timer? t = s.timers.get(id);
-      if (t is not null) { Timer n = t!.copy(); n.anchorTime = a; s.timers.set(n); }
+      if (t is not null) { Timer n = t!.copy(); n.place("a", a is not null); n.anchorTime = a; s.timers.set(n); }
     }
     InstanceDefaultAnchorSet(a): { s.defaultAnchorTime = a; }
     // History only: no effect on state.

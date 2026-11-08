@@ -414,7 +414,7 @@ Response addTimer(App app, Request req, string instanceId) {
   }
   i64 now = app.c.now();
   string? desc = nonEmpty(field(body, "description"));
-  Timer t = Timer(app.c.uuid(), name!, desc, now as~ f64, field(body, "expiry")!.number()!, spec, null);
+  Timer t = Timer(app.c.uuid(), name!, desc, now as~ f64, field(body, "expiry")!.number()!, spec, null, "");
   StoredEvent stored = appendEvent(app.c, instanceId, AppEvent.TimerAdded(t), now);
   app.hooks.event(instanceId, stored, checksum(computeState(app.c, instanceId)));
   return json(Obj.create().put("timer", t.toJson()).put("event", eventRef(stored)).done(), 201);
@@ -752,7 +752,7 @@ i64 lengthOf(JsonValue? v) {
   return 0;
 }
 
-Response importLegacy(App app, Request req, string instanceId) {
+export Response importLegacy(App app, Request req, string instanceId) {
   JsonValue? body = jsonBody(req.body);
   if (body is null) { return badRequest("Invalid JSON"); }
   if (body!.isNull()) { return crashed(); }
@@ -773,7 +773,7 @@ Response importLegacy(App app, Request req, string instanceId) {
     JsonValue t = timers!.get(i);
     if (!legacyTimer(t)) { continue; }
     appendAt(app, instanceId, AppEvent.TimerAdded(Timer(t.member("id")!.text()!, t.member("name")!.text()!, null,
-             t.member("created")!.number()!, t.member("currentExpiry")!.number()!, null, null)), t.member("created")!.number()!, s);
+             t.member("created")!.number()!, t.member("currentExpiry")!.number()!, null, null, "")), t.member("created")!.number()!, s);
     created++;
   }
   for (i32 i = 0; i < done!.len(); i++) {
@@ -781,7 +781,7 @@ Response importLegacy(App app, Request req, string instanceId) {
     if (!legacyTimer(t)) { continue; }
     string id = t.member("id")!.text()!;
     appendAt(app, instanceId, AppEvent.TimerAdded(Timer(id, t.member("name")!.text()!, null, t.member("created")!.number()!,
-             t.member("currentExpiry")!.number()!, null, null)), t.member("created")!.number()!, s);
+             t.member("currentExpiry")!.number()!, null, null, "")), t.member("created")!.number()!, s);
     appendAt(app, instanceId, AppEvent.TimerCompleted(id, "imported"), t.member("currentExpiry")!.number()!, s);
     created += 2;
   }
@@ -924,7 +924,7 @@ Planned actionToEvent(App app, JsonValue a, ProjectedState s) {
     }
     i64 now = app.c.now();
     string? desc = nonEmpty(a.member("description"));
-    return plan(AppEvent.TimerAdded(Timer(app.c.uuid(), name!, desc, now as~ f64, a.member("expiry")!.number()!, spec, null)), null);
+    return plan(AppEvent.TimerAdded(Timer(app.c.uuid(), name!, desc, now as~ f64, a.member("expiry")!.number()!, spec, null, "")), null);
   }
   string id = timerKey(a);
   Timer? t = s.timers.get(id);

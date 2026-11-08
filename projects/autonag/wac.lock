@@ -1,1 +1,1 @@
-{ "imports": { "wac": { "git": "https://git.voltrevo.com/wac.git", "ref": "master", "commit": "4085b2e9c0733e0f15b4e07555ca272559750489" }, "sqlite": { "git": "https://git.voltrevo.com/wac-sqlite.git", "ref": "main", "commit": "f656606ec76ff74ce01a493d5be5371d4ec07287" } } }
+{ "imports": { "wac": { "git": "https://git.voltrevo.com/wac.git", "ref": "master", "commit": "6ebfd846ce49e7b2dbe699bcc408ff6ebe5a40d3" }, "sqlite": { "git": "https://git.voltrevo.com/wac-sqlite.git", "ref": "main", "commit": "a153d43f82ff93c2abccb5800060d06351fdfa46" } } }

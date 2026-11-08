@@ -13,3 +13,6 @@ README.md says what this is, the plan, and where it stands.
 - **Time zones** come from the host (`/usr/share/zoneinfo`, read with `--allow-read`); the oracle's
   answers come from Bun's ICU, so a tz database much older or newer than it can disagree for some zones.
 - Comments explain *why*, in full sentences, as wac's own do.
+- **The CLI and admin tool are functions, not programs** (`runCli`, `runAdmin` in `src/cli/`): cmd/ wires
+  them to the host, and `test/cli_test.wac` to the API in-process with the clock fixed. Their output is
+  compared byte for byte, so JSON key order matters there even where the API test compares semantically.

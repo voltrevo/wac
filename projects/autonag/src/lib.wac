@@ -38,3 +38,7 @@ export { skipEvent } from "./store/eventstore.wac";
 export { unskipEvent } from "./store/eventstore.wac";
 export { App } from "./server/api.wac";
 export { handle } from "./server/api.wac";
+export { CliHost } from "./cli/cli.wac";
+export { CliResult } from "./cli/cli.wac";
+export { runCli } from "./cli/cli.wac";
+export { runAdmin } from "./cli/admin.wac";

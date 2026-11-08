@@ -1,0 +1,397 @@
+// What autonag's CLI and admin tool get from JavaScript and print: dates as `toLocaleString()` writes them
+// in en-US and as `toISOString()` does, `Date.parse` of the one ISO shape the CLI accepts, `Number()` of a
+// command-line argument, string lengths and slices in UTF-16 code units, `JSON.stringify(x, null, 2)`, and
+// `JSON5.stringify(x, null, 2)` for the config file.
+//
+// Each is what Bun 1.4 does, checked against it by tools/oracle_cli.ts; where JavaScriptCore differs from
+// V8 (Date.parse lets a day overflow its month: 2026-02-31 is March 3) the CLI's own engine is the one followed.
+
+import { Buf } from "core";
+import { json.JsonValue, json.JsonObject, json.JsonArray, json.stringify } from "wac";
+import { TimeZone, Zones } from "../time/tz.wac";
+import { civilOf, Civil, floorDiv, floorMod, utcMillis } from "../time/civil.wac";
+import { jsNumber, utf16Units } from "../model/jsstring.wac";
+import { jsTrim } from "../time/duration.wac";
+import { json.parseNumberValue } from "wac";
+
+// ── numbers ──
+
+f64 digitsIn(string s, i32 from, i32 radix) {
+  u8[] b = s.toBytes();
+  if (from >= b.len()) { return 0.0 / 0.0; }
+  f64 v = 0.0;
+  for (i32 i = from; i < b.len(); i++) {
+    i32 c = b[i] as i32;
+    i32 d = -1;
+    if (c >= '0' && c <= '9') { d = c - '0'; }
+    else if (c >= 'a' && c <= 'z') { d = c - 'a' + 10; }
+    else if (c >= 'A' && c <= 'Z') { d = c - 'A' + 10; }
+    if (d < 0 || d >= radix) { return 0.0 / 0.0; }
+    v = v * (radix as f64) + (d as f64);
+  }
+  return v;
+}
+
+bool allDigits(const u8[] b, i32 from, i32 to) {
+  for (i32 i = from; i < to; i++) { if (b[i] < '0' || b[i] > '9') { return false; } }
+  return true;
+}
+
+// Number(s): JavaScript's StringToNumber. Whitespace around it is ignored and nothing at all is 0; then a
+// 0x/0o/0b integer, an Infinity, or a decimal literal, and anything else is NaN.
+export f64 jsToNumber(string s) {
+  string t = jsTrim(s);
+  if (t.len() == 0) { return 0.0; }
+  if (t.len() > 2 && t.slice(0, 1) == "0") {
+    string p = t.slice(1, 2);
+    if (p == "x" || p == "X") { return digitsIn(t, 2, 16); }
+    if (p == "o" || p == "O") { return digitsIn(t, 2, 8); }
+    if (p == "b" || p == "B") { return digitsIn(t, 2, 2); }
+  }
+  if (t == "Infinity" || t == "+Infinity") { return 1.0 / 0.0; }
+  if (t == "-Infinity") { return -1.0 / 0.0; }
+  u8[] b = t.toBytes();
+  i32 i = 0;
+  bool negative = false;
+  if (b[0] == '+' || b[0] == '-') { negative = b[0] == '-'; i = 1; }
+  i32 intStart = i;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') { i++; }
+  i32 intEnd = i;
+  i32 fracStart = i;
+  i32 fracEnd = i;
+  if (i < b.len() && b[i] == '.') {
+    i++;
+    fracStart = i;
+    while (i < b.len() && b[i] >= '0' && b[i] <= '9') { i++; }
+    fracEnd = i;
+  }
+  if (intEnd == intStart && fracEnd == fracStart) { return 0.0 / 0.0; }
+  string exp = "";
+  if (i < b.len() && (b[i] == 'e' || b[i] == 'E')) {
+    i32 e = i + 1;
+    if (e < b.len() && (b[e] == '+' || b[e] == '-')) { e++; }
+    if (e >= b.len() || !allDigits(b, e, b.len())) { return 0.0 / 0.0; }
+    exp = "e" + t.slice(i + 1, b.len());
+    i = b.len();
+  }
+  if (i != b.len()) { return 0.0 / 0.0; }
+  // As a JSON number, which wac's parser reads exactly: no leading zeros, a digit before any point.
+  i32 z = intStart;
+  while (z < intEnd - 1 && b[z] == '0') { z++; }
+  string whole = intEnd == intStart ? "0" : t.slice(z, intEnd);
+  string frac = fracEnd > fracStart ? "." + t.slice(fracStart, fracEnd) : "";
+  f64? v = parseNumberValue((whole + frac + exp).toBytes());
+  if (v is null) { return 0.0 / 0.0; }
+  return negative ? -v! : v!;
+}
+
+export bool isInteger(f64 x) { return x == x && x != 1.0 / 0.0 && x != -1.0 / 0.0 && x == x.floor(); }
+
+// ── UTF-16 strings ──
+
+// A string's length in UTF-16 code units.
+export i32 jsLength(string s) { return utf16Units(s).len(); }
+
+// The code units back to text; half of a surrogate pair alone is written as U+FFFD, which is what a lone
+// surrogate becomes on its way to a UTF-8 terminal.
+string fromUnits(const i32[] u, i32 from, i32 to) {
+  Buf out = Buf.create();
+  i32 i = from;
+  while (i < to) {
+    i32 c = u[i];
+    i32 cp = c;
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < to && u[i + 1] >= 0xDC00 && u[i + 1] <= 0xDFFF) {
+      cp = 0x10000 + ((c - 0xD800) << 10) + (u[i + 1] - 0xDC00);
+      i++;
+    } else if (c >= 0xD800 && c <= 0xDFFF) {
+      cp = 0xFFFD;
+    }
+    if (cp < 0x80) { out.push(cp as! u8); }
+    else if (cp < 0x800) { out.push((0xC0 | (cp >> 6)) as! u8); out.push((0x80 | (cp & 63)) as! u8); }
+    else if (cp < 0x10000) {
+      out.push((0xE0 | (cp >> 12)) as! u8); out.push((0x80 | ((cp >> 6) & 63)) as! u8); out.push((0x80 | (cp & 63)) as! u8);
+    } else {
+      out.push((0xF0 | (cp >> 18)) as! u8); out.push((0x80 | ((cp >> 12) & 63)) as! u8);
+      out.push((0x80 | ((cp >> 6) & 63)) as! u8); out.push((0x80 | (cp & 63)) as! u8);
+    }
+    i++;
+  }
+  return out.toStr();
+}
+
+// s.slice(from, to) with non-negative bounds, in code units.
+export string jsSlice(string s, i32 from, i32 to) {
+  i32[] u = utf16Units(s);
+  i32 a = from > u.len() ? u.len() : from;
+  i32 z = to > u.len() ? u.len() : to;
+  if (z < a) { z = a; }
+  return fromUnits(u, a, z);
+}
+
+// s.slice(-n): the last n code units.
+export string jsSliceEnd(string s, i32 n) {
+  i32[] u = utf16Units(s);
+  i32 a = u.len() - n;
+  if (a < 0) { a = 0; }
+  return fromUnits(u, a, u.len());
+}
+
+export string padEnd(string s, i32 w) {
+  i32 n = jsLength(s);
+  string out = s;
+  for (i32 i = n; i < w; i++) { out += " "; }
+  return out;
+}
+
+export string repeat(string s, i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out += s; }
+  return out;
+}
+
+// ── dates ──
+
+static f64 MAX_TIME = 8640000000000000.0;
+
+string two(i64 n) { return n < 10 ? "0\{n}" : "\{n}"; }
+
+// new Date(ms).toLocaleString() in en-US: "11/8/2026, 3:04:05 PM", in the zone given.
+export string localeString(f64 ms, TimeZone tz) {
+  if (ms != ms || ms > MAX_TIME || ms < -MAX_TIME) { return "Invalid Date"; }
+  i64 t = ms.floor() as~ i64;
+  i64 local = t + tz.offsetAt(floorDiv(t, 1000)) * 1000;
+  Civil c = civilOf(local);
+  i64 secs = floorMod(floorDiv(local, 1000), 86400);
+  i64 h = secs / 3600;
+  i64 m = (secs / 60) % 60;
+  i64 s = secs % 60;
+  i64 h12 = h % 12 == 0 ? 12 : h % 12;
+  // Years before 1 are written as ICU's en-US does with the era, counting 1 BC as year 1.
+  string year = c.year >= 1 ? "\{c.year}" : "\{1 - c.year}";
+  string era = c.year >= 1 ? "" : " BC";
+  return "\{c.month}/\{c.day}/\{year}\{era}, \{h12}:\{two(m)}:\{two(s)} \{h < 12 ? "AM" : "PM"}";
+}
+
+// new Date(ms).toISOString(). (A time out of range throws in JavaScript; the admin tool only formats
+// timestamps it wrote.)
+export string isoString(f64 ms) {
+  i64 t = ms.floor() as~ i64;
+  Civil c = civilOf(t);
+  i64 secs = floorMod(floorDiv(t, 1000), 86400);
+  i64 milli = floorMod(t, 1000);
+  string year = "";
+  if (c.year >= 0 && c.year <= 9999) {
+    year = "\{c.year}";
+    while (year.len() < 4) { year = "0" + year; }
+  } else {
+    i64 a = c.year < 0 ? -c.year : c.year;
+    year = "\{a}";
+    while (year.len() < 6) { year = "0" + year; }
+    year = (c.year < 0 ? "-" : "+") + year;
+  }
+  string ms3 = milli < 10 ? "00\{milli}" : (milli < 100 ? "0\{milli}" : "\{milli}");
+  return "\{year}-\{two(c.month)}-\{two(c.day)}T\{two(secs / 3600)}:\{two((secs / 60) % 60)}:\{two(secs % 60)}.\{ms3}Z";
+}
+
+i64 num(const u8[] b, i32 at, i32 n) {
+  i64 v = 0;
+  for (i32 i = at; i < at + n; i++) { v = v * 10 + (b[i] - '0') as i64; }
+  return v;
+}
+
+// Whether `s` is the CLI's ISO shape: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/.
+export bool isIsoShape(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() != 20 && b.len() != 25) { return false; }
+  string shape = "dddd-dd-ddTdd:dd:dd";
+  u8[] p = shape.toBytes();
+  for (i32 i = 0; i < p.len(); i++) {
+    if (p[i] == 'd') { if (b[i] < '0' || b[i] > '9') { return false; } }
+    else if (b[i] != p[i]) { return false; }
+  }
+  if (b.len() == 20) { return b[19] == 'Z'; }
+  if (b[19] != '+' && b[19] != '-') { return false; }
+  return b[20] >= '0' && b[20] <= '9' && b[21] >= '0' && b[21] <= '9' && b[22] == ':'
+      && b[23] >= '0' && b[23] <= '9' && b[24] >= '0' && b[24] <= '9';
+}
+
+// Date.parse of a string of that shape, as JavaScriptCore reads it: month 1–12, a day of 1–31 whatever the
+// month (an overflow runs into the next), hours to 24 only for 24:00:00, minutes and seconds to 59, an
+// offset's hours to 23. NaN otherwise.
+export f64 parseIsoShape(string s) {
+  u8[] b = s.toBytes();
+  i64 year = num(b, 0, 4);
+  i64 month = num(b, 5, 2);
+  i64 day = num(b, 8, 2);
+  i64 hour = num(b, 11, 2);
+  i64 minute = num(b, 14, 2);
+  i64 second = num(b, 17, 2);
+  f64 nan = 0.0 / 0.0;
+  if (month < 1 || month > 12 || day < 1 || day > 31 || minute > 59 || second > 59) { return nan; }
+  if (hour > 24 || (hour == 24 && (minute != 0 || second != 0))) { return nan; }
+  i64 off = 0;
+  if (b.len() == 25) {
+    i64 oh = num(b, 20, 2);
+    i64 om = num(b, 23, 2);
+    if (oh > 23 || om > 59) { return nan; }
+    off = (oh * 60 + om) * 60000;
+    if (b[19] == '-') { off = -off; }
+  }
+  return (utcMillis(year, month, day, hour, minute, second) - off) as~ f64;
+}
+
+// ── the local time zone ──
+
+// The zone `Intl.DateTimeFormat().resolvedOptions().timeZone` reports for a TZ setting: a leading colon
+// dropped, links followed to the zone they name, letter case as the zone has it, every name for UTC as
+// "UTC", and anything not a zone as UTC.
+export string canonicalZone(Zones zones, string raw) {
+  string name = raw.len() > 0 && raw.slice(0, 1) == ":" ? raw.slice(1, raw.len()) : raw;
+  if (name == "") { return "UTC"; }
+  TimeZone? z = zones.zone(name);
+  if (z is null) { return "UTC"; }
+  string canon = z!.name;
+  string[] utc = ["Etc/UTC", "Etc/UCT", "Etc/Universal", "Etc/Zulu", "Etc/GMT", "Etc/GMT0", "Etc/GMT+0", "Etc/GMT-0",
+                  "Etc/Greenwich", "UTC", "UCT", "Universal", "Zulu", "GMT", "GMT0", "GMT+0", "GMT-0", "Greenwich"];
+  for (string u in utc) { if (canon == u) { return "UTC"; } }
+  return canon;
+}
+
+// ── JSON, as JSON.stringify(v, null, 2) writes it ──
+
+void indent(Buf out, i32 depth) {
+  out.pushStr("\n");
+  for (i32 i = 0; i < depth; i++) { out.pushStr("  "); }
+}
+
+void pretty(Buf out, JsonValue v, i32 depth) {
+  match (v) {
+    Null: { out.pushStr("null"); }
+    Bool(x): { out.pushStr(x ? "true" : "false"); }
+    Number(x, raw): { out.pushStr(x != x || x == 1.0 / 0.0 || x == -1.0 / 0.0 ? "null" : jsNumber(x)); }
+    Str(bytes): { out.pushAll(stringify(JsonValue.Str(bytes))); }
+    Array(items): {
+      if (items.len() == 0) { out.pushStr("[]"); return; }
+      out.pushStr("[");
+      for (i32 i = 0; i < items.len(); i++) {
+        if (i > 0) { out.pushStr(","); }
+        indent(out, depth + 1);
+        pretty(out, items.get(i), depth + 1);
+      }
+      indent(out, depth);
+      out.pushStr("]");
+    }
+    Object(members): {
+      if (members.len() == 0) { out.pushStr("{}"); return; }
+      out.pushStr("{");
+      for (i32 i = 0; i < members.len(); i++) {
+        if (i > 0) { out.pushStr(","); }
+        indent(out, depth + 1);
+        out.pushAll(stringify(JsonValue.Str(members.at(i).key)));
+        out.pushStr(": ");
+        pretty(out, members.at(i).value, depth + 1);
+      }
+      indent(out, depth);
+      out.pushStr("}");
+    }
+  }
+}
+
+export string prettyJson(JsonValue v) {
+  Buf out = Buf.create();
+  pretty(out, v, 0);
+  return out.toStr();
+}
+
+// ── JSON5, as the json5 package's stringify(v, null, 2) writes it ──
+
+// Whether a key can go unquoted: an ES5 IdentifierName. Beyond ASCII, a letter is taken to be one, which
+// covers the keys a config file has.
+bool identifier(string k) {
+  u8[] b = k.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i] as i32;
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '$' || c == '_' || c >= 0x80
+           || (i > 0 && c >= '0' && c <= '9');
+    if (!ok) { return false; }
+  }
+  return true;
+}
+
+void json5String(Buf out, string s) {
+  u8[] b = s.toBytes();
+  i32 singles = 0;
+  i32 doubles = 0;
+  for (u8 c in b) { if (c == '\'') { singles++; } if (c == '"') { doubles++; } }
+  u8 q = singles > doubles ? '"' : '\'';
+  out.push(q);
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i] as i32;
+    if (c == q as i32) { out.push('\\'); out.push(q); continue; }
+    if (c == '\\') { out.pushStr("\\\\"); continue; }
+    if (c == 0x08) { out.pushStr("\\b"); continue; }
+    if (c == 0x0C) { out.pushStr("\\f"); continue; }
+    if (c == '\n') { out.pushStr("\\n"); continue; }
+    if (c == '\r') { out.pushStr("\\r"); continue; }
+    if (c == '\t') { out.pushStr("\\t"); continue; }
+    if (c == 0x0B) { out.pushStr("\\v"); continue; }
+    if (c == 0) {
+      bool digitNext = i + 1 < b.len() && b[i + 1] >= '0' && b[i + 1] <= '9';
+      out.pushStr(digitNext ? "\\x00" : "\\0");
+      continue;
+    }
+    if (c < 0x20) {
+      string hex = "0123456789abcdef";
+      out.pushStr("\\x" + hex.slice(c >> 4, (c >> 4) + 1) + hex.slice(c & 15, (c & 15) + 1));
+      continue;
+    }
+    if (c == 0xE2 && i + 2 < b.len() && b[i + 1] == 0x80 && (b[i + 2] == 0xA8 || b[i + 2] == 0xA9)) {
+      out.pushStr(b[i + 2] == 0xA8 ? "\\u2028" : "\\u2029");
+      i += 2;
+      continue;
+    }
+    out.push(c as! u8);
+  }
+  out.push(q);
+}
+
+void json5(Buf out, JsonValue v, i32 depth) {
+  match (v) {
+    Null: { out.pushStr("null"); }
+    Bool(x): { out.pushStr(x ? "true" : "false"); }
+    Number(x, raw): { out.pushStr(x == 0.0 ? "0" : jsNumber(x)); }
+    Str(bytes): { json5String(out, string.fromBytes(bytes)); }
+    Array(items): {
+      if (items.len() == 0) { out.pushStr("[]"); return; }
+      out.pushStr("[");
+      for (i32 i = 0; i < items.len(); i++) {
+        indent(out, depth + 1);
+        json5(out, items.get(i), depth + 1);
+        out.pushStr(",");
+      }
+      indent(out, depth);
+      out.pushStr("]");
+    }
+    Object(members): {
+      if (members.len() == 0) { out.pushStr("{}"); return; }
+      out.pushStr("{");
+      for (i32 i = 0; i < members.len(); i++) {
+        indent(out, depth + 1);
+        string k = members.at(i).keyStr();
+        if (identifier(k)) { out.pushStr(k); } else { json5String(out, k); }
+        out.pushStr(": ");
+        json5(out, members.at(i).value, depth + 1);
+        out.pushStr(",");
+      }
+      indent(out, depth);
+      out.pushStr("}");
+    }
+  }
+}
+
+export string json5Stringify(JsonValue v) {
+  Buf out = Buf.create();
+  json5(out, v, 0);
+  return out.toStr();
+}

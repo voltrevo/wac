@@ -1,0 +1,134 @@
+// The CLI and the admin tool against autonag's own: test/data/cli_script.jsonl is a session
+// tools/oracle_cli.ts ran with autonag's shared/cli.ts and server/autonag-admin.ts against autonag's API,
+// every step at a fixed instant and in a given TZ. Here the same steps run through the wac port — the CLI
+// talking to the wac API in-process, the admin tool on the same store, the config files in memory — and
+// each must print the same, byte for byte, exit the same way, and leave the same config file behind.
+//
+// Where autonag's CLI crashed (an exception Bun prints with a stack), only the exit code and the output
+// before it are compared.
+
+import { Vec, Map, hashString, stringEq, flatten, Result } from "core";
+import { Sys } from "std";
+import { json.parse, json.stringify, json.JsonValue, json.JsonArray, url.parseUrl, url.serialize } from "wac";
+import { Connection } from "sqlite";
+import { Ctx, migrate } from "../src/store/db.wac";
+import { App, Hooks, Request, Response, RateLimiter, handle } from "../src/server/api.wac";
+import { hostZones } from "../src/time/hostzones.wac";
+import { Zones } from "../src/time/tz.wac";
+import { StoredEvent } from "../src/model/events.wac";
+import { CliHost, CliResult, Reply, runCli } from "../src/cli/cli.wac";
+import { runAdmin } from "../src/cli/admin.wac";
+
+string hex12(i64 n) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 11; i >= 0; i--) {
+    i64 d = (n >> ((i * 4) as i64)) & 15;
+    out += digits.slice(d as! i32, (d as! i32) + 1);
+  }
+  return out;
+}
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
+
+// A request as fetch() sends it to the API: the URL through the WHATWG parser, the header names in lower case.
+Result<Reply, string> inProcess(App app, string method, string url, string[] headers, u8[] body) {
+  auto u = parseUrl(url.toBytes(), null);
+  if (u is null) { return Result.Err("Invalid URL: \{url}"); }
+  Map<string, string> h = Map.create(hashString, stringEq);
+  for (string line in headers) {
+    i32 colon = line.indexOf(":");
+    h.set(lower(line.slice(0, colon)), line.slice(colon + 2, line.len()));
+  }
+  Response res = handle(app, Request(method, string.fromBytes(serialize(u!)), h, body, "1.2.3.4"));
+  return Result.Ok(Reply(res.status, stringify(res.body)));
+}
+
+string show(string s) {
+  return string.fromBytes(stringify(JsonValue.Str(s.toBytes())));
+}
+
+export string test_the_cli_and_admin_tool_print_what_autonags_do(Sys sys) {
+  string all = string.fromBytes(flatten(sys.files().readFile("test/data/cli_script.jsonl").wait()).unwrap());
+  i64[] clock = [0 as i64];
+  i64[] uuids = [0 as i64];
+  i64[] randoms = [0 as i64];
+  Ctx c = Ctx { db: Connection.memory(), now: () => clock[0],
+                random: (i32 n) => {
+                  randoms[0] = randoms[0] + 1;
+                  u8[] b = u8[].filled(n, 0);
+                  for (i32 i = 0; i < n; i++) { b[i] = ((randoms[0] * 31 + (i as i64)) & 255) as! u8; }
+                  return b;
+                },
+                snapshotInterval: 5, skipDepthLimit: 20,
+                ids: () => {
+                  uuids[0] = uuids[0] + 1;
+                  return "00000000-0000-4000-8000-" + hex12(uuids[0]);
+                } };
+  migrate(c);
+  Zones zones = hostZones(sys.files(), "/usr/share/zoneinfo");
+  App app = App { c: c, zones: zones,
+                  hooks: Hooks((string i, StoredEvent e, string sum) => {}, (string i, JsonValue cm) => {}),
+                  limits: RateLimiter.create(), limited: false };
+  Map<string, u8[]> files = Map.create(hashString, stringEq);
+  string bad = "";
+  i32 n = 0;
+  i32 fails = 0;
+  string rest = all;
+  while (rest.len() > 0 && fails < 6) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    rest = nl < 0 ? "" : rest.slice(nl + 1, rest.len());
+    if (line.len() == 0) { continue; }
+    n++;
+    JsonValue step = parse(line.toBytes()).unwrap();
+    string kind = step.member("kind")!.text()!;
+    if (kind == "write") {
+      files.set(step.member("path")!.text()!, step.member("content")!.text()!.toBytes());
+      continue;
+    }
+    clock[0] = step.member("now")!.number()! as~ i64;
+    JsonArray a = step.member("args")!.array()!;
+    string[] args = string[].filled(a.len(), "");
+    for (i32 i = 0; i < a.len(); i++) { args[i] = a.get(i).text()!; }
+    CliResult got = CliResult("", "", 0);
+    if (kind == "admin") {
+      got = runAdmin(app, args, (string path) => files.get(path));
+    } else {
+      CliHost h = CliHost {
+        now: () => clock[0],
+        http: (string method, string url, string[] headers, u8[] body) => inProcess(app, method, url, headers, body),
+        zones: zones,
+        tz: step.member("tz")!.text()!,
+        home: step.member("home")!.text()!,
+        readFile: (string path) => files.get(path),
+        writeFile: (string path, u8[] bytes) => { files.set(path, bytes); return null; },
+      };
+      got = runCli(h, args);
+    }
+    bool crashed = step.member("crashed")?.boolean() ?? false;
+    string wantOut = step.member("stdout")!.text()!;
+    string wantErr = step.member("stderr")!.text()!;
+    i32 wantCode = step.member("code")!.number()! as~ i32;
+    string why = "";
+    if (got.code != wantCode) { why += "  code: got \{got.code}, want \{wantCode}\n"; }
+    if (got.stdout != wantOut) { why += "  stdout:\n    got  \{show(got.stdout)}\n    want \{show(wantOut)}\n"; }
+    if (!crashed && got.stderr != wantErr) { why += "  stderr:\n    got  \{show(got.stderr)}\n    want \{show(wantErr)}\n"; }
+    if (kind == "cli") {
+      JsonValue? wantCfg = step.member("config");
+      u8[]? have = files.get(step.member("configPath")!.text()!);
+      string gotCfg = have is null ? "(none)" : string.fromBytes(have!);
+      string wantText = wantCfg is null || wantCfg!.isNull() ? "(none)" : wantCfg!.text()!;
+      if (gotCfg != wantText) { why += "  config:\n    got  \{show(gotCfg)}\n    want \{show(wantText)}\n"; }
+    }
+    if (why != "") {
+      fails++;
+      bad += "line \{n}: \{kind} \{string.fromBytes(stringify(step.member("args")!))} (TZ=\{step.member("tz")?.text() ?? ""})\n\{why}";
+    }
+  }
+  return bad;
+}

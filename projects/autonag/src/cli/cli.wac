@@ -1,0 +1,1391 @@
+// autonag's command-line client: a port of shared/cli.ts and shared/apiClient.ts, printing what they print.
+//
+// The CLI is a function of its arguments and a `CliHost` — the clock, HTTP, the config file, the zones —
+// rather than a program, so the same code runs as cmd/cli.wac over the network and in test/cli_test.wac
+// against the API in-process, with the clock fixed.
+//
+// autonag's CLI leaves through `process.exit` from wherever it is; here a command stops by setting `halted`
+// and every caller returns when a call it made has halted. A failed API call is autonag's ApiError,
+// reported as "Error: <message>"; a failure JavaScript would throw past the CLI's handler (an unreachable
+// server, a time zone Intl refuses) is reported as "error: <what>" with exit code 1, where Bun would print a
+// stack trace.
+
+import { Buf, Result, Vec, Map, hashString, stringEq } from "core";
+import { json.JsonValue, json.JsonObject, json.JsonArray, json.JsonMember, json.parse, json.parseJson5, json.stringify } from "wac";
+import { TimeZone, Zones } from "../time/tz.wac";
+import { LocalDate, localDateParts, localToUtc, DEFAULT_ANCHOR_TIME, anchorTimeError } from "../time/anchor.wac";
+import { AnchorSpec, ParsedDuration, parseDuration, resolveDuration, resolveAnchor, nextRecurrenceExpiry } from "../time/duration.wac";
+import { RecurrenceSpec, Timer, timerFrom, recurrenceFrom } from "../model/events.wac";
+import { Obj, num, str } from "../model/jsonkit.wac";
+import { jsNumber } from "../model/jsstring.wac";
+import { jsToNumber, isInteger, jsLength, jsSlice, jsSliceEnd, padEnd, repeat, localeString, isIsoShape, parseIsoShape,
+         canonicalZone, prettyJson, json5Stringify } from "./jsfmt.wac";
+import { HELP, TUTORIAL } from "./texts.wac";
+
+export static string VERSION = "0.4.1";
+
+export struct Reply {
+  i32 status;
+  u8[] body;
+}
+
+// What the CLI needs from where it runs.
+export struct CliHost {
+  fn<i64()> now;
+  // method, absolute URL, header lines, body: the response, or why there is none.
+  fn<Result<Reply, string>(string, string, string[], u8[])> http;
+  Zones zones;
+  string tz;                               // the TZ setting, as given
+  string home;                             // os.homedir()
+  fn<u8[]?(string)> readFile;              // null when the file does not exist
+  fn<string?(string, u8[])> writeFile;     // creates the directories; an error, or null
+}
+
+// What a run printed and how it ended.
+export struct CliResult {
+  string stdout;
+  string stderr;
+  i32 code;
+}
+
+struct Cli {
+  CliHost h;
+  JsonObject cfg;
+  string configPath;
+  bool json;
+  string zoneName;      // Intl.DateTimeFormat().resolvedOptions().timeZone
+  TimeZone zone;
+  Buf out;
+  Buf err;
+  i32 code;
+  bool halted;
+
+  void log(this, string s) { this.out.pushStr(s + "\n"); }
+
+  // console.error and process.exit(1).
+  void fail(this, string s) {
+    this.err.pushStr(s + "\n");
+    this.code = 1;
+    this.halted = true;
+  }
+
+  // What JavaScript would throw past the CLI's handler.
+  void crash(this, string s) { this.fail("error: " + s); }
+
+  void jsonOut(this, JsonValue v) { this.log(prettyJson(v)); }
+
+  string? cfgText(this, string key) {
+    JsonValue? v = this.cfg.getStr(key);
+    return v is null ? null : v!.text();
+  }
+
+  // A config value as a template literal writes it.
+  string cfgShow(this, string key) { return tpl(this.cfg.getStr(key)); }
+
+  void cfgSet(this, string key, JsonValue v) {
+    for (i32 i = 0; i < this.cfg.len(); i++) {
+      if (this.cfg.at(i).keyStr() == key) { JsonMember m = this.cfg.at(i); m.value = v; return; }
+    }
+    this.cfg.push(key.toBytes(), v);
+  }
+
+  i64 now(this) { return this.h.now(); }
+
+  string fmtDate(this, f64 ms) { return localeString(ms, this.zone); }
+
+  TimeZone? zoneNamed(this, string name) {
+    TimeZone? z = this.h.zones.zone(name);
+    if (z is null) { this.crash("Invalid time zone specified: \{name}"); }
+    return z;
+  }
+}
+
+// A value as `${v}` writes it.
+string tpl(JsonValue? v) {
+  if (v is null) { return "undefined"; }
+  match (v!) {
+    Null: { return "null"; }
+    Bool(b): { return b ? "true" : "false"; }
+    Number(x, raw): { return jsNumber(x); }
+    Str(bytes): { return string.fromBytes(bytes); }
+    Array(items): { return "[array]"; }
+    Object(m): { return "[object Object]"; }
+  }
+}
+
+// JavaScript truthiness of a JSON value (absent is falsy).
+bool truthy(JsonValue? v) {
+  if (v is null) { return false; }
+  match (v!) {
+    Null: { return false; }
+    Bool(b): { return b; }
+    Number(x, raw): { return x == x && x != 0.0; }
+    Str(bytes): { return bytes.len() > 0; }
+    default: { return true; }
+  }
+}
+
+JsonValue orNull(JsonValue? v) { return v is null ? JsonValue.Null : v!; }
+
+string shortId(string id) { return jsSlice(id, 0, 8); }
+
+string col(string s, i32 w, bool ellipsis) {
+  if (ellipsis && jsLength(s) > w) { return jsSlice(s, 0, w - 1) + "…"; }
+  return padEnd(jsSlice(s, 0, w), w);
+}
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+
+bool uuidShaped(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() != 36) { return false; }
+  for (u8 c in b) { if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) { return false; } }
+  return true;
+}
+
+string fmtCountdown(f64 ms) {
+  string sign = ms < 0.0 ? "-" : "";
+  f64 abs = ms < 0.0 ? -ms : ms;
+  i64 totalSec = (abs / 1000.0).floor() as~ i64;
+  i64 d = totalSec / 86400;
+  i64 h = (totalSec % 86400) / 3600;
+  i64 m = (totalSec % 3600) / 60;
+  i64 s = totalSec % 60;
+  if (d > 0) { return "\{sign}\{d}d \{h}h"; }
+  if (h > 0) { return "\{sign}\{h}h \{m}m"; }
+  if (m > 0) { return "\{sign}\{m}m \{s}s"; }
+  return "\{sign}\{s}s";
+}
+
+// ── the API ──
+
+// apiFetch: the response's JSON, or null with the run halted.
+JsonValue? api(Cli c, string method, string path, JsonValue? body, bool withToken) {
+  string[] headers = ["Content-Type: application/json"];
+  string? tok = withToken ? c.cfgText("token") : null;
+  if (tok is not null && tok!.len() > 0) { headers = ["Content-Type: application/json", "Authorization: Bearer \{tok!}"]; }
+  u8[] payload = body is null ? u8[]() : stringify(body!);
+  match (c.h.http(method, c.cfgShow("server") + path, headers, payload)) {
+    Err(e): { c.crash("fetch failed: \{e}"); return null; }
+    Ok(res): {
+      JsonValue? parsed = parse(res.body).ok();
+      if (res.status < 200 || res.status > 299) {
+        string message = "HTTP \{res.status}";
+        if (parsed is not null && parsed!.object() is not null) {
+          JsonValue? e = parsed!.member("error");
+          if (truthy(e)) { message = tpl(e); }
+        }
+        c.fail("Error: \{message}");
+        return null;
+      }
+      if (parsed is null) { c.crash("the response from \{path} is not JSON"); }
+      return parsed;
+    }
+  }
+}
+
+JsonValue? getState(Cli c) { return api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/state", null, true); }
+
+JsonValue? batch(Cli c, JsonValue action) {
+  JsonArray a = JsonArray.create();
+  a.push(action);
+  return api(c, "POST", "/instances/\{c.cfgShow("instanceId")}/actions", Obj.create().put("actions", JsonValue.Array(a)).done(), true);
+}
+
+JsonArray timersOf(JsonValue state) { return state.member("timers")?.array() ?? JsonArray.create(); }
+
+string idOf(JsonValue v) { return v.member("id")?.text() ?? ""; }
+
+JsonValue? timerById(JsonValue state, string id) {
+  JsonArray ts = timersOf(state);
+  for (i32 i = 0; i < ts.len(); i++) { if (idOf(ts.get(i)) == id) { return ts.get(i); } }
+  return null;
+}
+
+// ── ids ──
+
+string? ambiguous(Cli c, string prefix, Vec<string> shown) {
+  string list = "";
+  for (i32 i = 0; i < shown.len(); i++) { list += (i > 0 ? ", " : "") + shown.get(i); }
+  c.fail("Ambiguous prefix \"\{prefix}\" matches: \{list}");
+  return null;
+}
+
+string? resolveTimerId(Cli c, string prefix) {
+  if (uuidShaped(prefix)) { return prefix; }
+  JsonValue? state = getState(c);
+  if (state is null) { return null; }
+  JsonArray ts = timersOf(state!);
+  Vec<string> ids = Vec<string>.create();
+  for (i32 i = 0; i < ts.len(); i++) { if (startsWith(idOf(ts.get(i)), prefix)) { ids.push(idOf(ts.get(i))); } }
+  if (ids.len() == 0) { c.fail("Timer not found: \{prefix}"); return null; }
+  if (ids.len() > 1) {
+    Vec<string> shown = Vec<string>.create();
+    for (i32 k = 0; k < ids.len(); k++) { shown.push(shortId(ids.get(k)) + "…"); }
+    return ambiguous(c, prefix, shown);
+  }
+  return ids.get(0);
+}
+
+string? resolveEventId(Cli c, string prefix) {
+  if (uuidShaped(prefix)) { return prefix; }
+  Vec<string> all = Vec<string>.create();
+  f64 from = 1.0;
+  while (true) {
+    JsonValue? page = api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/events?from=\{jsNumber(from)}&limit=200", null, true);
+    if (page is null) { return null; }
+    JsonArray evs = page!.member("events")?.array() ?? JsonArray.create();
+    for (i32 i = 0; i < evs.len(); i++) { all.push(idOf(evs.get(i))); }
+    if (evs.len() < 200) { break; }
+    f64 lastSeq = evs.get(evs.len() - 1).member("seq")?.number() ?? 0.0;
+    if (lastSeq >= (page!.member("latestSeq")?.number() ?? 0.0)) { break; }
+    from = lastSeq + 1.0;
+  }
+  Vec<string> ids = Vec<string>.create();
+  for (i32 k = 0; k < all.len(); k++) { if (startsWith(all.get(k), prefix)) { ids.push(all.get(k)); } }
+  if (ids.len() == 0) { c.fail("Event not found: \{prefix}"); return null; }
+  if (ids.len() > 1) {
+    Vec<string> shown = Vec<string>.create();
+    for (i32 k = 0; k < ids.len(); k++) { shown.push(shortId(ids.get(k)) + "…"); }
+    return ambiguous(c, prefix, shown);
+  }
+  return ids.get(0);
+}
+
+string? resolveInstanceId(Cli c, string prefix) {
+  if (uuidShaped(prefix)) { return prefix; }
+  JsonValue? r = api(c, "GET", "/instances", null, true);
+  if (r is null) { return null; }
+  JsonArray insts = r!.member("instances")?.array() ?? JsonArray.create();
+  Vec<JsonValue> hits = Vec<JsonValue>.create();
+  for (i32 i = 0; i < insts.len(); i++) { if (startsWith(idOf(insts.get(i)), prefix)) { hits.push(insts.get(i)); } }
+  if (hits.len() == 0) { c.fail("Instance not found: \{prefix}"); return null; }
+  if (hits.len() > 1) {
+    Vec<string> shown = Vec<string>.create();
+    for (i32 k = 0; k < hits.len(); k++) { shown.push("\"\{tpl(hits.get(k).member("nickname"))}\" (\{shortId(idOf(hits.get(k)))}…)"); }
+    return ambiguous(c, prefix, shown);
+  }
+  return idOf(hits.get(0));
+}
+
+// ── guards ──
+
+bool requireToken(Cli c) {
+  if (!truthy(c.cfg.getStr("token"))) { c.fail("Not registered. Run: autonag register <nickname>"); return false; }
+  return true;
+}
+
+bool requireInstance(Cli c) {
+  if (!truthy(c.cfg.getStr("instanceId"))) { c.fail("No instance selected. Run: autonag instances select <id>"); return false; }
+  return true;
+}
+
+bool ready(Cli c) { return requireToken(c) && requireInstance(c); }
+
+// ── expiries ──
+
+static string EXPIRY_SYNTAX = "Use: 1d, 1w, 1mo, 30m, 2h, 90s (relative duration, combinable as 1w2d or 1d12h), 2026-05-01T09:00:00Z (ISO 8601 with timezone), or unix-ms:<n>";
+
+struct ExpirySpec {
+  bool absolute;
+  f64 ms;
+  ParsedDuration? parsed;
+}
+
+ExpirySpec? parseExpirySpec(Cli c, string input) {
+  if (startsWith(input, "unix-ms:")) {
+    f64 n = jsToNumber(input.slice(8, input.len()));
+    if (!isInteger(n) || n <= 0.0) { c.fail("Invalid expiry \"\{input}\". Use unix-ms:<positive-integer>"); return null; }
+    return ExpirySpec(true, n, null);
+  }
+  if (isIsoShape(input)) {
+    f64 ms = parseIsoShape(input);
+    if (ms != ms) { c.fail("Invalid datetime \"\{input}\""); return null; }
+    return ExpirySpec(true, ms, null);
+  }
+  ParsedDuration? p = parseDuration(input);
+  if (p is not null) { return ExpirySpec(false, 0.0, p); }
+  c.fail("Cannot parse expiry \"\{input}\". \{EXPIRY_SYNTAX}");
+  return null;
+}
+
+// The instant; NaN when the run halted (a zone Intl would refuse).
+f64 resolveExpirySpec(Cli c, ExpirySpec spec, AnchorSpec? anchor) {
+  if (spec.absolute) { return spec.ms; }
+  f64 base = c.now() as~ f64;
+  if (anchor is null) { return base + spec.parsed!.ms; }
+  if (spec.parsed!.hasSubDayUnit) { return base + spec.parsed!.ms; }
+  TimeZone? z = c.zoneNamed(anchor!.timezone);
+  if (z is null) { return 0.0 / 0.0; }
+  return resolveDuration(spec.parsed!, base, anchor!, z!);
+}
+
+f64 parseExactExpiry(Cli c, string input) {
+  ExpirySpec? s = parseExpirySpec(c, input);
+  if (s is null) { return 0.0 / 0.0; }
+  return resolveExpirySpec(c, s!, null);
+}
+
+AnchorSpec anchorFor(Cli c, Timer? timer, string? instanceDefault) {
+  return resolveAnchor(timer, instanceDefault, c.cfgText("timezone") ?? c.zoneName);
+}
+
+// A timer on the wire as the anchor rules read it.
+Timer? wireTimer(JsonValue t) { return timerFrom(t).ok(); }
+
+string? defaultAnchorOf(JsonValue state) { return state.member("defaultAnchorTime")?.text(); }
+
+i64 digits(const u8[] b, i32 at, i32 n) {
+  i64 v = 0;
+  for (i32 i = at; i < at + n; i++) { v = v * 10 + (b[i] - '0') as i64; }
+  return v;
+}
+
+// Local midnight of "today", "yesterday" or YYYY-MM-DD; NaN when the run halted.
+f64 localDayStart(Cli c, string? input) {
+  i64 now = c.now();
+  if (input is null || input! == "today" || input! == "yesterday") {
+    i64 at = input is not null && input! == "yesterday" ? now - 86400000 : now;
+    LocalDate d = localDateParts(at, c.zone);
+    return localToUtc(d.year, d.month, d.day, 0, 0, c.zone) as~ f64;
+  }
+  u8[] b = input!.toBytes();
+  bool ok = b.len() == 10 && b[4] == '-' && b[7] == '-';
+  for (i32 i = 0; i < b.len() && ok; i++) { if (i != 4 && i != 7 && (b[i] < '0' || b[i] > '9')) { ok = false; } }
+  if (!ok) { c.fail("Cannot parse date \"\{input!}\". Use: today, yesterday, or YYYY-MM-DD"); return 0.0 / 0.0; }
+  i64 y = digits(b, 0, 4);
+  i64 m = digits(b, 5, 2);
+  i64 d = digits(b, 8, 2);
+  return localToUtc(y, m, d, 0, 0, c.zone) as~ f64;
+}
+
+// ── commands ──
+
+void saveConfig(Cli c) {
+  string? e = c.h.writeFile(c.configPath, json5Stringify(JsonValue.Object(c.cfg)).toBytes());
+  if (e is not null) { c.crash(e!); }
+}
+
+void cmdRegister(Cli c, string nickname) {
+  JsonValue? r = api(c, "POST", "/devices/request", Obj.create().put("nickname", str(nickname)).done(), false);
+  if (r is null) { return; }
+  JsonValue device = orNull(r!.member("device"));
+  c.cfgSet("token", orNull(r!.member("token")));
+  c.cfgSet("deviceId", orNull(device.member("id")));
+  saveConfig(c);
+  if (c.halted) { return; }
+  if (c.json) {
+    c.jsonOut(Obj.create().put("deviceId", orNull(device.member("id"))).put("nickname", str(nickname))
+      .put("token", orNull(r!.member("token"))).put("configPath", str(c.configPath)).done());
+    return;
+  }
+  c.log("Registered as \"\{nickname}\" (\{shortId(tpl(device.member("id")))}…)");
+  c.log("Token saved to \{c.configPath}");
+  c.log("Waiting for admin approval — run \"autonag status\" to check.");
+}
+
+void cmdStatus(Cli c) {
+  if (c.json) {
+    Obj result = Obj.create();
+    JsonValue? server = c.cfg.getStr("server");
+    if (server is not null) { result.put("server", server!); }
+    result.put("configPath", str(c.configPath)).put("instanceId", orNull(c.cfg.getStr("instanceId")));
+    if (!truthy(c.cfg.getStr("token"))) { result.put("auth", JsonValue.Null); c.jsonOut(result.done()); return; }
+    JsonValue? me = meOrInvalid(c);
+    if (c.halted) { return; }
+    if (me is null) {
+      result.put("auth", Obj.create().put("error", str("invalid_token")).done());
+    } else {
+      JsonValue d = orNull(me!.member("device"));
+      JsonValue? at = d.member("approvedAt");
+      result.put("auth", Obj.create().put("nickname", orNull(d.member("nickname"))).put("deviceId", orNull(d.member("id")))
+        .put("approved", JsonValue.Bool(truthy(at))).put("approvedAt", orNull(at)).done());
+    }
+    c.jsonOut(result.done());
+    return;
+  }
+  c.log("Server:   \{c.cfgShow("server")}");
+  c.log("Config:   \{c.configPath}");
+  if (!truthy(c.cfg.getStr("token"))) {
+    c.log("Auth:     not registered (run: autonag register <nickname>)");
+    return;
+  }
+  JsonValue? me = meOrInvalid(c);
+  if (c.halted) { return; }
+  if (me is null) {
+    c.log("Auth:     token invalid or expired");
+  } else {
+    JsonValue d = orNull(me!.member("device"));
+    JsonValue? at = d.member("approvedAt");
+    string status = truthy(at) ? "approved \{c.fmtDate(at!.number() ?? 0.0)}" : "PENDING APPROVAL";
+    c.log("Auth:     \{tpl(d.member("nickname"))} (\{shortId(tpl(d.member("id")))}…) [\{status}]");
+  }
+  JsonValue? inst = c.cfg.getStr("instanceId");
+  c.log("Instance: \{inst is null || inst!.isNull() ? "none selected (run: autonag instances select <id>)" : tpl(inst)}");
+}
+
+// GET /devices/me, with a 401 answered as null rather than as an error.
+JsonValue? meOrInvalid(Cli c) {
+  string[] headers = ["Content-Type: application/json", "Authorization: Bearer \{c.cfgText("token") ?? ""}"];
+  match (c.h.http("GET", c.cfgShow("server") + "/devices/me", headers, u8[]())) {
+    Err(e): { c.crash("fetch failed: \{e}"); return null; }
+    Ok(res): {
+      if (res.status == 401) { return null; }
+      if (res.status < 200 || res.status > 299) {
+        JsonValue? parsed = parse(res.body).ok();
+        string message = "HTTP \{res.status}";
+        if (parsed is not null && parsed!.object() is not null && truthy(parsed!.member("error"))) { message = tpl(parsed!.member("error")); }
+        c.fail("Error: \{message}");
+        return null;
+      }
+      return parse(res.body).ok();
+    }
+  }
+}
+
+void cmdInstancesList(Cli c) {
+  if (!requireToken(c)) { return; }
+  JsonValue? r = api(c, "GET", "/instances", null, true);
+  if (r is null) { return; }
+  JsonArray insts = r!.member("instances")?.array() ?? JsonArray.create();
+  string? selected = c.cfgText("instanceId");
+  if (c.json) {
+    JsonArray out = JsonArray.create();
+    for (i32 i = 0; i < insts.len(); i++) {
+      JsonValue x = insts.get(i);
+      out.push(Obj.create().put("id", orNull(x.member("id"))).put("nickname", orNull(x.member("nickname")))
+        .put("approved", JsonValue.Bool(truthy(x.member("approvedAt")))).put("approvedAt", orNull(x.member("approvedAt")))
+        .put("selected", JsonValue.Bool(selected is not null && idOf(x) == selected!)).done());
+    }
+    c.jsonOut(JsonValue.Array(out));
+    return;
+  }
+  if (insts.len() == 0) { c.log("No accessible instances."); return; }
+  for (i32 i = 0; i < insts.len(); i++) {
+    JsonValue x = insts.get(i);
+    string status = truthy(x.member("approvedAt")) ? "active" : "PENDING";
+    string marker = selected is not null && idOf(x) == selected! ? " *" : "  ";
+    c.log("\{marker} \{shortId(idOf(x))}…  \"\{tpl(x.member("nickname"))}\"  [\{status}]");
+  }
+  c.log("\n* = current default");
+}
+
+void cmdInstancesRequest(Cli c, string nickname) {
+  if (!requireToken(c)) { return; }
+  JsonValue? r = api(c, "POST", "/instances/request", Obj.create().put("nickname", str(nickname)).done(), true);
+  if (r is null) { return; }
+  JsonValue inst = orNull(r!.member("instance"));
+  if (c.json) { c.jsonOut(Obj.create().put("instanceId", orNull(inst.member("id"))).put("nickname", orNull(inst.member("nickname"))).done()); return; }
+  c.log("Requested instance \"\{tpl(inst.member("nickname"))}\" (\{shortId(tpl(inst.member("id")))}…)");
+  c.log("Waiting for admin approval.");
+}
+
+void cmdInstancesSelect(Cli c, string id) {
+  if (!requireToken(c)) { return; }
+  string? instanceId = resolveInstanceId(c, id);
+  if (instanceId is null) { return; }
+  c.cfgSet("instanceId", str(instanceId!));
+  saveConfig(c);
+  if (c.halted) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("instanceId", str(instanceId!)).done()); return; }
+  c.log("Default instance set to \{instanceId!}");
+}
+
+void cmdInstancesAnchor(Cli c, string? anchorTime) {
+  if (!ready(c)) { return; }
+  if (anchorTime is null) {
+    JsonValue? state = getState(c);
+    if (state is null) { return; }
+    string? def = defaultAnchorOf(state!);
+    string effective = def ?? DEFAULT_ANCHOR_TIME;
+    string tz = anchorFor(c, null, def).timezone;
+    if (c.json) {
+      c.jsonOut(Obj.create().put("defaultAnchorTime", def is null ? JsonValue.Null : str(def!)).put("effective", str(effective))
+        .put("timezone", str(tz)).done());
+      return;
+    }
+    c.log("Default anchor: \{effective}\{def is not null && def!.len() > 0 ? "" : " (unset — built-in default)"}");
+    c.log("Interpreted in: \{tz}");
+    return;
+  }
+  string? e = anchorTimeError(anchorTime!);
+  if (e is not null) { c.fail("Invalid anchor: \{e!}"); return; }
+  if (batch(c, Obj.create().put("type", str("setDefaultAnchor")).put("anchorTime", str(anchorTime!)).done()) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("defaultAnchorTime", str(anchorTime!)).done()); return; }
+  c.log("Default anchor set to \{anchorTime!}");
+}
+
+void cmdInstancesJoin(Cli c, string instanceId) {
+  if (!requireToken(c)) { return; }
+  if (api(c, "POST", "/instances/\{instanceId}/access/request", Obj.create().done(), true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("instanceId", str(instanceId)).done()); return; }
+  c.log("Access requested for instance \{shortId(instanceId)}…");
+  c.log("An admin will need to approve your request.");
+  c.log("Once approved, run: autonag instances select \{instanceId}");
+}
+
+void cmdTimersList(Cli c) {
+  if (!ready(c)) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  if (c.json) {
+    c.jsonOut(Obj.create().put("timers", orNull(state!.member("timers"))).put("alarm", orNull(state!.member("alarm")))
+      .put("shush", orNull(state!.member("shush"))).done());
+    return;
+  }
+  f64 now = c.now() as~ f64;
+  JsonArray ts = timersOf(state!);
+  // A stable sort by expiry, as Array.prototype.sort insts.
+  JsonValue[] sorted = JsonValue[].filled(ts.len(), JsonValue.Null);
+  for (i32 i = 0; i < ts.len(); i++) {
+    JsonValue t = ts.get(i);
+    f64 e = t.member("currentExpiry")?.number() ?? 0.0;
+    i32 k = i;
+    while (k > 0 && (sorted[k - 1].member("currentExpiry")?.number() ?? 0.0) > e) { sorted[k] = sorted[k - 1]; k--; }
+    sorted[k] = t;
+  }
+  if (sorted.len() == 0) {
+    c.log("No active timers.");
+  } else {
+    c.log("\{padEnd("ID", 10)}  \{padEnd("Name", 24)}  \{padEnd("Remaining", 16)}  Recur");
+    c.log(repeat("-", 60));
+    for (JsonValue t in sorted) {
+      f64 remaining = (t.member("currentExpiry")?.number() ?? 0.0) - now;
+      string label = remaining < 0.0 ? "OVERDUE \{fmtCountdown(remaining)}" : "in \{fmtCountdown(remaining)}";
+      string recur = truthy(t.member("recurrence")) ? "↻" : "";
+      c.log("\{col(shortId(idOf(t)) + "…", 10, false)}  \{col(tpl(t.member("name")), 24, true)}  \{col(label, 16, false)}  \{recur}");
+    }
+  }
+  c.log("");
+  printAlarmStatus(c, state!, now);
+}
+
+void printAlarmStatus(Cli c, JsonValue state, f64 now) {
+  JsonValue alarm = orNull(state.member("alarm"));
+  JsonValue? shush = state.member("shush");
+  f64? shushExpiry = shush is null ? null : shush!.member("expiry")?.number();
+  bool shushed = shushExpiry is not null && shushExpiry! > now;
+  f64? startsAt = alarm.member("startsAt")?.number();
+  string urgent = tpl(alarm.member("urgentName"));
+  if (startsAt is not null) {
+    f64 diff = startsAt! - now;
+    string color = alarm.member("color")?.text() ?? tpl(alarm.member("color"));
+    string label = color;
+    if (color == "blue") { label = "off"; }
+    else if (color == "flashing") { label = "FLASHING"; }
+    string timeStr = diff <= 0.0 ? "overdue \{fmtCountdown(diff)}" : "in \{fmtCountdown(diff)}";
+    c.log("[\{label}] \"\{urgent}\" — \{timeStr}");
+  }
+  if (alarm.member("on")?.boolean() ?? false) {
+    c.log("Alarm: ringing.");
+  } else if (shushed) {
+    bool overdue = startsAt is not null && startsAt! <= now;
+    bool endsAfter = startsAt is not null && shushExpiry! >= startsAt!;
+    if (overdue || endsAfter) {
+      c.log("Alarm: off. Will ring in \{fmtCountdown(shushExpiry! - now)}: Shush expires: \{urgent}.");
+    } else if (startsAt is not null) {
+      c.log("Alarm: off. Will ring in \{fmtCountdown(startsAt! - now)}: \{urgent}. (Shushed unnecessarily for \{fmtCountdown(shushExpiry! - now)}.)");
+    } else {
+      c.log("Alarm: off. Shushed (unnecessarily) for \{fmtCountdown(shushExpiry! - now)}.");
+    }
+  } else if (startsAt is not null) {
+    c.log("Alarm: off. Will ring in \{fmtCountdown(startsAt! - now)}: \{urgent}.");
+  } else {
+    c.log("Alarm: off.");
+  }
+}
+
+void cmdAlarm(Cli c) {
+  if (!ready(c)) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("alarm", orNull(state!.member("alarm"))).put("shush", orNull(state!.member("shush"))).done()); return; }
+  printAlarmStatus(c, state!, c.now() as~ f64);
+}
+
+struct AddOpts {
+  string? desc;
+  f64? days;
+  string? anchor;
+  string? tz;
+  bool skipWeekends;
+}
+
+void cmdTimersAdd(Cli c, string name, string expiryStr, AddOpts opts) {
+  if (!ready(c)) { return; }
+  ExpirySpec? spec = parseExpirySpec(c, expiryStr);
+  if (spec is null) { return; }
+  RecurrenceSpec? recurrence = null;
+  if (opts.days is not null) {
+    recurrence = RecurrenceSpec(opts.days!, opts.anchor ?? DEFAULT_ANCHOR_TIME, opts.tz ?? c.cfgText("timezone") ?? c.zoneName,
+                                opts.skipWeekends);
+  }
+  bool needsDefault = !spec!.absolute && !spec!.parsed!.hasSubDayUnit && recurrence is null;
+  string? defaultAnchor = null;
+  if (needsDefault) {
+    JsonValue? state = getState(c);
+    if (state is null) { return; }
+    defaultAnchor = defaultAnchorOf(state!);
+  }
+  Timer? holder = recurrence is null ? null : Timer("", "", null, 0.0, 0.0, recurrence, null, "");
+  f64 expiry = resolveExpirySpec(c, spec!, anchorFor(c, holder, defaultAnchor));
+  if (c.halted) { return; }
+  Obj body = Obj.create().put("name", str(name)).put("expiry", num(expiry));
+  if (opts.desc is not null && opts.desc!.len() > 0) { body.put("description", str(opts.desc!)); }
+  if (recurrence is not null) { body.put("recurrence", recurrence!.toJson()); }
+  JsonValue? r = api(c, "POST", "/instances/\{c.cfgShow("instanceId")}/timers", body.done(), true);
+  if (r is null) { return; }
+  if (c.json) { c.jsonOut(r!); return; }
+  string note = recurrence is not null ? " (recurs every \{jsNumber(opts.days!)}d)" : "";
+  c.log("Timer \"\{name}\" added, expires \{c.fmtDate(expiry)}\{note}");
+}
+
+void cmdTimersRename(Cli c, string id, string name) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  if (api(c, "PATCH", "/instances/\{c.cfgShow("instanceId")}/timers/\{timerId!}/name", Obj.create().put("name", str(name)).done(), true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("name", str(name)).done()); return; }
+  c.log("Timer \{shortId(timerId!)}… renamed to \"\{name}\"");
+}
+
+void cmdTimersReschedule(Cli c, string id, string expiryStr) {
+  if (!ready(c)) { return; }
+  ExpirySpec? spec = parseExpirySpec(c, expiryStr);
+  if (spec is null) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  JsonArray ts = timersOf(state!);
+  Vec<JsonValue> hits = Vec<JsonValue>.create();
+  for (i32 i = 0; i < ts.len(); i++) {
+    string tid = idOf(ts.get(i));
+    if (tid == id || startsWith(tid, id)) { hits.push(ts.get(i)); }
+  }
+  if (hits.len() == 0) { c.fail("Timer not found: \{id}"); return; }
+  if (hits.len() > 1) {
+    Vec<string> shown = Vec<string>.create();
+    for (i32 k = 0; k < hits.len(); k++) { shown.push(shortId(idOf(hits.get(k))) + "…"); }
+    ambiguous(c, id, shown);
+    return;
+  }
+  string timerId = idOf(hits.get(0));
+  f64 expiry = resolveExpirySpec(c, spec!, anchorFor(c, wireTimer(hits.get(0)), defaultAnchorOf(state!)));
+  if (c.halted) { return; }
+  if (api(c, "PATCH", "/instances/\{c.cfgShow("instanceId")}/timers/\{timerId}/expiry", Obj.create().put("expiry", num(expiry)).done(), true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId)).put("expiry", num(expiry)).done()); return; }
+  c.log("Timer \{shortId(timerId)}… rescheduled to \{c.fmtDate(expiry)}");
+}
+
+void cmdTimersComplete(Cli c, string id, string reason, f64? at) {
+  if (!ready(c)) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? timer = timerById(state!, timerId!);
+  JsonValue? rec = timer is null ? null : timer!.member("recurrence");
+  if (truthy(rec)) {
+    RecurrenceSpec? spec = recurrenceFrom(rec!).ok();
+    if (spec is null) { c.crash("the timer's recurrence is not one"); return; }
+    TimeZone? z = c.zoneNamed(spec!.timezone);
+    if (z is null) { return; }
+    i64 when = at is null ? c.now() : at!.floor() as~ i64;
+    f64 next = nextRecurrenceExpiry(spec!, when, z!) as~ f64;
+    Obj action = Obj.create().put("type", str("recurTimer")).put("timerId", str(timerId!)).put("closeReason", str(reason))
+      .put("newExpiry", num(next));
+    if (at is not null) { action.put("occurredAt", num(at!)); }
+    if (batch(c, action.done()) is null) { return; }
+    JsonValue? after = getState(c);
+    if (after is null) { return; }
+    JsonValue? updated = timerById(after!, timerId!);
+    if (c.json) {
+      c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("name", orNull(timer!.member("name"))).put("action", str("recurred"))
+        .put("closeReason", str(reason)).put("nextExpiry", updated is null ? JsonValue.Null : orNull(updated!.member("currentExpiry"))).done());
+      return;
+    }
+    if (updated is not null) {
+      c.log("Timer \"\{tpl(timer!.member("name"))}\" recurred — next: \{c.fmtDate(updated!.member("currentExpiry")?.number() ?? 0.0)}");
+    } else {
+      c.log("Timer \{shortId(timerId!)}… recurred");
+    }
+    return;
+  }
+  Obj action = Obj.create().put("type", str("completeTimer")).put("timerId", str(timerId!)).put("closeReason", str(reason));
+  if (at is not null) { action.put("occurredAt", num(at!)); }
+  if (batch(c, action.done()) is null) { return; }
+  JsonValue? name = timer is null ? null : timer!.member("name");
+  if (c.json) {
+    c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("name", orNull(name)).put("action", str("completed"))
+      .put("closeReason", str(reason)).done());
+    return;
+  }
+  c.log("Timer \"\{name is null || name!.isNull() ? shortId(timerId!) : tpl(name)}\" completed (\{reason})");
+}
+
+void cmdTimersRemove(Cli c, string id) {
+  if (!ready(c)) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? timer = timerById(state!, timerId!);
+  if (api(c, "DELETE", "/instances/\{c.cfgShow("instanceId")}/timers/\{timerId!}", null, true) is null) { return; }
+  JsonValue? n = timer is null ? null : timer!.member("name");
+  string name = n is null || n!.isNull() ? shortId(timerId!) : tpl(n);
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("name", n is null || n!.isNull() ? str(name) : n!).done()); return; }
+  c.log("Timer \"\{name}\" removed");
+}
+
+void cmdTimersDescribe(Cli c, string id, string text) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  if (batch(c, Obj.create().put("type", str("updateDescription")).put("timerId", str(timerId!)).put("description", str(text)).done()) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).done()); return; }
+  c.log("Timer \{shortId(timerId!)}… description updated");
+}
+
+void cmdTimersGetDescription(Cli c, string id) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  JsonValue? timer = timerById(state!, timerId!);
+  if (timer is null) { c.fail("Timer not found: \{timerId!}"); return; }
+  JsonValue? d = timer!.member("description");
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("description", orNull(d)).done()); return; }
+  if (!truthy(d)) { c.log("(no description)"); return; }
+  c.log(tpl(d));
+}
+
+struct RecurOpts {
+  string? anchor;
+  string? tz;
+  bool skipWeekends;
+}
+
+void cmdTimersRecurrenceSet(Cli c, string id, f64 days, RecurOpts opts) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  RecurrenceSpec r = RecurrenceSpec(days, opts.anchor ?? DEFAULT_ANCHOR_TIME, opts.tz ?? c.zoneName, opts.skipWeekends);
+  if (batch(c, Obj.create().put("type", str("updateRecurrence")).put("timerId", str(timerId!)).put("recurrence", r.toJson()).done()) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("recurrence", r.toJson()).done()); return; }
+  c.log("Timer \{shortId(timerId!)}… recurrence set to every \{jsNumber(days)}d at \{r.anchorTime} (\{r.timezone})");
+}
+
+void cmdTimersAnchor(Cli c, string id, string? anchorTime) {
+  if (!ready(c)) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? timer = timerById(state!, timerId!);
+  if (timer is null) { c.fail("Timer not found: \{id}"); return; }
+  bool recurring = truthy(timer!.member("recurrence"));
+  if (anchorTime is null) {
+    AnchorSpec effective = anchorFor(c, wireTimer(timer!), defaultAnchorOf(state!));
+    string source = recurring ? "recurrence" : (truthy(timer!.member("anchorTime")) ? "timer" : "instance default");
+    if (c.json) {
+      c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("anchorTime", orNull(timer!.member("anchorTime")))
+        .put("effective", str(effective.anchorTime)).put("timezone", str(effective.timezone)).put("source", str(source)).done());
+      return;
+    }
+    c.log("Anchor: \{effective.anchorTime} (\{source}, \{effective.timezone})");
+    return;
+  }
+  if (recurring) { c.fail("Timer is recurring — set its anchor with \"timers recurrence set\" instead"); return; }
+  bool clear = anchorTime! == "none" || anchorTime! == "default";
+  if (!clear) {
+    string? e = anchorTimeError(anchorTime!);
+    if (e is not null) { c.fail("Invalid anchor: \{e!}"); return; }
+  }
+  JsonValue value = clear ? JsonValue.Null : str(anchorTime!);
+  if (batch(c, Obj.create().put("type", str("setTimerAnchor")).put("timerId", str(timerId!)).put("anchorTime", value).done()) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("anchorTime", value).done()); return; }
+  c.log(clear ? "Timer \{shortId(timerId!)}… anchor cleared (using the instance default)"
+              : "Timer \{shortId(timerId!)}… anchor set to \{anchorTime!}");
+}
+
+void cmdTimersRecurrenceRemove(Cli c, string id) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  if (batch(c, Obj.create().put("type", str("removeRecurrence")).put("timerId", str(timerId!)).done()) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).done()); return; }
+  c.log("Timer \{shortId(timerId!)}… recurrence removed");
+}
+
+void cmdTimersHistory(Cli c, string id) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonArray entries = JsonArray.create();
+  f64? cursor = 0.0;
+  while (cursor is not null) {
+    JsonValue? page = api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/timers/\{timerId!}/history?after=\{jsNumber(cursor!)}", null, true);
+    if (page is null) { return; }
+    JsonArray evs = page!.member("events")?.array() ?? JsonArray.create();
+    for (i32 i = 0; i < evs.len(); i++) {
+      JsonValue ev = evs.get(i);
+      string type = ev.member("type")?.text() ?? "";
+      JsonValue p = orNull(ev.member("payload"));
+      JsonValue date = orNull(ev.member("timestamp"));
+      if (type == "TimerRecurred" || type == "TimerCompletionLogged") {
+        JsonValue? o = p.member("occurredAt");
+        if (o is not null && !o!.isNull()) { date = o!; }
+      }
+      Obj e = Obj.create().put("date", date);
+      JsonValue? reason = p.member("closeReason");
+      if (reason is not null) { e.put("closeReason", reason!); }
+      entries.push(e.put("type", orNull(ev.member("type"))).done());
+    }
+    cursor = page!.member("nextCursor")?.number();
+  }
+  if (c.json) { c.jsonOut(JsonValue.Array(entries)); return; }
+  if (entries.len() == 0) { c.log("No history yet."); return; }
+  c.log("\{padEnd("Date", 22)}  \{padEnd("Reason", 16)}  Type");
+  c.log(repeat("-", 56));
+  for (i32 i = 0; i < entries.len(); i++) {
+    JsonValue e = entries.get(i);
+    string type = tpl(e.member("type"));
+    string label = type == "TimerCompletionLogged" ? "logged" : (type == "TimerRecurred" ? "recurred" : "completed");
+    JsonValue? reason = e.member("closeReason");
+    if (reason is null || reason!.text() is null) { c.crash("Cannot read properties of undefined (reading 'slice')"); return; }
+    c.log("\{col(c.fmtDate(e.member("date")?.number() ?? 0.0 / 0.0), 22, false)}  \{col(reason!.text()!, 16, false)}  \{label}");
+  }
+}
+
+void cmdTimersLog(Cli c, string id, string reason, f64 at) {
+  if (!ready(c)) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? timer = timerById(state!, timerId!);
+  if (timer is null) { c.fail("Timer not found: \{id}"); return; }
+  if (batch(c, Obj.create().put("type", str("logCompletion")).put("timerId", str(timerId!)).put("closeReason", str(reason))
+                 .put("occurredAt", num(at)).done()) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).put("closeReason", str(reason)).put("occurredAt", num(at)).done()); return; }
+  c.log("Logged \"\{reason}\" for \"\{tpl(timer!.member("name"))}\" at \{c.fmtDate(at)}");
+}
+
+void cmdShush(Cli c, string? duration) {
+  if (!ready(c)) { return; }
+  f64 expiry = 0.0;
+  if (duration is not null && duration!.len() > 0) {
+    expiry = parseExactExpiry(c, duration!);
+    if (c.halted) { return; }
+  } else {
+    expiry = (c.now() + 30 * 60 * 1000) as~ f64;
+  }
+  if (api(c, "POST", "/instances/\{c.cfgShow("instanceId")}/shush", Obj.create().put("expiry", num(expiry)).done(), true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("expiry", num(expiry)).done()); return; }
+  c.log("Alarm silenced until \{c.fmtDate(expiry)}");
+}
+
+void cmdUnshush(Cli c) {
+  if (!ready(c)) { return; }
+  if (api(c, "DELETE", "/instances/\{c.cfgShow("instanceId")}/shush", null, true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("ok", JsonValue.Bool(true)).done()); return; }
+  c.log("Shush cleared");
+}
+
+void cmdEventsList(Cli c, f64 from) {
+  if (!ready(c)) { return; }
+  JsonValue? r = api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/events?from=\{jsNumber(from)}&limit=200", null, true);
+  if (r is null) { return; }
+  JsonValue events = orNull(r!.member("events"));
+  if (c.json) { c.jsonOut(events); return; }
+  JsonArray evs = events.array() ?? JsonArray.create();
+  if (evs.len() == 0) { c.log("No events."); return; }
+  c.log("\{padEnd("seq", 6)}  \{padEnd("ID", 10)}  \{padEnd("Type", 28)}  \{padEnd("Time", 20)}  Skipped");
+  c.log(repeat("-", 78));
+  for (i32 i = 0; i < evs.len(); i++) {
+    JsonValue e = evs.get(i);
+    string skipped = truthy(e.member("skipped")) ? "yes" : "";
+    c.log("\{padEnd(tpl(e.member("seq")), 6)}  \{col(shortId(idOf(e)) + "…", 10, false)}  \{col(tpl(e.member("type")), 28, false)}  \{col(c.fmtDate(e.member("timestamp")?.number() ?? 0.0 / 0.0), 20, false)}  \{skipped}");
+  }
+}
+
+void cmdEventsSkip(Cli c, string id, bool skip) {
+  if (!ready(c)) { return; }
+  string? eventId = resolveEventId(c, id);
+  if (eventId is null) { return; }
+  if (api(c, skip ? "POST" : "DELETE", "/instances/\{c.cfgShow("instanceId")}/events/\{eventId!}/skip", null, true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("eventId", str(eventId!)).done()); return; }
+  c.log("Event \{shortId(eventId!)}… \{skip ? "skipped" : "unskipped"}");
+}
+
+void cmdTimersView(Cli c, string id) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? state = getState(c);
+  if (state is null) { return; }
+  JsonValue? timer = timerById(state!, timerId!);
+  if (timer is null) { c.fail("Timer not found: \{timerId!}"); return; }
+  JsonValue? r = api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/threads/\{timerId!}/comments", null, true);
+  if (r is null) { return; }
+  JsonValue comments = orNull(r!.member("comments"));
+  if (c.json) {
+    Obj o = Obj.create();
+    JsonObject t = timer!.object()!;
+    bool replaced = false;
+    for (i32 i = 0; i < t.len(); i++) {
+      if (t.at(i).keyStr() == "comments") { o.put("comments", comments); replaced = true; }
+      else { o.putBytes(t.at(i).key, t.at(i).value); }
+    }
+    if (!replaced) { o.put("comments", comments); }
+    c.jsonOut(o.done());
+    return;
+  }
+  f64 now = c.now() as~ f64;
+  f64 expiry = timer!.member("currentExpiry")?.number() ?? 0.0;
+  f64 remaining = expiry - now;
+  c.log("ID:          \{tpl(timer!.member("id"))}");
+  c.log("Name:        \{tpl(timer!.member("name"))}");
+  JsonValue? d = timer!.member("description");
+  if (truthy(d)) {
+    string desc = tpl(d);
+    if (jsLength(desc) > 500) {
+      c.log("Description: \{jsSlice(desc, 0, 497)}...");
+      c.log("             (\{jsLength(desc)} chars total — run 'timers description \{shortId(timerId!)}' for full text)");
+    } else {
+      c.log("Description: \{desc}");
+    }
+  }
+  c.log("Expires:     \{c.fmtDate(expiry)}  (\{remaining >= 0.0 ? "in " : ""}\{fmtCountdown(remaining)})");
+  c.log("Created:     \{c.fmtDate(timer!.member("created")?.number() ?? 0.0 / 0.0)}");
+  JsonValue? rec = timer!.member("recurrence");
+  if (truthy(rec)) {
+    string wknd = truthy(rec!.member("skipWeekends")) ? ", skip weekends" : "";
+    c.log("Recurrence:  every \{tpl(rec!.member("periodDays"))}d at \{tpl(rec!.member("anchorTime"))} \{tpl(rec!.member("timezone"))}\{wknd}");
+  }
+  JsonArray cs = comments.array() ?? JsonArray.create();
+  if (cs.len() > 0) {
+    i32 start = cs.len() > 5 ? cs.len() - 5 : 0;
+    string more = start > 0 ? "  (\{start} older — run 'comments list \{shortId(timerId!)}' to see all)" : "";
+    c.log("\nComments:\{more}");
+    for (i32 i = start; i < cs.len(); i++) {
+      string text = tpl(cs.get(i).member("text"));
+      if (jsLength(text) > 80) { text = jsSlice(text, 0, 77) + "..."; }
+      c.log("  \{c.fmtDate(cs.get(i).member("createdAt")?.number() ?? 0.0 / 0.0)}  \{text}");
+    }
+  }
+}
+
+// comments.slice(-limit), with slice's handling of 0 and of a negative limit.
+i32 sliceStart(i32 len, f64? limit) {
+  if (limit is null) { return 0; }
+  f64 s = -limit!;
+  if (s == 0.0) { return 0; }
+  if (s < 0.0) { f64 a = (len as f64) + s; return a < 0.0 ? 0 : a as~ i32; }
+  return s > (len as f64) ? len : s as~ i32;
+}
+
+void cmdCommentsList(Cli c, string id, f64? limit) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  JsonValue? r = api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/threads/\{timerId!}/comments", null, true);
+  if (r is null) { return; }
+  JsonArray cs = r!.member("comments")?.array() ?? JsonArray.create();
+  i32 start = sliceStart(cs.len(), limit);
+  if (c.json) {
+    JsonArray shown = JsonArray.create();
+    for (i32 i = start; i < cs.len(); i++) { shown.push(cs.get(i)); }
+    c.jsonOut(JsonValue.Array(shown));
+    return;
+  }
+  if (cs.len() == 0) { c.log("No comments."); return; }
+  if (start > 0) { c.log("(\{start} older comments not shown)"); }
+  for (i32 i = start; i < cs.len(); i++) {
+    c.log("[\{c.fmtDate(cs.get(i).member("createdAt")?.number() ?? 0.0 / 0.0)}] \{tpl(cs.get(i).member("text"))}");
+  }
+}
+
+void cmdCommentsAdd(Cli c, string id, string text) {
+  if (!ready(c)) { return; }
+  string? timerId = resolveTimerId(c, id);
+  if (timerId is null) { return; }
+  if (api(c, "POST", "/instances/\{c.cfgShow("instanceId")}/threads/\{timerId!}/comments", Obj.create().put("text", str(text)).done(), true) is null) { return; }
+  if (c.json) { c.jsonOut(Obj.create().put("timerId", str(timerId!)).done()); return; }
+  c.log("Comment added");
+}
+
+void printCompletions(Cli c, string title, JsonArray entries) {
+  if (entries.len() == 0) { return; }
+  c.log("\n\{title} (\{entries.len()})");
+  for (i32 i = 0; i < entries.len(); i++) {
+    JsonValue e = entries.get(i);
+    JsonValue? n = e.member("name");
+    string name = n is null || n!.isNull() ? "timer \{shortId(tpl(e.member("timerId")))}" : tpl(n);
+    c.log("  \{col(name, 26, false)}  \{col(tpl(e.member("closeReason")), 10, false)}  \{c.fmtDate(e.member("occurredAt")?.number() ?? 0.0 / 0.0)}");
+  }
+}
+
+void cmdResults(Cli c, string? date) {
+  if (!ready(c)) { return; }
+  f64 from = localDayStart(c, date);
+  if (c.halted) { return; }
+  f64 to = from + 86400000.0;
+  JsonValue? r = api(c, "GET", "/instances/\{c.cfgShow("instanceId")}/daily-results?from=\{jsNumber(from)}&to=\{jsNumber(to)}", null, true);
+  if (r is null) { return; }
+  if (c.json) { c.jsonOut(r!); return; }
+  JsonArray passed = r!.member("passed")?.array() ?? JsonArray.create();
+  JsonArray failed = r!.member("failed")?.array() ?? JsonArray.create();
+  JsonArray other = r!.member("other")?.array() ?? JsonArray.create();
+  JsonArray deferred = r!.member("deferred")?.array() ?? JsonArray.create();
+  string day = c.fmtDate(from);
+  i32 comma = day.indexOf(",");
+  c.log(comma < 0 ? day : day.slice(0, comma));
+  if (passed.len() + failed.len() + other.len() + deferred.len() == 0) { c.log("Nothing happened this day."); return; }
+  printCompletions(c, "Passed", passed);
+  printCompletions(c, "Failed", failed);
+  printCompletions(c, "Other", other);
+  if (deferred.len() > 0) {
+    c.log("\nDeferred (\{deferred.len()})");
+    for (i32 i = 0; i < deferred.len(); i++) {
+      JsonValue d = deferred.get(i);
+      JsonValue? n = d.member("name");
+      string name = n is null || n!.isNull() ? "timer \{shortId(tpl(d.member("timerId")))}" : tpl(n);
+      c.log("  \{col(name, 26, false)}  → \{c.fmtDate(d.member("newExpiry")?.number() ?? 0.0 / 0.0)}");
+    }
+  }
+}
+
+// ── flags ──
+
+struct Flags {
+  Vec<string> positional;
+  Map<string, string> values;
+  Map<string, f64> numbers;
+  Map<string, bool> set;
+
+  string? text(this, string k) { return this.values.get(k); }
+  f64? number(this, string k) { return this.numbers.get(k); }
+  bool on(this, string k) { return this.set.has(k); }
+}
+
+// parseFlags: `schema` is "name:type" for each flag; null with the run halted on a bad one.
+Flags? parseFlags(Cli c, Vec<string> args, string[] schema) {
+  Flags f = Flags(Vec<string>.create(), Map.create(hashString, stringEq), Map.create(hashString, stringEq), Map.create(hashString, stringEq));
+  for (i32 i = 0; i < args.len(); i++) {
+    string a = args.get(i);
+    if (!startsWith(a, "--")) { f.positional.push(a); continue; }
+    string key = a.slice(2, a.len());
+    string type = "";
+    for (string s in schema) {
+      i32 colon = s.indexOf(":");
+      if (s.slice(0, colon) == key) { type = s.slice(colon + 1, s.len()); }
+    }
+    if (type == "") { c.fail("Unknown flag: --\{key}"); return null; }
+    if (type == "boolean") { f.set.set(key, true); continue; }
+    string? next = i + 1 < args.len() ? args.get(i + 1) : null;
+    if (next is null || next!.len() == 0 || startsWith(next!, "--")) { c.fail("Flag --\{key} requires a value"); return null; }
+    if (type == "int") {
+      f64 n = jsToNumber(next!);
+      if (!isInteger(n)) { c.fail("Flag --\{key} must be an integer, got: \"\{next!}\""); return null; }
+      f.numbers.set(key, n);
+    } else {
+      f.values.set(key, next!);
+    }
+    f.set.set(key, true);
+    i++;
+  }
+  return f;
+}
+
+string? at(Vec<string> xs, i32 i) { return i < xs.len() && xs.get(i).len() > 0 ? xs.get(i) : null; }
+
+Vec<string> tail(Vec<string> xs, i32 from) {
+  Vec<string> out = Vec<string>.create();
+  for (i32 i = from; i < xs.len(); i++) { out.push(xs.get(i)); }
+  return out;
+}
+
+// The json5 package's message for a parse failure: the character it stopped at, or the end, by line and
+// column (counted in characters, from 1).
+string json5Error(const u8[] src, string fault, i32 pos) {
+  bool end = fault == "end of input" || pos >= src.len();
+  i32 stop = end ? src.len() : pos;
+  i32 line = 1;
+  i32 col = 1;
+  for (i32 i = 0; i < stop; i++) {
+    if (src[i] == '\n') { line++; col = 1; }
+    else if ((src[i] & 0xC0) != 0x80) { col++; }
+  }
+  if (end) { return "JSON5: invalid end of input at \{line}:\{col}"; }
+  i32 w = 1;
+  while (pos + w < src.len() && (src[pos + w] & 0xC0) == 0x80) { w++; }
+  u8[] ch = u8[].filled(w, 0);
+  ch.copyFrom(src, pos, 0, w);
+  string c = string.fromBytes(ch);
+  if (c == "'") { c = "\\'"; } else if (c == "\"") { c = "\\\""; } else if (c == "\\") { c = "\\\\"; }
+  else if (c == "\n") { c = "\\n"; } else if (c == "\r") { c = "\\r"; } else if (c == "\t") { c = "\\t"; }
+  else if (ch[0] < 0x20) {
+    string hex = "0123456789abcdef";
+    c = "\\x" + hex.slice((ch[0] >> 4) as i32, ((ch[0] >> 4) as i32) + 1) + hex.slice((ch[0] & 15) as i32, ((ch[0] & 15) as i32) + 1);
+  }
+  return "JSON5: invalid character '\{c}' at \{line}:\{col}";
+}
+
+// ── dispatch ──
+
+// One run of `autonag <args>`.
+export CliResult runCli(CliHost h, string[] rawArgs) {
+  string configPath = h.home + "/.config/autonag/client.json5";
+  Vec<string> top = Vec<string>.create();
+  string? serverOverride = null;
+  string? instanceOverride = null;
+  bool json = false;
+  Buf out = Buf.create();
+  Buf err = Buf.create();
+  for (i32 i = 0; i < rawArgs.len(); i++) {
+    string a = rawArgs[i];
+    bool valueNext = i + 1 < rawArgs.len() && rawArgs[i + 1].len() > 0 && !startsWith(rawArgs[i + 1], "-");
+    if (a == "-h" || a == "--help") { return CliResult(HELP + "\n", "", 0); }
+    else if (a == "-s" || a == "--server") {
+      if (!valueNext) { return CliResult("", "Flag -s/--server requires a URL\n", 1); }
+      i++;
+      serverOverride = rawArgs[i];
+    } else if (a == "-i" || a == "--instance") {
+      if (!valueNext) { return CliResult("", "Flag -i/--instance requires an ID\n", 1); }
+      i++;
+      instanceOverride = rawArgs[i];
+    } else if (a == "-c" || a == "--config") {
+      if (!valueNext) { return CliResult("", "Flag -c/--config requires a path\n", 1); }
+      i++;
+      configPath = rawArgs[i];
+    } else if (a == "--json") {
+      json = true;
+    } else {
+      top.push(a);
+    }
+  }
+
+  JsonObject cfg = JsonObject.create();
+  u8[]? raw = h.readFile(configPath);
+  if (raw is null) {
+    cfg.push("server".toBytes(), str("http://localhost:3000"));
+  } else {
+    match (parseJson5(raw!)) {
+      Ok(v): { if (v.object() is not null) { cfg = v.object()!; } }
+      Err(e): { return CliResult("", "Config file \{configPath} is not valid JSON5: SyntaxError: \{json5Error(raw!, e.fault.name(), e.pos)}\n", 1); }
+    }
+  }
+  string zoneName = canonicalZone(h.zones, h.tz);
+  TimeZone? zone = h.zones.zone(zoneName);
+  if (zone is null) { zone = TimeZone("UTC", i64[](), i32[](), [0 as i64], null); }
+  Cli c = Cli(h, cfg, configPath, json, zoneName, zone!, out, err, 0, false);
+  if (serverOverride is not null) { c.cfgSet("server", str(serverOverride!)); }
+  if (instanceOverride is not null) { c.cfgSet("instanceId", str(instanceOverride!)); }
+  dispatch(c, top);
+  return CliResult(out.toStr(), err.toStr(), c.code);
+}
+
+void dispatch(Cli c, Vec<string> top) {
+  string? cmd = at(top, 0);
+  string? sub = at(top, 1);
+  Vec<string> rest = tail(top, 2);
+  // `!cmd` and `!sub`: an empty argument is as good as none.
+  if (cmd is null || cmd! == "help") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    c.log(HELP);
+  } else if (cmd! == "version") {
+    if (c.json) { c.jsonOut(Obj.create().put("version", str(VERSION)).done()); } else { c.log(VERSION); }
+  } else if (cmd! == "tutorial") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    c.log(TUTORIAL);
+  } else if (cmd! == "register") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    if (sub is null) { c.fail("Usage: autonag register <nickname>"); return; }
+    cmdRegister(c, sub!);
+  } else if (cmd! == "status") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdStatus(c);
+  } else if (cmd! == "instances") {
+    instances(c, sub, rest);
+  } else if (cmd! == "timers") {
+    timers(c, sub, rest);
+  } else if (cmd! == "alarm") {
+    if (sub is null || sub! != "show") { c.fail("Usage: autonag alarm show"); return; }
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdAlarm(c);
+  } else if (cmd! == "shush") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdShush(c, top.len() > 1 ? top.get(1) : null);
+  } else if (cmd! == "unshush") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdUnshush(c);
+  } else if (cmd! == "events") {
+    if (sub is null || sub! == "list") {
+      Flags? f = parseFlags(c, rest, ["from:int"]);
+      if (f is null) { return; }
+      cmdEventsList(c, f!.number("from") ?? 1.0);
+    } else if (sub! == "skip" || sub! == "unskip") {
+      Flags? f = parseFlags(c, rest, string[]());
+      if (f is null) { return; }
+      string? id = at(f!.positional, 0);
+      if (id is null) { c.fail("Usage: autonag events \{sub!} <id>"); return; }
+      cmdEventsSkip(c, id!, sub! == "skip");
+    } else {
+      c.fail("Unknown subcommand: events \{sub!}");
+    }
+  } else if (cmd! == "comments") {
+    if (sub is null || sub! == "list") {
+      Flags? f = parseFlags(c, rest, ["limit:int"]);
+      if (f is null) { return; }
+      string? id = at(f!.positional, 0);
+      if (id is null) { c.fail("Usage: autonag comments list <timerId> [--limit N]"); return; }
+      cmdCommentsList(c, id!, f!.number("limit"));
+    } else if (sub! == "add") {
+      Flags? f = parseFlags(c, rest, string[]());
+      if (f is null) { return; }
+      string? id = at(f!.positional, 0);
+      string? text = at(f!.positional, 1);
+      if (id is null || text is null) { c.fail("Usage: autonag comments add <timerId> <text>"); return; }
+      cmdCommentsAdd(c, id!, text!);
+    } else {
+      c.fail("Unknown subcommand: comments \{sub!}");
+    }
+  } else if (cmd! == "results") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdResults(c, sub);
+  } else {
+    c.err.pushStr("Unknown command: \{cmd!}\nRun \"autonag --help\" for usage.\n");
+    c.code = 1;
+    c.halted = true;
+  }
+}
+
+void instances(Cli c, string? sub, Vec<string> rest) {
+  if (sub is null || sub! == "list") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdInstancesList(c);
+    return;
+  }
+  string s = sub!;
+  if (s != "request" && s != "join" && s != "select" && s != "anchor") { c.fail("Unknown subcommand: instances \{s}"); return; }
+  Flags? f = parseFlags(c, rest, string[]());
+  if (f is null) { return; }
+  if (s == "anchor") { cmdInstancesAnchor(c, f!.positional.len() > 0 ? f!.positional.get(0) : null); return; }
+  string? p = at(f!.positional, 0);
+  if (p is null) {
+    string usage = s == "request" ? "<nickname>" : (s == "join" ? "<instance-id>" : "<id>");
+    c.fail("Usage: autonag instances \{s} \{usage}");
+    return;
+  }
+  if (s == "request") { cmdInstancesRequest(c, p!); }
+  else if (s == "join") { cmdInstancesJoin(c, p!); }
+  else { cmdInstancesSelect(c, p!); }
+}
+
+f64? atFlag(Cli c, Flags f) {
+  string? a = f.text("at");
+  if (a is null) { return null; }
+  return parseExactExpiry(c, a!);
+}
+
+void timers(Cli c, string? sub, Vec<string> rest) {
+  if (sub is null || sub! == "list") {
+    if (parseFlags(c, rest, string[]()) is null) { return; }
+    cmdTimersList(c);
+    return;
+  }
+  string s = sub!;
+  if (s == "add") {
+    Flags? f = parseFlags(c, rest, ["desc:string", "days:int", "anchor:string", "tz:string", "skip-weekends:boolean"]);
+    if (f is null) { return; }
+    string? name = at(f!.positional, 0);
+    string? expiry = at(f!.positional, 1);
+    if (name is null || expiry is null) {
+      c.fail("Usage: autonag timers add <name> <expiry> [--desc <text>] [--days <n>] [--anchor <HH:MM>] [--tz <tz>] [--skip-weekends]");
+      return;
+    }
+    cmdTimersAdd(c, name!, expiry!, AddOpts(f!.text("desc"), f!.number("days"), f!.text("anchor"), f!.text("tz"), f!.on("skip-weekends")));
+  } else if (s == "rename" || s == "reschedule" || s == "snooze" || s == "describe") {
+    Flags? f = parseFlags(c, rest, string[]());
+    if (f is null) { return; }
+    string? a = at(f!.positional, 0);
+    string? b = at(f!.positional, 1);
+    if (a is null || b is null) {
+      string usage = s == "rename" ? "rename <id> <name>" : (s == "describe" ? "describe <id> <text>" : "reschedule <id> <expiry>");
+      c.fail("Usage: autonag timers \{usage}");
+      return;
+    }
+    if (s == "rename") { cmdTimersRename(c, a!, b!); }
+    else if (s == "describe") { cmdTimersDescribe(c, a!, b!); }
+    else { cmdTimersReschedule(c, a!, b!); }
+  } else if (s == "pass" || s == "fail") {
+    Flags? f = parseFlags(c, rest, ["at:string"]);
+    if (f is null) { return; }
+    string? id = at(f!.positional, 0);
+    if (id is null) { c.fail("Usage: autonag timers \{s} <id> [--at <datetime>]"); return; }
+    f64? when = atFlag(c, f!);
+    if (c.halted) { return; }
+    cmdTimersComplete(c, id!, s, when);
+  } else if (s == "complete") {
+    Flags? f = parseFlags(c, rest, ["at:string"]);
+    if (f is null) { return; }
+    string? id = at(f!.positional, 0);
+    string? reason = at(f!.positional, 1);
+    if (id is null || reason is null) { c.fail("Usage: autonag timers complete <id> <reason> [--at <datetime>]"); return; }
+    f64? when = atFlag(c, f!);
+    if (c.halted) { return; }
+    cmdTimersComplete(c, id!, reason!, when);
+  } else if (s == "remove" || s == "description" || s == "view" || s == "history") {
+    Flags? f = parseFlags(c, rest, string[]());
+    if (f is null) { return; }
+    string? id = at(f!.positional, 0);
+    if (id is null) { c.fail("Usage: autonag timers \{s} <id>"); return; }
+    if (s == "remove") { cmdTimersRemove(c, id!); }
+    else if (s == "description") { cmdTimersGetDescription(c, id!); }
+    else if (s == "view") { cmdTimersView(c, id!); }
+    else { cmdTimersHistory(c, id!); }
+  } else if (s == "anchor") {
+    Flags? f = parseFlags(c, rest, string[]());
+    if (f is null) { return; }
+    string? id = at(f!.positional, 0);
+    if (id is null) { c.fail("Usage: autonag timers anchor <id> [<HH:MM>|none]"); return; }
+    cmdTimersAnchor(c, id!, f!.positional.len() > 1 ? f!.positional.get(1) : null);
+  } else if (s == "recurrence") {
+    string? recSub = rest.len() > 0 ? rest.get(0) : null;
+    if (recSub is not null && recSub! == "set") {
+      Flags? f = parseFlags(c, rest, ["anchor:string", "tz:string", "skip-weekends:boolean"]);
+      if (f is null) { return; }
+      string? id = at(f!.positional, 1);
+      string? daysText = at(f!.positional, 2);
+      if (id is null || daysText is null) {
+        c.fail("Usage: autonag timers recurrence set <id> <days> [--anchor <HH:MM>] [--tz <tz>] [--skip-weekends]");
+        return;
+      }
+      f64 days = jsToNumber(daysText!);
+      if (!isInteger(days) || days <= 0.0) { c.fail("<days> must be a positive integer, got: \"\{daysText!}\""); return; }
+      cmdTimersRecurrenceSet(c, id!, days, RecurOpts(f!.text("anchor"), f!.text("tz"), f!.on("skip-weekends")));
+    } else if (recSub is not null && recSub! == "remove") {
+      Flags? f = parseFlags(c, rest, string[]());
+      if (f is null) { return; }
+      string? id = at(f!.positional, 1);
+      if (id is null) { c.fail("Usage: autonag timers recurrence remove <id>"); return; }
+      cmdTimersRecurrenceRemove(c, id!);
+    } else {
+      c.fail("Usage: autonag timers recurrence set|remove ...");
+    }
+  } else if (s == "log") {
+    Flags? f = parseFlags(c, rest, ["at:string"]);
+    if (f is null) { return; }
+    string? id = at(f!.positional, 0);
+    string? reason = at(f!.positional, 1);
+    if (id is null || reason is null) { c.fail("Usage: autonag timers log <id> <reason> --at <datetime>"); return; }
+    string? a = f!.text("at");
+    if (a is null) { c.fail("--at <datetime> is required for timers log"); return; }
+    f64 when = parseExactExpiry(c, a!);
+    if (c.halted) { return; }
+    cmdTimersLog(c, id!, reason!, when);
+  } else {
+    c.fail("Unknown subcommand: timers \{s}");
+  }
+}

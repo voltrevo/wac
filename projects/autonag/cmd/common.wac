@@ -1,0 +1,56 @@
+// What the server and the admin tool both do first: read autonag's config and open its database, the way
+// autonag's server/src/config.ts and db.ts do. CONFIG_PATH names the config (config.json5 by default) and
+// DB_PATH overrides its dbPath.
+
+import { Sys } from "std";
+import { flatten } from "core";
+import { json.JsonValue, json.parseJson5 } from "wac";
+import { Connection, SqliteFile } from "sqlite";
+import { Ctx, migrate } from "../src/store/db.wac";
+
+export string env(Sys sys, string name) {
+  match (flatten(sys.env().get(name).wait())) {
+    Ok(v): { return v is null ? "" : string.fromBytes(v!); }
+    Err(e): { return ""; }
+  }
+}
+
+export i64 nowMs(Sys sys) { return flatten(sys.clock().nowMillis().wait()).orElse(0 as i64); }
+
+export struct Setup {
+  JsonValue config;
+  Ctx c;
+}
+
+// The config and the migrated store, or null with the reason already said.
+export Setup? setup(Sys sys) {
+  string configPath = env(sys, "CONFIG_PATH");
+  if (configPath == "") { configPath = "config.json5"; }
+  JsonValue config = JsonValue.Null;
+  match (flatten(sys.files().readFile(configPath).wait())) {
+    Ok(b): {
+      match (parseJson5(b)) {
+        Ok(v): { config = v; }
+        Err(e): { sys.warn("Failed to parse config at \{configPath}"); return null; }
+      }
+    }
+    Err(e): {}
+  }
+  string dbPath = env(sys, "DB_PATH");
+  if (dbPath == "") { dbPath = config.member("dbPath")?.text() ?? "data/autonag.db"; }
+  Connection conn = Connection.memory();
+  if (dbPath != ":memory:") {
+    i32 slash = -1;
+    for (i32 i = 0; i < dbPath.len(); i++) { if (dbPath.slice(i, i + 1) == "/") { slash = i; } }
+    if (slash > 0) { flatten(sys.files().mkdir(dbPath.slice(0, slash), true).wait()); }
+    match (SqliteFile.open(sys.files(), dbPath)) {
+      Ok(f): { conn = f.conn; }
+      Err(e): { sys.warn("cannot open \{dbPath}: \{e.describe()}"); return null; }
+    }
+  }
+  Ctx c = Ctx { db: conn, now: () => nowMs(sys), random: (i32 n) => flatten(sys.random().bytes(n).wait()).unwrap(),
+                snapshotInterval: (config.member("snapshotInterval")?.number() ?? 100.0) as~ i64,
+                skipDepthLimit: (config.member("skipDepthLimit")?.number() ?? 1000.0) as~ i64 };
+  migrate(c);
+  return Setup(config, c);
+}

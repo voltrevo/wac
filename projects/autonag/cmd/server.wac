@@ -11,13 +11,13 @@
 
 import { Sys, Socket } from "std";
 import { Vec, Map, hashString, stringEq, flatten } from "core";
-import { json.JsonValue, json.parseJson5, url.parseUrl, url.pathname, url.Url } from "wac";
-import { Connection, SqliteFile } from "sqlite";
-import { Ctx, migrate } from "../src/store/db.wac";
+import { json.JsonValue, url.parseUrl, url.pathname, url.Url } from "wac";
+import { Ctx } from "../src/store/db.wac";
 import { App, Hooks, Request, Response, RateLimiter, handle } from "../src/server/api.wac";
 import { Head, headEnd, parseHead, writeResponse } from "../src/server/http.wac";
 import { Hub, Conn, Frame, readFrame, frame, acceptResponse, onMessage } from "../src/server/ws.wac";
 import { hostZones } from "../src/time/hostzones.wac";
+import { Setup, setup, env, nowMs } from "./common.wac";
 import { StoredEvent } from "../src/model/events.wac";
 
 struct Settings {
@@ -27,44 +27,11 @@ struct Settings {
   i64 maxBody;
 }
 
-string env(Sys sys, string name) {
-  match (flatten(sys.env().get(name).wait())) {
-    Ok(v): { return v is null ? "" : string.fromBytes(v!); }
-    Err(e): { return ""; }
-  }
-}
-
-i64 nowMs(Sys sys) { return flatten(sys.clock().nowMillis().wait()).orElse(0 as i64); }
-
 export async i32 main(Sys sys) {
-  string configPath = env(sys, "CONFIG_PATH");
-  if (configPath == "") { configPath = "config.json5"; }
-  JsonValue config = JsonValue.Null;
-  match (flatten(sys.files().readFile(configPath).wait())) {
-    Ok(b): {
-      match (parseJson5(b)) {
-        Ok(v): { config = v; }
-        Err(e): { sys.warn("Failed to parse config at \{configPath}"); return 1; }
-      }
-    }
-    Err(e): {}
-  }
-  string dbPath = env(sys, "DB_PATH");
-  if (dbPath == "") { dbPath = config.member("dbPath")?.text() ?? "data/autonag.db"; }
-  Connection conn = Connection.memory();
-  if (dbPath != ":memory:") {
-    i32 slash = -1;
-    for (i32 i = 0; i < dbPath.len(); i++) { if (dbPath.slice(i, i + 1) == "/") { slash = i; } }
-    if (slash > 0) { await sys.files().mkdir(dbPath.slice(0, slash), true); }
-    match (SqliteFile.open(sys.files(), dbPath)) {
-      Ok(f): { conn = f.conn; }
-      Err(e): { sys.warn("cannot open \{dbPath}: \{e.describe()}"); return 1; }
-    }
-  }
-  Ctx c = Ctx { db: conn, now: () => nowMs(sys), random: (i32 n) => flatten(sys.random().bytes(n).wait()).unwrap(),
-                snapshotInterval: (config.member("snapshotInterval")?.number() ?? 100.0) as~ i64,
-                skipDepthLimit: (config.member("skipDepthLimit")?.number() ?? 1000.0) as~ i64 };
-  migrate(c);
+  Setup? setup0 = setup(sys);
+  if (setup0 is null) { return 1; }
+  JsonValue config = setup0!.config;
+  Ctx c = setup0!.c;
   string tzdir = env(sys, "TZDIR");
   Hub hub = Hub.create();
   App app = App { c: c, zones: hostZones(sys.files(), tzdir == "" ? "/usr/share/zoneinfo" : tzdir),

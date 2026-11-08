@@ -1,0 +1,27 @@
+// autonag's admin tool, in wac: src/cli/admin.wac on the database the server's config names.
+//
+//     wac build --allow-read --allow-write --allow-env cmd/admin.wac -o dist/autonag-admin
+//     wac dist/autonag-admin.wasm list-pending
+
+import { Sys } from "std";
+import { flatten } from "core";
+import { App, Hooks, RateLimiter } from "../src/server/api.wac";
+import { StoredEvent } from "../src/model/events.wac";
+import { json.JsonValue } from "wac";
+import { hostZones } from "../src/time/hostzones.wac";
+import { CliResult } from "../src/cli/cli.wac";
+import { runAdmin } from "../src/cli/admin.wac";
+import { Setup, setup, env } from "./common.wac";
+
+export i32 main(Sys sys) {
+  Setup? s = setup(sys);
+  if (s is null) { return 1; }
+  string tzdir = env(sys, "TZDIR");
+  App app = App { c: s!.c, zones: hostZones(sys.files(), tzdir == "" ? "/usr/share/zoneinfo" : tzdir),
+                  hooks: Hooks((string i, StoredEvent e, string sum) => {}, (string i, JsonValue cm) => {}),
+                  limits: RateLimiter.create(), limited: false };
+  CliResult r = runAdmin(app, sys.args(), (string path) => flatten(sys.files().readFile(path).wait()).ok());
+  if (r.stdout.len() > 0) { sys.stdout().write(r.stdout.toBytes()).wait(); }
+  if (r.stderr.len() > 0) { sys.stderr().write(r.stderr.toBytes()).wait(); }
+  return r.code;
+}

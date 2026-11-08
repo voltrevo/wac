@@ -1,0 +1,233 @@
+// autonag's server-side admin tool: a port of server/autonag-admin.ts, working on the database directly
+// and printing what it prints. Like the CLI, a function of its arguments rather than a program, so the
+// test runs it on the same store the API is answering from.
+
+import { Buf, Map, hashString, stringEq } from "core";
+import { json.JsonValue, json.parse } from "wac";
+import { Value, Rows } from "sqlite";
+import { Ctx, txt, int, textAt, intAt } from "../store/db.wac";
+import { App, Request, Response, importLegacy } from "../server/api.wac";
+import { isoString } from "./jsfmt.wac";
+import { CliResult } from "./cli.wac";
+
+static string ADMIN_HELP = "autonag-admin — server-side admin CLI\n\nCommands:\n  list-pending                          List devices and instances awaiting approval\n  approve-device <device-id>            Approve a device registration\n  reject-device <device-id>             Reject and delete a device registration\n  approve-instance <instance-id>        Approve an instance request (also grants creator access)\n  grant-access <device-id> <inst-id>   Grant a device access to an instance\n  revoke-access <device-id> <inst-id>  Revoke a device's access to an instance\n  list-devices                          List all devices\n  list-instances                        List all instances with device access\n  list-access-requests                  List pending access requests\n  approve-access <request-id>           Approve an access request\n  deny-access <request-id>              Deny an access request\n  import <instance-id> <file.json>      Import a legacy autonag v1 export\n";
+
+struct Admin {
+  App app;
+  Buf out;
+  Buf err;
+  i32 code;
+
+  void log(this, string s) { this.out.pushStr(s + "\n"); }
+  void fail(this, string s) { this.err.pushStr(s + "\n"); this.code = 1; }
+  Rows q(this, string sql, Value[] params) { return this.app.c.q(sql, params); }
+}
+
+string s(const Value[] row, i32 i) { return textAt(row, i) ?? "null"; }
+
+string iso(const Value[] row, i32 i) { return isoString((intAt(row, i) ?? 0) as~ f64); }
+
+bool has(const Value[] row, i32 i) {
+  bool out = true;
+  match (row[i]) { Null: { out = false; } Int(n): { out = n != 0; } Text(t): { out = t.len() > 0; } default: {} }
+  return out;
+}
+
+string? arg(const string[] args, i32 i) { return i < args.len() && args[i].len() > 0 ? args[i] : null; }
+
+// One run of `autonag-admin <args>`; `readFile` is for `import`.
+export CliResult runAdmin(App app, string[] args, fn<u8[]?(string)> readFile) {
+  Admin a = Admin(app, Buf.create(), Buf.create(), 0);
+  string cmd = args.len() > 0 ? args[0] : "";
+  string? x = arg(args, 1);
+  string? y = arg(args, 2);
+  if (cmd == "list-pending") { listPending(a); }
+  else if (cmd == "approve-device") { approveDevice(a, x); }
+  else if (cmd == "reject-device") { rejectDevice(a, x); }
+  else if (cmd == "approve-instance") { approveInstance(a, x); }
+  else if (cmd == "grant-access") { grantAccess(a, x, y); }
+  else if (cmd == "revoke-access") { revokeAccess(a, x, y); }
+  else if (cmd == "list-devices") { listDevices(a); }
+  else if (cmd == "list-instances") { listInstances(a); }
+  else if (cmd == "list-access-requests") { listAccessRequests(a); }
+  else if (cmd == "approve-access") { resolveAccessRequest(a, x, true); }
+  else if (cmd == "deny-access") { resolveAccessRequest(a, x, false); }
+  else if (cmd == "import") { importFromFile(a, x, y, readFile); }
+  else { a.log(ADMIN_HELP); }
+  return CliResult(a.out.toStr(), a.err.toStr(), a.code);
+}
+
+void listPending(Admin a) {
+  Rows devices = a.q("SELECT id, nickname, created_at FROM devices WHERE approved_at IS NULL ORDER BY created_at", Value[]());
+  Rows instances = a.q("""
+    SELECT i.id, i.nickname, i.created_at, i.requested_by, d.nickname AS device_nickname
+     FROM instances i LEFT JOIN devices d ON d.id = i.requested_by
+     WHERE i.approved_at IS NULL ORDER BY i.created_at""", Value[]());
+  if (devices.rows.len() == 0 && instances.rows.len() == 0) { a.log("No pending approvals."); return; }
+  if (devices.rows.len() > 0) {
+    a.log("\nPending devices:");
+    for (i32 i = 0; i < devices.rows.len(); i++) {
+      Value[] d = devices.rows.get(i);
+      a.log("  \{s(d, 0)}  \"\{s(d, 1)}\"  (requested \{iso(d, 2)})");
+    }
+  }
+  if (instances.rows.len() > 0) {
+    a.log("\nPending instances:");
+    for (i32 i = 0; i < instances.rows.len(); i++) {
+      Value[] r = instances.rows.get(i);
+      string by = has(r, 3) ? "  by \"\{s(r, 4)}\" (\{s(r, 3)})" : "";
+      a.log("  \{s(r, 0)}  \"\{s(r, 1)}\"  (requested \{iso(r, 2)})\{by}");
+    }
+  }
+}
+
+void approveDevice(Admin a, string? id) {
+  if (id is null) { a.fail("Usage: cli approve-device <device-id>"); return; }
+  Rows r = a.q("SELECT id, nickname FROM devices WHERE id = ?", [txt(id!)]);
+  if (r.rows.len() == 0) { a.fail("Device \{id!} not found"); return; }
+  a.q("UPDATE devices SET approved_at = ? WHERE id = ?", [int(a.app.c.now()), txt(id!)]);
+  a.log("Approved device \"\{s(r.rows.get(0), 1)}\" (\{id!})");
+}
+
+void rejectDevice(Admin a, string? id) {
+  if (id is null) { a.fail("Usage: cli reject-device <device-id>"); return; }
+  Rows r = a.q("SELECT id, nickname FROM devices WHERE id = ?", [txt(id!)]);
+  if (r.rows.len() == 0) { a.fail("Device \{id!} not found"); return; }
+  a.q("DELETE FROM devices WHERE id = ?", [txt(id!)]);
+  a.log("Rejected and deleted device \"\{s(r.rows.get(0), 1)}\" (\{id!})");
+}
+
+void approveInstance(Admin a, string? id) {
+  if (id is null) { a.fail("Usage: cli approve-instance <instance-id>"); return; }
+  Rows r = a.q("SELECT id, nickname, requested_by FROM instances WHERE id = ?", [txt(id!)]);
+  if (r.rows.len() == 0) { a.fail("Instance \{id!} not found"); return; }
+  i64 now = a.app.c.now();
+  a.q("UPDATE instances SET approved_at = ? WHERE id = ?", [int(now), txt(id!)]);
+  Value[] row = r.rows.get(0);
+  // The device that asked for the instance gets access to it.
+  if (has(row, 2)) {
+    a.q("INSERT OR IGNORE INTO device_instance_access (device_id, instance_id, granted_at) VALUES (?, ?, ?)",
+        [row[2], txt(id!), int(now)]);
+  }
+  a.log("Approved instance \"\{s(row, 1)}\" (\{id!})");
+}
+
+void grantAccess(Admin a, string? deviceId, string? instanceId) {
+  if (deviceId is null || instanceId is null) { a.fail("Usage: cli grant-access <device-id> <instance-id>"); return; }
+  Rows d = a.q("SELECT nickname FROM devices WHERE id = ? AND approved_at IS NOT NULL", [txt(deviceId!)]);
+  if (d.rows.len() == 0) { a.fail("Approved device \{deviceId!} not found"); return; }
+  Rows i = a.q("SELECT nickname FROM instances WHERE id = ? AND approved_at IS NOT NULL", [txt(instanceId!)]);
+  if (i.rows.len() == 0) { a.fail("Approved instance \{instanceId!} not found"); return; }
+  a.q("INSERT OR IGNORE INTO device_instance_access (device_id, instance_id, granted_at) VALUES (?, ?, ?)",
+      [txt(deviceId!), txt(instanceId!), int(a.app.c.now())]);
+  a.log("Granted device \"\{s(d.rows.get(0), 0)}\" access to instance \"\{s(i.rows.get(0), 0)}\"");
+}
+
+void revokeAccess(Admin a, string? deviceId, string? instanceId) {
+  if (deviceId is null || instanceId is null) { a.fail("Usage: cli revoke-access <device-id> <instance-id>"); return; }
+  a.q("DELETE FROM device_instance_access WHERE device_id = ? AND instance_id = ?", [txt(deviceId!), txt(instanceId!)]);
+  a.log("Revoked access for device \{deviceId!} to instance \{instanceId!}");
+}
+
+void listDevices(Admin a) {
+  Rows r = a.q("SELECT id, nickname, created_at, approved_at FROM devices ORDER BY created_at", Value[]());
+  if (r.rows.len() == 0) { a.log("No devices."); return; }
+  a.log("\nDevices:");
+  for (i32 i = 0; i < r.rows.len(); i++) {
+    Value[] d = r.rows.get(i);
+    string status = has(d, 3) ? "approved \{iso(d, 3)}" : "PENDING";
+    a.log("  \{s(d, 0)}  \"\{s(d, 1)}\"  [\{status}]");
+  }
+}
+
+void listInstances(Admin a) {
+  Rows r = a.q("SELECT id, nickname, created_at, approved_at FROM instances ORDER BY created_at", Value[]());
+  if (r.rows.len() == 0) { a.log("No instances."); return; }
+  a.log("\nInstances:");
+  for (i32 i = 0; i < r.rows.len(); i++) {
+    Value[] row = r.rows.get(i);
+    string status = has(row, 3) ? "approved \{iso(row, 3)}" : "PENDING";
+    a.log("  \{s(row, 0)}  \"\{s(row, 1)}\"  [\{status}]");
+    Rows access = a.q("SELECT dia.device_id, d.nickname FROM device_instance_access dia JOIN devices d ON d.id = dia.device_id WHERE dia.instance_id = ?",
+                      [row[0]]);
+    for (i32 k = 0; k < access.rows.len(); k++) {
+      a.log("    -> device \"\{s(access.rows.get(k), 1)}\" (\{s(access.rows.get(k), 0)})");
+    }
+  }
+}
+
+void listAccessRequests(Admin a) {
+  Rows r = a.q("""
+    SELECT r.id, r.instance_id, i.nickname AS instance_nickname,
+           r.device_id, d.nickname AS device_nickname,
+           r.requested_at, r.status
+    FROM instance_access_requests r
+    JOIN instances i ON i.id = r.instance_id
+    JOIN devices d ON d.id = r.device_id
+    WHERE r.status = 'pending'
+    ORDER BY r.requested_at
+  """, Value[]());
+  if (r.rows.len() == 0) { a.log("No pending access requests."); return; }
+  a.log("\nPending access requests:");
+  for (i32 i = 0; i < r.rows.len(); i++) {
+    Value[] x = r.rows.get(i);
+    a.log("  \{s(x, 0)}");
+    a.log("    Device:   \"\{s(x, 4)}\" (\{s(x, 3)})");
+    a.log("    Instance: \"\{s(x, 2)}\" (\{s(x, 1)})");
+    a.log("    Requested: \{iso(x, 5)}");
+  }
+}
+
+void resolveAccessRequest(Admin a, string? id, bool approve) {
+  if (id is null) { a.fail("Usage: autonag-admin \{approve ? "approve" : "deny"}-access <request-id>"); return; }
+  Rows r = a.q("""
+    SELECT r.id, r.instance_id, i.nickname AS instance_nickname,
+           r.device_id, d.nickname AS device_nickname, r.status
+    FROM instance_access_requests r
+    JOIN instances i ON i.id = r.instance_id
+    JOIN devices d ON d.id = r.device_id
+    WHERE r.id = ?
+  """, [txt(id!)]);
+  if (r.rows.len() == 0) { a.fail("Request \{id!} not found"); return; }
+  Value[] row = r.rows.get(0);
+  if (s(row, 5) != "pending") { a.fail("Request is already \{s(row, 5)}"); return; }
+  i64 now = a.app.c.now();
+  a.q("UPDATE instance_access_requests SET status = ?, resolved_at = ? WHERE id = ?", [txt(approve ? "approved" : "denied"), int(now), txt(id!)]);
+  if (approve) {
+    a.q("INSERT OR IGNORE INTO device_instance_access (device_id, instance_id, granted_at) VALUES (?, ?, ?)", [row[3], row[1], int(now)]);
+    a.log("Approved: device \"\{s(row, 4)}\" → instance \"\{s(row, 2)}\"");
+  } else {
+    a.log("Denied: device \"\{s(row, 4)}\" → instance \"\{s(row, 2)}\"");
+  }
+}
+
+string count(JsonValue got, string k) { return "\{(got.member(k)?.number() ?? 0.0) as~ i64}"; }
+
+void importFromFile(Admin a, string? instanceId, string? path, fn<u8[]?(string)> readFile) {
+  if (instanceId is null || path is null) { a.fail("Usage: autonag-admin import <instance-id> <file.json>"); return; }
+  Rows r = a.q("SELECT id, nickname, approved_at FROM instances WHERE id = ?", [txt(instanceId!)]);
+  if (r.rows.len() == 0) { a.fail("Instance \{instanceId!} not found"); return; }
+  string nickname = s(r.rows.get(0), 1);
+  if (!has(r.rows.get(0), 2)) { a.fail("Instance \"\{nickname}\" is not yet approved"); return; }
+  u8[]? raw = readFile(path!);
+  if (raw is null) { a.fail("Cannot read file: \{path!}"); return; }
+  JsonValue? data = parse(raw!).ok();
+  if (data is null) { a.fail("File is not valid JSON"); return; }
+  if (data!.member("timers")?.array() is null || data!.member("completedTimers")?.array() is null) {
+    a.fail("Invalid export format: expected timers and completedTimers arrays");
+    return;
+  }
+  Request req = Request("POST", "http://localhost/instances/\{instanceId!}/import", Map.create(hashString, stringEq), raw!, "");
+  Response res = importLegacy(a.app, req, instanceId!);
+  if (res.status != 200) {
+    if (res.status == 500) { a.fail("error: the import failed part way"); return; }
+    a.fail("Import failed: \{res.body.member("error")?.text() ?? ""}");
+    return;
+  }
+  JsonValue got = res.body.member("imported")!;
+  a.log("Imported into instance \"\{nickname}\" (\{instanceId!}):");
+  a.log("  Active timers:    \{count(got, "activeTimers")}");
+  a.log("  Completed timers: \{count(got, "completedTimers")}");
+  a.log("  Log entries:      \{count(got, "logs")}");
+  a.log("  Events created:   \{count(got, "eventsCreated")}");
+}
