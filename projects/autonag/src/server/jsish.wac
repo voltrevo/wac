@@ -1,0 +1,110 @@
+// What autonag's server gets from JavaScript and the platform, where its answers depend on it: parseInt,
+// trim, URL query decoding, and reading request bodies as `req.json()` and `body["x"]` read them.
+
+import { Vec, Map, hashString, stringEq } from "core";
+import { json.JsonValue, json.parse } from "wac";
+import { jsTrim } from "../time/duration.wac";
+
+// parseInt(s) (radix 10, or 16 after a "0x" when no radix is given): leading whitespace, a sign, then the
+// longest run of digits; NaN when there are none.
+export f64 jsParseInt(string s, bool radixGiven) {
+  u8[] b = jsTrim(s).toBytes();
+  i32 i = 0;
+  f64 sign = 1.0;
+  if (i < b.len() && (b[i] == '+' || b[i] == '-')) { if (b[i] == '-') { sign = -1.0; } i++; }
+  i32 radix = 10;
+  if (!radixGiven && i + 1 < b.len() && b[i] == '0' && (b[i + 1] == 'x' || b[i + 1] == 'X')) { radix = 16; i += 2; }
+  f64 v = 0.0;
+  i32 start = i;
+  while (i < b.len()) {
+    i32 d = digitValue(b[i]);
+    if (d < 0 || d >= radix) { break; }
+    v = v * (radix as f64) + (d as f64);
+    i++;
+  }
+  if (i == start) { return 0.0 / 0.0; }
+  return sign * v;
+}
+
+i32 digitValue(u8 c) {
+  if (c >= '0' && c <= '9') { return (c - '0') as i32; }
+  if (c >= 'a' && c <= 'z') { return (c - 'a') as i32 + 10; }
+  if (c >= 'A' && c <= 'Z') { return (c - 'A') as i32 + 10; }
+  return 99;
+}
+
+export bool isNaN(f64 x) { return x != x; }
+
+// Number.isInteger
+export bool isInteger(f64 x) { return x == x && x != 1.0 / 0.0 && x != -1.0 / 0.0 && x == x.floor(); }
+
+// A query string as URLSearchParams reads it: name=value pairs split on "&", "+" a space, percent
+// escapes decoded. `get` answers the first value for a name.
+export struct Query {
+  Vec<string> names;
+  Vec<string> values;
+
+  Query parse(u8[]? q) {
+    Query out = Query(Vec.create(), Vec.create());
+    if (q is null) { return out; }
+    string rest = string.fromBytes(q!);
+    while (true) {
+      i32 amp = rest.indexOf("&");
+      string part = amp < 0 ? rest : rest.slice(0, amp);
+      if (part.len() > 0) {
+        i32 eq = part.indexOf("=");
+        out.names.push(formDecode(eq < 0 ? part : part.slice(0, eq)));
+        out.values.push(eq < 0 ? "" : formDecode(part.slice(eq + 1, part.len())));
+      }
+      if (amp < 0) { break; }
+      rest = rest.slice(amp + 1, rest.len());
+    }
+    return out;
+  }
+
+  string? get(this, string name) {
+    for (i32 i = 0; i < this.names.len(); i++) { if (this.names.get(i) == name) { return this.values.get(i); } }
+    return null;
+  }
+}
+
+i32 hexVal(u8 c) {
+  if (c >= '0' && c <= '9') { return (c - '0') as i32; }
+  if (c >= 'a' && c <= 'f') { return (c - 'a') as i32 + 10; }
+  if (c >= 'A' && c <= 'F') { return (c - 'A') as i32 + 10; }
+  return -1;
+}
+
+string formDecode(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[].filled(b.len(), 0);
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '+') { out[n] = ' '; n++; continue; }
+    if (b[i] == '%' && i + 2 < b.len() && hexVal(b[i + 1]) >= 0 && hexVal(b[i + 2]) >= 0) {
+      out[n] = (hexVal(b[i + 1]) * 16 + hexVal(b[i + 2])) as! u8;
+      n++;
+      i += 2;
+      continue;
+    }
+    out[n] = b[i];
+    n++;
+  }
+  u8[] t = u8[].filled(n, 0);
+  t.copyFrom(out, 0, 0, n);
+  return string.fromBytes(t);
+}
+
+// A request body as `await req.json()` reads it: JSON, or null (the request then answers "Invalid JSON").
+export JsonValue? jsonBody(u8[] body) { return parse(body).ok(); }
+
+// body["key"], where autonag reads a field off whatever the body was: undefined (null here) for a
+// missing key and for anything that is not an object.
+export JsonValue? field(JsonValue? body, string key) {
+  if (body is null) { return null; }
+  return body!.member(key);
+}
+
+export bool isString(JsonValue? v) { return v is not null && v!.text() is not null; }
+export bool isNumber(JsonValue? v) { return v is not null && v!.number() is not null; }
+export string textOr(JsonValue? v) { return v?.text() ?? ""; }

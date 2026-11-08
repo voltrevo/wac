@@ -13,3 +13,16 @@ A plain `return v;` is boxed correctly; the conditional's value is not. **Worked
 ## `x as string?` is refused by the emitter
 
 "cast to an unsupported type". **Worked around** by assigning in an `if`.
+
+## A send not waited on holds a host call
+
+`sock.send(bytes)` without `await`/`.wait()` leaves its host call open; after enough of them (the
+JavaScript hosts allow a program a bounded number) the host stops answering anything, and the server
+hangs on its next request. **Worked around** by waiting on every send. A dropped ticket could release its
+call, or the type system could refuse to drop one.
+
+## `wac run` of the server takes minutes to compile; `wac build` takes seconds
+
+`wac run --allow-read --allow-write --allow-net --allow-env cmd/server.wac` sat at 100% CPU for over ten
+minutes without starting, while `wac build` of the same file finished in six seconds and the built module
+runs correctly. **Worked around** by building first (tools/integration.ts does).

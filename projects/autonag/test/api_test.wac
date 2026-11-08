@@ -1,0 +1,107 @@
+// The API against autonag's own: test/data/api_script.jsonl is a session tools/oracle_api.ts drove
+// through autonag's handleRequest, with its UUIDs, clock and random bytes made deterministic. Here the
+// same requests go through the wac port, made deterministic the same way, and every response must be the
+// same: its status, and its JSON (objects compared by their members, arrays in order).
+
+import { Vec, Map, hashString, stringEq, flatten } from "core";
+import { Sys } from "std";
+import { json.parse, json.stringify, json.JsonValue, json.JsonObject } from "wac";
+import { Connection, Value } from "sqlite";
+import { Ctx, migrate } from "../src/store/db.wac";
+import { App, Hooks, Request, Response, RateLimiter, handle } from "../src/server/api.wac";
+import { hostZones } from "../src/time/hostzones.wac";
+import { StoredEvent } from "../src/model/events.wac";
+
+bool same(JsonValue a, JsonValue b) {
+  match (a) {
+    Object(x): {
+      JsonObject? y = b.object();
+      if (y is null || x.len() != y!.len()) { return false; }
+      for (i32 i = 0; i < x.len(); i++) {
+        JsonValue? other = y!.get(x.at(i).key);
+        if (other is null || !same(x.at(i).value, other!)) { return false; }
+      }
+      return true;
+    }
+    Array(xs): {
+      if (b.array() is null || b.array()!.len() != xs.len()) { return false; }
+      for (i32 i = 0; i < xs.len(); i++) { if (!same(xs.get(i), b.array()!.get(i))) { return false; } }
+      return true;
+    }
+    default: { return string.fromBytes(stringify(a)) == string.fromBytes(stringify(b)); }
+  }
+}
+
+string hex12(i64 n) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 11; i >= 0; i--) {
+    i64 d = (n >> ((i * 4) as i64)) & 15;
+    out += digits.slice(d as! i32, (d as! i32) + 1);
+  }
+  return out;
+}
+
+export string test_the_api_answers_as_autonags_does(Sys sys) {
+  string all = string.fromBytes(flatten(sys.files().readFile("test/data/api_script.jsonl").wait()).unwrap());
+  i64[] clock = [0 as i64];
+  i64[] uuids = [0 as i64];
+  i64[] randoms = [0 as i64];
+  Ctx c = Ctx { db: Connection.memory(), now: () => clock[0],
+                random: (i32 n) => {
+                  randoms[0] = randoms[0] + 1;
+                  u8[] b = u8[].filled(n, 0);
+                  for (i32 i = 0; i < n; i++) { b[i] = ((randoms[0] * 31 + (i as i64)) & 255) as! u8; }
+                  return b;
+                },
+                snapshotInterval: 5, skipDepthLimit: 20,
+                ids: () => {
+                  uuids[0] = uuids[0] + 1;
+                  return "00000000-0000-4000-8000-" + hex12(uuids[0]);
+                } };
+  migrate(c);
+  App app = App { c: c, zones: hostZones(sys.files(), "/usr/share/zoneinfo"),
+                  hooks: Hooks((string i, StoredEvent e, string sum) => {}, (string i, JsonValue cm) => {}),
+                  limits: RateLimiter.create(), limited: false };
+  string bad = "";
+  i32 n = 0;
+  i32 fails = 0;
+  string rest = all;
+  while (rest.len() > 0 && fails < 8) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    rest = nl < 0 ? "" : rest.slice(nl + 1, rest.len());
+    if (line.len() == 0) { continue; }
+    n++;
+    JsonValue step = parse(line.toBytes()).unwrap();
+    if (step.member("kind")!.text()! == "sql") {
+      Vec<Value> ps;
+      for (i32 i = 0; i < step.member("params")!.array()!.len(); i++) {
+        JsonValue p = step.member("params")!.array()!.get(i);
+        if (p.text() is not null) { ps.push(Value.Text(p.text()!)); } else { ps.push(Value.Int(p.number()! as~ i64)); }
+      }
+      c.q(step.member("sql")!.text()!, ps.toArray());
+      continue;
+    }
+    clock[0] = step.member("now")!.number()! as~ i64;
+    Map<string, string> headers = Map.create(hashString, stringEq);
+    JsonObject h = step.member("headers")!.object()!;
+    for (i32 i = 0; i < h.len(); i++) { headers.set(h.at(i).keyStr(), h.at(i).value.text()!); }
+    Request req = Request(step.member("method")!.text()!, "http://localhost" + step.member("path")!.text()!, headers,
+                          step.member("body")!.text()!.toBytes(), "1.2.3.4");
+    Response res = handle(app, req);
+    i32 want = step.member("status")!.number()! as~ i32;
+    string got = string.fromBytes(stringify(res.body));
+    string wantText = step.member("response")!.text()!;
+    bool okay = res.status == want;
+    if (okay && want != 500) {
+      JsonValue? w = parse(wantText.toBytes()).ok();
+      okay = w is not null && same(res.body, w!);
+    }
+    if (!okay) {
+      fails++;
+      bad += "line \{n}: \{req.method} \{step.member("path")!.text()!} \{step.member("body")!.text()!}\n  got  \{res.status} \{got}\n  want \{want} \{wantText}\n";
+    }
+  }
+  return bad;
+}

@@ -1,0 +1,1109 @@
+// autonag's HTTP API: a port of server/src/router.ts and the route handlers in server/src/api/, as one
+// function from a request to a response, so it can be tested by calling it (as autonag's tests call
+// handleRequest) and served by any loop around it.
+//
+// Every status, error text and response field is autonag's, and so is the order the checks run in: the
+// React client and the published CLI read them. Where autonag's answer comes from JavaScript rather than
+// from its own code — parseInt, trim, a TypeError on a JSON `null` body, which Bun turns into a 500 — the
+// port reproduces that too (src/server/jsish.wac).
+
+import { Result, Vec, Map, hashString, stringEq, Buf } from "core";
+import { json.JsonValue, json.JsonArray, json.JsonObject, json.parse, json.stringify, crypto.sha256, url.parseUrl, url.pathname,
+         url.Url } from "wac";
+import { Value, Rows } from "sqlite";
+import { Ctx, txt, int, textAt, intAt, scalarInt, hex } from "../store/db.wac";
+import { appendEvent, getEvents, latestSeq, computeState, computeStateAt, skippedEventIds, seqBeforeTimestamp, skipEvent,
+         unskipEvent, allSnapshots, SnapshotInfo, StoreError, messageOf } from "../store/eventstore.wac";
+import { AppEvent, StoredEvent, Timer, RecurrenceSpec, recurrenceFrom } from "../model/events.wac";
+import { ProjectedState, applyEvent, toWire, checksum } from "../model/state.wac";
+import { Obj, num, str, arr } from "../model/jsonkit.wac";
+import { jsNumber } from "../model/jsstring.wac";
+import { Zones } from "../time/tz.wac";
+import { anchorTimeError } from "../time/anchor.wac";
+import { recurrenceError, nextRecurrenceExpiry, jsTrim } from "../time/duration.wac";
+import { jsParseInt, isNaN, isInteger, Query, jsonBody, field, isString, isNumber, textOr } from "./jsish.wac";
+
+export struct Request {
+  string method;
+  string url;                      // absolute, as Request.url is: "http://host/instances/…?…"
+  Map<string, string> headers;     // by lower-case name
+  u8[] body;
+  string ip;
+}
+
+export struct Response {
+  i32 status;
+  JsonValue body;
+}
+
+// Who hears about changes: the WebSocket side, which sends each event (with the state's checksum after
+// it) and each comment to the instance's sockets.
+export struct Hooks {
+  fn<void(string, StoredEvent, string)> event;
+  fn<void(string, JsonValue)> comment;
+}
+
+export struct App {
+  Ctx c;
+  Zones zones;
+  Hooks hooks;
+  RateLimiter limits;
+  bool limited = true;             // off in tests, as NODE_ENV=test turns autonag's off
+}
+
+// ── responses ──
+
+Response json(JsonValue body, i32 status) { return Response(status, body); }
+Response ok(JsonValue body) { return Response(200, body); }
+Response err(i32 status, string message) { return Response(status, Obj.create().put("error", str(message)).done()); }
+Response badRequest(string m) { return err(400, m); }
+Response notFound(string m) { return err(404, m); }
+Response forbidden() { return err(403, "Forbidden"); }
+Response unauthorized() { return err(401, "Unauthorized"); }
+// What Bun answers when a handler throws: the status matters, and is all a client sees as one.
+Response crashed() { return err(500, "Internal Server Error"); }
+JsonValue nul() { return JsonValue.Null; }
+JsonValue intJ(i64 v) { return num(v as~ f64); }
+
+// ── rate limits ──
+
+// A sliding window per key: allowed while fewer than `limit` requests fell inside the last `windowMs`.
+export struct RateLimiter {
+  Map<string, Vec<i64>> buckets;
+
+  RateLimiter create() { return RateLimiter(Map.create(hashString, stringEq)); }
+
+  bool allow(this, string key, i32 limit, i64 windowMs, i64 now) {
+    Vec<i64>? b = this.buckets.get(key);
+    if (b is null) { b = Vec<i64>.create(); this.buckets.set(key, b!); }
+    i64 cutoff = now - windowMs;
+    while (b!.len() > 0 && b!.get(0) < cutoff) { b!.remove(0); }
+    if (b!.len() >= limit) { return false; }
+    b!.push(now);
+    return true;
+  }
+
+  // Buckets with nothing in the last hour, gone: autonag does this every five minutes.
+  void prune(this, i64 now) {
+    string[] ks = this.buckets.keys();
+    for (string k in ks) {
+      Vec<i64> b = this.buckets.get(k)!;
+      while (b.len() > 0 && b.get(0) < now - 3600000) { b.remove(0); }
+      if (b.len() == 0) { this.buckets.remove(k); }
+    }
+  }
+}
+
+bool allowed(App app, string key, i32 limit, i64 windowMs) {
+  if (!app.limited) { return true; }
+  return app.limits.allow(key, limit, windowMs, app.c.now());
+}
+
+Response tooMany() { return err(429, "Too many requests"); }
+
+// ── devices ──
+
+export struct Device {
+  string id;
+  string nickname;
+  i64? approvedAt;
+
+  JsonValue toJson(this) {
+    return Obj.create().put("id", str(this.id)).put("nickname", str(this.nickname))
+      .put("approvedAt", this.approvedAt is null ? nul() : intJ(this.approvedAt!)).done();
+  }
+}
+
+string hashToken(string token) { return hex(sha256(token.toBytes())); }
+
+Device? deviceByToken(App app, string token, bool approvedOnly) {
+  Rows r = app.c.q("SELECT id, nickname, approved_at FROM devices WHERE token_hash = ?", [txt(hashToken(token))]);
+  if (r.rows.len() == 0) { return null; }
+  Value[] row = r.rows.get(0);
+  i64? approved = intAt(row, 2);
+  if (approvedOnly && approved is null) { return null; }
+  return Device(textAt(row, 0)!, textAt(row, 1)!, approved);
+}
+
+// The bearer token, as autonag reads it: "Bearer " exactly, then the rest trimmed.
+string? bearer(Request req) {
+  string? auth = req.headers.get("authorization");
+  if (auth is null || auth!.len() < 7 || auth!.slice(0, 7) != "Bearer ") { return null; }
+  return jsTrim(auth!.slice(7, auth!.len()));
+}
+
+bool hasAccess(App app, string deviceId, string instanceId) {
+  return app.c.q("SELECT device_id FROM device_instance_access WHERE device_id = ? AND instance_id = ?",
+                 [txt(deviceId), txt(instanceId)]).rows.len() > 0;
+}
+
+// /^[a-zA-Z][a-zA-Z0-9_-]{0,62}[a-zA-Z0-9]$|^[a-zA-Z]$/
+string? nicknameError(string n) {
+  u8[] b = n.toBytes();
+  bool okay = b.len() >= 1 && b.len() <= 64 && isAlpha(b[0]) && (b.len() == 1 || isAlnum(b[b.len() - 1]));
+  for (i32 i = 1; okay && i < b.len() - 1; i++) { if (!isAlnum(b[i]) && b[i] != '_' && b[i] != '-') { okay = false; } }
+  if (okay) { return null; }
+  return "nickname must start with a letter, end with a letter or digit, contain only letters/digits/hyphens/underscores, and be 1–64 characters";
+}
+
+bool isAlpha(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+bool isAlnum(u8 c) { return isAlpha(c) || (c >= '0' && c <= '9'); }
+
+Response requestDevice(App app, Request req) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.object() is null && body!.array() is null || !isString(field(body, "nickname"))) {
+    return badRequest("nickname (string) required");
+  }
+  string nickname = jsTrim(textOr(field(body, "nickname")));
+  string? e = nicknameError(nickname);
+  if (e is not null) { return badRequest(e!); }
+  string id = app.c.uuid();
+  string token = hex(app.c.random(32));
+  app.c.q("INSERT INTO devices (id, nickname, token_hash, created_at) VALUES (?, ?, ?, ?)",
+          [txt(id), txt(nickname), txt(hashToken(token)), int(app.c.now())]);
+  return json(Obj.create().put("device", Device(id, nickname, null).toJson()).put("token", str(token)).done(), 201);
+}
+
+// ── the router ──
+
+// /^\/prefix\/([^/]+)(rest)$/ for a fixed rest: the segment between, or null.
+string? segmentBetween(string path, string prefix, string rest) {
+  if (path.len() <= prefix.len() + rest.len()) { return null; }
+  if (path.slice(0, prefix.len()) != prefix || path.slice(path.len() - rest.len(), path.len()) != rest) { return null; }
+  string mid = path.slice(prefix.len(), path.len() - rest.len());
+  if (mid.len() == 0 || mid.indexOf("/") >= 0) { return null; }
+  return mid;
+}
+
+// /^\/prefix\/([^/]+)(\/.*)?$/: the segment, and what follows it ("" for nothing).
+struct Split {
+  string id;
+  string rest;
+}
+
+Split? splitAfter(string path, string prefix) {
+  if (path.len() <= prefix.len() || path.slice(0, prefix.len()) != prefix) { return null; }
+  string tail = path.slice(prefix.len(), path.len());
+  i32 slash = tail.indexOf("/");
+  string id = slash < 0 ? tail : tail.slice(0, slash);
+  if (id.len() == 0) { return null; }
+  return Split(id, slash < 0 ? "" : tail.slice(slash, tail.len()));
+}
+
+export Response handle(App app, Request req) {
+  Url? u = parseUrl(req.url.toBytes(), null);
+  if (u is null) { return crashed(); }
+  string path = string.fromBytes(pathname(u!));
+  Query q = Query.parse(u!.query);
+  string method = req.method;
+
+  if (method == "POST" && path == "/devices/request") {
+    if (!allowed(app, "reg:\{req.ip}", 10, 600000)) { return tooMany(); }
+    return requestDevice(app, req);
+  }
+
+  // /devices/me lets an unapproved device in, so the client can show that it is waiting.
+  if (method == "GET" && path == "/devices/me") {
+    string? token = bearer(req);
+    if (token is null || token! == "") { return unauthorized(); }
+    Device? d = deviceByToken(app, token!, false);
+    if (d is null) { return unauthorized(); }
+    return ok(Obj.create().put("device", d!.toJson()).done());
+  }
+
+  string? accessFor = segmentBetween(path, "/instances/", "/access/request");
+  if (accessFor is not null && method == "POST") {
+    if (!allowed(app, "access:\{req.ip}", 10, 600000)) { return tooMany(); }
+    string? token = bearer(req);
+    if (token is null || token! == "") { return unauthorized(); }
+    Device? d = deviceByToken(app, token!, false);
+    if (d is null) { return unauthorized(); }
+    return requestAccess(app, accessFor!, d!);
+  }
+
+  // Everything else needs an approved device.
+  string? tok = bearer(req);
+  if (tok is null) { return unauthorized(); }
+  Device? found = deviceByToken(app, tok!, true);
+  if (found is null) { return unauthorized(); }
+  Device device = found!;
+
+  if (method != "GET" && !allowed(app, "write:\{device.id}", 30, 60000)) { return tooMany(); }
+
+  if (method == "POST" && path == "/instances/request") {
+    JsonValue? body = jsonBody(req.body);
+    if (body is null) { return badRequest("Invalid JSON"); }
+    if (body!.isNull()) { return crashed(); }
+    if (!isString(field(body, "nickname"))) { return badRequest("nickname required"); }
+    return requestInstance(app, device, textOr(field(body, "nickname")));
+  }
+
+  if (method == "GET" && path == "/instances") { return listInstances(app, device); }
+
+  Split? inst = splitAfter(path, "/instances/");
+  if (inst is null) { return notFound("Not found"); }
+  string instanceId = inst!.id;
+  string sub = inst!.rest;
+  if (!hasAccess(app, device.id, instanceId)) { return forbidden(); }
+
+  if (method == "GET" && sub == "") { return getInstance(app, instanceId, device); }
+  if (method == "GET" && sub == "/state") { return getState(app, instanceId, q); }
+  if (method == "GET" && sub == "/snapshots") { return getSnapshots(app, instanceId); }
+  if (method == "POST" && sub == "/timers") { return addTimer(app, req, instanceId); }
+
+  Split? timer = splitAfter(sub, "/timers/");
+  if (timer is not null) {
+    string tid = timer!.id;
+    string ts = timer!.rest;
+    if (method == "PATCH" && ts == "/expiry") { return updateExpiry(app, req, instanceId, tid); }
+    if (method == "PATCH" && ts == "/name") { return renameTimer(app, req, instanceId, tid); }
+    if (method == "POST" && ts == "/complete") { return completeTimer(app, req, instanceId, tid); }
+    if (method == "DELETE" && ts == "") { return removeTimer(app, instanceId, tid); }
+    if (method == "GET" && ts == "/closed") { return closedTimer(app, instanceId, tid); }
+  }
+
+  if (method == "POST" && sub == "/shush") { return shush(app, req, instanceId); }
+  if (method == "DELETE" && sub == "/shush") { return clearShush(app, instanceId); }
+  if (method == "GET" && sub == "/events") { return listEvents(app, instanceId, q); }
+
+  string? historyOf = segmentBetween(sub, "/timers/", "/history");
+  if (historyOf is not null && method == "GET") { return timerHistory(app, instanceId, historyOf!, q); }
+
+  if (method == "GET" && sub == "/daily-results") { return dailyResults(app, instanceId, q); }
+
+  string? skipOf = segmentBetween(sub, "/events/", "/skip");
+  if (skipOf is not null) {
+    if (method == "POST") { return changeSkip(app, instanceId, skipOf!, true); }
+    if (method == "DELETE") { return changeSkip(app, instanceId, skipOf!, false); }
+  }
+
+  string? thread = segmentBetween(sub, "/threads/", "/comments");
+  if (thread is not null) {
+    if (method == "GET") { return listComments(app, instanceId, thread!); }
+    if (method == "POST") { return addComment(app, req, instanceId, thread!, device); }
+  }
+
+  if (method == "POST" && sub == "/import") { return importLegacy(app, req, instanceId); }
+  if (method == "POST" && sub == "/actions") { return batch(app, req, instanceId); }
+  return notFound("Not found");
+}
+
+// ── instances ──
+
+Response requestInstance(App app, Device device, string nickname) {
+  // Validated as given, stored trimmed: autonag's order.
+  string? e = nicknameError(nickname);
+  if (e is not null) { return badRequest(e!); }
+  string id = app.c.uuid();
+  string n = jsTrim(nickname);
+  app.c.q("INSERT INTO instances (id, nickname, created_at, requested_by) VALUES (?, ?, ?, ?)",
+          [txt(id), txt(n), int(app.c.now()), txt(device.id)]);
+  return json(Obj.create().put("instance", Obj.create().put("id", str(id)).put("nickname", str(n)).put("approvedAt", nul())
+    .put("requestedBy", str(device.id)).done()).done(), 201);
+}
+
+JsonValue instanceJson(Value[] row) {
+  i64? approved = intAt(row, 3);
+  return Obj.create().put("id", str(textAt(row, 0)!)).put("nickname", str(textAt(row, 1)!)).put("createdAt", intJ(intAt(row, 2)!))
+    .put("approvedAt", approved is null ? nul() : intJ(approved!)).done();
+}
+
+Response listInstances(App app, Device device) {
+  Rows ids = app.c.q("SELECT instance_id FROM device_instance_access WHERE device_id = ?", [txt(device.id)]);
+  JsonArray out = JsonArray.create();
+  if (ids.rows.len() > 0) {
+    Vec<Value> params;
+    string marks = "";
+    for (i32 i = 0; i < ids.rows.len(); i++) {
+      params.push(ids.rows.get(i)[0]);
+      marks += i == 0 ? "?" : ",?";
+    }
+    // ORDER BY id is the order SQLite gives an IN list on the primary key; written down, rather than
+    // left to the planner.
+    Rows r = app.c.q("SELECT id, nickname, created_at, approved_at FROM instances WHERE id IN (\{marks}) ORDER BY id", params.toArray());
+    for (i32 i = 0; i < r.rows.len(); i++) { out.push(instanceJson(r.rows.get(i))); }
+  }
+  return ok(Obj.create().put("instances", arr(out)).done());
+}
+
+Response getInstance(App app, string instanceId, Device device) {
+  Rows r = app.c.q("SELECT id, nickname, created_at, approved_at FROM instances WHERE id = ?", [txt(instanceId)]);
+  if (r.rows.len() == 0) { return notFound("Instance not found"); }
+  if (!hasAccess(app, device.id, instanceId)) { return forbidden(); }
+  return ok(Obj.create().put("instance", instanceJson(r.rows.get(0))).done());
+}
+
+Response requestAccess(App app, string instanceId, Device device) {
+  Rows inst = app.c.q("SELECT id, approved_at FROM instances WHERE id = ?", [txt(instanceId)]);
+  // approved_at of 0 is falsy in JavaScript, and counts as not approved there too.
+  if (inst.rows.len() == 0 || (intAt(inst.rows.get(0), 1) ?? 0) == 0) { return notFound("Instance not found"); }
+  if (hasAccess(app, device.id, instanceId)) { return ok(Obj.create().put("status", str("already_member")).done()); }
+  i64 now = app.c.now();
+  string id = app.c.uuid();
+  app.c.q("""
+    INSERT INTO instance_access_requests (id, instance_id, device_id, requested_at, status)
+    VALUES (?, ?, ?, ?, 'pending')
+    ON CONFLICT(instance_id, device_id) DO UPDATE SET
+      status = 'pending',
+      requested_at = excluded.requested_at,
+      resolved_at = NULL
+  """, [txt(id), txt(instanceId), txt(device.id), int(now)]);
+  Rows r = app.c.q("SELECT id FROM instance_access_requests WHERE instance_id = ? AND device_id = ?", [txt(instanceId), txt(device.id)]);
+  return json(Obj.create().put("request", Obj.create().put("id", str(textAt(r.rows.get(0), 0)!)).put("status", str("pending")).done()).done(), 201);
+}
+
+// ── state ──
+
+JsonValue wire(App app, ProjectedState s) { return toWire(s, app.c.now() as~ f64); }
+
+Response getState(App app, string instanceId, Query q) {
+  string? at = q.get("at");
+  if (at is not null) {
+    f64 seq = jsParseInt(at!, true);
+    if (!isInteger(seq) || seq < 1.0) { return badRequest("at must be a positive integer seq"); }
+    ProjectedState? s = computeStateAt(app.c, instanceId, seq as~ i64);
+    if (s is null) { return err(404, "seq \{jsNumber(seq)} not found (latest is \{latestSeq(app.c, instanceId)})"); }
+    return ok(wire(app, s!));
+  }
+  return ok(wire(app, computeState(app.c, instanceId)));
+}
+
+Response getSnapshots(App app, string instanceId) {
+  Vec<SnapshotInfo> snaps = allSnapshots(app.c, instanceId);
+  JsonArray out = JsonArray.create();
+  for (i32 i = 0; i < snaps.len(); i++) {
+    out.push(Obj.create().put("seq", intJ(snaps.get(i).seq)).put("createdAt", intJ(snaps.get(i).createdAt)).done());
+  }
+  return ok(Obj.create().put("snapshots", arr(out)).done());
+}
+
+// ── timers ──
+
+// Appends, tells the sockets, and answers {event: {id, seq}}.
+Response appended(App app, string instanceId, AppEvent e) {
+  StoredEvent stored = appendEvent(app.c, instanceId, e, app.c.now());
+  app.hooks.event(instanceId, stored, checksum(computeState(app.c, instanceId)));
+  return ok(Obj.create().put("event", eventRef(stored)).done());
+}
+
+JsonValue eventRef(StoredEvent e) { return Obj.create().put("id", str(e.id)).put("seq", intJ(e.seq)).done(); }
+
+// A trimmed, non-empty string field, or null.
+string? nonEmpty(JsonValue? v) {
+  if (!isString(v)) { return null; }
+  string t = jsTrim(v!.text()!);
+  string? out = null;
+  if (t != "") { out = t; }
+  return out;
+}
+
+Response addTimer(App app, Request req, string instanceId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  string? name = nonEmpty(field(body, "name"));
+  if (name is null) { return badRequest("name (string) required"); }
+  if (!isNumber(field(body, "expiry"))) { return badRequest("expiry (number ms) required"); }
+  JsonValue? rec = field(body, "recurrence");
+  RecurrenceSpec? spec = null;
+  if (rec is not null) {
+    string? e = recurrenceError(rec!, app.zones);
+    if (e is not null) { return badRequest(e!); }
+    spec = recurrenceFrom(rec!).unwrap();
+  }
+  i64 now = app.c.now();
+  string? desc = nonEmpty(field(body, "description"));
+  Timer t = Timer(app.c.uuid(), name!, desc, now as~ f64, field(body, "expiry")!.number()!, spec, null);
+  StoredEvent stored = appendEvent(app.c, instanceId, AppEvent.TimerAdded(t), now);
+  app.hooks.event(instanceId, stored, checksum(computeState(app.c, instanceId)));
+  return json(Obj.create().put("timer", t.toJson()).put("event", eventRef(stored)).done(), 201);
+}
+
+Response updateExpiry(App app, Request req, string instanceId, string timerId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  if (!isNumber(field(body, "expiry"))) { return badRequest("expiry (number ms) required"); }
+  if (computeState(app.c, instanceId).timers.get(timerId) is null) { return notFound("Timer not found or already completed"); }
+  return appended(app, instanceId, AppEvent.TimerExpiryUpdated(timerId, field(body, "expiry")!.number()!));
+}
+
+Response completeTimer(App app, Request req, string instanceId, string timerId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  string? why = nonEmpty(field(body, "closeReason"));
+  if (why is null) { return badRequest("closeReason (string) required"); }
+  Timer? t = computeState(app.c, instanceId).timers.get(timerId);
+  if (t is null) { return notFound("Timer not found or already completed"); }
+  if (t!.recurrence is not null) { return badRequest("Cannot complete a recurring timer — remove its recurrence first"); }
+  return appended(app, instanceId, AppEvent.TimerCompleted(timerId, why!));
+}
+
+Response renameTimer(App app, Request req, string instanceId, string timerId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  string? name = nonEmpty(field(body, "name"));
+  if (name is null) { return badRequest("name (string) required"); }
+  if (computeState(app.c, instanceId).timers.get(timerId) is null) { return notFound("Timer not found"); }
+  return appended(app, instanceId, AppEvent.TimerNameUpdated(timerId, name!));
+}
+
+Response removeTimer(App app, string instanceId, string timerId) {
+  Timer? t = computeState(app.c, instanceId).timers.get(timerId);
+  if (t is null) { return notFound("Timer not found"); }
+  if (t!.recurrence is not null) { return badRequest("Cannot remove a recurring timer — remove its recurrence first"); }
+  return appended(app, instanceId, AppEvent.TimerRemoved(timerId));
+}
+
+// A closed timer, read back out of the log: as it stood the instant before its (unskipped) close.
+Response closedTimer(App app, string instanceId, string timerId) {
+  Rows cands = app.c.q("""
+    SELECT id, seq, type, payload, timestamp FROM events
+      WHERE instance_id = ?
+        AND type IN ('TimerCompleted', 'TimerRemoved')
+        AND json_extract(payload, '$.id') = ?
+      ORDER BY seq DESC
+  """, [txt(instanceId), txt(timerId)]);
+  Map<string, bool> skipped = skippedEventIds(app.c, instanceId);
+  Value[]? close = null;
+  for (i32 i = 0; i < cands.rows.len(); i++) {
+    if (!skipped.has(textAt(cands.rows.get(i), 0)!)) { close = cands.rows.get(i); break; }
+  }
+  if (close is null) { return notFound("Timer not found"); }
+  ProjectedState? before = computeStateAt(app.c, instanceId, intAt(close!, 1)! - 1);
+  Timer? t = null;
+  if (before is not null) { t = before!.timers.get(timerId); }
+  if (t is null) { return notFound("Timer not found"); }
+  JsonValue? payload = parse((textAt(close!, 3) ?? "").toBytes()).ok();
+  JsonValue? why = payload?.member("closeReason");
+  return ok(Obj.create().put("timer", t!.toJson()).put("closedBy", Obj.create().put("eventId", str(textAt(close!, 0)!))
+    .put("type", str(textAt(close!, 2)!)).put("closeReason", why ?? nul()).put("at", intJ(intAt(close!, 4)!)).done()).done());
+}
+
+// ── shush ──
+
+Response shush(App app, Request req, string instanceId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  if (!isNumber(field(body, "expiry"))) { return badRequest("expiry (number ms) required"); }
+  return appended(app, instanceId, AppEvent.Shushed(field(body, "expiry")!.number()!));
+}
+
+Response clearShush(App app, string instanceId) { return appended(app, instanceId, AppEvent.ShushCleared); }
+
+// ── events ──
+
+// An events row's payload as stored, parsed, less the legacy flag: what autonag sends as an event's payload.
+JsonValue payloadOf(Value[] row, i32 col, bool stripLegacy) {
+  JsonValue? p = parse((textAt(row, col) ?? "").toBytes()).ok();
+  if (p is null) { return nul(); }
+  if (!stripLegacy || p!.member("legacySkipped") is null) { return p!; }
+  JsonObject o = p!.object()!;
+  Obj out = Obj.create();
+  for (i32 i = 0; i < o.len(); i++) {
+    if (o.at(i).keyStr() != "legacySkipped") { out.putBytes(o.at(i).key, o.at(i).value); }
+  }
+  return out.done();
+}
+
+Value numValue(f64 x) {
+  if (isInteger(x) && x < 9.2e18 && x > -9.2e18) { return Value.Int(x as~ i64); }
+  return Value.Real(x);
+}
+
+Response listEvents(App app, string instanceId, Query q) {
+  f64 raw = jsParseInt(q.get("limit") ?? "200", false);
+  f64 limit = raw < 1000.0 ? raw : 1000.0;
+  if (isNaN(raw) || raw < 1.0) { return badRequest("limit must be a positive integer"); }
+  Map<string, bool> skipped = skippedEventIds(app.c, instanceId);
+  i64 latest = latestSeq(app.c, instanceId);
+  string? beforeParam = q.get("before");
+  if (beforeParam is not null) {
+    f64 before = jsParseInt(beforeParam!, false);
+    if (isNaN(before) || before < 1.0) { return badRequest("before must be a positive integer"); }
+    Rows r = app.c.q("SELECT id, instance_id, seq, type, payload, timestamp FROM events WHERE instance_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?",
+                     [txt(instanceId), numValue(before), numValue(limit)]);
+    JsonArray evs = JsonArray.create();
+    for (i32 i = 0; i < r.rows.len(); i++) {
+      Value[] row = r.rows.get(i);
+      evs.push(Obj.create().put("id", str(textAt(row, 0)!)).put("instance_id", str(textAt(row, 1)!)).put("seq", intJ(intAt(row, 2)!))
+        .put("type", str(textAt(row, 3)!)).put("payload", payloadOf(row, 4, false)).put("timestamp", intJ(intAt(row, 5)!))
+        .put("skipped", JsonValue.Bool(skipped.has(textAt(row, 0)!))).done());
+    }
+    JsonValue prev = (r.rows.len() as f64) == limit ? intJ(intAt(r.rows.get(r.rows.len() - 1), 2)!) : nul();
+    return ok(Obj.create().put("events", arr(evs)).put("prevCursor", prev).put("latestSeq", intJ(latest)).done());
+  }
+  f64 from = jsParseInt(q.get("from") ?? "1", false);
+  if (isNaN(from) || from < 1.0) { return badRequest("from must be a positive integer"); }
+  Rows r = app.c.q("SELECT id, instance_id, seq, type, payload, timestamp FROM events WHERE instance_id = ? AND seq >= ? AND seq <= ? ORDER BY seq",
+                   [txt(instanceId), numValue(from), numValue(from + limit - 1.0)]);
+  JsonArray evs = JsonArray.create();
+  for (i32 i = 0; i < r.rows.len(); i++) { evs.push(storedJson(r.rows.get(i), skipped)); }
+  return ok(Obj.create().put("events", arr(evs)).put("latestSeq", intJ(latest)).done());
+}
+
+// A StoredEvent as autonag sends one, from its row.
+export JsonValue storedJson(Value[] row, Map<string, bool> skipped) {
+  return Obj.create().put("id", str(textAt(row, 0)!)).put("instanceId", str(textAt(row, 1)!)).put("seq", intJ(intAt(row, 2)!))
+    .put("type", str(textAt(row, 3)!)).put("payload", payloadOf(row, 4, true)).put("timestamp", intJ(intAt(row, 5)!))
+    .put("skipped", JsonValue.Bool(skipped.has(textAt(row, 0)!))).done();
+}
+
+Response timerHistory(App app, string instanceId, string timerId, Query q) {
+  f64 raw = jsParseInt(q.get("limit") ?? "500", false);
+  if (isNaN(raw) || raw < 1.0) { return badRequest("limit must be a positive integer"); }
+  f64 limit = raw < 500.0 ? raw : 500.0;
+  f64 after = jsParseInt(q.get("after") ?? "0", false);
+  if (isNaN(after) || after < 0.0) { return badRequest("after must be a non-negative integer"); }
+  string? fromP = q.get("from");
+  string? toP = q.get("to");
+  f64 from = fromP is null ? 0.0 : jsParseInt(fromP!, false);
+  f64 to = toP is null ? 0.0 : jsParseInt(toP!, false);
+  if (fromP is not null && isNaN(from)) { return badRequest("from must be a timestamp in ms"); }
+  if (toP is not null && isNaN(to)) { return badRequest("to must be a timestamp in ms"); }
+  Vec<Value> params;
+  params.push(txt(instanceId));
+  params.push(txt(timerId));
+  params.push(numValue(after));
+  if (fromP is not null) { params.push(numValue(from)); }
+  if (toP is not null) { params.push(numValue(to)); }
+  params.push(numValue(limit + 1.0));
+  Rows r = app.c.q("""
+    SELECT id, seq, type, payload, timestamp FROM events
+     WHERE instance_id = ?
+       AND type IN ('TimerRecurred', 'TimerCompleted', 'TimerCompletionLogged')
+       AND JSON_EXTRACT(payload, '$.id') = ?
+       AND seq > ?
+  """ + (fromP is not null ? " AND timestamp >= ?" : "") + (toP is not null ? " AND timestamp < ?" : "") + " ORDER BY seq LIMIT ?", params.toArray());
+  bool more = (r.rows.len() as f64) > limit;
+  i32 n = more ? (limit as~ i32) : r.rows.len();
+  JsonArray evs = JsonArray.create();
+  for (i32 i = 0; i < n; i++) {
+    Value[] row = r.rows.get(i);
+    evs.push(Obj.create().put("id", str(textAt(row, 0)!)).put("seq", intJ(intAt(row, 1)!)).put("type", str(textAt(row, 2)!))
+      .put("payload", payloadOf(row, 3, false)).put("timestamp", intJ(intAt(row, 4)!)).done());
+  }
+  JsonValue next = more ? intJ(intAt(r.rows.get(n - 1), 1)!) : nul();
+  return ok(Obj.create().put("events", arr(evs)).put("nextCursor", next).done());
+}
+
+ProjectedState stateBefore(App app, string instanceId, f64 ts) {
+  i64 seq = seqBeforeTimestamp(app.c, instanceId, ts as~ i64);
+  return seq == 0 ? ProjectedState.empty() : computeStateAt(app.c, instanceId, seq)!;
+}
+
+// JavaScript's String.prototype.toLowerCase, for the ASCII letters that decide pass and fail.
+string lowerAscii(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
+
+Response dailyResults(App app, string instanceId, Query q) {
+  string? fromP = q.get("from");
+  string? toP = q.get("to");
+  if (fromP is null || toP is null) { return badRequest("from and to are required"); }
+  f64 from = jsParseInt(fromP!, false);
+  f64 to = jsParseInt(toP!, false);
+  if (isNaN(from) || isNaN(to) || to <= from) { return badRequest("from and to must be a valid timestamp range"); }
+  ProjectedState atStart = stateBefore(app, instanceId, from);
+  Vec<Timer> scheduled;
+  for (i32 i = 0; i < atStart.timers.len(); i++) {
+    Timer t = atStart.timers.at(i);
+    if (t.currentExpiry >= from && t.currentExpiry < to) { scheduled.push(t); }
+  }
+  Rows rows = app.c.q("""
+    SELECT id, type, payload, timestamp FROM events
+     WHERE instance_id = ?
+       AND type IN ('TimerCompleted', 'TimerRecurred', 'TimerCompletionLogged')
+       AND COALESCE(JSON_EXTRACT(payload, '$.occurredAt'), timestamp) >= ?
+       AND COALESCE(JSON_EXTRACT(payload, '$.occurredAt'), timestamp) < ?
+     ORDER BY COALESCE(JSON_EXTRACT(payload, '$.occurredAt'), timestamp)
+  """, [txt(instanceId), numValue(from), numValue(to)]);
+  ProjectedState atEnd = to <= (app.c.now() as~ f64) ? stateBefore(app, instanceId, to) : computeState(app.c, instanceId);
+  // Names: a completed timer is gone from both states, so its name comes from when it was added.
+  Map<string, string> names = Map.create(hashString, stringEq);
+  for (i32 i = 0; i < atStart.timers.len(); i++) { names.set(atStart.timers.at(i).id, atStart.timers.at(i).name); }
+  for (i32 i = 0; i < atEnd.timers.len(); i++) { names.set(atEnd.timers.at(i).id, atEnd.timers.at(i).name); }
+  Vec<JsonValue> payloads;
+  Vec<string> unresolved;
+  Map<string, bool> seenIds = Map.create(hashString, stringEq);
+  for (i32 i = 0; i < rows.rows.len(); i++) {
+    JsonValue p = payloadOf(rows.rows.get(i), 2, false);
+    payloads.push(p);
+    string id = p.member("id")?.text() ?? "";
+    if (!seenIds.has(id)) {
+      seenIds.set(id, true);
+      if (!names.has(id)) { unresolved.push(id); }
+    }
+  }
+  if (unresolved.len() > 0) {
+    Vec<Value> params;
+    params.push(txt(instanceId));
+    string marks = "";
+    for (i32 i = 0; i < unresolved.len(); i++) { params.push(txt(unresolved.get(i))); marks += i == 0 ? "?" : ",?"; }
+    Rows added = app.c.q("SELECT payload FROM events WHERE instance_id = ? AND type = 'TimerAdded' AND JSON_EXTRACT(payload, '$.id') IN (\{marks})",
+                         params.toArray());
+    for (i32 i = 0; i < added.rows.len(); i++) {
+      JsonValue p = payloadOf(added.rows.get(i), 0, false);
+      names.set(p.member("id")?.text() ?? "", p.member("name")?.text() ?? "");
+    }
+  }
+  JsonArray passed = JsonArray.create();
+  JsonArray failed = JsonArray.create();
+  JsonArray other = JsonArray.create();
+  Map<string, bool> completed = Map.create(hashString, stringEq);
+  for (i32 i = 0; i < payloads.len(); i++) {
+    JsonValue p = payloads.get(i);
+    string id = p.member("id")?.text() ?? "";
+    string? name = names.get(id);
+    string why = p.member("closeReason")?.text() ?? "";
+    JsonValue at = p.member("occurredAt") ?? intJ(intAt(rows.rows.get(i), 3)!);
+    JsonValue c = Obj.create().put("timerId", p.member("id") ?? nul()).put("name", name is null ? nul() : str(name!))
+      .put("closeReason", p.member("closeReason") ?? nul()).put("occurredAt", at).done();
+    string low = lowerAscii(why);
+    if (low == "pass") { passed.push(c); } else if (low == "fail") { failed.push(c); } else { other.push(c); }
+    completed.set(id, true);
+  }
+  JsonArray deferred = JsonArray.create();
+  for (i32 i = 0; i < scheduled.len(); i++) {
+    Timer t = scheduled.get(i);
+    if (completed.has(t.id)) { continue; }
+    Timer? cur = atEnd.timers.get(t.id);
+    if (cur is null) { continue; }
+    if (cur!.currentExpiry < from || cur!.currentExpiry >= to) {
+      deferred.push(Obj.create().put("timerId", str(t.id)).put("name", str(cur!.name)).put("originalExpiry", num(t.currentExpiry))
+        .put("newExpiry", num(cur!.currentExpiry)).done());
+    }
+  }
+  return ok(Obj.create().put("from", num(from)).put("to", num(to)).put("passed", arr(passed)).put("failed", arr(failed))
+    .put("other", arr(other)).put("deferred", arr(deferred)).done());
+}
+
+// Undo and redo: appended as events, so they reach clients as any change does.
+Response changeSkip(App app, string instanceId, string eventId, bool skip) {
+  Rows r = app.c.q("SELECT id, seq, instance_id FROM events WHERE id = ?", [txt(eventId)]);
+  if (r.rows.len() == 0 || textAt(r.rows.get(0), 2)! != instanceId) { return notFound("Event not found"); }
+  match (skip ? skipEvent(app.c, eventId) : unskipEvent(app.c, eventId)) {
+    Ok(e): {}
+    Err(e): { return err(422, messageOf(e)); }
+  }
+  ProjectedState s = computeState(app.c, instanceId);
+  Vec<StoredEvent> tail = getEvents(app.c, instanceId, latestSeq(app.c, instanceId), -1);
+  if (tail.len() > 0) { app.hooks.event(instanceId, tail.get(tail.len() - 1), checksum(s)); }
+  return ok(Obj.create().put("ok", JsonValue.Bool(true)).put("seq", intJ(intAt(r.rows.get(0), 1)!)).put("state", wire(app, s)).done());
+}
+
+// ── comments ──
+
+JsonValue commentJson(Value[] row) {
+  string? device = textAt(row, 4);
+  return Obj.create().put("id", str(textAt(row, 0)!)).put("instanceId", str(textAt(row, 1)!)).put("threadId", str(textAt(row, 2)!))
+    .put("text", str(textAt(row, 3)!)).put("deviceId", device is null ? nul() : str(device!)).put("createdAt", intJ(intAt(row, 5)!)).done();
+}
+
+Response listComments(App app, string instanceId, string threadId) {
+  Rows r = app.c.q("SELECT id, instance_id, thread_id, text, device_id, created_at FROM comments WHERE instance_id = ? AND thread_id = ? ORDER BY created_at ASC",
+                   [txt(instanceId), txt(threadId)]);
+  JsonArray out = JsonArray.create();
+  for (i32 i = 0; i < r.rows.len(); i++) { out.push(commentJson(r.rows.get(i))); }
+  return ok(Obj.create().put("comments", arr(out)).done());
+}
+
+Response addComment(App app, Request req, string instanceId, string threadId, Device device) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  string? text = nonEmpty(field(body, "text"));
+  if (text is null) { return badRequest("text (string) required"); }
+  if (!hasAccess(app, device.id, instanceId)) { return notFound("Instance not found"); }
+  string id = app.c.uuid();
+  i64 now = app.c.now();
+  app.c.q("INSERT INTO comments (id, instance_id, thread_id, text, device_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          [txt(id), txt(instanceId), txt(threadId), txt(text!), txt(device.id), int(now)]);
+  JsonValue comment = Obj.create().put("id", str(id)).put("instanceId", str(instanceId)).put("threadId", str(threadId))
+    .put("text", str(text!)).put("deviceId", str(device.id)).put("createdAt", intJ(now)).done();
+  app.hooks.comment(instanceId, comment);
+  return json(Obj.create().put("comment", comment).done(), 201);
+}
+
+// ── import (autonag v1's export) ──
+
+bool legacyTimer(JsonValue t) {
+  return t.object() is not null && isString(t.member("id")) && isString(t.member("name")) && isNumber(t.member("created"))
+    && isNumber(t.member("currentExpiry"));
+}
+
+StoredEvent appendAt(App app, string instanceId, AppEvent e, f64 ts, ProjectedState s) {
+  StoredEvent stored = appendEvent(app.c, instanceId, e, ts as~ i64);
+  applyEvent(s, e);
+  app.hooks.event(instanceId, stored, checksum(s));
+  return stored;
+}
+
+// JavaScript's `x.length`: an array's or a string's, and 0 for anything else (undefined).
+i64 lengthOf(JsonValue? v) {
+  if (v is null) { return 0; }
+  if (v!.array() is not null) { return v!.array()!.len() as i64; }
+  return 0;
+}
+
+Response importLegacy(App app, Request req, string instanceId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  JsonArray? timers = field(body, "timers")?.array();
+  JsonArray? done = field(body, "completedTimers")?.array();
+  if (timers is null || done is null) { return badRequest("Invalid export format: expected timers and completedTimers arrays"); }
+  JsonValue? shushes = field(body, "shushes");
+  JsonValue? logs = field(body, "logs");
+  // `for … of` over something that is not iterable throws: a 500, before anything is written only for
+  // the shushes, which come after the timers (as in autonag, those are then already in).
+  if (computeState(app.c, instanceId).timers.len() > 0) {
+    return err(409, "Instance already has data. Import is only allowed into an empty instance.");
+  }
+  i64 now = app.c.now();
+  ProjectedState s = computeState(app.c, instanceId);
+  i64 created = 0;
+  for (i32 i = 0; i < timers!.len(); i++) {
+    JsonValue t = timers!.get(i);
+    if (!legacyTimer(t)) { continue; }
+    appendAt(app, instanceId, AppEvent.TimerAdded(Timer(t.member("id")!.text()!, t.member("name")!.text()!, null,
+             t.member("created")!.number()!, t.member("currentExpiry")!.number()!, null, null)), t.member("created")!.number()!, s);
+    created++;
+  }
+  for (i32 i = 0; i < done!.len(); i++) {
+    JsonValue t = done!.get(i);
+    if (!legacyTimer(t)) { continue; }
+    string id = t.member("id")!.text()!;
+    appendAt(app, instanceId, AppEvent.TimerAdded(Timer(id, t.member("name")!.text()!, null, t.member("created")!.number()!,
+             t.member("currentExpiry")!.number()!, null, null)), t.member("created")!.number()!, s);
+    appendAt(app, instanceId, AppEvent.TimerCompleted(id, "imported"), t.member("currentExpiry")!.number()!, s);
+    created += 2;
+  }
+  if (shushes is not null && !shushes!.isNull()) {
+    if (shushes!.array() is null) { return crashed(); }
+    JsonArray sh = shushes!.array()!;
+    for (i32 i = 0; i < sh.len(); i++) {
+      f64? x = sh.get(i).member("expiry")?.number();
+      if (x is not null && x! > (now as~ f64)) {
+        appendAt(app, instanceId, AppEvent.Shushed(x!), now as~ f64, s);
+        created++;
+        break;
+      }
+    }
+  }
+  if (logs is not null && !logs!.isNull()) {
+    if (logs!.array() is null) { return crashed(); }
+    JsonArray ls = logs!.array()!;
+    app.c.exec("BEGIN");
+    for (i32 i = 0; i < ls.len(); i++) {
+      JsonValue l = ls.get(i);
+      JsonValue? action = l.member("action");
+      JsonValue? ts = l.member("timestamp");
+      if (action is null || action!.isNull() || ts is null || ts!.isNull()) {
+        // NOT NULL fails, the transaction rolls back, and the request fails with it.
+        app.c.exec("ROLLBACK");
+        return crashed();
+      }
+      JsonValue? details = l.member("details");
+      app.c.q("INSERT INTO import_logs (instance_id, action, timestamp, details) VALUES (?, ?, ?, ?)",
+              [txt(instanceId), sqlValue(action!), sqlValue(ts!),
+               details is null || details!.isNull() ? Value.Null : txt(string.fromBytes(stringify(details!)))]);
+    }
+    app.c.exec("COMMIT");
+  }
+  return ok(Obj.create().put("ok", JsonValue.Bool(true)).put("imported", Obj.create().put("activeTimers", intJ(timers!.len() as i64))
+    .put("completedTimers", intJ(done!.len() as i64)).put("logs", intJ(lengthOf(logs))).put("eventsCreated", intJ(created)).done()).done());
+}
+
+// A JSON value bound as bun:sqlite binds a JavaScript value.
+Value sqlValue(JsonValue v) {
+  Value out = Value.Text(string.fromBytes(stringify(v)));
+  match (v) {
+    Str(b): { out = Value.Text(string.fromBytes(b)); }
+    Number(x, raw): { out = numValue(x); }
+    Bool(b): { out = Value.Int(b ? 1 : 0); }
+    default: {}
+  }
+  return out;
+}
+
+// ── batch actions ──
+
+static string[] ACTION_TYPES = ["addTimer", "updateExpiry", "completeTimer", "removeTimer", "shush", "clearShush", "recurTimer",
+  "updateRecurrence", "removeRecurrence", "updateDescription", "logCompletion", "setTimerAnchor", "setDefaultAnchor", "assert"];
+
+// String(x) for a value read off a JSON body, where autonag puts one in a message.
+string jsString(JsonValue? v) {
+  if (v is null) { return "undefined"; }
+  return match (v!) {
+    Null: "null",
+    Bool(b): b ? "true" : "false",
+    Number(x, raw): jsNumber(x),
+    Str(b): string.fromBytes(b),
+    Array(a): joinArray(a),
+    Object(o): "[object Object]",
+  };
+}
+
+string joinArray(JsonArray a) {
+  string out = "";
+  for (i32 i = 0; i < a.len(); i++) {
+    if (i > 0) { out += ","; }
+    JsonValue x = a.get(i);
+    if (!x.isNull()) { out += jsString(x); }
+  }
+  return out;
+}
+
+// expected ⊆ actual, as autonag's isPartialMatch: primitives strictly equal, arrays element by element
+// (actual may be longer), objects member by member.
+bool partialMatch(JsonValue expected, JsonValue? actual) {
+  match (expected) {
+    Array(xs): {
+      if (actual is null || actual!.array() is null) { return false; }
+      for (i32 i = 0; i < xs.len(); i++) { if (!partialMatch(xs.get(i), actual!.item(i))) { return false; } }
+      return true;
+    }
+    Object(o): {
+      if (actual is null || (actual!.object() is null && actual!.array() is null)) { return false; }
+      for (i32 i = 0; i < o.len(); i++) {
+        JsonValue? a = actual!.object() is not null ? actual!.member(o.at(i).keyStr()) : indexed(actual!, o.at(i).keyStr());
+        if (!partialMatch(o.at(i).value, a)) { return false; }
+      }
+      return true;
+    }
+    default: {
+      if (actual is null) { return false; }
+      return match (expected) {
+        Null: actual!.isNull(),
+        Bool(b): actual!.boolean() is not null && actual!.boolean()! == b,
+        Number(x, raw): actual!.number() is not null && actual!.number()! == x,
+        Str(b): actual!.text() is not null && actual!.text()! == string.fromBytes(b),
+        default: false,
+      };
+    }
+  }
+}
+
+JsonValue? indexed(JsonValue a, string key) {
+  f64 i = jsParseInt(key, true);
+  if (!isInteger(i) || jsNumber(i) != key) { return null; }
+  return a.item(i as~ i32);
+}
+
+struct Planned {
+  AppEvent? event;
+  f64? timestamp;     // when the thing happened, for the row; null for now
+  string? error;
+}
+
+Planned fail(string m) { return Planned(null, null, m); }
+Planned plan(AppEvent e, f64? ts) { return Planned(e, ts, null); }
+
+// An action's timer id as autonag uses it: as an object key, so String() of whatever was sent.
+string timerKey(JsonValue a) { return jsString(a.member("timerId")); }
+
+Planned actionToEvent(App app, JsonValue a, ProjectedState s) {
+  string type = a.member("type")!.text()!;
+  if (type == "addTimer") {
+    string? name = nonEmpty(a.member("name"));
+    if (name is null) { return fail("name required"); }
+    if (!isNumber(a.member("expiry"))) { return fail("expiry (number ms) required"); }
+    JsonValue? rec = a.member("recurrence");
+    RecurrenceSpec? spec = null;
+    if (rec is not null) {
+      string? e = recurrenceError(rec!, app.zones);
+      if (e is not null) { return fail(e!); }
+      spec = recurrenceFrom(rec!).unwrap();
+    }
+    i64 now = app.c.now();
+    string? desc = nonEmpty(a.member("description"));
+    return plan(AppEvent.TimerAdded(Timer(app.c.uuid(), name!, desc, now as~ f64, a.member("expiry")!.number()!, spec, null)), null);
+  }
+  string id = timerKey(a);
+  Timer? t = s.timers.get(id);
+  if (type == "updateExpiry") {
+    if (!isNumber(a.member("expiry"))) { return fail("expiry (number ms) required"); }
+    if (t is null) { return fail("Timer \{id} not found or completed"); }
+    return plan(AppEvent.TimerExpiryUpdated(id, a.member("expiry")!.number()!), null);
+  }
+  if (type == "completeTimer") {
+    string? why = nonEmpty(a.member("closeReason"));
+    if (why is null) { return fail("closeReason required"); }
+    if (t is null) { return fail("Timer \{id} not found or already completed"); }
+    if (t!.recurrence is not null) { return fail("Cannot complete a recurring timer — remove its recurrence first"); }
+    return plan(AppEvent.TimerCompleted(id, why!), a.member("occurredAt")?.number());
+  }
+  if (type == "removeTimer") {
+    if (t is null) { return fail("Timer \{id} not found"); }
+    if (t!.recurrence is not null) { return fail("Cannot remove a recurring timer — remove its recurrence first"); }
+    return plan(AppEvent.TimerRemoved(id), null);
+  }
+  if (type == "shush") {
+    if (!isNumber(a.member("expiry"))) { return fail("expiry (number ms) required"); }
+    return plan(AppEvent.Shushed(a.member("expiry")!.number()!), null);
+  }
+  if (type == "clearShush") { return plan(AppEvent.ShushCleared, null); }
+  if (type == "recurTimer") {
+    string? why = nonEmpty(a.member("closeReason"));
+    if (why is null) { return fail("closeReason required"); }
+    if (t is null) { return fail("Timer \{id} not found or already completed"); }
+    if (t!.recurrence is null) { return fail("Timer \{id} is not a recurring timer"); }
+    f64 ts = a.member("occurredAt")?.number() ?? (app.c.now() as~ f64);
+    f64 next = 0.0;
+    JsonValue? given = a.member("newExpiry");
+    if (given is not null) {
+      f64? x = given!.number();
+      if (x is null || x! != x! || x! == 1.0 / 0.0 || x! == -1.0 / 0.0) { return fail("newExpiry must be a finite number"); }
+      next = x!;
+    } else {
+      // The fallback for older clients that do not send the expiry they computed.
+      next = nextRecurrenceExpiry(t!.recurrence!, ts as~ i64, app.zones.zone(t!.recurrence!.timezone)!) as~ f64;
+    }
+    return plan(AppEvent.TimerRecurred(id, why!, ts, next), ts);
+  }
+  if (type == "updateRecurrence") {
+    if (t is null) { return fail("Timer \{id} not found or already completed"); }
+    JsonValue rec = a.member("recurrence") ?? JsonValue.Null;
+    string? e = recurrenceError(rec, app.zones);
+    if (e is not null) { return fail(e!); }
+    return plan(AppEvent.TimerRecurrenceUpdated(id, recurrenceFrom(rec).unwrap(), t!.currentExpiry), null);
+  }
+  if (type == "setTimerAnchor") {
+    if (t is null) { return fail("Timer \{id} not found or already completed"); }
+    if (t!.recurrence is not null) { return fail("Timer \{id} is recurring — set its anchor via the recurrence"); }
+    JsonValue? at = a.member("anchorTime");
+    if (at is not null && at!.isNull()) { return plan(AppEvent.TimerAnchorUpdated(id, null), null); }
+    string? e = anchorError(at);
+    if (e is not null) { return fail(e!); }
+    return plan(AppEvent.TimerAnchorUpdated(id, at!.text()), null);
+  }
+  if (type == "setDefaultAnchor") {
+    JsonValue? at = a.member("anchorTime");
+    string? e = anchorError(at);
+    if (e is not null) { return fail(e!); }
+    return plan(AppEvent.InstanceDefaultAnchorSet(at!.text()!), null);
+  }
+  if (type == "removeRecurrence") {
+    if (t is null) { return fail("Timer \{id} not found or already completed"); }
+    return plan(AppEvent.TimerRecurrenceRemoved(id), null);
+  }
+  if (type == "updateDescription") {
+    if (t is null) { return fail("Timer \{id} not found or already completed"); }
+    if (!isString(a.member("description"))) { return fail("description must be a string"); }
+    return plan(AppEvent.TimerDescriptionUpdated(id, a.member("description")!.text()!), null);
+  }
+  // logCompletion
+  if (t is null) { return fail("Timer \{id} not found or already completed"); }
+  string? why = nonEmpty(a.member("closeReason"));
+  if (why is null) { return fail("closeReason required"); }
+  if (!isNumber(a.member("occurredAt"))) { return fail("occurredAt (number ms) required"); }
+  f64 at = a.member("occurredAt")!.number()!;
+  return plan(AppEvent.TimerCompletionLogged(id, why!, at), at);
+}
+
+string? anchorError(JsonValue? v) {
+  if (v is null || v!.text() is null) { return "anchorTime must be a string"; }
+  return anchorTimeError(v!.text()!);
+}
+
+// An assertion's path against the state the batch has reached: "state", or "timers/<id>".
+struct PathResult {
+  i32 status;
+  JsonValue body;
+}
+
+PathResult evaluatePath(App app, string path, ProjectedState s) {
+  if (path == "state") { return PathResult(200, wire(app, s)); }
+  Split? m = splitAfter("/" + path, "/timers/");
+  if (m is not null && m!.rest == "") {
+    Timer? t = s.timers.get(m!.id);
+    if (t is null) { return PathResult(404, Obj.create().put("error", str("Not found")).done()); }
+    return PathResult(200, t!.toJson());
+  }
+  return PathResult(404, Obj.create().put("error", str("Unknown path")).done());
+}
+
+struct Committed {
+  StoredEvent event;
+  string checksum;
+}
+
+Response batch(App app, Request req, string instanceId) {
+  JsonValue? body = jsonBody(req.body);
+  if (body is null) { return badRequest("Invalid JSON"); }
+  if (body!.isNull()) { return crashed(); }
+  JsonArray? actions = field(body, "actions")?.array();
+  if (actions is null) { return badRequest("actions (array) required"); }
+  if (actions!.len() == 0) { return badRequest("actions must not be empty"); }
+  if (actions!.len() > 100) { return badRequest("actions must not exceed 100 items"); }
+  for (i32 i = 0; i < actions!.len(); i++) {
+    JsonValue a = actions!.get(i);
+    if (a.object() is null && a.array() is null) { return badRequest("action[\{i}]: must be an object"); }
+    string? type = a.member("type")?.text();
+    if (type is null) { return badRequest("action[\{i}]: must have a type string"); }
+    bool known = false;
+    for (string k in ACTION_TYPES) { if (k == type!) { known = true; } }
+    if (!known) { return badRequest("action[\{i}]: unknown action type \"\{type!}\""); }
+  }
+  // All or nothing: one transaction, rolled back at the first failed assertion or write.
+  Vec<Committed> committed;
+  app.c.exec("BEGIN");
+  ProjectedState s = computeState(app.c, instanceId);
+  for (i32 i = 0; i < actions!.len(); i++) {
+    JsonValue a = actions!.get(i);
+    if (a.member("type")!.text()! == "assert") {
+      JsonValue? p = a.member("path");
+      if (p is null || p!.text() is null) {
+        // `path.match` on something that is not a string throws.
+        app.c.exec("ROLLBACK");
+        return crashed();
+      }
+      string path = p!.text()!;
+      PathResult r = evaluatePath(app, path, s);
+      JsonValue? es = a.member("expectStatus");
+      bool statusMatches = es is not null && es!.number() is not null && es!.number()! == (r.status as f64);
+      if (es is not null && !statusMatches) {
+        app.c.exec("ROLLBACK");
+        return assertionFailed(i, "assert[\{i}]: path \"\{path}\" — expected status \{jsString(es)}, got \{r.status}");
+      }
+      JsonValue? ex = a.member("expect");
+      if (ex is not null && !partialMatch(ex!, r.body)) {
+        app.c.exec("ROLLBACK");
+        return assertionFailed(i, "assert[\{i}]: path \"\{path}\" — response does not match expected");
+      }
+      continue;
+    }
+    Planned pl = actionToEvent(app, a, s);
+    if (pl.error is not null) {
+      app.c.exec("ROLLBACK");
+      return json(Obj.create().put("error", str(pl.error!)).put("action", intJ(i as i64)).done(), 400);
+    }
+    i64 ts = pl.timestamp is null ? app.c.now() : pl.timestamp! as~ i64;
+    StoredEvent stored = appendEvent(app.c, instanceId, pl.event!, ts);
+    applyEvent(s, pl.event!);
+    committed.push(Committed(stored, checksum(s)));
+  }
+  app.c.exec("COMMIT");
+  JsonArray out = JsonArray.create();
+  for (i32 i = 0; i < committed.len(); i++) {
+    Committed c = committed.get(i);
+    app.hooks.event(instanceId, c.event, c.checksum);
+    out.push(Obj.create().put("id", str(c.event.id)).put("seq", intJ(c.event.seq)).put("type", str(c.event.type)).done());
+  }
+  return ok(Obj.create().put("events", arr(out)).done());
+}
+
+Response assertionFailed(i32 i, string message) {
+  return json(Obj.create().put("error", str("Assertion failed")).put("assertion", intJ(i as i64)).put("message", str(message)).done(), 409);
+}
+
+// For the WebSocket side: an approved device by its token, and whether it may use an instance.
+export Device? deviceByTokenFor(App app, string token) { return deviceByToken(app, token, true); }
+export bool hasAccessFor(App app, string deviceId, string instanceId) { return hasAccess(app, deviceId, instanceId); }

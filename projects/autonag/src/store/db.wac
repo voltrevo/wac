@@ -13,6 +13,7 @@ export struct Ctx {
   fn<u8[](i32)> random;        // crypto.getRandomValues
   i64 snapshotInterval = 100;  // config.snapshotInterval
   i64 skipDepthLimit = 1000;   // config.skipDepthLimit
+  fn<string()>? ids = null;    // crypto.randomUUID, when a test fixes it; random version 4 otherwise
 
   // A statement, failing loudly: the schema is the store's own, so an error here is a bug, not input.
   Rows q(this, string sql, Value[] params) {
@@ -31,6 +32,7 @@ export struct Ctx {
 
   // crypto.randomUUID(): version 4, variant 1, lower-case hex in 8-4-4-4-12.
   string uuid(this) {
+    if (this.ids is not null) { return this.ids!(); }
     u8[] b = this.random(16);
     b[6] = (b[6] & 0x0F) | 0x40;
     b[8] = (b[8] & 0x3F) | 0x80;

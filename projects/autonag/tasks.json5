@@ -1,6 +1,8 @@
 {
   // Every unit test.
   test: "wac test --allow-read --allow-write test",
+  // The server, as one module.
+  build: "wac build --allow-read --allow-write --allow-net --allow-env cmd/server.wac -o dist/server",
   // The locked imports into wac's package cache with `git` (git.voltrevo.com refuses `wac update`'s fetcher).
   deps: "wac run --allow-read --allow-write --allow-env --allow-run tools/deps.wac",
 }

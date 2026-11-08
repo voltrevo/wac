@@ -1,0 +1,240 @@
+// autonag's server, in wac: the HTTP API and the WebSocket protocol on one port, over autonag's own
+// SQLite database. A port of server/src/main.ts.
+//
+//     wac build --allow-read --allow-write --allow-net --allow-env cmd/server.wac -o dist/server && wac dist/server.wasm
+//
+// (Built first: `wac run` of this program spends minutes compiling, where `wac build` takes seconds.)
+//
+// Configuration is autonag's: config.json5 (or the file CONFIG_PATH names) with port, host, dbPath,
+// corsOrigin, maxBodySize, skipDepthLimit and snapshotInterval; DB_PATH overrides dbPath. Time zones come
+// from TZDIR, or /usr/share/zoneinfo.
+
+import { Sys, Socket } from "std";
+import { Vec, Map, hashString, stringEq, flatten } from "core";
+import { json.JsonValue, json.parseJson5, url.parseUrl, url.pathname, url.Url } from "wac";
+import { Connection, SqliteFile } from "sqlite";
+import { Ctx, migrate } from "../src/store/db.wac";
+import { App, Hooks, Request, Response, RateLimiter, handle } from "../src/server/api.wac";
+import { Head, headEnd, parseHead, writeResponse } from "../src/server/http.wac";
+import { Hub, Conn, Frame, readFrame, frame, acceptResponse, onMessage } from "../src/server/ws.wac";
+import { hostZones } from "../src/time/hostzones.wac";
+import { StoredEvent } from "../src/model/events.wac";
+
+struct Settings {
+  i32 port;
+  string host;
+  string origin;
+  i64 maxBody;
+}
+
+string env(Sys sys, string name) {
+  match (flatten(sys.env().get(name).wait())) {
+    Ok(v): { return v is null ? "" : string.fromBytes(v!); }
+    Err(e): { return ""; }
+  }
+}
+
+i64 nowMs(Sys sys) { return flatten(sys.clock().nowMillis().wait()).orElse(0 as i64); }
+
+export async i32 main(Sys sys) {
+  string configPath = env(sys, "CONFIG_PATH");
+  if (configPath == "") { configPath = "config.json5"; }
+  JsonValue config = JsonValue.Null;
+  match (flatten(sys.files().readFile(configPath).wait())) {
+    Ok(b): {
+      match (parseJson5(b)) {
+        Ok(v): { config = v; }
+        Err(e): { sys.warn("Failed to parse config at \{configPath}"); return 1; }
+      }
+    }
+    Err(e): {}
+  }
+  string dbPath = env(sys, "DB_PATH");
+  if (dbPath == "") { dbPath = config.member("dbPath")?.text() ?? "data/autonag.db"; }
+  Connection conn = Connection.memory();
+  if (dbPath != ":memory:") {
+    i32 slash = -1;
+    for (i32 i = 0; i < dbPath.len(); i++) { if (dbPath.slice(i, i + 1) == "/") { slash = i; } }
+    if (slash > 0) { await sys.files().mkdir(dbPath.slice(0, slash), true); }
+    match (SqliteFile.open(sys.files(), dbPath)) {
+      Ok(f): { conn = f.conn; }
+      Err(e): { sys.warn("cannot open \{dbPath}: \{e.describe()}"); return 1; }
+    }
+  }
+  Ctx c = Ctx { db: conn, now: () => nowMs(sys), random: (i32 n) => flatten(sys.random().bytes(n).wait()).unwrap(),
+                snapshotInterval: (config.member("snapshotInterval")?.number() ?? 100.0) as~ i64,
+                skipDepthLimit: (config.member("skipDepthLimit")?.number() ?? 1000.0) as~ i64 };
+  migrate(c);
+  string tzdir = env(sys, "TZDIR");
+  Hub hub = Hub.create();
+  App app = App { c: c, zones: hostZones(sys.files(), tzdir == "" ? "/usr/share/zoneinfo" : tzdir),
+                  hooks: Hooks((string i, StoredEvent e, string sum) => { hub.event(i, e, sum); }, (string i, JsonValue cm) => { hub.comment(i, cm); }),
+                  limits: RateLimiter.create(), limited: env(sys, "NODE_ENV") != "test" };
+  Settings s = Settings((config.member("port")?.number() ?? 3000.0) as~ i32, config.member("host")?.text() ?? "127.0.0.1",
+                        config.member("corsOrigin")?.text() ?? "*", (config.member("maxBodySize")?.number() ?? 10485760.0) as~ i64);
+  match (await sys.net().listen(s.host, s.port)) {
+    Err(e): { sys.warn("cannot listen on \{s.host}:\{s.port}: \{e}"); return 1; }
+    Ok(listener): {
+      sys.log("autonag2 server running on port \{listener.port}");
+      Vec<Conn> sockets;
+      sweep(sys, app, hub, sockets);
+      while (true) {
+        match (await listener.accept()) {
+          Err(e): { sys.warn("accept: \{e}"); }
+          Ok(sock): { serve(sys, app, hub, sock, s, sockets); }
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+// Idle WebSockets closed after 960 seconds, as Bun's idleTimeout closes them (the client pings every 600);
+// and the rate limiter's empty buckets dropped every five minutes.
+async void sweep(Sys sys, App app, Hub hub, Vec<Conn> sockets) {
+  i32 ticks = 0;
+  while (true) {
+    await sys.sleepMillis(30000);
+    i64 now = nowMs(sys);
+    Vec<Conn> keep;
+    for (i32 i = 0; i < sockets.len(); i++) {
+      Conn c = sockets.get(i);
+      if (c.open && now - c.lastHeard > 960000) { c.close(); hub.remove(c); }
+      if (c.open) { keep.push(c); }
+    }
+    sockets.clear();
+    for (i32 i = 0; i < keep.len(); i++) { sockets.push(keep.get(i)); }
+    ticks++;
+    if (ticks % 10 == 0) { app.limits.prune(now); }
+  }
+}
+
+u8[] grow(u8[] buf, i32 len, const u8[] more) {
+  u8[] b = buf;
+  if (len + more.len() > b.len()) {
+    i32 cap = b.len() * 2;
+    while (cap < len + more.len()) { cap *= 2; }
+    u8[] g = u8[].filled(cap, 0);
+    g.copyFrom(b, 0, 0, len);
+    b = g;
+  }
+  b.copyFrom(more, 0, len, more.len());
+  return b;
+}
+
+u8[] slice(const u8[] b, i32 from, i32 to) {
+  u8[] out = u8[].filled(to - from, 0);
+  out.copyFrom(b, from, 0, to - from);
+  return out;
+}
+
+// One connection: requests answered in turn while it is kept alive, or a WebSocket from the upgrade on.
+async void serve(Sys sys, App app, Hub hub, Socket sock, Settings s, Vec<Conn> sockets) {
+  u8[] buf = u8[].filled(4096, 0);
+  i32 len = 0;
+  while (true) {
+    match (await sock.recv()) {
+      Err(e): { sock.close(); return; }
+      Ok(r): {
+        match (r) {
+          End: { sock.close(); return; }
+          Data(bytes): { buf = grow(buf, len, bytes); len += bytes.len(); }
+        }
+      }
+    }
+    // Every complete request in what has arrived.
+    while (true) {
+      i32 end = headEnd(buf, len);
+      if (end < 0) {
+        if (len > 65536) { await sock.send(writeResponse(431, null, s.origin, false)); sock.close(); return; }
+        break;
+      }
+      Head? head = parseHead(buf, end);
+      if (head is null) { await sock.send(writeResponse(400, null, s.origin, false)); sock.close(); return; }
+      if (head!.contentLength > s.maxBody) { await sock.send(writeResponse(413, null, s.origin, false)); sock.close(); return; }
+      i32 total = end + head!.contentLength as! i32;
+      if (len < total) { break; }
+      u8[] body = slice(buf, end, total);
+      u8[] rest = slice(buf, total, len);
+      buf = u8[].filled(4096, 0);
+      len = 0;
+      buf = grow(buf, 0, rest);
+      len = rest.len();
+      Head h = head!;
+      string hostHeader = h.headers.get("host") ?? "localhost";
+      string url = "http://" + hostHeader + h.target;
+      if (h.method == "OPTIONS") {
+        await sock.send(writeResponse(204, null, s.origin, h.keepAlive));
+      } else {
+        Url? u = parseUrl(url.toBytes(), null);
+        string path = u is null ? "" : string.fromBytes(pathname(u!));
+        if (path.len() >= 3 && path.slice(path.len() - 3, path.len()) == "/ws") {
+          await websocket(sys, app, hub, sock, h, path, buf, len, sockets);
+          return;
+        }
+        Response res = handle(app, Request(h.method, url, h.headers, body, sock.peer));
+        await sock.send(writeResponse(res.status, res.body, s.origin, h.keepAlive));
+      }
+      if (!h.keepAlive) { sock.close(); return; }
+    }
+  }
+}
+
+async void websocket(Sys sys, App app, Hub hub, Socket sock, Head h, string path, u8[] buf0, i32 len0, Vec<Conn> sockets) {
+  // /instances/:id/ws; any other path ending in /ws is answered 101 without an upgrade, as autonag's is.
+  string prefix = "/instances/";
+  string id = "";
+  if (path.len() > prefix.len() + 3 && path.slice(0, prefix.len()) == prefix) { id = path.slice(prefix.len(), path.len() - 3); }
+  if (id == "" || id.indexOf("/") >= 0) {
+    await sock.send("HTTP/1.1 101 Switching Protocols\r\nContent-Length: 0\r\n\r\n".toBytes());
+    sock.close();
+    return;
+  }
+  string? key = h.headers.get("sec-websocket-key");
+  string upgrade = h.headers.get("upgrade") ?? "";
+  if (key is null || (upgrade != "websocket" && upgrade != "WebSocket")) {
+    await sock.send(("HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain;charset=utf-8\r\nContent-Length: 25\r\nConnection: close\r\n\r\nWebSocket upgrade failed").toBytes());
+    sock.close();
+    return;
+  }
+  await sock.send(acceptResponse(key!));
+  Conn c = Conn(sock, id, null, 0, true, nowMs(sys));
+  sockets.push(c);
+  u8[] buf = buf0;
+  i32 len = len0;
+  u8[] message = u8[]();
+  while (c.open) {
+    while (true) {
+      Frame? f = readFrame(buf, len, 16777216);
+      if (f is null) { break; }
+      if (f!.opcode < 0) { c.close(); break; }
+      buf = slice(buf, f!.used, len);
+      len = buf.len();
+      c.lastHeard = nowMs(sys);
+      i32 op = f!.opcode;
+      if (op == 8) { c.close(); break; }
+      if (op == 9) { await sock.send(frame(10, f!.payload)); continue; }
+      if (op == 10) { continue; }
+      u8[] joined = u8[].filled(message.len() + f!.payload.len(), 0);
+      joined.copyFrom(message, 0, 0, message.len());
+      joined.copyFrom(f!.payload, 0, message.len(), f!.payload.len());
+      message = joined;
+      if (f!.fin) {
+        onMessage(app, hub, c, string.fromBytes(message));
+        message = u8[]();
+      }
+    }
+    if (!c.open) { break; }
+    match (await sock.recv()) {
+      Err(e): { c.open = false; }
+      Ok(r): {
+        match (r) {
+          End: { c.open = false; }
+          Data(bytes): { buf = grow(buf, len, bytes); len += bytes.len(); }
+        }
+      }
+    }
+  }
+  hub.remove(c);
+  sock.close();
+}

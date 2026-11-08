@@ -1,0 +1,213 @@
+// WebSockets: the RFC 6455 handshake and frames, and autonag's protocol over them — a port of the
+// `websocket` handlers in server/src/router.ts and of server/src/ws.ts.
+//
+// The protocol: a ping is answered with a pong at any time; the first other message must be
+// {type: "auth", token, since?}. Then the client gets a base and the events after it, and `synced` with
+// the state's checksum; from then on every event appended to the instance (with the checksum after it)
+// and every comment. The base is deliberately one of the stored snapshots, not the state now: a client
+// folds events onto it, and must be able to re-derive across a retroactive skip.
+
+import { Buf, Vec, Map, hashString, stringEq } from "core";
+import { Socket } from "std";
+import { json.JsonValue, json.JsonArray, json.parse, json.stringify, crypto.sha1 } from "wac";
+import { Value, Rows } from "sqlite";
+import { App, Device, deviceByTokenFor, hasAccessFor, storedJson } from "./api.wac";
+import { StoredEvent } from "../model/events.wac";
+import { ProjectedState, toWire, checksum, MAX_DELTA } from "../model/state.wac";
+import { latestSeq, computeState, nearestSnapshot, Snapshot, skippedEventIds } from "../store/eventstore.wac";
+import { Obj, num, str } from "../model/jsonkit.wac";
+import { txt, int } from "../store/db.wac";
+
+// ── the handshake ──
+
+static string GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+export string base64(const u8[] b) {
+  string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  Buf out = Buf.create();
+  for (i32 i = 0; i < b.len(); i += 3) {
+    i32 n = ((b[i] as i32) << 16) | ((i + 1 < b.len() ? b[i + 1] as i32 : 0) << 8) | (i + 2 < b.len() ? b[i + 2] as i32 : 0);
+    for (i32 k = 0; k < 4; k++) {
+      if (k >= 2 && i + k - 1 >= b.len()) { out.pushStr("="); continue; }
+      i32 v = (n >> (18 - 6 * k)) & 63;
+      out.pushStr(alphabet.slice(v, v + 1));
+    }
+  }
+  return out.toStr();
+}
+
+// The 101 that accepts a WebSocket, for the client's Sec-WebSocket-Key.
+export u8[] acceptResponse(string key) {
+  string accept = base64(sha1((key + GUID).toBytes()));
+  return ("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \{accept}\r\n\r\n").toBytes();
+}
+
+// ── frames ──
+
+export struct Frame {
+  bool fin;
+  i32 opcode;
+  u8[] payload;
+  i32 used;       // bytes of the input the frame took
+}
+
+// The first whole frame in `b[0, len)`, unmasked, or null when more bytes are needed. A frame over
+// `max` bytes gives an opcode of -1, and the connection is closed.
+export Frame? readFrame(const u8[] b, i32 len, i32 max) {
+  if (len < 2) { return null; }
+  bool fin = (b[0] & 0x80) != 0;
+  i32 opcode = (b[0] & 0x0F) as i32;
+  bool masked = (b[1] & 0x80) != 0;
+  i64 n = (b[1] & 0x7F) as i64;
+  i32 at = 2;
+  if (n == 126) {
+    if (len < 4) { return null; }
+    n = ((b[2] as i64) << 8) | (b[3] as i64);
+    at = 4;
+  } else if (n == 127) {
+    if (len < 10) { return null; }
+    n = 0;
+    for (i32 i = 2; i < 10; i++) { n = (n << 8) | (b[i] as i64); }
+    at = 10;
+  }
+  if (n > max as i64) { return Frame(true, -1, u8[](), 0); }
+  i32 maskAt = at;
+  if (masked) { at += 4; }
+  if (len < at + n as! i32) { return null; }
+  u8[] p = u8[].filled(n as! i32, 0);
+  for (i32 i = 0; i < p.len(); i++) {
+    u8 v = b[at + i];
+    if (masked) { v = v ^ b[maskAt + (i % 4)]; }
+    p[i] = v;
+  }
+  return Frame(fin, opcode, p, at + p.len());
+}
+
+// A frame from the server: unmasked, whole.
+export u8[] frame(i32 opcode, const u8[] payload) {
+  Buf b = Buf.create();
+  b.push((0x80 | opcode) as! u8);
+  i32 n = payload.len();
+  if (n < 126) { b.push(n as! u8); }
+  else if (n < 65536) { b.push(126); b.push((n >> 8) as! u8); b.push((n & 255) as! u8); }
+  else {
+    b.push(127);
+    for (i32 i = 7; i >= 0; i--) { b.push(((n as i64 >> (8 * i) as i64) & 255) as! u8); }
+  }
+  b.pushAll(payload);
+  return b.take();
+}
+
+export u8[] textFrame(JsonValue v) { return frame(1, stringify(v)); }
+
+// ── connections ──
+
+export struct Conn {
+  Socket sock;
+  string instanceId;
+  string? deviceId;     // null until the auth message
+  i64 sinceSeq;
+  bool open;
+  i64 lastHeard;        // for the idle timeout
+
+  void send(this, JsonValue v) {
+    if (!this.open) { return; }
+    // Waited on: a send not waited on keeps a host call open, and a host gives a program few of those.
+    this.sock.send(textFrame(v)).wait();
+  }
+
+  void close(this) {
+    if (!this.open) { return; }
+    this.open = false;
+    this.sock.send(frame(8, u8[]())).wait();
+    this.sock.close();
+  }
+}
+
+// The open, authenticated connections, by instance.
+export struct Hub {
+  Map<string, Vec<Conn>> byInstance;
+
+  Hub create() { return Hub(Map.create(hashString, stringEq)); }
+
+  void add(this, Conn c) {
+    Vec<Conn>? v = this.byInstance.get(c.instanceId);
+    if (v is null) { v = Vec<Conn>.create(); this.byInstance.set(c.instanceId, v!); }
+    v!.push(c);
+  }
+
+  void remove(this, Conn c) {
+    Vec<Conn>? v = this.byInstance.get(c.instanceId);
+    if (v is null) { return; }
+    for (i32 i = 0; i < v!.len(); i++) { if (v!.get(i) is c) { v!.remove(i); return; } }
+  }
+
+  void broadcast(this, string instanceId, JsonValue msg) {
+    Vec<Conn>? v = this.byInstance.get(instanceId);
+    if (v is null) { return; }
+    u8[] bytes = textFrame(msg);
+    for (i32 i = 0; i < v!.len(); i++) {
+      Conn c = v!.get(i);
+      if (c.open) { c.sock.send(bytes).wait(); }
+    }
+  }
+
+  // The hooks the API calls: each event with the checksum after it, and each comment.
+  void event(this, string instanceId, StoredEvent e, string sum) {
+    this.broadcast(instanceId, Obj.create().put("type", str("event")).put("event", e.toJson()).put("stateChecksum", str(sum)).done());
+  }
+
+  void comment(this, string instanceId, JsonValue comment) {
+    this.broadcast(instanceId, Obj.create().put("type", str("comment")).put("comment", comment).done());
+  }
+}
+
+JsonValue errorMsg(string m) { return Obj.create().put("type", str("error")).put("message", str(m)).done(); }
+
+// One text message from a client.
+export void onMessage(App app, Hub hub, Conn c, string text) {
+  if (text.indexOf("\"ping\"") >= 0) {
+    JsonValue? probe = parse(text.toBytes()).ok();
+    if (probe is not null && (probe!.member("type")?.text() ?? "") == "ping") {
+      c.send(Obj.create().put("type", str("pong")).done());
+      return;
+    }
+  }
+  if (c.deviceId is not null) { return; }
+  JsonValue? msg = parse(text.toBytes()).ok();
+  if (msg is null || (msg!.object() is null && msg!.array() is null)) { c.close(); return; }
+  if ((msg!.member("type")?.text() ?? "") != "auth" || msg!.member("token")?.text() is null) {
+    c.send(errorMsg("Expected auth message"));
+    c.close();
+    return;
+  }
+  Device? d = deviceByTokenFor(app, msg!.member("token")!.text()!);
+  if (d is null) { c.send(errorMsg("Unauthorized")); c.close(); return; }
+  if (!hasAccessFor(app, d!.id, c.instanceId)) { c.send(errorMsg("Forbidden")); c.close(); return; }
+  c.deviceId = d!.id;
+  f64 since = msg!.member("since")?.number() ?? 0.0;
+  c.sinceSeq = since as~ i64;
+  hub.add(c);
+
+  i64 latest = latestSeq(app.c, c.instanceId);
+  ProjectedState state = computeState(app.c, c.instanceId);
+  string sum = checksum(state);
+  bool resume = since > 0.0 && since <= (latest as~ f64) && (latest as~ f64) - since <= (MAX_DELTA as f64);
+  i64 from = 0;
+  if (resume) {
+    from = since as~ i64;
+  } else {
+    Snapshot? snap = nearestSnapshot(app.c, c.instanceId, latest + 1);
+    from = snap is null ? 0 : snap!.seq;
+    ProjectedState base = snap is null ? ProjectedState.empty() : snap!.state;
+    c.send(Obj.create().put("type", str("snapshot")).put("seq", num(from as~ f64))
+      .put("state", toWire(base, app.c.now() as~ f64)).put("stateChecksum", str(checksum(base))).done());
+  }
+  Rows r = app.c.q("SELECT id, instance_id, seq, type, payload, timestamp FROM events WHERE instance_id = ? AND seq >= ? ORDER BY seq",
+                   [txt(c.instanceId), int(from + 1)]);
+  Map<string, bool> skipped = skippedEventIds(app.c, c.instanceId);
+  for (i32 i = 0; i < r.rows.len(); i++) {
+    c.send(Obj.create().put("type", str("event")).put("event", storedJson(r.rows.get(i), skipped)).done());
+  }
+  c.send(Obj.create().put("type", str("synced")).put("seq", num(latest as~ f64)).put("stateChecksum", str(sum)).done());
+}

@@ -1,0 +1,127 @@
+// HTTP/1.1 as autonag's server needs it: requests read off a connection (with keep-alive, bodies by
+// Content-Length), responses written with autonag's CORS headers, and what Bun.serve did around
+// handleRequest in server/src/main.ts — OPTIONS answered 204, a body over the limit refused.
+//
+// wac's own packages/http is not yet among what the wac repository exports to another project, so the
+// little of it this needs is here.
+
+import { Buf, Vec, Map, hashString, stringEq } from "core";
+import { json.JsonValue, json.stringify } from "wac";
+
+export struct Head {
+  string method;
+  string target;
+  Map<string, string> headers;   // lower-case names; a repeated header's values joined with ", "
+  i64 contentLength;
+  bool keepAlive;
+}
+
+// Where a request's head ends (after its blank line) in the first `len` bytes, or -1.
+export i32 headEnd(const u8[] b, i32 len) {
+  for (i32 i = 3; i < len; i++) {
+    if (b[i - 3] == '\r' && b[i - 2] == '\n' && b[i - 1] == '\r' && b[i] == '\n') { return i + 1; }
+  }
+  return -1;
+}
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
+
+string trimOws(string s) {
+  u8[] b = s.toBytes();
+  i32 a = 0;
+  i32 z = b.len();
+  while (a < z && (b[a] == ' ' || b[a] == '\t')) { a++; }
+  while (z > a && (b[z - 1] == ' ' || b[z - 1] == '\t')) { z--; }
+  return s.slice(a, z);
+}
+
+// A request's head, or null when it is not one this can answer (it is then answered 400 and closed).
+// A chunked body is refused too: browsers and autonag's CLI send a length.
+export Head? parseHead(const u8[] b, i32 end) {
+  u8[] h = u8[].filled(end, 0);
+  h.copyFrom(b, 0, 0, end);
+  string text = string.fromBytes(h);
+  i32 first = text.indexOf("\r\n");
+  if (first < 0) { return null; }
+  string line = text.slice(0, first);
+  i32 s1 = line.indexOf(" ");
+  if (s1 <= 0) { return null; }
+  string rest = line.slice(s1 + 1, line.len());
+  i32 s2 = rest.indexOf(" ");
+  if (s2 <= 0) { return null; }
+  string version = rest.slice(s2 + 1, rest.len());
+  if (version != "HTTP/1.1" && version != "HTTP/1.0") { return null; }
+  Head head = Head(line.slice(0, s1), rest.slice(0, s2), Map.create(hashString, stringEq), 0, version == "HTTP/1.1");
+  string fields = text.slice(first + 2, text.len());
+  while (fields.len() > 0) {
+    i32 nl = fields.indexOf("\r\n");
+    string f = nl < 0 ? fields : fields.slice(0, nl);
+    fields = nl < 0 ? "" : fields.slice(nl + 2, fields.len());
+    if (f.len() == 0) { continue; }
+    i32 colon = f.indexOf(":");
+    if (colon <= 0) { return null; }
+    string name = lower(f.slice(0, colon));
+    string value = trimOws(f.slice(colon + 1, f.len()));
+    string? had = head.headers.get(name);
+    head.headers.set(name, had is null ? value : had! + ", " + value);
+  }
+  string? te = head.headers.get("transfer-encoding");
+  if (te is not null) { return null; }
+  string? cl = head.headers.get("content-length");
+  if (cl is not null) {
+    u8[] d = cl!.toBytes();
+    if (d.len() == 0 || d.len() > 15) { return null; }
+    i64 n = 0;
+    for (u8 c in d) {
+      if (c < '0' || c > '9') { return null; }
+      n = n * 10 + (c - '0') as i64;
+    }
+    head.contentLength = n;
+  }
+  string? conn = head.headers.get("connection");
+  if (conn is not null) {
+    string c = lower(conn!);
+    if (c.indexOf("close") >= 0) { head.keepAlive = false; }
+    if (c.indexOf("keep-alive") >= 0) { head.keepAlive = true; }
+  }
+  return head;
+}
+
+string reason(i32 status) {
+  if (status == 200) { return "OK"; }
+  if (status == 201) { return "Created"; }
+  if (status == 204) { return "No Content"; }
+  if (status == 400) { return "Bad Request"; }
+  if (status == 401) { return "Unauthorized"; }
+  if (status == 403) { return "Forbidden"; }
+  if (status == 404) { return "Not Found"; }
+  if (status == 409) { return "Conflict"; }
+  if (status == 413) { return "Payload Too Large"; }
+  if (status == 422) { return "Unprocessable Entity"; }
+  if (status == 429) { return "Too Many Requests"; }
+  return "Internal Server Error";
+}
+
+// The CORS headers autonag's server puts on every answer.
+void cors(Buf b, string origin) {
+  b.pushStr("Access-Control-Allow-Origin: " + origin + "\r\n");
+  b.pushStr("Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS\r\n");
+  b.pushStr("Access-Control-Allow-Headers: Authorization, Content-Type\r\n");
+}
+
+// A response's bytes: JSON when there is a body, nothing for 204.
+export u8[] writeResponse(i32 status, JsonValue? body, string origin, bool keepAlive) {
+  u8[] payload = body is null ? u8[]() : stringify(body!);
+  Buf b = Buf.create();
+  b.pushStr("HTTP/1.1 \{status} \{reason(status)}\r\n");
+  if (body is not null) { b.pushStr("Content-Type: application/json\r\n"); }
+  cors(b, origin);
+  b.pushStr("Content-Length: \{payload.len()}\r\n");
+  b.pushStr(keepAlive ? "Connection: keep-alive\r\n\r\n" : "Connection: close\r\n\r\n");
+  b.pushAll(payload);
+  return b.take();
+}

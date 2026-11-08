@@ -36,3 +36,5 @@ export { getEvents } from "./store/eventstore.wac";
 export { computeState } from "./store/eventstore.wac";
 export { skipEvent } from "./store/eventstore.wac";
 export { unskipEvent } from "./store/eventstore.wac";
+export { App } from "./server/api.wac";
+export { handle } from "./server/api.wac";
