@@ -1,0 +1,103 @@
+// The time code against autonag's own, which asks Intl: test/data/time_cases.jsonl is what
+// shared/anchor.ts, shared/naturalTime.ts and server/src/recurrence.ts answered (tools/oracle_time.ts),
+// and every case must come out the same here, reading the host's tz database.
+
+import { Vec, flatten } from "core";
+import { Sys } from "std";
+import { json.parse, json.stringify, json.JsonValue } from "wac";
+import { TimeZone, Zones } from "../src/time/tz.wac";
+import { hostZones } from "../src/time/hostzones.wac";
+import { LocalDate, HourMinute, localOffsetMs, localDateParts, localToUtc, dayOfWeek, anchorOnDayOffset, nextAnchorAtOrAfter,
+         advancePastWeekends, parseAnchorTime, anchorTimeError } from "../src/time/anchor.wac";
+import { AnchorSpec, ParsedDuration, parseDuration, resolveDuration, nextRecurrenceExpiry, recurrenceError } from "../src/time/duration.wac";
+import { parseNaturalTime } from "../src/time/natural.wac";
+import { recurrenceFrom } from "../src/model/events.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+string[] lines(Sys sys, string path) {
+  string all = string.fromBytes(flatten(sys.files().readFile(path).wait()).unwrap());
+  Vec<string> out;
+  string rest = all;
+  while (rest.len() > 0) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    if (line.len() > 0) { out.push(line); }
+    rest = nl < 0 ? "" : rest.slice(nl + 1, rest.len());
+  }
+  return out.toArray();
+}
+
+i64 i(JsonValue c, string k) { return c.member(k)!.number()! as~ i64; }
+string t(JsonValue c, string k) { return c.member(k)!.text()!; }
+string js(JsonValue v) { return string.fromBytes(stringify(v)); }
+string orNull(i64? v) { return v is null ? "null" : "\{v!}"; }
+
+export string test_time_agrees_with_autonags_typescript(Sys sys) {
+  Zones zones = hostZones(sys.files(), "/usr/share/zoneinfo");
+  string[] ls = lines(sys, "test/data/time_cases.jsonl");
+  Vec<string> bad;
+  i32 checked = 0;
+  for (i32 n = 0; n < ls.len() && bad.len() < 12; n++) {
+    JsonValue c = parse(ls[n].toBytes()).unwrap();
+    string kind = t(c, "kind");
+    string got = "";
+    string want = "";
+    if (kind == "zoneValid") {
+      got = "\{zones.zone(t(c, "value")) is not null}";
+      want = "\{c.member("valid")!.boolean()!}";
+    } else if (kind == "anchorValid") {
+      string? e = anchorTimeError(t(c, "value"));
+      HourMinute? hm = parseAnchorTime(t(c, "value"));
+      got = (e ?? "null") + " " + (hm is null ? "null" : "\{hm!.hour}:\{hm!.minute}");
+      JsonValue p = c.member("parsed")!;
+      want = (c.member("error")!.text() ?? "null") + " " + (p.isNull() ? "null" : "\{p.member("hour")!.number()! as~ i64}:\{p.member("minute")!.number()! as~ i64}");
+    } else if (kind == "recurValid") {
+      got = recurrenceError(c.member("value")!, zones) ?? "null";
+      want = c.member("error")!.text() ?? "null";
+    } else {
+      TimeZone? tz0 = null;
+      if (c.member("tz") is not null) { tz0 = zones.zone(t(c, "tz")); }
+      else if (c.member("spec") is not null) { tz0 = zones.zone(c.member("spec")!.member("timezone")!.text()!); }
+      else { tz0 = zones.zone(c.member("anchor")!.member("timezone")!.text()!); }
+      if (tz0 is null) { bad.push("line \{n + 1}: no zone"); continue; }
+      TimeZone tz = tz0!;
+      if (kind == "offset") {
+        i64 ms = i(c, "ms");
+        LocalDate p = localDateParts(ms, tz);
+        got = "\{localOffsetMs(ms, tz)} \{p.year}-\{p.month}-\{p.day} \{dayOfWeek(ms, tz)}";
+        JsonValue wp = c.member("parts")!;
+        want = "\{i(c, "offset")} \{i(wp, "year")}-\{i(wp, "month")}-\{i(wp, "day")} \{i(c, "dow")}";
+      } else if (kind == "l2u") {
+        got = "\{localToUtc(i(c, "y"), i(c, "m"), i(c, "d"), i(c, "h"), i(c, "mi"), tz)}";
+        want = "\{i(c, "utc")}";
+      } else if (kind == "anchor") {
+        i64 cand = anchorOnDayOffset(i(c, "base"), i(c, "off"), i(c, "h"), i(c, "mi"), tz);
+        got = "\{cand} \{nextAnchorAtOrAfter(i(c, "base"), i(c, "h"), i(c, "mi"), tz)} \{advancePastWeekends(cand, i(c, "h"), i(c, "mi"), tz)}";
+        want = "\{i(c, "onDay")} \{i(c, "atOrAfter")} \{i(c, "pastWeekends")}";
+      } else if (kind == "recur") {
+        got = "\{nextRecurrenceExpiry(recurrenceFrom(c.member("spec")!).unwrap(), i(c, "now"), tz)}";
+        want = "\{i(c, "next")}";
+      } else if (kind == "dur") {
+        ParsedDuration? p = parseDuration(t(c, "input"));
+        AnchorSpec a = AnchorSpec(c.member("anchor")!.member("anchorTime")!.text()!, t(c.member("anchor")!, "timezone"));
+        got = p is null ? "null null" : "\{jsNumber(p!.ms)},\{p!.days},\{p!.hasSubDayUnit} \{jsNumber(resolveDuration(p!, i(c, "base") as~ f64, a, tz))}";
+        JsonValue wp = c.member("parsed")!;
+        want = wp.isNull() ? "null null"
+          : "\{jsNumber(wp.member("ms")!.number()!)},\{i(wp, "days")},\{wp.member("hasSubDayUnit")!.boolean()!} \{jsNumber(c.member("resolved")!.number()!)}";
+      } else if (kind == "natural") {
+        AnchorSpec a = AnchorSpec(c.member("anchor")!.member("anchorTime")!.text()!, t(c.member("anchor")!, "timezone"));
+        got = orNull(parseNaturalTime(t(c, "input"), i(c, "now"), a, tz));
+        JsonValue w = c.member("at")!;
+        want = w.isNull() ? "null" : "\{w.number()! as~ i64}";
+      }
+    }
+    checked++;
+    if (got != want) { bad.push("line \{n + 1} (\{kind}): got \{got}, want \{want}\n    \{ls[n]}"); }
+  }
+  if (bad.len() > 0) {
+    string s = "";
+    for (i32 k = 0; k < bad.len(); k++) { s += bad.get(k) + "\n"; }
+    return s;
+  }
+  return checked > 2000 ? "" : "only \{checked} cases";
+}

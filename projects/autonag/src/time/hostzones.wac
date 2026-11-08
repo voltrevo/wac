@@ -1,0 +1,68 @@
+// Zones from the host's tz database: the compiled files under a directory (/usr/share/zoneinfo on most
+// systems), read as they are first wanted. The calls block until the files are read.
+
+import { Vec, Map, hashString, stringEq, flatten } from "core";
+import { Files } from "std";
+import { Zones } from "./tz.wac";
+
+export Zones hostZones(Files fs, string dir) {
+  Map<string, string> links = Map.create(hashString, stringEq);
+  bool[] linksRead = [false];
+  return Zones.over((string name) => {
+    match (flatten(fs.readFile(dir + "/" + name).wait())) {
+      Ok(b): { return b; }
+      Err(e): { return null; }
+    }
+  }, () => {
+    Vec<string> out;
+    walk(fs, dir, "", out, 0);
+    string[] ks = linksOf(fs, dir, links, linksRead).keys();
+    for (string k in ks) { out.push(k); }
+    return out.toArray();
+  }, (string name) => {
+    return linksOf(fs, dir, links, linksRead).get(name);
+  });
+}
+
+// The database's links, from its tzdata.zi ("L America/Los_Angeles US/Pacific"), read once.
+Map<string, string> linksOf(Files fs, string dir, Map<string, string> links, bool[] read) {
+  if (read[0]) { return links; }
+  read[0] = true;
+  match (flatten(fs.readFile(dir + "/tzdata.zi").wait())) {
+    Ok(b): {
+      string rest = string.fromBytes(b);
+      while (rest.len() > 0) {
+        i32 nl = rest.indexOf("\n");
+        string line = nl < 0 ? rest : rest.slice(0, nl);
+        rest = nl < 0 ? "" : rest.slice(nl + 1, rest.len());
+        if (line.len() < 3 || line.slice(0, 2) != "L ") { continue; }
+        string pair = line.slice(2, line.len());
+        i32 sp = pair.indexOf(" ");
+        if (sp > 0) { links.set(pair.slice(sp + 1, pair.len()), pair.slice(0, sp)); }
+      }
+    }
+    Err(e): {}
+  }
+  return links;
+}
+
+// Every file's name under `dir`, relative to it; the database's own tables and the "posix" and "right"
+// copies are passed over.
+void walk(Files fs, string dir, string prefix, Vec<string> out, i32 depth) {
+  if (depth > 4) { return; }
+  match (flatten(fs.readDir(dir + (prefix == "" ? "" : "/" + prefix)).wait())) {
+    Ok(names): {
+      for (string n in names) {
+        string rel = prefix == "" ? n : prefix + "/" + n;
+        if (prefix == "" && (n == "posix" || n == "right" || n.indexOf(".") >= 0)) { continue; }
+        match (flatten(fs.stat(dir + "/" + rel).wait())) {
+          Ok(st): {
+            if (st.isDir) { walk(fs, dir, rel, out, depth + 1); } else { out.push(rel); }
+          }
+          Err(e): {}
+        }
+      }
+    }
+    Err(e): {}
+  }
+}

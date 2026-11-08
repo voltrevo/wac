@@ -9,5 +9,7 @@ README.md says what this is, the plan, and where it stands.
   integration test for the server.
 - **Dependencies** are pinned in `wac.lock` and fetched with `wac task deps` (git.voltrevo.com refuses
   `wac update`). wac must have `Files.openRandom` (master from `4085b2e9c`), which wac-sqlite needs.
-- **wac quirks met so far**: `x as string?` is refused by the emitter — assign in an `if` instead.
+- **wac bugs met so far** are in `docs/wac-asks.md`, with reproductions and workarounds.
+- **Time zones** come from the host (`/usr/share/zoneinfo`, read with `--allow-read`); the oracle's
+  answers come from Bun's ICU, so a tz database much older or newer than it can disagree for some zones.
 - Comments explain *why*, in full sentences, as wac's own do.

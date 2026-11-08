@@ -12,7 +12,7 @@ existing React client is the integration test for the new server. The web client
 | Phase | What | State |
 | --- | --- | --- |
 | 1 | The core: events, the fold to state, the alarm, the wire shape, the state checksum | done |
-| 2 | Time zones (TZif), anchors, durations, recurrence, natural-language times | |
+| 2 | Time zones (TZif), anchors, durations, recurrence, natural-language times | done |
 | 3 | Storage: autonag's own SQLite schema, through [wac-sqlite](https://git.voltrevo.com/wac-sqlite) | |
 | 4 | The HTTP API: every route, batch actions, import, auth, rate limits | |
 | 5 | The WebSocket protocol | |
@@ -33,6 +33,13 @@ colours.
     wac task deps                                        # wac and wac-sqlite into the package cache
     wac task test
     AUTONAG=../autonag bun tools/oracle.ts 7 1000 > test/data/fold_cases.jsonl   # another seed
+
+The time code is held to autonag's the same way: `tools/oracle_time.ts` records what autonag's
+`anchor.ts`, `naturalTime.ts` and `recurrence.ts` answer through `Intl` — offsets, local dates, local
+times to instants (inside DST gaps too), anchors, recurrences, durations, natural-language times and the
+validations — over twenty zones chosen for their DST oddities, and `test/time_test.wac` must agree reading
+the host's tz database (`src/time/tz.wac` reads its TZif files and the POSIX rule after their last
+transition; names it no longer carries as files are found through `tzdata.zi`'s links).
 
 What JavaScript decides is reproduced on purpose: the checksum hashes UTF-16 code units, numbers are
 written as `String()` writes them, timers come in the order a JavaScript object keeps its keys (array

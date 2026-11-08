@@ -1,0 +1,150 @@
+// Durations ("1d", "2w", "3mo", "1w2d", "1d12h", "30m", "+1d"), how they become instants, recurrence,
+// and which anchor a timer uses: the rest of autonag's shared/anchor.ts, and server/src/recurrence.ts.
+
+import { json.JsonValue } from "wac";
+import { TimeZone, Zones } from "./tz.wac";
+import { HourMinute, parseAnchorTime, anchorTimeError, anchorOnDayOffset, advancePastWeekends, nextAnchorAtOrAfter,
+         DEFAULT_ANCHOR_TIME } from "./anchor.wac";
+import { RecurrenceSpec, Timer } from "../model/events.wac";
+
+export struct AnchorSpec {
+  string anchorTime;
+  string timezone;
+}
+
+export struct ParsedDuration {
+  f64 ms;              // the total, every unit taken as exact
+  i64 days;            // whole days asked for, months (30 days) and weeks folded in
+  bool hasSubDayUnit;  // an h, m or s appeared: the whole duration is then exact
+}
+
+static f64 DAY = 86400000.0;
+
+// JavaScript's String.prototype.trim: whitespace and line terminators at either end.
+export string jsTrim(string s) {
+  u8[] b = s.toBytes();
+  i32 a = 0;
+  i32 z = b.len();
+  while (a < z) {
+    i32 w = spaceAt(b, a);
+    if (w == 0) { break; }
+    a += w;
+  }
+  while (z > a) {
+    i32 w = spaceBefore(b, z);
+    if (w == 0) { break; }
+    z -= w;
+  }
+  u8[] out = u8[].filled(z - a, 0);
+  out.copyFrom(b, a, 0, z - a);
+  return string.fromBytes(out);
+}
+
+// The width of the whitespace character at `i`, or 0: tab to carriage return, space, and the Unicode
+// spaces JavaScript's \s and trim count (U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F,
+// U+3000, U+FEFF).
+export i32 spaceAt(const u8[] b, i32 i) {
+  i32 c = b[i] as i32;
+  if (c == 0x20 || (c >= 0x09 && c <= 0x0D)) { return 1; }
+  if (c == 0xC2 && i + 1 < b.len() && b[i + 1] == 0xA0) { return 2; }
+  if (c == 0xE1 && i + 2 < b.len() && b[i + 1] == 0x9A && b[i + 2] == 0x80) { return 3; }
+  if (c == 0xE2 && i + 2 < b.len()) {
+    i32 c1 = b[i + 1] as i32;
+    i32 c2 = b[i + 2] as i32;
+    if (c1 == 0x80 && ((c2 >= 0x80 && c2 <= 0x8A) || c2 == 0xA8 || c2 == 0xA9 || c2 == 0xAF)) { return 3; }
+    if (c1 == 0x81 && c2 == 0x9F) { return 3; }
+  }
+  if (c == 0xE3 && i + 2 < b.len() && b[i + 1] == 0x80 && b[i + 2] == 0x80) { return 3; }
+  if (c == 0xEF && i + 2 < b.len() && b[i + 1] == 0xBB && b[i + 2] == 0xBF) { return 3; }
+  return 0;
+}
+
+i32 spaceBefore(const u8[] b, i32 end) {
+  for (i32 w = 1; w <= 3; w++) {
+    if (end - w < 0) { break; }
+    // A UTF-8 character starts here when the byte is not a continuation byte.
+    if ((b[end - w] & 0xC0) == 0x80) { continue; }
+    return spaceAt(b, end - w) == w ? w : 0;
+  }
+  return 0;
+}
+
+// Strict: each unit at most once, in the order mo w d h m s, nothing else; a leading "+" is allowed.
+export ParsedDuration? parseDuration(string input) {
+  u8[] b = jsTrim(input).toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  i32 at = 0;
+  if (at < b.len() && b[at] == '+') { at++; }
+  string[] units = ["mo", "w", "d", "h", "m", "s"];
+  f64[] counts = f64[].filled(6, 0.0);
+  bool[] seen = bool[].filled(6, false);
+  bool any = false;
+  for (i32 u = 0; u < 6; u++) {
+    i32 j = at;
+    while (j < b.len() && b[j] >= '0' && b[j] <= '9') { j++; }
+    if (j == at) { continue; }
+    u8[] unit = units[u].toBytes();
+    bool fits = j + unit.len() <= b.len();
+    for (i32 k = 0; fits && k < unit.len(); k++) { if (b[j + k] != unit[k]) { fits = false; } }
+    if (!fits) { continue; }
+    f64 v = 0.0;
+    for (i32 k = at; k < j; k++) { v = v * 10.0 + ((b[k] - 48) as i32) as f64; }
+    counts[u] = v;
+    seen[u] = true;
+    any = true;
+    at = j + unit.len();
+  }
+  if (at != b.len() || !any) { return null; }
+  f64 ms = counts[0] * 30.0 * DAY + counts[1] * 7.0 * DAY + counts[2] * DAY + counts[3] * 3600000.0 + counts[4] * 60000.0 + counts[5] * 1000.0;
+  f64 days = counts[0] * 30.0 + counts[1] * 7.0 + counts[2];
+  return ParsedDuration(ms, days as~ i64, seen[3] || seen[4] || seen[5]);
+}
+
+// A duration from `base`: exact when it has an hour, minute or second in it; otherwise the anchor on the
+// calendar day that many days on.
+export f64 resolveDuration(ParsedDuration p, f64 base, AnchorSpec anchor, TimeZone tz) {
+  if (p.hasSubDayUnit) { return base + p.ms; }
+  HourMinute hm = parseAnchorTime(anchor.anchorTime) ?? HourMinute(9, 0);
+  return anchorOnDayOffset(base as~ i64, p.days, hm.hour, hm.minute, tz) as~ f64;
+}
+
+// The next expiry for a recurring timer closed at `now`: the anchor `periodDays` calendar days on, then
+// past a weekend if the recurrence skips them. Nothing to do with the previous expiry: late is late.
+export i64 nextRecurrenceExpiry(RecurrenceSpec spec, i64 now, TimeZone tz) {
+  HourMinute hm = parseAnchorTime(spec.anchorTime) ?? HourMinute(0, 0);
+  i64 candidate = anchorOnDayOffset(now, spec.periodDays as~ i64, hm.hour, hm.minute, tz);
+  return spec.skipWeekends ? advancePastWeekends(candidate, hm.hour, hm.minute, tz) : candidate;
+}
+
+// The anchor a timer uses: its recurrence's (in the recurrence's zone), else its own, else the instance's
+// default, else 09:00 — the last three in the acting device's zone.
+export AnchorSpec resolveAnchor(Timer? timer, string? instanceDefault, string deviceTimezone) {
+  if (timer is not null && timer!.recurrence is not null) {
+    return AnchorSpec(timer!.recurrence!.anchorTime, timer!.recurrence!.timezone);
+  }
+  string a = DEFAULT_ANCHOR_TIME;
+  if (instanceDefault is not null) { a = instanceDefault!; }
+  if (timer is not null && timer!.anchorTime is not null) { a = timer!.anchorTime!; }
+  return AnchorSpec(a, deviceTimezone);
+}
+
+// Why a JSON value is not a recurrence, as autonag words it (callers match on the "recurrence." prefix),
+// or null when it is one.
+export string? recurrenceError(JsonValue r, Zones zones) {
+  if (r.object() is null) { return "recurrence must be an object"; }
+  f64? p = r.member("periodDays")?.number();
+  if (p is null || p! != p!.floor() || p! < 1.0 || p! == 1.0 / 0.0) { return "recurrence.periodDays must be a positive integer"; }
+  JsonValue? a = r.member("anchorTime");
+  string? at = a?.text();
+  if (at is null) { return "recurrence.anchorTime must be a string"; }
+  string? ae = anchorTimeError(at!);
+  if (ae is not null) { return "recurrence." + ae!; }
+  string? z = r.member("timezone")?.text();
+  if (z is null) { return "recurrence.timezone must be a string"; }
+  if (zones.zone(z!) is null) { return "recurrence.timezone \"\{z!}\" is not a valid IANA timezone"; }
+  if (r.member("skipWeekends")?.boolean() is null) { return "recurrence.skipWeekends must be a boolean"; }
+  return null;
+}
+
+// The next (or same) HH:MM at or after `ms`: what autonag's server calls snapToAnchorTime.
+export i64 snapToAnchorTime(i64 ms, i64 hour, i64 minute, TimeZone tz) { return nextAnchorAtOrAfter(ms, hour, minute, tz); }

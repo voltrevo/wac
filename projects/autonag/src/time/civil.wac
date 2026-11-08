@@ -1,0 +1,59 @@
+// Calendar arithmetic in UTC, as JavaScript's Date does it: Date.UTC with its normalisation of
+// out-of-range fields, and the calendar date of an instant.
+
+// Days from 1970-01-01 to a proleptic Gregorian date (Howard Hinnant's days_from_civil).
+export i64 daysFromCivil(i64 y0, i64 m, i64 d) {
+  i64 y = m <= 2 ? y0 - 1 : y0;
+  i64 era = (y >= 0 ? y : y - 399) / 400;
+  i64 yoe = y - era * 400;
+  i64 mp = m > 2 ? m - 3 : m + 9;
+  i64 doy = (153 * mp + 2) / 5 + d - 1;
+  i64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+export struct Civil {
+  i64 year;
+  i64 month;   // 1–12
+  i64 day;     // 1–31
+}
+
+// The date `days` days after 1970-01-01.
+export Civil civilFromDays(i64 z0) {
+  i64 z = z0 + 719468;
+  i64 era = (z >= 0 ? z : z - 146096) / 146097;
+  i64 doe = z - era * 146097;
+  i64 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  i64 y = yoe + era * 400;
+  i64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  i64 mp = (5 * doy + 2) / 153;
+  i64 d = doy - (153 * mp + 2) / 5 + 1;
+  i64 m = mp < 10 ? mp + 3 : mp - 9;
+  return Civil(m <= 2 ? y + 1 : y, m, d);
+}
+
+export i64 floorDiv(i64 a, i64 b) {
+  i64 q = a / b;
+  if ((a % b != 0) && ((a < 0) != (b < 0))) { q--; }
+  return q;
+}
+
+export i64 floorMod(i64 a, i64 b) { return a - floorDiv(a, b) * b; }
+
+static i64 DAY_MS = 86400000;
+
+// Date.UTC(year, month - 1, day, hour, minute, second): a month or day out of range carries into the
+// next field, as JavaScript's does.
+export i64 utcMillis(i64 year, i64 month, i64 day, i64 hour, i64 minute, i64 second) {
+  i64 m0 = month - 1;
+  i64 y = year + floorDiv(m0, 12);
+  i64 mn = floorMod(m0, 12) + 1;
+  i64 days = daysFromCivil(y, mn, 1) + day - 1;
+  return days * DAY_MS + hour * 3600000 + minute * 60000 + second * 1000;
+}
+
+// The UTC calendar date of an instant.
+export Civil civilOf(i64 ms) { return civilFromDays(floorDiv(ms, DAY_MS)); }
+
+// 0 Sunday … 6 Saturday, for days since 1970-01-01 (a Thursday).
+export i32 weekdayOfDays(i64 days) { return floorMod(days + 4, 7) as! i32; }

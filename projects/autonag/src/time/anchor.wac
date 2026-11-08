@@ -1,0 +1,120 @@
+// Time-zone-aware anchor arithmetic: a port of autonag's shared/anchor.ts. An anchor time is a wall-clock
+// time of day ("HH:MM") in a zone; recurring timers land on it, and so do day and week durations ("1d",
+// "2w") — "1d" means the anchor on tomorrow's calendar day, not 24 hours on.
+//
+// Where autonag asks Intl, this asks a TimeZone, and reproduces what Intl's answers make of it: the offset
+// at an instant is the local time to the second, as a UTC instant, less the instant.
+
+import { TimeZone } from "./tz.wac";
+import { utcMillis, civilOf, Civil, floorDiv, floorMod, weekdayOfDays } from "./civil.wac";
+
+export struct LocalDate {
+  i64 year;
+  i64 month;
+  i64 day;
+}
+
+// The local calendar date of an instant in a zone.
+export LocalDate localDateParts(i64 ms, TimeZone tz) {
+  i64 local = ms + tz.offsetAt(floorDiv(ms, 1000)) * 1000;
+  Civil c = civilOf(local);
+  return LocalDate(c.year, c.month, c.day);
+}
+
+// Local time as if it were UTC, less the instant (positive when local is ahead). Intl gives local time to
+// the second, so an instant's own milliseconds come off it, as in autonag.
+export i64 localOffsetMs(i64 ms, TimeZone tz) {
+  i64 localSeconds = floorDiv(ms, 1000) + tz.offsetAt(floorDiv(ms, 1000));
+  return localSeconds * 1000 - ms;
+}
+
+// A local date and time in a zone, as an instant: the offset depends on the instant and the instant on
+// the offset, so it is found by iterating, three times as autonag does. Inside a spring-forward gap
+// there is no exact answer and this settles on one side of it.
+export i64 localToUtc(i64 year, i64 month, i64 day, i64 hour, i64 minute, TimeZone tz) {
+  i64 localAsUtc = utcMillis(year, month, day, hour, minute, 0);
+  i64 t = localAsUtc - localOffsetMs(localAsUtc, tz);
+  t = localAsUtc - localOffsetMs(t, tz);
+  t = localAsUtc - localOffsetMs(t, tz);
+  return t;
+}
+
+// 0 Sunday … 6 Saturday, locally.
+export i32 dayOfWeek(i64 ms, TimeZone tz) {
+  i64 local = ms + tz.offsetAt(floorDiv(ms, 1000)) * 1000;
+  return weekdayOfDays(floorDiv(local, 86400000));
+}
+
+export bool isWeekend(i64 ms, TimeZone tz) {
+  i32 d = dayOfWeek(ms, tz);
+  return d == 0 || d == 6;
+}
+
+// ── anchor times ──
+
+export static string DEFAULT_ANCHOR_TIME = "09:00";
+
+export struct HourMinute {
+  i64 hour;
+  i64 minute;
+}
+
+bool twoDigitsColonTwoDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() != 5 || b[2] != ':') { return false; }
+  for (i32 i in [0, 1, 3, 4]) { if (b[i] < '0' || b[i] > '9') { return false; } }
+  return true;
+}
+
+// "HH:MM" as an hour and minute, or null when it is not one or is out of range.
+export HourMinute? parseAnchorTime(string s) {
+  if (!twoDigitsColonTwoDigits(s)) { return null; }
+  u8[] b = s.toBytes();
+  i64 h = ((b[0] - '0') * 10 + (b[1] - '0')) as i64;
+  i64 m = ((b[3] - '0') * 10 + (b[4] - '0')) as i64;
+  if (h > 23 || m > 59) { return null; }
+  return HourMinute(h, m);
+}
+
+// The message for an anchor time that is not one, or null when it is.
+export string? anchorTimeError(string s) {
+  if (!twoDigitsColonTwoDigits(s)) { return "anchorTime must be HH:MM"; }
+  if (parseAnchorTime(s) is null) { return "anchorTime is out of range"; }
+  return null;
+}
+
+// HH:MM on the local calendar day `dayOffset` days after `from`. Days are counted on the date, not by
+// adding milliseconds, so a DST change in between cannot move which day it lands on.
+export i64 anchorOnLocalDay(LocalDate from, i64 dayOffset, i64 hour, i64 minute, TimeZone tz) {
+  Civil d = civilOf(utcMillis(from.year, from.month, from.day + dayOffset, 0, 0, 0));
+  return localToUtc(d.year, d.month, d.day, hour, minute, tz);
+}
+
+// The anchor on the calendar day `dayOffset` days after `base`, and after `base`: a DST gap, or a day
+// offset of 0 whose anchor has passed, moves it to the next day. Weekends are not skipped here; that is a
+// recurrence's business (advancePastWeekends).
+export i64 anchorOnDayOffset(i64 base, i64 dayOffset, i64 hour, i64 minute, TimeZone tz) {
+  LocalDate from = localDateParts(base, tz);
+  i64 candidate = anchorOnLocalDay(from, dayOffset, hour, minute, tz);
+  if (candidate <= base) { candidate = anchorOnLocalDay(from, dayOffset + 1, hour, minute, tz); }
+  return candidate;
+}
+
+// The next (or same) HH:MM at or after `ms`.
+export i64 nextAnchorAtOrAfter(i64 ms, i64 hour, i64 minute, TimeZone tz) {
+  LocalDate today = localDateParts(ms, tz);
+  i64 candidate = anchorOnLocalDay(today, 0, hour, minute, tz);
+  if (candidate >= ms) { return candidate; }
+  return anchorOnLocalDay(today, 1, hour, minute, tz);
+}
+
+// Day by day, re-anchored each time, until the candidate is not on a weekend.
+export i64 advancePastWeekends(i64 candidate, i64 hour, i64 minute, TimeZone tz) {
+  i64 result = candidate;
+  i32 iter = 0;
+  while (isWeekend(result, tz) && iter < 7) {
+    result = anchorOnLocalDay(localDateParts(result, tz), 1, hour, minute, tz);
+    iter++;
+  }
+  return result;
+}

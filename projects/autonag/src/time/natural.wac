@@ -1,0 +1,132 @@
+// Natural-language due dates: "tomorrow", "fri", "thu morning", "tmr @ 3pm". A port of autonag's
+// shared/naturalTime.ts. Its regular expressions are matched here by hand, trying the alternatives in the
+// order a backtracking matcher would, so "830pm" is 8:30 as it is there.
+
+import { TimeZone } from "./tz.wac";
+import { LocalDate, HourMinute, localDateParts, anchorOnLocalDay, dayOfWeek, parseAnchorTime } from "./anchor.wac";
+import { AnchorSpec, jsTrim, spaceAt } from "./duration.wac";
+
+static i64 MINUTE = 60000;
+static i64 HOUR = 3600000;
+
+static string[] WEEKDAY_NAMES = ["monday", "mon", "tuesday", "tue", "wednesday", "wed", "thursday", "thu", "friday", "fri",
+                                 "saturday", "sat", "sunday", "sun"];
+static i32[] WEEKDAY_NUMBERS = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 0, 0];
+
+bool wordByte(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
+
+// Whether `input` starts with `word` followed by a word boundary (/^word\b/).
+bool startsWord(const u8[] input, string word) {
+  u8[] w = word.toBytes();
+  if (input.len() < w.len()) { return false; }
+  for (i32 i = 0; i < w.len(); i++) { if (input[i] != w[i]) { return false; } }
+  return input.len() == w.len() || !wordByte(input[w.len()]);
+}
+
+string after(const u8[] b, i32 n) {
+  u8[] out = u8[].filled(b.len() - n, 0);
+  out.copyFrom(b, n, 0, b.len() - n);
+  return string.fromBytes(out);
+}
+
+struct DayPrefix {
+  i64 dayOffset;
+  string suffix;
+}
+
+DayPrefix? dayPrefix(string input, i64 now, TimeZone tz) {
+  u8[] b = input.toBytes();
+  if (startsWord(b, "today")) { return DayPrefix(0, after(b, 5)); }
+  if (startsWord(b, "tomorrow")) { return DayPrefix(1, after(b, 8)); }
+  if (startsWord(b, "tmr")) { return DayPrefix(1, after(b, 3)); }
+  for (i32 i = 0; i < WEEKDAY_NAMES.len(); i++) {
+    if (startsWord(b, WEEKDAY_NAMES[i])) {
+      // A weekday that is today means today, not a week on.
+      i64 off = ((7 + WEEKDAY_NUMBERS[i] - dayOfWeek(now, tz)) % 7) as i64;
+      return DayPrefix(off, after(b, WEEKDAY_NAMES[i].toBytes().len()));
+    }
+  }
+  return null;
+}
+
+i64 at(LocalDate today, i64 dayOffset, i64 h, i64 m, TimeZone tz) { return anchorOnLocalDay(today, dayOffset, h, m, tz); }
+
+// A natural-language date as an instant, or null when it is not one. `input` is matched as given:
+// callers lower-case it first.
+export i64? parseNaturalTime(string input, i64 now, AnchorSpec anchor, TimeZone tz) {
+  DayPrefix? target = dayPrefix(input, now, tz);
+  if (target is null) { return null; }
+  LocalDate today = localDateParts(now, tz);
+  string suffix = jsTrim(target!.suffix);
+  i64 d = target!.dayOffset;
+  if (suffix == "") {
+    HourMinute hm = parseAnchorTime(anchor.anchorTime) ?? HourMinute(9, 0);
+    i64 candidate = at(today, d, hm.hour, hm.minute, tz);
+    if (candidate >= now + 2 * HOUR) { return some(candidate); }
+    // The day's anchor has passed or is too close to be a useful reminder: a couple of hours on, but
+    // not into the night.
+    i64 bedtime = at(today, 0, 21, 0, tz);
+    i64 endOfDay = at(today, 0, 23, 59, tz);
+    i64 pushed = now + 2 * HOUR;
+    if (pushed <= bedtime) { return some(pushed); }
+    i64 v = bedtime > now + 30 * MINUTE ? bedtime : now + 30 * MINUTE;
+    return some(v < endOfDay ? v : endOfDay);
+  }
+  if (suffix == "morning") { return some(at(today, d, 10, 0, tz)); }
+  if (suffix == "afternoon") { return some(at(today, d, 16, 30, tz)); }
+  if (suffix == "night") { return some(at(today, d, 21, 0, tz)); }
+  HourMinute? hm = clockTime(suffix);
+  if (hm is null) { return null; }
+  if (hm!.hour < 0) { return null; }
+  return some(at(today, d, hm!.hour, hm!.minute, tz));
+}
+
+// An i64 as an i64?: returning an i64 where an i64? is declared emits invalid wasm (docs/wac-asks.md).
+i64? some(i64 v) {
+  i64? r = v;
+  return r;
+}
+
+// /^(?:(?:at|@)\s*)?(\d{1,2}):?(\d{2})?(am|pm)$/, then the 12-hour clock: the time, an hour of -1 when it
+// matched but is out of range, or null when it did not match.
+HourMinute? clockTime(string s) {
+  u8[] b = s.toBytes();
+  // With the "at"/"@" prefix (and the spaces after it) first, as the greedy optional group tries.
+  i32 pre = -1;
+  if (b.len() >= 2 && b[0] == 'a' && b[1] == 't') { pre = 2; } else if (b.len() >= 1 && b[0] == '@') { pre = 1; }
+  if (pre > 0) {
+    i32 p = pre;
+    while (p < b.len() && spaceAt(b, p) > 0) { p += spaceAt(b, p); }
+    HourMinute? r = clockFrom(b, p);
+    if (r is not null) { return r; }
+  }
+  return clockFrom(b, 0);
+}
+
+bool digit(const u8[] b, i32 i) { return i < b.len() && b[i] >= '0' && b[i] <= '9'; }
+
+HourMinute? clockFrom(const u8[] b, i32 p) {
+  // \d{1,2}: two digits first; then the optional colon, taken when there; then two optional digits.
+  for (i32 hl = 2; hl >= 1; hl--) {
+    if (!digit(b, p) || (hl == 2 && !digit(b, p + 1))) { continue; }
+    i64 h12 = hl == 2 ? ((b[p] - '0') * 10 + (b[p + 1] - '0')) as i64 : (b[p] - '0') as i64;
+    i32 q0 = p + hl;
+    i32[] colonChoices = q0 < b.len() && b[q0] == ':' ? [q0 + 1, q0] : [q0];
+    for (i32 q in colonChoices) {
+      for (i32 ml = 2; ml >= 0; ml -= 2) {
+        if (ml == 2 && !(digit(b, q) && digit(b, q + 1))) { continue; }
+        i32 r = q + ml;
+        if (r + 2 != b.len()) { continue; }
+        bool am = b[r] == 'a' && b[r + 1] == 'm';
+        bool pm = b[r] == 'p' && b[r + 1] == 'm';
+        if (!am && !pm) { continue; }
+        i64 minute = ml == 2 ? ((b[q] - '0') * 10 + (b[q + 1] - '0')) as i64 : 0;
+        if (h12 < 1 || h12 > 12 || minute > 59) { return HourMinute(-1, 0); }
+        i64 hour = pm && h12 < 12 ? h12 + 12 : h12;
+        if (am && h12 == 12) { hour = 0; }
+        return HourMinute(hour, minute);
+      }
+    }
+  }
+  return null;
+}

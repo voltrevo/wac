@@ -1,0 +1,339 @@
+// Time zones from the tz database's compiled files (TZif, RFC 8536), as /usr/share/zoneinfo holds them:
+// where JavaScript asks Intl for a zone's offset at an instant, this reads the zone's transitions, and
+// past the last of them the POSIX TZ rule in the file's footer, which repeats every year.
+//
+// Zones are found through a `Zones`, which reads a zone's file when first asked for it; how it reads is
+// the caller's (the host's zoneinfo directory for the server and CLI).
+
+import { Result, Vec, Map, hashString, stringEq } from "core";
+import { daysFromCivil, civilFromDays, floorDiv, floorMod, weekdayOfDays, Civil } from "./civil.wac";
+
+// A POSIX TZ rule's date: Mm.w.d (month, week 1–5 with 5 the last, weekday 0 Sunday), Jn (day 1–365 of a
+// year without February 29) or n (day 0–365 counting it), and the local time of day it happens at.
+struct RuleDate {
+  i32 kind;      // 0 Mm.w.d, 1 Jn, 2 n
+  i32 month;
+  i32 week;
+  i32 wday;
+  i32 day;
+  i64 time;      // seconds after local midnight; may be negative or past a day
+}
+
+// A footer rule: standard time, and daylight time between two dates of each year when there is any.
+struct PosixRule {
+  i64 stdOff;    // seconds east of UTC
+  bool hasDst;
+  i64 dstOff;
+  RuleDate start;
+  RuleDate end;
+}
+
+export struct TimeZone {
+  string name;
+  i64[] trans;     // transition instants, seconds since 1970, ascending
+  i32[] idx;       // the local time type each transition begins
+  i64[] offs;      // each type's offset, seconds east of UTC
+  PosixRule? rule; // what follows the last transition
+
+  // The zone's offset from UTC at an instant, in seconds east (positive ahead of UTC).
+  i64 offsetAt(this, i64 utcSeconds) {
+    i32 n = this.trans.len();
+    if (n == 0 || utcSeconds < this.trans[0]) {
+      if (n == 0 && this.rule is not null) { return ruleOffset(this.rule!, utcSeconds); }
+      return this.offs.len() > 0 ? this.offs[0] : 0;
+    }
+    if (utcSeconds >= this.trans[n - 1] && this.rule is not null) { return ruleOffset(this.rule!, utcSeconds); }
+    i32 lo = 0;
+    i32 hi = n - 1;
+    while (lo < hi) {
+      i32 mid = (lo + hi + 1) / 2;
+      if (this.trans[mid] <= utcSeconds) { lo = mid; } else { hi = mid - 1; }
+    }
+    return this.offs[this.idx[lo]];
+  }
+}
+
+// The instant (seconds since 1970) a rule date falls on in `year`, given the offset local time is in.
+i64 ruleInstant(RuleDate r, i64 year, i64 off) {
+  i64 days = 0;
+  if (r.kind == 0) {
+    i64 first = daysFromCivil(year, r.month as i64, 1);
+    i64 wd = weekdayOfDays(first) as i64;
+    i64 d = floorMod(r.wday as i64 - wd, 7) + 1 + (r.week as i64 - 1) * 7;
+    i64 mdays = daysFromCivil(r.month == 12 ? year + 1 : year, r.month == 12 ? 1 : (r.month + 1) as i64, 1) - first;
+    while (d > mdays) { d -= 7; }
+    days = first + d - 1;
+  } else if (r.kind == 1) {
+    // Jn: February 29 is never counted, so day 60 is always March 1.
+    i64 jan1 = daysFromCivil(year, 1, 1);
+    bool leap = daysFromCivil(year, 3, 1) - daysFromCivil(year, 2, 1) == 29;
+    days = jan1 + r.day as i64 - 1 + (leap && r.day >= 60 ? 1 : 0);
+  } else {
+    days = daysFromCivil(year, 1, 1) + r.day as i64;
+  }
+  return days * 86400 + r.time - off;
+}
+
+i64 ruleOffset(PosixRule p, i64 t) {
+  if (!p.hasDst) { return p.stdOff; }
+  i64 year = civilFromDays(floorDiv(t + p.stdOff, 86400)).year;
+  // The transitions of the year around `t`, and the years either side, so an instant near New Year is
+  // judged against the transitions nearest it.
+  for (i64 y = year - 1; y <= year + 1; y++) {
+    i64 s = ruleInstant(p.start, y, p.stdOff);
+    i64 e = ruleInstant(p.end, y, p.dstOff);
+    if (s < e) {
+      if (t >= s && t < e) { return p.dstOff; }
+    }
+  }
+  // Southern-hemisphere rules (daylight time spans New Year): daylight unless between this year's end and start.
+  i64 s0 = ruleInstant(p.start, year, p.stdOff);
+  i64 e0 = ruleInstant(p.end, year, p.dstOff);
+  if (s0 > e0) { return t >= e0 && t < s0 ? p.stdOff : p.dstOff; }
+  return p.stdOff;
+}
+
+// ── parsing ──
+
+i64 be32s(const u8[] b, i32 at) {
+  i64 v = ((b[at] as i64) << 24) | ((b[at + 1] as i64) << 16) | ((b[at + 2] as i64) << 8) | (b[at + 3] as i64);
+  return v >= 0x80000000 ? v - 0x100000000 : v;
+}
+
+i64 be64s(const u8[] b, i32 at) {
+  i64 v = 0;
+  for (i32 i = 0; i < 8; i++) { v = (v << 8) | (b[at + i] as i64); }
+  return v;
+}
+
+// A zone from its TZif bytes. Version 2 and later files hold the transitions twice, in 32 and 64 bits;
+// the 64-bit block and the footer after it are what is read.
+export Result<TimeZone, string> parseTzif(string name, const u8[] b) {
+  if (b.len() < 44 || b[0] != 'T' || b[1] != 'Z' || b[2] != 'i' || b[3] != 'f') { return Result.Err("\{name}: not a TZif file"); }
+  i32 version = b[4] as i32;
+  i32 at = 0;
+  i32 timeSize = 4;
+  if (version >= '2') {
+    // Step over the version 1 block to the second header.
+    at = 44 + blockSize(b, 0, 4);
+    timeSize = 8;
+    if (at + 44 > b.len() || b[at] != 'T') { return Result.Err("\{name}: truncated TZif file"); }
+  }
+  i32 isut = be32s(b, at + 20) as! i32;
+  i32 isstd = be32s(b, at + 24) as! i32;
+  i32 leap = be32s(b, at + 28) as! i32;
+  i32 timecnt = be32s(b, at + 32) as! i32;
+  i32 typecnt = be32s(b, at + 36) as! i32;
+  i32 charcnt = be32s(b, at + 40) as! i32;
+  i32 p = at + 44;
+  if (p + blockSize(b, at, timeSize) > b.len() || typecnt < 1) { return Result.Err("\{name}: truncated TZif file"); }
+  i64[] trans = i64[].filled(timecnt, 0);
+  for (i32 i = 0; i < timecnt; i++) { trans[i] = timeSize == 8 ? be64s(b, p + 8 * i) : be32s(b, p + 4 * i); }
+  p += timecnt * timeSize;
+  i32[] idx = i32[].filled(timecnt, 0);
+  for (i32 i = 0; i < timecnt; i++) {
+    idx[i] = b[p + i] as i32;
+    if (idx[i] >= typecnt) { return Result.Err("\{name}: bad time type"); }
+  }
+  p += timecnt;
+  i64[] offs = i64[].filled(typecnt, 0);
+  for (i32 i = 0; i < typecnt; i++) { offs[i] = be32s(b, p + 6 * i); }
+  p += typecnt * 6 + charcnt + leap * (timeSize + 4) + isstd + isut;
+  PosixRule? rule = null;
+  if (version >= '2' && p < b.len() && b[p] == '\n') {
+    i32 end = p + 1;
+    while (end < b.len() && b[end] != '\n') { end++; }
+    u8[] tz = u8[].filled(end - p - 1, 0);
+    tz.copyFrom(b, p + 1, 0, end - p - 1);
+    if (tz.len() > 0) { rule = parsePosix(string.fromBytes(tz)); }
+  }
+  return Result.Ok(TimeZone(name, trans, idx, offs, rule));
+}
+
+i32 blockSize(const u8[] b, i32 at, i32 timeSize) {
+  i32 isut = be32s(b, at + 20) as! i32;
+  i32 isstd = be32s(b, at + 24) as! i32;
+  i32 leap = be32s(b, at + 28) as! i32;
+  i32 timecnt = be32s(b, at + 32) as! i32;
+  i32 typecnt = be32s(b, at + 36) as! i32;
+  i32 charcnt = be32s(b, at + 40) as! i32;
+  return timecnt * timeSize + timecnt + typecnt * 6 + charcnt + leap * (timeSize + 4) + isstd + isut;
+}
+
+struct Scan {
+  u8[] s;
+  i32 at;
+
+  bool more(const this) { return this.at < this.s.len(); }
+  u8 peek(const this) { return this.at < this.s.len() ? this.s[this.at] : 0; }
+}
+
+// A POSIX TZ string ("NZST-12NZDT,M9.5.0,M4.1.0/3"), or null when it is not one this understands.
+PosixRule? parsePosix(string text) {
+  Scan sc = Scan(text.toBytes(), 0);
+  if (!skipName(sc)) { return null; }
+  i64? std = hms(sc);
+  if (std is null) { return null; }
+  // POSIX offsets count west of UTC; a zone's offset here is east.
+  i64 stdOff = -std!;
+  RuleDate none = RuleDate(0, 1, 1, 0, 0, 0);
+  if (!sc.more()) { return PosixRule(stdOff, false, stdOff, none, none); }
+  if (!skipName(sc)) { return null; }
+  i64 dstOff = stdOff + 3600;
+  if (sc.more() && sc.peek() != ',') {
+    i64? d = hms(sc);
+    if (d is null) { return null; }
+    dstOff = -d!;
+  }
+  if (sc.peek() != ',') { return null; }
+  sc.at++;
+  RuleDate? start = ruleDate(sc);
+  if (start is null || sc.peek() != ',') { return null; }
+  sc.at++;
+  RuleDate? end = ruleDate(sc);
+  if (end is null) { return null; }
+  return PosixRule(stdOff, true, dstOff, start!, end!);
+}
+
+bool skipName(Scan sc) {
+  if (sc.peek() == '<') {
+    while (sc.more() && sc.peek() != '>') { sc.at++; }
+    if (!sc.more()) { return false; }
+    sc.at++;
+    return true;
+  }
+  i32 start = sc.at;
+  while (sc.more() && ((sc.peek() >= 'a' && sc.peek() <= 'z') || (sc.peek() >= 'A' && sc.peek() <= 'Z'))) { sc.at++; }
+  return sc.at - start >= 3;
+}
+
+i64? number(Scan sc) {
+  if (!(sc.peek() >= '0' && sc.peek() <= '9')) { return null; }
+  i64 v = 0;
+  while (sc.peek() >= '0' && sc.peek() <= '9') { v = v * 10 + (sc.peek() - '0') as i64; sc.at++; }
+  return v;
+}
+
+// [+-]hh[:mm[:ss]], in seconds.
+i64? hms(Scan sc) {
+  i64 sign = 1;
+  if (sc.peek() == '+') { sc.at++; } else if (sc.peek() == '-') { sign = -1; sc.at++; }
+  i64? h = number(sc);
+  if (h is null) { return null; }
+  i64 v = h! * 3600;
+  if (sc.peek() == ':') {
+    sc.at++;
+    i64? m = number(sc);
+    if (m is null) { return null; }
+    v += m! * 60;
+    if (sc.peek() == ':') {
+      sc.at++;
+      i64? s = number(sc);
+      if (s is null) { return null; }
+      v += s!;
+    }
+  }
+  return sign * v;
+}
+
+RuleDate? ruleDate(Scan sc) {
+  RuleDate r = RuleDate(0, 1, 1, 0, 0, 7200);
+  if (sc.peek() == 'M') {
+    sc.at++;
+    i64? m = number(sc);
+    if (m is null || sc.peek() != '.') { return null; }
+    sc.at++;
+    i64? w = number(sc);
+    if (w is null || sc.peek() != '.') { return null; }
+    sc.at++;
+    i64? d = number(sc);
+    if (d is null || m! < 1 || m! > 12 || w! < 1 || w! > 5 || d! > 6) { return null; }
+    r.month = m! as! i32;
+    r.week = w! as! i32;
+    r.wday = d! as! i32;
+  } else if (sc.peek() == 'J') {
+    sc.at++;
+    i64? n = number(sc);
+    if (n is null || n! < 1 || n! > 365) { return null; }
+    r.kind = 1;
+    r.day = n! as! i32;
+  } else {
+    i64? n = number(sc);
+    if (n is null || n! > 365) { return null; }
+    r.kind = 2;
+    r.day = n! as! i32;
+  }
+  if (sc.peek() == '/') {
+    sc.at++;
+    i64? t = hms(sc);
+    if (t is null) { return null; }
+    r.time = t!;
+  }
+  return r;
+}
+
+// ── finding zones ──
+
+// Zones by name, each read once through `read` (which answers a zone file's bytes, or null). A name is
+// looked up as given, and failing that with any capitalisation, as Intl accepts "america/new_york".
+export struct Zones {
+  fn<u8[]?(string)> read;
+  fn<string[]()> names;     // every zone name, for the second lookup
+  // A link's target ("US/Pacific" is "America/Los_Angeles"), for names the files no longer carry: some
+  // systems ship the old names separately, where the database's own tzdata.zi still lists them.
+  fn<string?(string)> link;
+  Map<string, TimeZone> found;
+  Map<string, bool> missing;
+
+  Zones over(fn<u8[]?(string)> read, fn<string[]()> names, fn<string?(string)> link) {
+    return Zones(read, names, link, Map.create(hashString, stringEq), Map.create(hashString, stringEq));
+  }
+
+  TimeZone? zone(this, string name) {
+    TimeZone? hit = this.found.get(name);
+    if (hit is not null) { return hit; }
+    if (this.missing.has(name)) { return null; }
+    TimeZone? z = this.load(name);
+    if (z is null) {
+      string? target = this.link(name);
+      if (target is not null) { z = this.load(target!); }
+    }
+    if (z is null) {
+      string low = lowerAscii(name);
+      string[] all = this.names();
+      for (string n in all) {
+        if (lowerAscii(n) == low && n != name) { z = this.load(n); break; }
+      }
+    }
+    if (z is null) { this.missing.set(name, true); return null; }
+    this.found.set(name, z!);
+    return z;
+  }
+
+  TimeZone? load(this, string name) {
+    if (!saneName(name)) { return null; }
+    u8[]? b = this.read(name);
+    if (b is null) { return null; }
+    match (parseTzif(name, b!)) {
+      Ok(z): { return z; }
+      Err(e): { return null; }
+    }
+  }
+}
+
+// A name that can only reach a file inside the zone directory.
+bool saneName(string name) {
+  if (name.len() == 0 || name.indexOf("..") >= 0 || name.slice(0, 1) == "/") { return false; }
+  u8[] b = name.toBytes();
+  for (u8 c in b) {
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '_' || c == '-' || c == '+';
+    if (!ok) { return false; }
+  }
+  return true;
+}
+
+export string lowerAscii(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= 'A' && b[i] <= 'Z') { b[i] = b[i] + 32; } }
+  return string.fromBytes(b);
+}
