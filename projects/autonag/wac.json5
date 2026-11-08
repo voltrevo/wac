@@ -1,0 +1,10 @@
+{
+  // What another project gets from `import { … } from "autonag"`.
+  exports: './src/lib.wac',
+  imports: {
+    // The rest of wac, as one dependency: `import { json.parse } from "wac"`.
+    wac: { git: 'https://git.voltrevo.com/wac.git', ref: 'master' },
+    // SQLite in wac: the server keeps autonag's own schema and database file.
+    sqlite: { git: 'https://git.voltrevo.com/wac-sqlite.git', ref: 'main' },
+  },
+}

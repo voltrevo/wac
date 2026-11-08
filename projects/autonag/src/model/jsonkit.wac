@@ -1,0 +1,47 @@
+// Small helpers for building and reading JSON with wac's `json` package.
+
+import { Result } from "core";
+import { json.JsonValue, json.JsonObject, json.JsonArray } from "wac";
+
+// An object being built, member by member, in the order they are put.
+export struct Obj {
+  JsonObject o;
+
+  Obj create() { return Obj(JsonObject.create()); }
+
+  Obj put(this, string key, JsonValue v) {
+    this.o.push(key.toBytes(), v);
+    return this;
+  }
+
+  Obj putBytes(this, u8[] key, JsonValue v) {
+    this.o.push(key, v);
+    return this;
+  }
+
+  JsonValue done(this) { return JsonValue.Object(this.o); }
+}
+
+export JsonValue num(f64 x) { return JsonValue.Number(x, u8[]()); }
+
+export JsonValue str(string s) { return JsonValue.Str(s.toBytes()); }
+
+export JsonValue arr(JsonArray a) { return JsonValue.Array(a); }
+
+export Result<string, string> textOf(JsonValue v, string key) {
+  string? t = v.member(key)?.text();
+  if (t is null) { return Result.Err("\{key} must be a string"); }
+  return Result.Ok(t!);
+}
+
+export Result<f64, string> numOf(JsonValue v, string key) {
+  f64? x = v.member(key)?.number();
+  if (x is null) { return Result.Err("\{key} must be a number"); }
+  return Result.Ok(x!);
+}
+
+export Result<bool, string> boolOf(JsonValue v, string key) {
+  bool? b = v.member(key)?.boolean();
+  if (b is null) { return Result.Err("\{key} must be a boolean"); }
+  return Result.Ok(b!);
+}

@@ -1,0 +1,19 @@
+// autonag in wac: what another project gets from `import { … } from "autonag"`.
+
+export { RecurrenceSpec } from "./model/events.wac";
+export { Timer } from "./model/events.wac";
+export { AppEvent } from "./model/events.wac";
+export { StoredEvent } from "./model/events.wac";
+export { eventFrom } from "./model/events.wac";
+export { storedEventFrom } from "./model/events.wac";
+export { ProjectedState } from "./model/state.wac";
+export { applyEvent } from "./model/state.wac";
+export { foldEvents } from "./model/state.wac";
+export { skippedIds } from "./model/state.wac";
+export { deriveAlarm } from "./model/state.wac";
+export { toWire } from "./model/state.wac";
+export { fromWire } from "./model/state.wac";
+export { checksum } from "./model/state.wac";
+export { canonicalize } from "./model/state.wac";
+export { calculateColor } from "./model/color.wac";
+export { resolveColor } from "./model/color.wac";

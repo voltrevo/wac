@@ -1,0 +1,56 @@
+// The alarm's colour bands, as autonag's shared/color.ts computes them: blue beyond two days, then
+// blue, green, yellow and red down to zero, and flashing once overdue. A boundary falls to the band
+// below it, and a time that is not a number (NaN) is flashing.
+
+export struct ColorInfo {
+  string color;
+  f64 colorProgress;     // how far through its band, eased
+  f64 nextUpdateIn;      // milliseconds until the band changes (Infinity when it never does)
+  string nextColor;
+}
+
+static f64 HOUR = 3600000.0;
+
+f64 stopTime(i32 i) {
+  if (i == 0) { return 1.0 / 0.0; }
+  if (i == 1) { return 48.0 * HOUR; }
+  if (i == 2) { return 24.0 * HOUR; }
+  if (i == 3) { return 2.0 * HOUR; }
+  if (i == 4) { return 15.0 * 60000.0; }
+  if (i == 5) { return 0.0; }
+  return -1.0 / 0.0;
+}
+
+static string[] STOP_COLORS = ["blue", "blue", "green", "yellow", "red", "flashing", "flashing"];
+
+f64 easeProgress(f64 progress) {
+  f64 q = 0.0012;
+  f64 t = 0.3;
+  f64 x = 1.0 - progress;
+  f64 sqrtish = (t * ((x + q).sqrt() - q.sqrt())) / ((1.0 + q).sqrt() - q.sqrt()) + (1.0 - t) * x;
+  return 1.0 - sqrtish;
+}
+
+export ColorInfo calculateColor(f64 timeRemaining) {
+  i32 cur = -1;
+  for (i32 i = 0; i < 6; i++) {
+    if (timeRemaining <= stopTime(i) && timeRemaining > stopTime(i + 1)) { cur = i; break; }
+  }
+  if (cur < 0) {
+    return ColorInfo(STOP_COLORS[6], 1.0, 1.0 / 0.0, STOP_COLORS[6]);
+  }
+  f64 total = stopTime(cur) - stopTime(cur + 1);
+  bool finite = total == total && total != 1.0 / 0.0 && total != -1.0 / 0.0;
+  f64 progress = finite && total > 0.0 ? easeProgress((stopTime(cur) - timeRemaining) / total) : 0.0;
+  return ColorInfo(STOP_COLORS[cur], progress, timeRemaining - stopTime(cur + 1), STOP_COLORS[cur + 1]);
+}
+
+// A colour's CSS value in a theme ("light" or "dark"); an unknown name is itself.
+export string resolveColor(string name, string theme) {
+  bool dark = theme == "dark";
+  if (name == "blue") { return dark ? "hsla(192, 50%, 20%, 1.00)" : "hsla(192, 50%, 80%, 1.00)"; }
+  if (name == "green") { return dark ? "hsla(150, 50%, 20%, 1.00)" : "hsla(150, 50%, 80%, 1.00)"; }
+  if (name == "yellow") { return dark ? "hsla(30, 70%, 25%, 1.00)" : "hsla(62, 50%, 80%, 1.00)"; }
+  if (name == "red" || name == "flashing") { return dark ? "hsla(0, 70%, 20%, 1.00)" : "hsla(0, 50%, 80%, 1.00)"; }
+  return name;
+}

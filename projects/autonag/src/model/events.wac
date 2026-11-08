@@ -1,0 +1,196 @@
+// The event vocabulary: the append-only source of truth both the server and a client fold to derive
+// state. A port of autonag's shared/events.ts; the JSON each type reads and writes is that file's.
+//
+// Numbers are f64 where autonag's are JavaScript numbers read from JSON (expiries, periods), so a
+// value round-trips exactly; `seq` and `timestamp` are SQLite integers, and i64.
+
+import { Result, Vec } from "core";
+import { json.JsonValue, json.JsonObject, json.JsonArray } from "wac";
+import { Obj, num, str, textOf, numOf, boolOf } from "./jsonkit.wac";
+
+export struct RecurrenceSpec {
+  f64 periodDays;       // 1 daily, 7 weekly, 14 fortnightly, …
+  string anchorTime;    // "HH:MM", local time
+  string timezone;      // IANA, e.g. "America/Auckland"
+  bool skipWeekends;
+
+  JsonValue toJson(this) {
+    return Obj.create().put("periodDays", num(this.periodDays)).put("anchorTime", str(this.anchorTime))
+      .put("timezone", str(this.timezone)).put("skipWeekends", JsonValue.Bool(this.skipWeekends)).done();
+  }
+}
+
+export Result<RecurrenceSpec, string> recurrenceFrom(JsonValue v) {
+  if (v.object() is null) { return Result.Err("recurrence is not an object"); }
+  return Result.Ok(RecurrenceSpec(try numOf(v, "periodDays"), try textOf(v, "anchorTime"), try textOf(v, "timezone"),
+                                  try boolOf(v, "skipWeekends")));
+}
+
+export struct Timer {
+  string id;
+  string name;
+  string? description;
+  f64 created;
+  f64 currentExpiry;
+  RecurrenceSpec? recurrence;
+  // A non-recurring timer's own anchor ("HH:MM"); a recurring timer's anchor is its recurrence's.
+  string? anchorTime;
+
+  Timer copy(this) {
+    return Timer(this.id, this.name, this.description, this.created, this.currentExpiry, this.recurrence, this.anchorTime);
+  }
+
+  JsonValue toJson(this) {
+    Obj o = Obj.create().put("id", str(this.id)).put("name", str(this.name));
+    if (this.description is not null) { o.put("description", str(this.description!)); }
+    o.put("created", num(this.created)).put("currentExpiry", num(this.currentExpiry));
+    if (this.recurrence is not null) { o.put("recurrence", this.recurrence!.toJson()); }
+    if (this.anchorTime is not null) { o.put("anchorTime", str(this.anchorTime!)); }
+    return o.done();
+  }
+}
+
+// A timer from an object holding its fields (a TimerAdded payload, or a timer on the wire).
+export Result<Timer, string> timerFrom(JsonValue v) {
+  if (v.object() is null) { return Result.Err("timer is not an object"); }
+  string? description = null;
+  if (v.member("description") is not null) { description = try textOf(v, "description"); }
+  RecurrenceSpec? rec = null;
+  JsonValue? r = v.member("recurrence");
+  if (r is not null) { rec = try recurrenceFrom(r!); }
+  string? anchor = null;
+  if (v.member("anchorTime") is not null) { anchor = try textOf(v, "anchorTime"); }
+  return Result.Ok(Timer(try textOf(v, "id"), try textOf(v, "name"), description, try numOf(v, "created"),
+                         try numOf(v, "currentExpiry"), rec, anchor));
+}
+
+export enum AppEvent {
+  TimerAdded(Timer timer),
+  TimerExpiryUpdated(string id, f64 newExpiry),
+  TimerCompleted(string id, string closeReason),
+  TimerRemoved(string id),
+  Shushed(f64 expiry),
+  ShushCleared,
+  TimerRecurred(string id, string closeReason, f64 occurredAt, f64 newExpiry),
+  TimerCompletionLogged(string id, string closeReason, f64 occurredAt),
+  TimerRecurrenceUpdated(string id, RecurrenceSpec recurrence, f64 nextExpiry),
+  TimerRecurrenceRemoved(string id),
+  TimerNameUpdated(string id, string newName),
+  // An empty description clears it.
+  TimerDescriptionUpdated(string id, string description),
+  // A null anchor clears the override.
+  TimerAnchorUpdated(string id, string? anchorTime),
+  InstanceDefaultAnchorSet(string anchorTime),
+  // Undo: the target never happened. Resolved before folding (see skippedIds), not by the fold.
+  EventSkipped(string targetEventId),
+  EventUnskipped(string targetEventId),
+}
+
+// Every event type's name, as the log's `type` column and the payload's `type` field spell it.
+export static string[] EVENT_TYPES = ["TimerAdded", "TimerExpiryUpdated", "TimerCompleted", "TimerRemoved", "Shushed",
+  "ShushCleared", "TimerRecurred", "TimerCompletionLogged", "TimerRecurrenceUpdated", "TimerRecurrenceRemoved",
+  "TimerNameUpdated", "TimerDescriptionUpdated", "TimerAnchorUpdated", "InstanceDefaultAnchorSet", "EventSkipped",
+  "EventUnskipped"];
+
+export string typeOf(const AppEvent e) {
+  return match (e) {
+    TimerAdded: "TimerAdded", TimerExpiryUpdated: "TimerExpiryUpdated", TimerCompleted: "TimerCompleted",
+    TimerRemoved: "TimerRemoved", Shushed: "Shushed", ShushCleared: "ShushCleared", TimerRecurred: "TimerRecurred",
+    TimerCompletionLogged: "TimerCompletionLogged", TimerRecurrenceUpdated: "TimerRecurrenceUpdated",
+    TimerRecurrenceRemoved: "TimerRecurrenceRemoved", TimerNameUpdated: "TimerNameUpdated",
+    TimerDescriptionUpdated: "TimerDescriptionUpdated", TimerAnchorUpdated: "TimerAnchorUpdated",
+    InstanceDefaultAnchorSet: "InstanceDefaultAnchorSet", EventSkipped: "EventSkipped", EventUnskipped: "EventUnskipped",
+  };
+}
+
+// An event from its type and payload. The type given is authoritative, as the log's `type` column is: the
+// payload repeats it, but what a payload happens to say about its own type does not decide the fold.
+export Result<AppEvent, string> eventFrom(string type, JsonValue p) {
+  if (p.object() is null) { return Result.Err("\{type} payload is not an object"); }
+  if (type == "TimerAdded") { return Result.Ok(AppEvent.TimerAdded(try timerFrom(p))); }
+  if (type == "TimerExpiryUpdated") { return Result.Ok(AppEvent.TimerExpiryUpdated(try textOf(p, "id"), try numOf(p, "newExpiry"))); }
+  if (type == "TimerCompleted") { return Result.Ok(AppEvent.TimerCompleted(try textOf(p, "id"), try textOf(p, "closeReason"))); }
+  if (type == "TimerRemoved") { return Result.Ok(AppEvent.TimerRemoved(try textOf(p, "id"))); }
+  if (type == "Shushed") { return Result.Ok(AppEvent.Shushed(try numOf(p, "expiry"))); }
+  if (type == "ShushCleared") { return Result.Ok(AppEvent.ShushCleared); }
+  if (type == "TimerRecurred") {
+    return Result.Ok(AppEvent.TimerRecurred(try textOf(p, "id"), try textOf(p, "closeReason"), try numOf(p, "occurredAt"),
+                                            try numOf(p, "newExpiry")));
+  }
+  if (type == "TimerCompletionLogged") {
+    return Result.Ok(AppEvent.TimerCompletionLogged(try textOf(p, "id"), try textOf(p, "closeReason"), try numOf(p, "occurredAt")));
+  }
+  if (type == "TimerRecurrenceUpdated") {
+    JsonValue? r = p.member("recurrence");
+    if (r is null) { return Result.Err("TimerRecurrenceUpdated has no recurrence"); }
+    return Result.Ok(AppEvent.TimerRecurrenceUpdated(try textOf(p, "id"), try recurrenceFrom(r!), try numOf(p, "nextExpiry")));
+  }
+  if (type == "TimerRecurrenceRemoved") { return Result.Ok(AppEvent.TimerRecurrenceRemoved(try textOf(p, "id"))); }
+  if (type == "TimerNameUpdated") { return Result.Ok(AppEvent.TimerNameUpdated(try textOf(p, "id"), try textOf(p, "newName"))); }
+  if (type == "TimerDescriptionUpdated") {
+    return Result.Ok(AppEvent.TimerDescriptionUpdated(try textOf(p, "id"), try textOf(p, "description")));
+  }
+  if (type == "TimerAnchorUpdated") {
+    JsonValue? a = p.member("anchorTime");
+    string? anchor = null;
+    if (a is not null && !a!.isNull()) { anchor = try textOf(p, "anchorTime"); }
+    return Result.Ok(AppEvent.TimerAnchorUpdated(try textOf(p, "id"), anchor));
+  }
+  if (type == "InstanceDefaultAnchorSet") { return Result.Ok(AppEvent.InstanceDefaultAnchorSet(try textOf(p, "anchorTime"))); }
+  if (type == "EventSkipped") { return Result.Ok(AppEvent.EventSkipped(try textOf(p, "targetEventId"))); }
+  if (type == "EventUnskipped") { return Result.Ok(AppEvent.EventUnskipped(try textOf(p, "targetEventId"))); }
+  return Result.Err("unhandled event type \"\{type}\"");
+}
+
+// An event's payload as autonag stores and sends it: its type first, then its fields.
+export JsonValue payloadJson(const AppEvent e) {
+  Obj o = Obj.create().put("type", str(typeOf(e)));
+  match (e) {
+    TimerAdded(t): {
+      JsonObject fields = t.toJson().object()!;
+      for (i32 i = 0; i < fields.len(); i++) { o.putBytes(fields.at(i).key, fields.at(i).value); }
+    }
+    TimerExpiryUpdated(id, x): { o.put("id", str(id)).put("newExpiry", num(x)); }
+    TimerCompleted(id, why): { o.put("id", str(id)).put("closeReason", str(why)); }
+    TimerRemoved(id): { o.put("id", str(id)); }
+    Shushed(x): { o.put("expiry", num(x)); }
+    ShushCleared: {}
+    TimerRecurred(id, why, at, x): { o.put("id", str(id)).put("closeReason", str(why)).put("occurredAt", num(at)).put("newExpiry", num(x)); }
+    TimerCompletionLogged(id, why, at): { o.put("id", str(id)).put("closeReason", str(why)).put("occurredAt", num(at)); }
+    TimerRecurrenceUpdated(id, r, x): { o.put("id", str(id)).put("recurrence", r.toJson()).put("nextExpiry", num(x)); }
+    TimerRecurrenceRemoved(id): { o.put("id", str(id)); }
+    TimerNameUpdated(id, n): { o.put("id", str(id)).put("newName", str(n)); }
+    TimerDescriptionUpdated(id, d): { o.put("id", str(id)).put("description", str(d)); }
+    TimerAnchorUpdated(id, a): { o.put("id", str(id)).put("anchorTime", a is null ? JsonValue.Null : str(a!)); }
+    InstanceDefaultAnchorSet(a): { o.put("anchorTime", str(a)); }
+    EventSkipped(t): { o.put("targetEventId", str(t)); }
+    EventUnskipped(t): { o.put("targetEventId", str(t)); }
+  }
+  return o.done();
+}
+
+// An event as persisted and sent: `skipped` travels with it, so folding is a filter over its input.
+export struct StoredEvent {
+  string id;
+  string instanceId;
+  i64 seq;
+  string type;
+  AppEvent payload;
+  i64 timestamp;
+  bool skipped;
+
+  JsonValue toJson(this) {
+    return Obj.create().put("id", str(this.id)).put("instanceId", str(this.instanceId)).put("seq", num(this.seq as~ f64))
+      .put("type", str(this.type)).put("payload", payloadJson(this.payload)).put("timestamp", num(this.timestamp as~ f64))
+      .put("skipped", JsonValue.Bool(this.skipped)).done();
+  }
+}
+
+export Result<StoredEvent, string> storedEventFrom(JsonValue v) {
+  string type = try textOf(v, "type");
+  JsonValue? p = v.member("payload");
+  if (p is null) { return Result.Err("event has no payload"); }
+  bool skipped = v.member("skipped")?.boolean() ?? false;
+  return Result.Ok(StoredEvent(try textOf(v, "id"), try textOf(v, "instanceId"), (try numOf(v, "seq")) as~ i64, type,
+                               try eventFrom(type, p!), (try numOf(v, "timestamp")) as~ i64, skipped));
+}

@@ -1,0 +1,87 @@
+// Put each git import `wac.lock` pins into wac's package cache, with `git` rather than `wac update`.
+//
+//     wac run --allow-read --allow-write --allow-env --allow-run tools/deps.wac      (or: wac task deps)
+//
+// **Because `wac update` cannot authenticate.** git.voltrevo.com answers its fetcher 401, where `git` has
+// credentials (a helper, or a proxy that adds them). This is wac's own `tools/fill-cache.sh` as a wac program:
+// one plain checkout per commit under `$WAC_HOME/cache/git` (`$HOME/.wac` by default), the repository's URL
+// escaped as `packages/wacpkg/src/cache.wac` escapes it, and a checkout already there left alone.
+//
+// **It imports nothing but `std`**, since what it fetches is what any other import would need first; so the lock
+// is read by finding each `"git"` and the `"commit"` after it, which is all a lock entry says that matters here.
+
+import { Sys, ChildEnv, Launch } from "std";
+
+export async i32 main(Sys sys) {
+  u8[]? lock = (await sys.readFile("wac.lock")).ok();
+  if (lock is null) { sys.warn("deps: no wac.lock here: run this from the project's root"); return 1; }
+  string home = await env(sys, "WAC_HOME");
+  if (home == "") { home = (await env(sys, "HOME")) + "/.wac"; }
+  string cache = home + "/cache/git";
+  i32 fetched = 0;
+  string rest = string.fromBytes(lock!);
+  while (rest.indexOf("\"git\"") >= 0) {
+    rest = rest.slice(rest.indexOf("\"git\"") + 5, rest.len());
+    string url = quoted(rest);
+    if (rest.indexOf("\"commit\"") < 0) { break; }
+    string commit = quoted(rest.slice(rest.indexOf("\"commit\"") + 8, rest.len()));
+    if (url == "" || commit.len() != 40) { continue; }
+    string dest = cache + "/" + escapeRepo(url) + "/" + commit;
+    if ((await sys.files().stat(dest + "/pack.pack")).ok()?.exists ?? false) { continue; }
+    string tmp = dest + ".fetching";
+    await sys.files().remove(tmp, true);
+    await sys.files().mkdir(tmp, true);
+    await sys.files().mkdir(dest, true);
+    // A shallow fetch of the one commit, then its tree checked out straight into the cache.
+    if (!(await git(sys, ["-C", tmp, "init", "-q"]))) { return 1; }
+    if (!(await git(sys, ["-C", tmp, "fetch", "-q", "--depth", "1", url, commit]))) { return 1; }
+    if (!(await git(sys, ["-C", tmp, "--work-tree", dest, "checkout", "-q", "-f", commit, "--", "."]))) { return 1; }
+    // The cache's "this checkout is complete" marker.
+    await sys.writeFile(dest + "/pack.pack", u8[]());
+    await sys.files().remove(tmp, true);
+    sys.log("deps: \{url} \{commit}");
+    fetched++;
+  }
+  if (fetched == 0) { sys.log("deps: every import is in the cache"); }
+  return 0;
+}
+
+/** The first string literal in `s` (after its colon), without its quotes. */
+string quoted(string s) {
+  i32 open = s.indexOf("\"");
+  if (open < 0) { return ""; }
+  string after = s.slice(open + 1, s.len());
+  i32 close = after.indexOf("\"");
+  return close < 0 ? "" : after.slice(0, close);
+}
+
+/** An environment variable's value, or "" when it is unset. */
+async string env(Sys sys, string name) {
+  match (await sys.env().get(name)) {
+    Err(e): { return ""; }
+    Ok(v): { return v is null ? "" : string.fromBytes(v!); }
+  }
+}
+
+async bool git(Sys sys, string[] args) {
+  match (await sys.procs().exec("git", args, u8[](), ChildEnv.inherited(), Launch.plain())) {
+    Err(e): { sys.warn("deps: cannot run git: \{e}"); return false; }
+    Ok(r): {
+      if (r.ok()) { return true; }
+      sys.warn("deps: git \{args[2]}: \{r.ran() ? string.fromBytes(r.stderr) : r.error}");
+      return false;
+    }
+  }
+}
+
+/** A repository URL as a directory name: `[a-z0-9._-]` as itself, a capital as `!` and its lower case, anything else `%XX`. */
+export string escapeRepo(string url) {
+  string out = "";
+  string hex = "0123456789ABCDEF";
+  for (u8 c in url.toBytes()) {
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') { out += string.fromBytes([c]); }
+    else if (c >= 'A' && c <= 'Z') { out += "!" + string.fromBytes([c + 32]); }
+    else { out += "%" + hex.slice((c >> 4) as i32, ((c >> 4) as i32) + 1) + hex.slice((c & 15) as i32, ((c & 15) as i32) + 1); }
+  }
+  return out;
+}

@@ -1,0 +1,1 @@
+{ "imports": { "wac": { "git": "https://git.voltrevo.com/wac.git", "ref": "master", "commit": "4085b2e9c0733e0f15b4e07555ca272559750489" }, "sqlite": { "git": "https://git.voltrevo.com/wac-sqlite.git", "ref": "main", "commit": "f656606ec76ff74ce01a493d5be5371d4ec07287" } } }

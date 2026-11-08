@@ -1,0 +1,58 @@
+// Strings and numbers as JavaScript sees them, where autonag's results depend on it: lengths and order in
+// UTF-16 code units, and numbers as String() writes them.
+
+import { json.JsonValue, json.stringify } from "wac";
+
+// A string's UTF-16 code units: a code point above U+FFFF is two (a surrogate pair).
+export i32[] utf16Units(string s) {
+  u8[] b = s.toBytes();
+  i32[] out = i32[].filled(b.len() * 2, 0);
+  i32 n = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 c = b[i] as i32;
+    i32 cp = c;
+    i32 w = 1;
+    if (c >= 0xF0 && i + 3 < b.len() + 0 && i + 3 <= b.len() - 1) {
+      cp = ((c & 0x07) << 18) | (((b[i + 1] as i32) & 0x3F) << 12) | (((b[i + 2] as i32) & 0x3F) << 6) | ((b[i + 3] as i32) & 0x3F);
+      w = 4;
+    } else if (c >= 0xE0 && i + 2 <= b.len() - 1) {
+      cp = ((c & 0x0F) << 12) | (((b[i + 1] as i32) & 0x3F) << 6) | ((b[i + 2] as i32) & 0x3F);
+      w = 3;
+    } else if (c >= 0xC0 && i + 1 <= b.len() - 1) {
+      cp = ((c & 0x1F) << 6) | ((b[i + 1] as i32) & 0x3F);
+      w = 2;
+    }
+    if (cp >= 0x10000) {
+      i32 v = cp - 0x10000;
+      out[n] = 0xD800 | (v >> 10);
+      out[n + 1] = 0xDC00 | (v & 0x3FF);
+      n += 2;
+    } else {
+      out[n] = cp;
+      n++;
+    }
+    i += w;
+  }
+  i32[] trimmed = i32[].filled(n, 0);
+  trimmed.copyFrom(out, 0, 0, n);
+  return trimmed;
+}
+
+// JavaScript's comparison of two strings: code unit by code unit.
+export i32 compareUtf16(string a, string b) {
+  i32[] x = utf16Units(a);
+  i32[] y = utf16Units(b);
+  for (i32 i = 0; i < x.len() && i < y.len(); i++) {
+    if (x[i] != y[i]) { return x[i] < y[i] ? -1 : 1; }
+  }
+  return x.len() < y.len() ? -1 : (x.len() > y.len() ? 1 : 0);
+}
+
+// String(x) for a JavaScript number.
+export string jsNumber(f64 x) {
+  if (x != x) { return "NaN"; }
+  if (x == 1.0 / 0.0) { return "Infinity"; }
+  if (x == -1.0 / 0.0) { return "-Infinity"; }
+  return string.fromBytes(stringify(JsonValue.Number(x, u8[]())));
+}

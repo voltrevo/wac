@@ -1,0 +1,97 @@
+// The core model against autonag's own TypeScript: test/data/fold_cases.jsonl is what
+// shared/projection.ts and shared/color.ts answered (tools/oracle.ts), and every line must come out the
+// same here — the state on the wire, its canonical text and checksum, and the alarm's colours.
+
+import { Vec, Buf, flatten } from "core";
+import { Sys } from "std";
+import { json.parse, json.stringify, json.JsonValue, json.JsonObject } from "wac";
+import { StoredEvent, storedEventFrom } from "../src/model/events.wac";
+import { ProjectedState, foldEvents, toWire, fromWire, checksum, canonicalize } from "../src/model/state.wac";
+import { calculateColor, ColorInfo } from "../src/model/color.wac";
+import { jsNumber } from "../src/model/jsstring.wac";
+
+// JSON equality as a reader of it sees it: objects by their members whatever their order, arrays in order.
+bool same(JsonValue a, JsonValue b) {
+  match (a) {
+    Object(x): {
+      JsonObject? y = b.object();
+      if (y is null || x.len() != y!.len()) { return false; }
+      for (i32 i = 0; i < x.len(); i++) {
+        JsonValue? other = y!.get(x.at(i).key);
+        if (other is null || !same(x.at(i).value, other!)) { return false; }
+      }
+      return true;
+    }
+    Array(xs): {
+      if (b.array() is null || b.array()!.len() != xs.len()) { return false; }
+      for (i32 i = 0; i < xs.len(); i++) { if (!same(xs.get(i), b.array()!.get(i))) { return false; } }
+      return true;
+    }
+    default: { return string.fromBytes(stringify(a)) == string.fromBytes(stringify(b)); }
+  }
+}
+
+string[] lines(Sys sys, string path) {
+  string all = string.fromBytes(flatten(sys.files().readFile(path).wait()).unwrap());
+  Vec<string> out;
+  string rest = all;
+  while (rest.len() > 0) {
+    i32 nl = rest.indexOf("\n");
+    string line = nl < 0 ? rest : rest.slice(0, nl);
+    if (line.len() > 0) { out.push(line); }
+    rest = nl < 0 ? "" : rest.slice(nl + 1, rest.len());
+  }
+  return out.toArray();
+}
+
+export string test_folds_agree_with_autonags_typescript(Sys sys) {
+  string[] ls = lines(sys, "test/data/fold_cases.jsonl");
+  i32 folds = 0;
+  for (i32 n = 0; n < ls.len(); n++) {
+    JsonValue c = parse(ls[n].toBytes()).unwrap();
+    if (c.member("kind")!.text()! != "fold") { continue; }
+    folds++;
+    Vec<StoredEvent> evs;
+    for (i32 i = 0; i < c.member("events")!.array()!.len(); i++) {
+      match (storedEventFrom(c.member("events")!.array()!.get(i))) {
+        Ok(e): { evs.push(e); }
+        Err(msg): { return "case \{n}: event \{i}: \{msg}"; }
+      }
+    }
+    ProjectedState s = foldEvents(ProjectedState.empty(), evs);
+    f64 now = c.member("now")!.number()!;
+    string canon = canonicalize(s);
+    if (canon != c.member("canonical")!.text()!) { return "case \{n}: canonical\n  got  \{canon}\n  want \{c.member("canonical")!.text()!}"; }
+    if (checksum(s) != c.member("checksum")!.text()!) { return "case \{n}: checksum \{checksum(s)}, want \{c.member("checksum")!.text()!}"; }
+    JsonValue wire = toWire(s, now);
+    if (!same(wire, c.member("wire")!)) {
+      return "case \{n}: wire\n  got  \{string.fromBytes(stringify(wire))}\n  want \{string.fromBytes(stringify(c.member("wire")!))}";
+    }
+    // A client seeded from the wire derives the same state.
+    ProjectedState back = fromWire(wire).unwrap();
+    if (checksum(back) != checksum(s)) { return "case \{n}: fromWire changed the checksum"; }
+  }
+  return folds >= 100 ? "" : "only \{folds} fold cases";
+}
+
+f64 numberOf(string t) {
+  if (t == "Infinity") { return 1.0 / 0.0; }
+  if (t == "-Infinity") { return -1.0 / 0.0; }
+  if (t == "NaN") { return 0.0 / 0.0; }
+  return parse(t.toBytes()).unwrap().number()!;
+}
+
+export string test_colors_agree_with_autonags_typescript(Sys sys) {
+  string[] ls = lines(sys, "test/data/fold_cases.jsonl");
+  string bad = "";
+  for (i32 n = 0; n < ls.len(); n++) {
+    JsonValue c = parse(ls[n].toBytes()).unwrap();
+    if (c.member("kind")!.text()! != "color") { continue; }
+    string t = c.member("t")!.text()!;
+    ColorInfo r = calculateColor(numberOf(t));
+    string got = "\{r.color} \{jsNumber(r.colorProgress)} \{jsNumber(r.nextUpdateIn)} \{r.nextColor}";
+    string want = "\{c.member("color")!.text()!} \{c.member("progress")!.text()!} \{c.member("nextUpdateIn")!.text()!} \{c.member("nextColor")!.text()!}";
+    if (got != want) { bad += "t=\{t}: got \{got}, want \{want}\n"; }
+  }
+  return bad;
+}

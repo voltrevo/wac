@@ -1,0 +1,303 @@
+// The fold from events to state, used by the server and by a client: a port of autonag's
+// shared/projection.ts, which both sides of autonag run so that their states, and the checksum over
+// them, agree.
+
+import { Result, Vec, Map, hashString, stringEq, Buf } from "core";
+import { json.JsonValue, json.JsonArray } from "wac";
+import { Timer, AppEvent, StoredEvent, timerFrom } from "./events.wac";
+import { calculateColor } from "./color.wac";
+import { Obj, num, str, arr, textOf } from "./jsonkit.wac";
+import { utf16Units, compareUtf16, jsNumber } from "./jsstring.wac";
+
+// How far back a skip may reach, and so how many events a replica must keep to honour one itself.
+export static i32 SKIP_DEPTH_LIMIT = 1000;
+
+// Beyond this many deltas, sending a fresh base is cheaper than catching up.
+export static i32 MAX_DELTA = 1000;
+
+// Timers by id, in the order a JavaScript object keeps its keys, since the wire's list of timers is
+// `Object.values` of autonag's map: keys that are array indices ("0", "17") first, in numeric order,
+// then the rest in the order they were first set. Setting a key already there keeps its place.
+export struct TimerMap {
+  Vec<string> order;
+  Map<string, Timer> byId;
+
+  TimerMap create() { return TimerMap(Vec.create(), Map.create(hashString, stringEq)); }
+
+  i32 len(const this) { return this.order.len(); }
+
+  Timer? get(this, string id) { return this.byId.get(id); }
+
+  Timer at(this, i32 i) { return this.byId.get(this.order.get(i))!; }
+
+  void set(this, Timer t) {
+    if (!this.byId.has(t.id)) {
+      i64 idx = arrayIndex(t.id);
+      if (idx < 0) {
+        this.order.push(t.id);
+      } else {
+        i32 at = 0;
+        while (at < this.order.len()) {
+          i64 k = arrayIndex(this.order.get(at));
+          if (k < 0 || k > idx) { break; }
+          at++;
+        }
+        this.order.insert(at, t.id);
+      }
+    }
+    this.byId.set(t.id, t);
+  }
+
+  void remove(this, string id) {
+    if (!this.byId.has(id)) { return; }
+    this.byId.remove(id);
+    for (i32 i = 0; i < this.order.len(); i++) {
+      if (this.order.get(i) == id) { this.order.remove(i); return; }
+    }
+  }
+
+  TimerMap copy(this) {
+    TimerMap m = TimerMap.create();
+    for (i32 i = 0; i < this.order.len(); i++) { m.order.push(this.order.get(i)); }
+    string[] ks = this.byId.keys();
+    for (string k in ks) { m.byId.set(k, this.byId.get(k)!); }
+    return m;
+  }
+}
+
+// A key's value as a JavaScript array index (a canonical integer below 2^32 - 1), or -1 when it is not one.
+export i64 arrayIndex(string key) {
+  u8[] b = key.toBytes();
+  if (b.len() == 0 || b.len() > 10) { return -1; }
+  if (b[0] == '0' && b.len() > 1) { return -1; }
+  i64 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0') as i64;
+  }
+  return v < 4294967295 ? v : -1;
+}
+
+// Projected state: a pure, time-independent function of the log. The alarm depends on the time and is
+// derived when read (deriveAlarm), never kept.
+export struct ProjectedState {
+  TimerMap timers;
+  f64? shush;                 // the shush's expiry, when there is one
+  string? defaultAnchorTime;  // the instance-wide day/week anchor ("HH:MM"), absent until set
+
+  ProjectedState empty() { return ProjectedState(TimerMap.create(), null, null); }
+
+  ProjectedState copy(this) { return ProjectedState(this.timers.copy(), this.shush, this.defaultAnchorTime); }
+}
+
+// Folds one event into the state, in place. Every event type is known here, so unlike autonag's this
+// cannot meet one it does not handle: an unknown type is refused when the event is read (eventFrom).
+export void applyEvent(ProjectedState s, const AppEvent e) {
+  match (e) {
+    TimerAdded(t): { s.timers.set(t.copy()); }
+    TimerExpiryUpdated(id, x): {
+      Timer? t = s.timers.get(id);
+      if (t is not null) { Timer n = t!.copy(); n.currentExpiry = x; s.timers.set(n); }
+    }
+    TimerCompleted(id, why): { s.timers.remove(id); }
+    TimerRemoved(id): { s.timers.remove(id); }
+    Shushed(x): { s.shush = x; }
+    ShushCleared: { s.shush = null; }
+    TimerRecurred(id, why, at, x): {
+      Timer? t = s.timers.get(id);
+      if (t is not null) { Timer n = t!.copy(); n.currentExpiry = x; s.timers.set(n); }
+    }
+    TimerNameUpdated(id, name): {
+      Timer? t = s.timers.get(id);
+      if (t is not null) { Timer n = t!.copy(); n.name = name; s.timers.set(n); }
+    }
+    TimerRecurrenceUpdated(id, r, x): {
+      Timer? t = s.timers.get(id);
+      // Gaining a recurrence supersedes a per-timer anchor: the recurrence's anchor is now the timer's.
+      if (t is not null) { Timer n = t!.copy(); n.anchorTime = null; n.recurrence = r; n.currentExpiry = x; s.timers.set(n); }
+    }
+    TimerRecurrenceRemoved(id): {
+      Timer? t = s.timers.get(id);
+      if (t is not null) { Timer n = t!.copy(); n.recurrence = null; s.timers.set(n); }
+    }
+    TimerDescriptionUpdated(id, d): {
+      Timer? t = s.timers.get(id);
+      if (t is not null) {
+        Timer n = t!.copy();
+        if (d == "") { n.description = null; } else { n.description = d; }
+        s.timers.set(n);
+      }
+    }
+    TimerAnchorUpdated(id, a): {
+      Timer? t = s.timers.get(id);
+      if (t is not null) { Timer n = t!.copy(); n.anchorTime = a; s.timers.set(n); }
+    }
+    InstanceDefaultAnchorSet(a): { s.defaultAnchorTime = a; }
+    // History only: no effect on state.
+    TimerCompletionLogged(id, why, at): {}
+    // These change which events count, which is resolved before the fold (skippedIds).
+    EventSkipped(t): {}
+    EventUnskipped(t): {}
+  }
+}
+
+// Which events a run of the log excludes: those marked skipped on the envelope (the old, immutable
+// flag) and those a live EventSkipped targets. One pass is enough because skips never nest: the API
+// refuses a skip whose target is a skip.
+export Map<string, bool> skippedIds(const Vec<StoredEvent> events) {
+  Map<string, bool> ids = Map.create(hashString, stringEq);
+  for (i32 i = 0; i < events.len(); i++) {
+    const StoredEvent e = events.get(i);
+    if (e.skipped) { ids.set(e.id, true); }
+    match (e.payload) {
+      EventSkipped(t): { if (e.type == "EventSkipped") { ids.set(t, true); } }
+      EventUnskipped(t): { if (e.type == "EventUnskipped") { ids.remove(t); } }
+      default: {}
+    }
+  }
+  return ids;
+}
+
+// Folds a run of stored events onto a copy of `base`. A skipped event is not folded: it never happened.
+export ProjectedState foldEvents(ProjectedState base, const Vec<StoredEvent> events) {
+  Map<string, bool> excluded = skippedIds(events);
+  ProjectedState s = base.copy();
+  for (i32 i = 0; i < events.len(); i++) {
+    const StoredEvent e = events.get(i);
+    if (excluded.has(e.id)) { continue; }
+    applyEvent(s, e.payload);
+  }
+  return s;
+}
+
+// ── read-time derivation ──
+
+export struct Alarm {
+  bool on;
+  f64? startsAt;
+  string? urgentName;
+  string color;
+
+  JsonValue toJson(this) {
+    return Obj.create().put("on", JsonValue.Bool(this.on)).put("startsAt", this.startsAt is null ? JsonValue.Null : num(this.startsAt!))
+      .put("urgentName", this.urgentName is null ? JsonValue.Null : str(this.urgentName!)).put("color", str(this.color)).done();
+  }
+}
+
+// The alarm at `now`: the most urgent timer (the last of those that tie, as autonag's reduce picks),
+// ringing once it is due unless a shush covers now.
+export Alarm deriveAlarm(ProjectedState s, f64 now) {
+  if (s.timers.len() == 0) { return Alarm(false, null, null, "blue"); }
+  Timer urgent = s.timers.at(0);
+  for (i32 i = 1; i < s.timers.len(); i++) {
+    Timer b = s.timers.at(i);
+    if (!(urgent.currentExpiry < b.currentExpiry)) { urgent = b; }
+  }
+  f64 remaining = urgent.currentExpiry - now;
+  bool shushActive = s.shush is not null && s.shush! > now;
+  return Alarm(remaining <= 0.0 && !shushActive, urgent.currentExpiry, urgent.name, calculateColor(remaining).color);
+}
+
+// The state as the API and a snapshot send it: the timers as a list, the shush, the alarm at `now`, and
+// the default anchor when it is set.
+export JsonValue toWire(ProjectedState s, f64 now) {
+  JsonArray ts = JsonArray.create();
+  for (i32 i = 0; i < s.timers.len(); i++) { ts.push(s.timers.at(i).toJson()); }
+  Obj o = Obj.create().put("timers", arr(ts));
+  o.put("shush", s.shush is null ? JsonValue.Null : Obj.create().put("expiry", num(s.shush!)).done());
+  o.put("alarm", deriveAlarm(s, now).toJson());
+  if (s.defaultAnchorTime is not null) { o.put("defaultAnchorTime", str(s.defaultAnchorTime!)); }
+  return o.done();
+}
+
+// State from the wire shape, as a client seeding itself from a snapshot does.
+export Result<ProjectedState, string> fromWire(JsonValue w) {
+  ProjectedState s = ProjectedState.empty();
+  JsonArray? ts = w.member("timers")?.array();
+  if (ts is null) { return Result.Err("timers must be a list"); }
+  for (i32 i = 0; i < ts!.len(); i++) { s.timers.set(try timerFrom(ts!.get(i))); }
+  JsonValue? sh = w.member("shush");
+  if (sh is not null && !sh!.isNull()) { s.shush = sh!.member("expiry")?.number(); }
+  if (w.member("defaultAnchorTime") is not null) { s.defaultAnchorTime = try textOf(w, "defaultAnchorTime"); }
+  return Result.Ok(s);
+}
+
+// ── the checksum ──
+//
+// Lets a client confirm cheaply that it derived the state the server did. It must be autonag's exactly,
+// byte for byte, while clients of both kinds exist: so strings are measured and hashed as JavaScript sees
+// them, in UTF-16 code units, and numbers are written as JavaScript's String() writes them.
+
+void strPart(Buf b, string s) {
+  b.pushStr("\{utf16Units(s).len()}:");
+  b.pushStr(s);
+}
+
+void canonicalTimer(Buf b, Timer t) {
+  strPart(b, t.id);
+  b.pushStr("|");
+  strPart(b, t.name);
+  b.pushStr("|" + jsNumber(t.created) + "|" + jsNumber(t.currentExpiry) + "|");
+  if (t.description is not null) { b.pushStr("d"); strPart(b, t.description!); } else { b.pushStr("d-"); }
+  b.pushStr("|");
+  if (t.anchorTime is not null) { b.pushStr("a"); strPart(b, t.anchorTime!); } else { b.pushStr("a-"); }
+  b.pushStr("|");
+  if (t.recurrence is not null) {
+    b.pushStr("r" + jsNumber(t.recurrence!.periodDays) + ",");
+    strPart(b, t.recurrence!.anchorTime);
+    b.pushStr(",");
+    strPart(b, t.recurrence!.timezone);
+    b.pushStr(t.recurrence!.skipWeekends ? ",1" : ",0");
+  } else {
+    b.pushStr("r-");
+  }
+}
+
+export string canonicalize(ProjectedState s) {
+  string[] ids = s.timers.byId.keys();
+  sortUtf16(ids);
+  Buf b = Buf.create();
+  b.pushStr("t[");
+  for (i32 i = 0; i < ids.len(); i++) {
+    if (i > 0) { b.pushStr(";"); }
+    canonicalTimer(b, s.timers.get(ids[i])!);
+  }
+  b.pushStr("]s[" + (s.shush is null ? "-" : jsNumber(s.shush!)) + "]a[");
+  if (s.defaultAnchorTime is not null) { strPart(b, s.defaultAnchorTime!); } else { b.pushStr("-"); }
+  b.pushStr("]");
+  return b.toStr();
+}
+
+// FNV-1a over the UTF-16 code units, twice with different bases, for 64 bits of output as 16 hex digits.
+u32 fnv1a(const i32[] units, u32 basis) {
+  u32 h = basis;
+  for (i32 i = 0; i < units.len(); i++) {
+    h = (h ^ (units[i] as! u32)) * 0x01000193;
+  }
+  return h;
+}
+
+string hex8(u32 v) {
+  string digits = "0123456789abcdef";
+  Buf b = Buf.create();
+  for (i32 i = 7; i >= 0; i--) {
+    i32 d = ((v >> ((i * 4) as! u32)) & 15) as! i32;
+    b.pushStr(digits.slice(d, d + 1));
+  }
+  return b.toStr();
+}
+
+export string checksum(ProjectedState s) {
+  i32[] units = utf16Units(canonicalize(s));
+  return hex8(fnv1a(units, 0x811c9dc5)) + hex8(fnv1a(units, 0x9dc5811c));
+}
+
+// JavaScript's default sort of strings: by UTF-16 code units.
+void sortUtf16(string[] a) {
+  for (i32 i = 1; i < a.len(); i++) {
+    string v = a[i];
+    i32 j = i - 1;
+    while (j >= 0 && compareUtf16(a[j], v) > 0) { a[j + 1] = a[j]; j--; }
+    a[j + 1] = v;
+  }
+}
