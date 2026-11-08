@@ -3,7 +3,7 @@
 // them, agree.
 
 import { Result, Vec, Map, hashString, stringEq, Buf } from "core";
-import { json.JsonValue, json.JsonArray } from "wac";
+import { json.JsonValue, json.JsonArray, json.JsonObject } from "wac";
 import { Timer, AppEvent, StoredEvent, timerFrom } from "./events.wac";
 import { calculateColor } from "./color.wac";
 import { Obj, num, str, arr, textOf } from "./jsonkit.wac";
@@ -300,4 +300,34 @@ void sortUtf16(string[] a) {
     while (j >= 0 && compareUtf16(a[j], v) > 0) { a[j + 1] = a[j]; j--; }
     a[j + 1] = v;
   }
+}
+
+// ── snapshots ──
+//
+// A snapshot holds the projected state as autonag's server stores it, JSON.stringify of its
+// ProjectedState: timers as an object by id (in the map's order), the shush, and the default anchor
+// when set. Read back, the object's keys go into a TimerMap in JSON.parse's order, which is the order
+// JavaScript would hold them in.
+
+export JsonValue stateJson(ProjectedState s) {
+  Obj timers = Obj.create();
+  for (i32 i = 0; i < s.timers.len(); i++) {
+    Timer t = s.timers.at(i);
+    timers.put(t.id, t.toJson());
+  }
+  Obj o = Obj.create().put("timers", timers.done());
+  o.put("shush", s.shush is null ? JsonValue.Null : Obj.create().put("expiry", num(s.shush!)).done());
+  if (s.defaultAnchorTime is not null) { o.put("defaultAnchorTime", str(s.defaultAnchorTime!)); }
+  return o.done();
+}
+
+export Result<ProjectedState, string> stateFromJson(JsonValue v) {
+  ProjectedState s = ProjectedState.empty();
+  JsonObject? ts = v.member("timers")?.object();
+  if (ts is null) { return Result.Err("snapshot timers must be an object"); }
+  for (i32 i = 0; i < ts!.len(); i++) { s.timers.set(try timerFrom(ts!.at(i).value)); }
+  JsonValue? sh = v.member("shush");
+  if (sh is not null && !sh!.isNull()) { s.shush = sh!.member("expiry")?.number(); }
+  if (v.member("defaultAnchorTime") is not null) { s.defaultAnchorTime = try textOf(v, "defaultAnchorTime"); }
+  return Result.Ok(s);
 }

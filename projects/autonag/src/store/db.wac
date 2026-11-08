@@ -1,0 +1,212 @@
+// The database: autonag's own schema and migrations, over wac-sqlite, so the wac server opens the
+// database file autonag's server writes, and the other way round. A port of server/src/db.ts.
+//
+// `Ctx` carries what the store needs from outside it — the database, the clock and randomness — so tests
+// can fix all three.
+
+import { Result, Vec } from "core";
+import { Connection, Value, Rows, SqlError } from "sqlite";
+
+export struct Ctx {
+  Connection db;
+  fn<i64()> now;               // Date.now()
+  fn<u8[](i32)> random;        // crypto.getRandomValues
+  i64 snapshotInterval = 100;  // config.snapshotInterval
+  i64 skipDepthLimit = 1000;   // config.skipDepthLimit
+
+  // A statement, failing loudly: the schema is the store's own, so an error here is a bug, not input.
+  Rows q(this, string sql, Value[] params) {
+    match (this.db.execute(sql, params)) {
+      Ok(r): { return r; }
+      Err(e): { trap "\{sql}: \{e.describe()}"; }
+    }
+  }
+
+  void exec(this, string sql) {
+    match (this.db.exec(sql)) {
+      Ok(r): {}
+      Err(e): { trap "\{e.describe()}"; }
+    }
+  }
+
+  // crypto.randomUUID(): version 4, variant 1, lower-case hex in 8-4-4-4-12.
+  string uuid(this) {
+    u8[] b = this.random(16);
+    b[6] = (b[6] & 0x0F) | 0x40;
+    b[8] = (b[8] & 0x3F) | 0x80;
+    string h = hex(b);
+    return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20, 32);
+  }
+}
+
+export string hex(const u8[] b) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 v = b[i] as i32;
+    out += digits.slice(v >> 4, (v >> 4) + 1) + digits.slice(v & 15, (v & 15) + 1);
+  }
+  return out;
+}
+
+// ── reading rows ──
+
+export Value txt(string s) { return Value.Text(s); }
+export Value int(i64 i) { return Value.Int(i); }
+
+export string? textAt(const Value[] row, i32 i) {
+  string? out = null;
+  match (row[i]) { Text(s): { out = s; } default: {} }
+  return out;
+}
+
+export i64? intAt(const Value[] row, i32 i) {
+  i64? out = null;
+  match (row[i]) { Int(n): { out = n; } Real(r): { out = r as~ i64; } default: {} }
+  return out;
+}
+
+// The first row's first column as an integer (MAX(seq) and the like), or null.
+export i64? scalarInt(Rows r) { return r.rows.len() == 0 ? null : intAt(r.rows.get(0), 0); }
+
+// ── the schema ──
+
+// Opens the store on a connection: WAL and foreign keys on, as autonag's server sets them, and every
+// migration not yet run, run.
+export void migrate(Ctx c) {
+  c.exec("PRAGMA journal_mode=WAL");
+  c.exec("PRAGMA foreign_keys=ON");
+  c.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);");
+  i64 current = scalarInt(c.q("SELECT version FROM schema_version LIMIT 1", Value[]())) ?? 0;
+  if (current < 1) {
+    c.exec("""
+      CREATE TABLE devices (
+        id TEXT PRIMARY KEY,
+        nickname TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        approved_at INTEGER
+      );
+
+      CREATE TABLE instances (
+        id TEXT PRIMARY KEY,
+        nickname TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        approved_at INTEGER
+      );
+
+      CREATE TABLE device_instance_access (
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        granted_at INTEGER NOT NULL,
+        PRIMARY KEY (device_id, instance_id)
+      );
+
+      -- Append-only event log, sequenced per instance
+      CREATE TABLE events (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        UNIQUE (instance_id, seq)
+      );
+      CREATE INDEX events_by_instance_seq ON events(instance_id, seq);
+
+      -- Cached state snapshots (state after applying events 1..seq)
+      CREATE TABLE snapshots (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (instance_id, seq)
+      );
+      CREATE INDEX snapshots_by_instance_seq ON snapshots(instance_id, seq);
+
+      -- Skipped events (outside event history — mutable, not append-only)
+      CREATE TABLE skipped_events (
+        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE PRIMARY KEY,
+        skipped_at INTEGER NOT NULL
+      );
+
+      -- Imported legacy logs (stored as-is, not part of event stream)
+      CREATE TABLE import_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        details TEXT
+      );
+      CREATE INDEX import_logs_by_instance ON import_logs(instance_id, timestamp);
+
+      INSERT INTO schema_version VALUES (1);
+    """);
+  }
+  if (current < 2) {
+    c.exec("""
+      CREATE TABLE comments (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        device_id TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX comments_by_thread ON comments(instance_id, thread_id, created_at);
+
+      UPDATE schema_version SET version = 2;
+    """);
+  }
+  if (current < 3) {
+    c.exec("""
+      CREATE TABLE instance_access_requests (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        requested_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        resolved_at INTEGER,
+        UNIQUE(instance_id, device_id)
+      );
+      CREATE INDEX access_requests_by_instance ON instance_access_requests(instance_id, status);
+
+      UPDATE schema_version SET version = 3;
+    """);
+  }
+  if (current < 4) {
+    c.exec("""
+      ALTER TABLE instances ADD COLUMN requested_by TEXT REFERENCES devices(id) ON DELETE SET NULL;
+
+      UPDATE schema_version SET version = 4;
+    """);
+  }
+  if (current < 5) {
+    c.exec("""
+      CREATE TABLE invite_links (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        used_by_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL
+      );
+      CREATE INDEX invite_links_by_instance ON invite_links(instance_id);
+
+      UPDATE schema_version SET version = 5;
+    """);
+  }
+  if (current < 6) {
+    // Skips made before EventSkipped existed are recorded on the event they undo, as `legacySkipped` in
+    // its payload; skipped_events is left in place, as autonag's migration leaves it.
+    Rows legacy = c.q("SELECT event_id FROM skipped_events", Value[]());
+    c.exec("BEGIN");
+    for (i32 i = 0; i < legacy.rows.len(); i++) {
+      c.q("UPDATE events SET payload = json_set(payload, '$.legacySkipped', json('true')) WHERE id = ?",
+          [legacy.rows.get(i)[0]]);
+    }
+    c.exec("UPDATE schema_version SET version = 6");
+    c.exec("COMMIT");
+  }
+}

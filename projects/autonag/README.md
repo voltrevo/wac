@@ -13,7 +13,7 @@ existing React client is the integration test for the new server. The web client
 | --- | --- | --- |
 | 1 | The core: events, the fold to state, the alarm, the wire shape, the state checksum | done |
 | 2 | Time zones (TZif), anchors, durations, recurrence, natural-language times | done |
-| 3 | Storage: autonag's own SQLite schema, through [wac-sqlite](https://git.voltrevo.com/wac-sqlite) | |
+| 3 | Storage: autonag's own SQLite schema, through [wac-sqlite](https://git.voltrevo.com/wac-sqlite) | done |
 | 4 | The HTTP API: every route, batch actions, import, auth, rate limits | |
 | 5 | The WebSocket protocol | |
 | 6 | The CLI and admin tools | |
@@ -41,6 +41,24 @@ validations — over twenty zones chosen for their DST oddities, and `test/time_
 the host's tz database (`src/time/tz.wac` reads its TZif files and the POSIX rule after their last
 transition; names it no longer carries as files are found through `tzdata.zi`'s links).
 
+The store is checked both ways on the database file itself: `tools/oracle_store.ts` has autonag's
+server code write events, skips and unskips (snapshots every 7, skips reaching back 30) and record what
+it answers, and `test/store_test.wac` opens that file and must answer the same; `tools/store_writer.wac`
+has the wac store write one, and `tools/check_store.ts` has autonag's code read it back and agree, SQLite's
+integrity check included.
+
 What JavaScript decides is reproduced on purpose: the checksum hashes UTF-16 code units, numbers are
 written as `String()` writes them, timers come in the order a JavaScript object keeps its keys (array
 indices first), and the most urgent of two timers due at once is the later one.
+
+## Found in autonag along the way
+
+**A fold can count an event the log currently skips.** `foldEvents` starts from each event's
+`skipped` flag, which `getEvents` sets from the whole log's current skip set, and then replays the
+`EventSkipped` and `EventUnskipped` events inside the range it folds. For an event skipped, unskipped and
+skipped again, a range that holds the unskip but not the second skip clears the exclusion the flag
+already says is current, so the event is folded in. `computeState` and `computeStateAt` fold such a range
+after their snapshot (snapshots themselves use the flags alone, and are right), and so does a client
+catching up. Seen on every seed `tools/oracle_store.ts` was run with. The port keeps the behaviour, since
+its checksums must match autonag's until the switch-over; the fix (fold with the flags alone, or resolve
+skips over the whole log before folding a range) belongs in both at once.

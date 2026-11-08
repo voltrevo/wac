@@ -1,0 +1,62 @@
+// The store against autonag's own: test/data/store_ts.db was written by autonag's server/src/events.ts
+// (tools/oracle_store.ts, snapshots every 7 events, skips reaching back 30), and store_ts.json is what it
+// answered about it. The wac store opens the same file and must answer the same.
+
+import { Vec, Map, flatten } from "core";
+import { Sys } from "std";
+import { json.parse, json.stringify, json.JsonValue, json.JsonArray } from "wac";
+import { SqliteFile } from "sqlite";
+import { Ctx, migrate } from "../src/store/db.wac";
+import { latestSeq, computeState, computeStateFromScratch, computeStateAt, skippedEventIds, allSnapshots,
+         seqBeforeTimestamp, SnapshotInfo } from "../src/store/eventstore.wac";
+import { ProjectedState, checksum, toWire } from "../src/model/state.wac";
+
+Ctx open(Sys sys, string path) {
+  SqliteFile f = SqliteFile.open(sys.files(), path).unwrap();
+  Ctx c = Ctx { db: f.conn, now: () => 1700000099000 as i64, random: (i32 n) => u8[].filled(n, 7), snapshotInterval: 7, skipDepthLimit: 30 };
+  migrate(c);
+  return c;
+}
+
+string js(JsonValue v) { return string.fromBytes(stringify(v)); }
+
+export string test_reads_what_autonags_store_wrote(Sys sys) {
+  // A copy: opening runs the migrations, which must change nothing in a current database, but the
+  // fixture is not the place to find out.
+  sys.files().mkdir("dist", true).wait();
+  sys.files().writeFile("dist/store_ts_copy.db", flatten(sys.files().readFile("test/data/store_ts.db").wait()).unwrap()).wait();
+  Ctx c = open(sys, "dist/store_ts_copy.db");
+  JsonValue want = parse(flatten(sys.files().readFile("test/data/store_ts.json").wait()).unwrap()).unwrap();
+  JsonValue insts = want.member("instances")!;
+  string bad = "";
+  for (string inst in ["inst-a", "inst-b", "inst-c"]) {
+    JsonValue w = insts.member(inst)!;
+    i64 latest = latestSeq(c, inst);
+    if (latest != w.member("latest")!.number()! as~ i64) { bad += "\{inst}: latest \{latest}\n"; }
+    if (checksum(computeState(c, inst)) != w.member("checksum")!.text()!) { bad += "\{inst}: checksum\n"; }
+    if (checksum(computeStateFromScratch(c, inst)) != w.member("scratch")!.text()!) { bad += "\{inst}: scratch\n"; }
+    JsonValue at = w.member("at")!;
+    for (i32 k = 0; k < at.object()!.len(); k++) {
+      string q = at.object()!.at(k).keyStr();
+      i64 qi = parse(q.toBytes()).unwrap().number()! as~ i64;
+      ProjectedState? st = computeStateAt(c, inst, qi);
+      string got = st is null ? "null" : checksum(st!);
+      if (got != at.object()!.at(k).value.text()!) { bad += "\{inst}: at \{q}: \{got}\n"; }
+    }
+    Map<string, bool> sk = skippedEventIds(c, inst);
+    JsonArray ws = w.member("skipped")!.array()!;
+    if (sk.len() != ws.len()) { bad += "\{inst}: \{sk.len()} skipped, want \{ws.len()}\n"; }
+    for (i32 k = 0; k < ws.len(); k++) { if (!sk.has(ws.get(k).text()!)) { bad += "\{inst}: \{ws.get(k).text()!} not skipped\n"; } }
+    Vec<SnapshotInfo> snaps = allSnapshots(c, inst);
+    JsonArray wsn = w.member("snapshots")!.array()!;
+    string gs = "";
+    string wss = "";
+    for (i32 k = 0; k < snaps.len(); k++) { gs += "\{snaps.get(k).seq},"; }
+    for (i32 k = 0; k < wsn.len(); k++) { wss += "\{wsn.get(k).number()! as~ i64},"; }
+    if (gs != wss) { bad += "\{inst}: snapshots \{gs} want \{wss}\n"; }
+    if (seqBeforeTimestamp(c, inst, 1700000200000) != w.member("before")!.number()! as~ i64) { bad += "\{inst}: before\n"; }
+    string wire = js(toWire(computeState(c, inst), 1700000050000.0));
+    if (wire != js(w.member("wire")!)) { bad += "\{inst}: wire\n  got  \{wire}\n  want \{js(w.member("wire")!)}\n"; }
+  }
+  return bad;
+}

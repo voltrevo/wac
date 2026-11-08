@@ -1,0 +1,78 @@
+// The wac store writing a database of random events, skips and unskips, and what it answers about it,
+// for tools/check_store.ts to have autonag's own server code read the same file and agree:
+//
+//     wac run --allow-read --allow-write tools/store_writer.wac -- dist/store_wac.db 7 > dist/store_wac.json
+
+import { Sys } from "std";
+import { Vec, Buf, flatten } from "core";
+import { json.stringify, json.JsonValue, json.JsonArray } from "wac";
+import { SqliteFile } from "sqlite";
+import { Ctx, migrate, txt, int } from "../src/store/db.wac";
+import { appendEvent, skipEvent, unskipEvent, latestSeq, computeState, getEvents, messageOf, skippedEventIds } from "../src/store/eventstore.wac";
+import { AppEvent, StoredEvent, Timer } from "../src/model/events.wac";
+import { checksum, toWire } from "../src/model/state.wac";
+import { Obj, str, num, arr } from "../src/model/jsonkit.wac";
+
+struct Rng {
+  u64 s;
+  i32 below(this, i32 n) {
+    this.s = this.s * 6364136223846793005 + 1442695040888963407;
+    return ((this.s >> 33) % (n as! u64)) as! i32;
+  }
+}
+
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  string path = args[0];
+  for (string side in ["", "-journal", "-wal", "-shm"]) { sys.files().remove(path + side, false).wait(); }
+  Rng r = Rng(((args.len() > 1 ? args[1].toBytes()[0] : '1') as u64) * 7919);
+  SqliteFile f = SqliteFile.open(sys.files(), path).unwrap();
+  i64[] clock = [1700000000000 as i64];
+  Ctx c = Ctx { db: f.conn, now: () => clock[0], random: (i32 n) => flatten(sys.random().bytes(n).wait()).unwrap(),
+                snapshotInterval: 7, skipDepthLimit: 30 };
+  migrate(c);
+  string[] insts = ["inst-a", "inst-b", "inst-c"];
+  for (string id in insts) {
+    c.q("INSERT INTO instances (id, nickname, created_at, approved_at) VALUES (?, ?, ?, ?)", [txt(id), txt(id), int(1), int(1)]);
+  }
+  string[] tids = ["t1", "t2", "t3", "17"];
+  Vec<string> outcomes;
+  Vec<string>[] ids = [Vec<string>.create(), Vec<string>.create(), Vec<string>.create()];
+  for (i32 i = 0; i < 400; i++) {
+    clock[0] = 1700000000000 + (i as i64) * 1000;
+    i32 w = r.below(3);
+    string inst = insts[w];
+    i32 k = r.below(10);
+    if (k < 7 || ids[w].len() == 0) {
+      string tid = tids[r.below(4)];
+      f64 x = 1700000000000.0 + (r.below(100000) as f64);
+      AppEvent e = AppEvent.ShushCleared;
+      i32 kind = r.below(5);
+      if (kind == 0) { e = AppEvent.TimerAdded(Timer(tid, "n\{i}", null, 1700000000000.0 + (i as f64), x, null, null)); }
+      else if (kind == 1) { e = AppEvent.TimerExpiryUpdated(tid, x); }
+      else if (kind == 2) { e = AppEvent.TimerCompleted(tid, "pass"); }
+      else if (kind == 3) { e = AppEvent.Shushed(x); }
+      else { e = AppEvent.TimerNameUpdated(tid, "renamed \{i}"); }
+      ids[w].push(appendEvent(c, inst, e, clock[0]).id);
+    } else {
+      i32 from = ids[w].len() > 40 ? ids[w].len() - 40 : 0;
+      string target = ids[w].get(from + r.below(ids[w].len() - from));
+      string what = k < 9 ? "skip" : "unskip";
+      match (k < 9 ? skipEvent(c, target) : unskipEvent(c, target)) {
+        Ok(e): { outcomes.push("\{what} \{target} ok \{e.skipped}"); }
+        Err(err): { outcomes.push("\{what} \{target} \{messageOf(err)}"); }
+      }
+      Vec<StoredEvent> tail = getEvents(c, inst, latestSeq(c, inst), -1);
+      for (i32 t = 0; t < tail.len(); t++) { ids[w].push(tail.get(t).id); }
+    }
+  }
+  JsonArray oc = JsonArray.create();
+  for (i32 i = 0; i < outcomes.len(); i++) { oc.push(str(outcomes.get(i))); }
+  Obj per = Obj.create();
+  for (string inst in insts) {
+    per.put(inst, Obj.create().put("latest", num(latestSeq(c, inst) as~ f64)).put("checksum", str(checksum(computeState(c, inst))))
+      .put("wire", toWire(computeState(c, inst), 1700000050000.0)).put("skipped", num(skippedEventIds(c, inst).len() as f64)).done());
+  }
+  sys.stdout().line(string.fromBytes(stringify(Obj.create().put("outcomes", arr(oc)).put("instances", per.done()).done()))).wait();
+  return 0;
+}

@@ -1,0 +1,217 @@
+// The event store: appending to an instance's log, reading it back with skips resolved, undoing and
+// redoing events, and the snapshots that bound how much of a log a fold replays. A port of autonag's
+// server/src/events.ts, statement for statement where the SQL is concerned.
+
+import { Result, Vec, Map, hashString, stringEq } from "core";
+import { json.parse, json.stringify, json.JsonValue } from "wac";
+import { Value, Rows } from "sqlite";
+import { Ctx, txt, int, textAt, intAt, scalarInt } from "./db.wac";
+import { AppEvent, StoredEvent, eventFrom, payloadJson, typeOf } from "../model/events.wac";
+import { ProjectedState, applyEvent, foldEvents, stateJson, stateFromJson } from "../model/state.wac";
+
+export enum StoreError {
+  NotFound(string message),
+  // A skip that cannot be applied for a reason other than depth: nesting.
+  SkipNotAllowed(string message),
+  SkipDepth(string message),
+}
+
+export string messageOf(StoreError e) {
+  return match (e) { NotFound(m): m, SkipNotAllowed(m): m, SkipDepth(m): m };
+}
+
+// Appends an event, numbered one past the instance's last, and takes a snapshot when the number is a
+// multiple of the interval.
+export StoredEvent appendEvent(Ctx c, string instanceId, AppEvent e, i64 timestamp) {
+  string id = c.uuid();
+  i64 seq = latestSeq(c, instanceId) + 1;
+  string payload = string.fromBytes(stringify(payloadJson(e)));
+  c.q("INSERT INTO events (id, instance_id, seq, type, payload, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+      [txt(id), txt(instanceId), int(seq), txt(typeOf(e)), txt(payload), int(timestamp)]);
+  StoredEvent stored = StoredEvent(id, instanceId, seq, typeOf(e), e, timestamp, false);
+  if (seq % c.snapshotInterval == 0) { storeSnapshot(c, instanceId, seq, computeState(c, instanceId)); }
+  return stored;
+}
+
+// An event from its row. `legacySkipped` (a skip made before EventSkipped existed) comes off the payload
+// and onto the envelope here, the one place rows become events.
+StoredEvent? eventOfRow(Value[] row, Map<string, bool> skipped) {
+  string id = textAt(row, 0)!;
+  string type = textAt(row, 3)!;
+  JsonValue? p = parse((textAt(row, 4) ?? "").toBytes()).ok();
+  if (p is null) { return null; }
+  bool legacy = p!.member("legacySkipped")?.boolean() ?? false;
+  match (eventFrom(type, p!)) {
+    Ok(e): { return StoredEvent(id, textAt(row, 1)!, intAt(row, 2)!, type, e, intAt(row, 5)!, legacy || skipped.has(id)); }
+    Err(msg): { return null; }
+  }
+}
+
+// An instance's events from `fromSeq` to `toSeq` (to the end when it is negative), in order.
+export Vec<StoredEvent> getEvents(Ctx c, string instanceId, i64 fromSeq, i64 toSeq) {
+  Rows r = toSeq >= 0
+    ? c.q("SELECT id, instance_id, seq, type, payload, timestamp FROM events WHERE instance_id = ? AND seq >= ? AND seq <= ? ORDER BY seq",
+          [txt(instanceId), int(fromSeq), int(toSeq)])
+    : c.q("SELECT id, instance_id, seq, type, payload, timestamp FROM events WHERE instance_id = ? AND seq >= ? ORDER BY seq",
+          [txt(instanceId), int(fromSeq)]);
+  Map<string, bool> skipped = skippedEventIds(c, instanceId);
+  Vec<StoredEvent> out;
+  for (i32 i = 0; i < r.rows.len(); i++) {
+    StoredEvent? e = eventOfRow(r.rows.get(i), skipped);
+    if (e is null) { trap "event \{textAt(r.rows.get(i), 0) ?? "?"} does not parse"; }
+    out.push(e!);
+  }
+  return out;
+}
+
+export i64 latestSeq(Ctx c, string instanceId) {
+  return scalarInt(c.q("SELECT MAX(seq) as max_seq FROM events WHERE instance_id = ?", [txt(instanceId)])) ?? 0;
+}
+
+// The last event's seq strictly before `timestamp`, or 0.
+export i64 seqBeforeTimestamp(Ctx c, string instanceId, i64 timestamp) {
+  return scalarInt(c.q("SELECT MAX(seq) as max_seq FROM events WHERE instance_id = ? AND timestamp < ?",
+                       [txt(instanceId), int(timestamp)])) ?? 0;
+}
+
+// Which of an instance's events the fold excludes, from the whole log: the legacy flag, and the running
+// effect of EventSkipped and EventUnskipped (a skip is retroactive, so state at any seq needs them all).
+export Map<string, bool> skippedEventIds(Ctx c, string instanceId) {
+  Map<string, bool> ids = Map.create(hashString, stringEq);
+  Rows legacy = c.q("SELECT id FROM events WHERE instance_id = ? AND payload LIKE '%\"legacySkipped\":true%'", [txt(instanceId)]);
+  for (i32 i = 0; i < legacy.rows.len(); i++) { ids.set(textAt(legacy.rows.get(i), 0)!, true); }
+  Rows skips = c.q("SELECT type, payload FROM events WHERE instance_id = ? AND type IN ('EventSkipped', 'EventUnskipped') ORDER BY seq",
+                   [txt(instanceId)]);
+  for (i32 i = 0; i < skips.rows.len(); i++) {
+    Value[] row = skips.rows.get(i);
+    string? target = parse((textAt(row, 1) ?? "").toBytes()).ok()?.member("targetEventId")?.text();
+    if (target is null) { continue; }
+    if (textAt(row, 0)! == "EventSkipped") { ids.set(target!, true); } else { ids.remove(target!); }
+  }
+  return ids;
+}
+
+struct Target {
+  string id;
+  string instanceId;
+  i64 seq;
+}
+
+Result<Target, StoreError> requireSkippable(Ctx c, string eventId) {
+  Rows r = c.q("SELECT id, instance_id, seq, type FROM events WHERE id = ?", [txt(eventId)]);
+  if (r.rows.len() == 0) { return Result.Err(StoreError.NotFound("Event \{eventId} not found")); }
+  Value[] row = r.rows.get(0);
+  string type = textAt(row, 3)!;
+  // Skips do not nest: undoing a skip is what EventUnskipped is for.
+  if (type == "EventSkipped" || type == "EventUnskipped") {
+    return Result.Err(StoreError.SkipNotAllowed("Cannot skip a skip — use unskip to reverse one"));
+  }
+  Target t = Target(textAt(row, 0)!, textAt(row, 1)!, intAt(row, 2)!);
+  i64 depth = latestSeq(c, t.instanceId) - t.seq;
+  if (depth > c.skipDepthLimit) {
+    return Result.Err(StoreError.SkipDepth("Cannot skip: event is \{depth} events deep (limit is \{c.skipDepthLimit})"));
+  }
+  return Result.Ok(t);
+}
+
+// Undoes an event by appending an EventSkipped and rebuilding the snapshots it invalidates. Skipping an
+// event already skipped succeeds and appends nothing, so a retried request does no harm.
+export Result<StoredEvent, StoreError> skipEvent(Ctx c, string eventId) {
+  Target t = try requireSkippable(c, eventId);
+  if (!skippedEventIds(c, t.instanceId).has(eventId)) {
+    appendEvent(c, t.instanceId, AppEvent.EventSkipped(eventId), c.now());
+    rebuildSnapshots(c, t.instanceId, t.seq);
+  }
+  return Result.Ok(eventById(c, eventId)!);
+}
+
+export Result<StoredEvent, StoreError> unskipEvent(Ctx c, string eventId) {
+  Target t = try requireSkippable(c, eventId);
+  if (skippedEventIds(c, t.instanceId).has(eventId)) {
+    appendEvent(c, t.instanceId, AppEvent.EventUnskipped(eventId), c.now());
+    rebuildSnapshots(c, t.instanceId, t.seq);
+  }
+  return Result.Ok(eventById(c, eventId)!);
+}
+
+export StoredEvent? eventById(Ctx c, string eventId) {
+  Rows r = c.q("SELECT id, instance_id, seq, type, payload, timestamp FROM events WHERE id = ?", [txt(eventId)]);
+  if (r.rows.len() == 0) { return null; }
+  return eventOfRow(r.rows.get(0), skippedEventIds(c, textAt(r.rows.get(0), 1)!));
+}
+
+// ── snapshots ──
+
+export void storeSnapshot(Ctx c, string instanceId, i64 seq, ProjectedState s) {
+  c.q("INSERT OR REPLACE INTO snapshots (id, instance_id, seq, state, created_at) VALUES (?, ?, ?, ?, ?)",
+      [txt(c.uuid()), txt(instanceId), int(seq), txt(string.fromBytes(stringify(stateJson(s)))), int(c.now())]);
+}
+
+export struct Snapshot {
+  i64 seq;
+  ProjectedState state;
+}
+
+// The latest snapshot strictly before `beforeSeq`, or null.
+export Snapshot? nearestSnapshot(Ctx c, string instanceId, i64 beforeSeq) {
+  Rows r = c.q("SELECT seq, state FROM snapshots WHERE instance_id = ? AND seq < ? ORDER BY seq DESC LIMIT 1",
+               [txt(instanceId), int(beforeSeq)]);
+  if (r.rows.len() == 0) { return null; }
+  JsonValue? v = parse((textAt(r.rows.get(0), 1) ?? "").toBytes()).ok();
+  if (v is null) { trap "snapshot of \{instanceId} at \{intAt(r.rows.get(0), 0)!} does not parse"; }
+  match (stateFromJson(v!)) {
+    Ok(s): { return Snapshot(intAt(r.rows.get(0), 0)!, s); }
+    Err(m): { trap "snapshot of \{instanceId}: \{m}"; }
+  }
+}
+
+// After a skip or unskip at `fromSeq`: the snapshots from there on are wrong, and are taken again.
+void rebuildSnapshots(Ctx c, string instanceId, i64 fromSeq) {
+  c.q("DELETE FROM snapshots WHERE instance_id = ? AND seq >= ?", [txt(instanceId), int(fromSeq)]);
+  if (latestSeq(c, instanceId) == 0) { return; }
+  Snapshot? before = nearestSnapshot(c, instanceId, fromSeq);
+  i64 start = before is null ? 1 : before!.seq + 1;
+  ProjectedState s = before is null ? ProjectedState.empty() : before!.state;
+  Vec<StoredEvent> evs = getEvents(c, instanceId, start, -1);
+  for (i32 i = 0; i < evs.len(); i++) {
+    StoredEvent e = evs.get(i);
+    if (!e.skipped) { applyEvent(s, e.payload); }
+    if (e.seq % c.snapshotInterval == 0) { storeSnapshot(c, instanceId, e.seq, s); }
+  }
+}
+
+// The instance's state now: the latest snapshot, and the events after it folded on.
+export ProjectedState computeState(Ctx c, string instanceId) {
+  i64 latest = latestSeq(c, instanceId);
+  if (latest == 0) { return ProjectedState.empty(); }
+  Snapshot? snap = nearestSnapshot(c, instanceId, latest + 1);
+  i64 start = snap is null ? 1 : snap!.seq + 1;
+  return foldEvents(snap is null ? ProjectedState.empty() : snap!.state, getEvents(c, instanceId, start, -1));
+}
+
+// The whole log folded, snapshots ignored: for checking them.
+export ProjectedState computeStateFromScratch(Ctx c, string instanceId) {
+  return foldEvents(ProjectedState.empty(), getEvents(c, instanceId, 1, -1));
+}
+
+// The state after events 1..atSeq, or null when there is no such point.
+export ProjectedState? computeStateAt(Ctx c, string instanceId, i64 atSeq) {
+  if (atSeq < 1) { return null; }
+  i64 latest = latestSeq(c, instanceId);
+  if (latest == 0 || atSeq > latest) { return null; }
+  Snapshot? snap = nearestSnapshot(c, instanceId, atSeq + 1);
+  i64 start = snap is null ? 1 : snap!.seq + 1;
+  return foldEvents(snap is null ? ProjectedState.empty() : snap!.state, getEvents(c, instanceId, start, atSeq));
+}
+
+export struct SnapshotInfo {
+  i64 seq;
+  i64 createdAt;
+}
+
+export Vec<SnapshotInfo> allSnapshots(Ctx c, string instanceId) {
+  Rows r = c.q("SELECT seq, created_at FROM snapshots WHERE instance_id = ? ORDER BY seq", [txt(instanceId)]);
+  Vec<SnapshotInfo> out;
+  for (i32 i = 0; i < r.rows.len(); i++) { out.push(SnapshotInfo(intAt(r.rows.get(i), 0)!, intAt(r.rows.get(i), 1)!)); }
+  return out;
+}
