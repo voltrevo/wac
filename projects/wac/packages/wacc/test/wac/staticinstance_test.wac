@@ -37,3 +37,16 @@ export string test_the_same_static_in_a_plain_struct_is_unchanged(Sys sys) {
   t.eqI32(r.status, 1, "one object");
   return t.report();
 }
+
+export string test_a_static_in_a_method_with_letters_of_its_own_is_one_value_per_instantiation(Sys sys) {
+  T t = T.create();
+  string src = CELL + "struct Box<T> {\n  T v;\n  const Cell mine<U>(this, U x) { static Cell c = Cell(0); return c; }\n}\n"
+    + "export i32 main() {\n  Box<i32> b = Box(1);\n"
+    + "  bool same = b.mine(1 as i32) is b.mine(2 as i32);\n"
+    + "  bool apart = b.mine(1 as i32) is b.mine(\"x\");\n"
+    + "  return (same ? 1 : 0) + (apart ? 10 : 0);\n}\n";
+  Ran r = ran(sys, src, "staticmine.wasm");
+  t.isTrue(r.ok, "built and ran — " + r.error + r.stderr);
+  t.eqI32(r.status, 1, "one object for `mine<i32>` however often it runs, and another for `mine<string>`");
+  return t.report();
+}

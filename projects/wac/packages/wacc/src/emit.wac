@@ -3291,6 +3291,19 @@ export struct Env {
    * a type the emitter could not write (`issues/lang/0397a`).
    */
   bool provisional;
+  /**
+   * **A reference-typed `static` in a generic instance's body**, one per instance and name (`issues/lang/0374a`): a
+   * static per instantiation, which `lowerStaticLocals` rightly leaves in place, has a global of its own, given out
+   * after the module's constants and written by the start function as theirs are. Registered while the instances are
+   * discovered, before `assignGlobals`; kept apart from the constant tables because the static evaluator is a snapshot
+   * of those, and growing them mid-body would replace it under the block that holds its marks.
+   */
+  string[] instStaticNames;
+  string[] instStaticTypes;
+  Expr?[] instStaticInits;
+  i32[] instStaticFiles;
+  i32[] instStaticGlobal;
+  i32 instStaticCount;
 
   /** The component tag recorded at this position, in this file and instance, or -1. */
   i32 markupSiteAt(const this, i32 line, i32 col) {
@@ -3660,7 +3673,8 @@ export struct Env {
                0, 0, string[].filled(2048, ""), string[].filled(2048, ""), string[].filled(2048, ""),
                B[].filled(2048, B.create()),
                KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), KeyIndex.create(),
-               KeyIndex.create(), false, KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), 0 - 1, i32[](), false);
+               KeyIndex.create(), false, KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), 0 - 1, i32[](), false,
+                string[](), string[](), Expr?[](), i32[](), i32[](), 0);
   }
 
   
@@ -7654,6 +7668,9 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   for (i32 i = 0; i < env.constCount; i++) {
     if (env.constGlobal[i] >= 0) { globalCount = globalCount + 1; }
   }
+  for (i32 k = 0; k < env.instStaticCount; k++) {
+    if (env.instStaticGlobal[k] >= 0) { globalCount = globalCount + 1; }
+  }
   // **The trap message's global comes last**, after the counters and the constants, so no constant's
   // index moves — the comment on `coverage` above is about exactly that hazard, one global earlier.
   i32 trapGlobals = 1;
@@ -7690,6 +7707,14 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       }
       if (!here) { emitDefault(globals, env, env.constTypes[i]); }
       globals.byte(11);  // end of the initialiser expression
+    }
+    // An instance's static: mutable and null until the start function writes it.
+    for (i32 k = 0; k < env.instStaticCount; k++) {
+      if (env.instStaticGlobal[k] != g) { continue; }
+      writeValType(globals, env, env.instStaticTypes[k]);
+      globals.byte(1);
+      emitDefault(globals, env, env.instStaticTypes[k]);
+      globals.byte(11);
     }
   }
   // The last global: mutable, a nullable string, and null until a `trap "…"` writes one. Nothing reads
@@ -10250,7 +10275,16 @@ i32 bindBlockStatics(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, bool wri
     if (li < 0) { continue; }
     string ty = ev.localTypes[li];
     env.addLocal(sb.names[j], ty);
+    // A reference-typed static of a generic instance is registered while the instances are discovered, so that
+    // `assignGlobals` can give it a global (`instanceStaticAt`).
+    bool scalar = isStaticScalarType(ty) || ty == "bool";
+    i32 isi = scalar ? 0 - 1 : instanceStaticAt(env, sb.names[j], ty, staticInitIn(src, lexed, body, sb.names[j]));
     if (!write) { continue; }
+    if (isi >= 0 && env.instStaticGlobal[isi] >= 0) {
+      fb.byte(35); fb.u32leb(env.instStaticGlobal[isi]);   // global.get
+      fb.byte(33); fb.u32leb(env.localCount - 1);          // local.set
+      continue;
+    }
     if (!emitValueLiteral(fb, env, ev.localVals[li], ty)) {
       env.declineFor("the static `" + sb.names[j] + "`, of a type this emitter writes only at module level: " + ty);
       continue;
@@ -10258,6 +10292,49 @@ i32 bindBlockStatics(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, bool wri
     fb.byte(33); fb.u32leb(env.localCount - 1);       // local.set
   }
   return sb.mark;
+}
+
+/**
+ * The instance static `name` of the instance being built — registered on first sight (`Env.instStaticNames`), or -1
+ * where there is no instance to have one.
+ */
+i32 instanceStaticAt(Env env, string name, string ty, Expr? init) {
+  if (env.curInst == "" || init is null) { return 0 - 1; }
+  string key = env.curInst + "." + name;
+  for (i32 i = 0; i < env.instStaticCount; i++) { if (env.instStaticNames[i] == key) { return i; } }
+  if (env.instStaticCount >= env.instStaticNames.len()) {
+    i32 room = env.instStaticNames.len() * 2 + 8;
+    string[] nm = string[].defaulted(room);
+    string[] ty2 = string[].defaulted(room);
+    Expr?[] ini = Expr?[].defaulted(room);
+    i32[] fl = i32[].filled(room, 0 - 1);
+    i32[] gl = i32[].filled(room, 0 - 1);
+    for (i32 i = 0; i < env.instStaticCount; i++) {
+      nm[i] = env.instStaticNames[i]; ty2[i] = env.instStaticTypes[i]; ini[i] = env.instStaticInits[i];
+      fl[i] = env.instStaticFiles[i]; gl[i] = env.instStaticGlobal[i];
+    }
+    env.instStaticNames = nm; env.instStaticTypes = ty2; env.instStaticInits = ini;
+    env.instStaticFiles = fl; env.instStaticGlobal = gl;
+  }
+  i32 at = env.instStaticCount;
+  env.instStaticNames[at] = key;
+  env.instStaticTypes[at] = ty;
+  env.instStaticInits[at] = init;
+  env.instStaticFiles[at] = env.curFile;
+  env.instStaticGlobal[at] = 0 - 1;
+  env.instStaticCount = at + 1;
+  return at;
+}
+
+/** The initialiser of the `static` called `name` among `body`'s statements, or null. */
+Expr? staticInitIn(u8[] src, Lexed lexed, Stmt[] body, string name) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): { if (tokenTextOf(src, lexed, nameTok) == name) { return init; } }
+      default: { }
+    }
+  }
+  return null;
 }
 
 /** A static scalar value as one instruction; answers whether it could be. */
@@ -20628,6 +20705,18 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
     insns.byte(36);   // global.set
     insns.u32leb(env.constGlobal[i]);
   }
+  // And each instance's statics, after every constant they could read.
+  for (i32 k = 0; k < env.instStaticCount; k++) {
+    if (env.instStaticGlobal[k] < 0) { continue; }
+    i32 fi = env.instStaticFiles[k];
+    i32 wasFile = env.curFile;
+    env.curFile = fi;
+    emitExprAt(insns, srcFor(env.fileSrcs, src, fi), lexFor(env.fileLexeds, lexed, fi), env, env.instStaticInits[k]!,
+               env.instStaticTypes[k]);
+    env.curFile = wasFile;
+    insns.byte(36);   // global.set
+    insns.u32leb(env.instStaticGlobal[k]);
+  }
 
   B fb = B.create();
   // The locals declaration, which is where `scratch` ends up if an initialiser needed one — so the
@@ -20669,6 +20758,15 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
     if (unsupportedValueAt(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!,
                            env.constTypes[i]) != "") { continue; }
     env.constGlobal[i] = next;
+    next = next + 1;
+  }
+  // **An instance's own statics after them** (`Env.instStaticNames`), each given a global when its initialiser is one
+  // this emitter can emit in the instance's file — with no letters bound, so one that names them is declined by name.
+  for (i32 k = 0; k < env.instStaticCount; k++) {
+    i32 fi = env.instStaticFiles[k];
+    if (unsupportedValueAt(srcFor(env.fileSrcs, src, fi), lexFor(env.fileLexeds, lexed, fi), env,
+                           env.instStaticInits[k]!, env.instStaticTypes[k]) != "") { continue; }
+    env.instStaticGlobal[k] = next;
     next = next + 1;
   }
   // **And the trap message's global, last — always.** Numbered here rather than where the section is
