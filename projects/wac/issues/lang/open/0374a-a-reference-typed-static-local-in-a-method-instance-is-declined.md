@@ -48,3 +48,22 @@ the plain-struct case beside it.
 `lowerStaticLocals` rightly does not hoist, and the emitter writes a reference-typed static only at module level: it
 needs a global per instance, made when the instance is, and initialised at instantiation. Measured: still *the static
 `c`, of a type this emitter writes only at module level: Cell*.
+
+## A plan for the second half — wac1, 2026-11-17 (not started)
+
+The pieces exist; what is missing is joining them at the right moment.
+
+1. **A module constant per instance.** When an instance is registered (`Env.instantiate`'s end, where `instDirty` is
+   set, inside `collectInstances`' fixpoint and so before `assignGlobals`), walk the template's body for
+   `static T name = init;` whose `T` is not a scalar, and append a constant to the `constNames`/`constTypes`/
+   `constInits`/`constInitFiles` tables (grown as `declareConsts` grows them) named `$static_<instance>_<name>`, typed
+   by the substituted `T`, with the template's `init` and the template's file.
+2. **`assignGlobals` and `emitStartFunction` then do the rest unchanged**: the constant gets a global if its initialiser
+   can be emitted, and the start function writes it once, in demand order.
+3. **`bindBlockStatics`**: where `emitValueLiteral` refuses a reference-typed static in an instance, look up
+   `$static_<instance>_<name>`; if it has a global, emit `global.get` then `local.set` instead of declining.
+
+The catch is step 2 for an initialiser that names the instance's own letters (`Vec<U>.create()`): the start function
+emits it with no substitution in force. Either push the instance's substitution around that one initialiser in
+`emitStartFunction` (the instance name is in the constant's name, and `pushSubstitution` takes it), or decline such an
+initialiser by name. `Cell(0)`, the reproduction's, needs neither.
