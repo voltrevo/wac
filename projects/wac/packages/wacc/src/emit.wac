@@ -3303,6 +3303,8 @@ export struct Env {
   Expr?[] instStaticInits;
   i32[] instStaticFiles;
   i32[] instStaticGlobal;
+  /** The letters in force where each was registered, `from\tto\n` each, put back around its initialiser. */
+  string[] instStaticSubs;
   i32 instStaticCount;
 
   /** The component tag recorded at this position, in this file and instance, or -1. */
@@ -3674,7 +3676,7 @@ export struct Env {
                B[].filled(2048, B.create()),
                KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), KeyIndex.create(),
                KeyIndex.create(), false, KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), 0 - 1, i32[](), false,
-                string[](), string[](), Expr?[](), i32[](), i32[](), 0);
+                string[](), string[](), Expr?[](), i32[](), i32[](), string[](), 0);
   }
 
   
@@ -10274,11 +10276,13 @@ i32 bindBlockStatics(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, bool wri
     i32 li = ev.localAt(sb.names[j], 0);
     if (li < 0) { continue; }
     string ty = ev.localTypes[li];
-    env.addLocal(sb.names[j], ty);
     // A reference-typed static of a generic instance is registered while the instances are discovered, so that
-    // `assignGlobals` can give it a global (`instanceStaticAt`).
+    // `assignGlobals` can give it a global (`instanceStaticAt`) — and its local is typed as the instance writes it, with
+    // the letters bound, where the evaluator's spelling may still say `U[]`.
     bool scalar = isStaticScalarType(ty) || ty == "bool";
-    i32 isi = scalar ? 0 - 1 : instanceStaticAt(env, sb.names[j], ty, staticInitIn(src, lexed, body, sb.names[j]));
+    string ity = scalar || env.curInst == "" ? "" : staticTypeIn(src, lexed, env, body, sb.names[j]);
+    env.addLocal(sb.names[j], ity != "" ? ity : ty);
+    i32 isi = ity == "" ? 0 - 1 : instanceStaticAt(env, sb.names[j], ity, staticInitIn(src, lexed, body, sb.names[j]));
     if (!write) { continue; }
     if (isi >= 0 && env.instStaticGlobal[isi] >= 0) {
       fb.byte(35); fb.u32leb(env.instStaticGlobal[isi]);   // global.get
@@ -10309,21 +10313,63 @@ i32 instanceStaticAt(Env env, string name, string ty, Expr? init) {
     Expr?[] ini = Expr?[].defaulted(room);
     i32[] fl = i32[].filled(room, 0 - 1);
     i32[] gl = i32[].filled(room, 0 - 1);
+    string[] sb = string[].defaulted(room);
     for (i32 i = 0; i < env.instStaticCount; i++) {
       nm[i] = env.instStaticNames[i]; ty2[i] = env.instStaticTypes[i]; ini[i] = env.instStaticInits[i];
-      fl[i] = env.instStaticFiles[i]; gl[i] = env.instStaticGlobal[i];
+      fl[i] = env.instStaticFiles[i]; gl[i] = env.instStaticGlobal[i]; sb[i] = env.instStaticSubs[i];
     }
     env.instStaticNames = nm; env.instStaticTypes = ty2; env.instStaticInits = ini;
-    env.instStaticFiles = fl; env.instStaticGlobal = gl;
+    env.instStaticFiles = fl; env.instStaticGlobal = gl; env.instStaticSubs = sb;
   }
+  string subs = "";
+  for (i32 i = 0; i < env.subCount; i++) { subs = subs + env.subFrom[i] + "\t" + env.subTo[i] + "\n"; }
   i32 at = env.instStaticCount;
   env.instStaticNames[at] = key;
   env.instStaticTypes[at] = ty;
   env.instStaticInits[at] = init;
   env.instStaticFiles[at] = env.curFile;
   env.instStaticGlobal[at] = 0 - 1;
+  env.instStaticSubs[at] = subs;
   env.instStaticCount = at + 1;
+  // Its type registered now, while the instances are discovered: an array type first named by the start function is
+  // one counted after the boundary helpers, and every function index after them would be short.
+  if (isArrayType(ty)) { env.arrayType(ty); }
   return at;
+}
+
+/**
+ * Put instance static `k`'s letters in force (`Env.instStaticSubs`), on top of whatever is; answers the count to put
+ * `subCount` back to.
+ */
+i32 pushInstanceStaticSubs(Env env, i32 k) {
+  i32 mark = env.subCount;
+  string rest = env.instStaticSubs[k];
+  while (rest.len() > 0) {
+    i32 nl = rest.indexOf("\n");
+    if (nl < 0) { break; }
+    string pair = rest.slice(0, nl);
+    rest = rest.slice(nl + 1, rest.len());
+    i32 tab = pair.indexOf("\t");
+    if (tab < 0) { continue; }
+    slotOrTrap(env.subCount, env.subFrom.len());
+    env.subFrom[env.subCount] = pair.slice(0, tab);
+    env.subTo[env.subCount] = pair.slice(tab + 1, pair.len());
+    env.subCount = env.subCount + 1;
+  }
+  return mark;
+}
+
+/** The type of the `static` called `name` among `body`'s statements as this instance writes it — letters bound — or "". */
+string staticTypeIn(u8[] src, Lexed lexed, Env env, Stmt[] body, string name) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): {
+        if (tokenTextOf(src, lexed, nameTok) == name) { return typeOfTyName(env, src, lexed, type); }
+      }
+      default: { }
+    }
+  }
+  return "";
 }
 
 /** The initialiser of the `static` called `name` among `body`'s statements, or null. */
@@ -20711,8 +20757,10 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
     i32 fi = env.instStaticFiles[k];
     i32 wasFile = env.curFile;
     env.curFile = fi;
+    i32 subMark = pushInstanceStaticSubs(env, k);
     emitExprAt(insns, srcFor(env.fileSrcs, src, fi), lexFor(env.fileLexeds, lexed, fi), env, env.instStaticInits[k]!,
                env.instStaticTypes[k]);
+    env.subCount = subMark;
     env.curFile = wasFile;
     insns.byte(36);   // global.set
     insns.u32leb(env.instStaticGlobal[k]);
@@ -20764,8 +20812,11 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
   // this emitter can emit in the instance's file — with no letters bound, so one that names them is declined by name.
   for (i32 k = 0; k < env.instStaticCount; k++) {
     i32 fi = env.instStaticFiles[k];
-    if (unsupportedValueAt(srcFor(env.fileSrcs, src, fi), lexFor(env.fileLexeds, lexed, fi), env,
-                           env.instStaticInits[k]!, env.instStaticTypes[k]) != "") { continue; }
+    i32 subMark = pushInstanceStaticSubs(env, k);
+    string why = unsupportedValueAt(srcFor(env.fileSrcs, src, fi), lexFor(env.fileLexeds, lexed, fi), env,
+                                    env.instStaticInits[k]!, env.instStaticTypes[k]);
+    env.subCount = subMark;
+    if (why != "") { continue; }
     env.instStaticGlobal[k] = next;
     next = next + 1;
   }

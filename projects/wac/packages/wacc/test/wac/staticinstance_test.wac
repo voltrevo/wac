@@ -21,20 +21,21 @@ Ran ran(Sys sys, string src, string name) {
 export string test_a_static_in_a_generic_structs_method_is_one_value(Sys sys) {
   T t = T.create();
   string src = CELL + "struct Box<T> {\n  T v;\n  const Cell shared() { static Cell c = Cell(0); return c; }\n}\n"
-    + "export i32 main() { return Box<i32>.shared() is Box<string>.shared() ? 1 : 0; }\n";
+    + "export i32 main() { return Box<i32>.shared() is Box<string>.shared() ? 42 : 43; }\n";
   Ran r = ran(sys, src, "staticinstance.wasm");
   t.isTrue(r.ok, "built and ran — " + r.error + r.stderr);
-  t.eqI32(r.status, 1, "`Box<i32>.shared()` and `Box<string>.shared()` answer the one object");
+  // 42 and 43 rather than 1 and 0: a module whose `main` was declined also exits 1.
+  t.eqI32(r.status, 42, "`Box<i32>.shared()` and `Box<string>.shared()` answer the one object");
   return t.report();
 }
 
 export string test_the_same_static_in_a_plain_struct_is_unchanged(Sys sys) {
   T t = T.create();
   string src = CELL + "struct Plain {\n  i32 v;\n  const Cell shared() { static Cell c = Cell(0); return c; }\n}\n"
-    + "export i32 main() { return Plain.shared() is Plain.shared() ? 1 : 0; }\n";
+    + "export i32 main() { return Plain.shared() is Plain.shared() ? 42 : 43; }\n";
   Ran r = ran(sys, src, "staticplain.wasm");
   t.isTrue(r.ok, "built and ran — " + r.error + r.stderr);
-  t.eqI32(r.status, 1, "one object");
+  t.eqI32(r.status, 42, "one object");
   return t.report();
 }
 
@@ -44,9 +45,22 @@ export string test_a_static_in_a_method_with_letters_of_its_own_is_one_value_per
     + "export i32 main() {\n  Box<i32> b = Box(1);\n"
     + "  bool same = b.mine(1 as i32) is b.mine(2 as i32);\n"
     + "  bool apart = b.mine(1 as i32) is b.mine(\"x\");\n"
-    + "  return (same ? 1 : 0) + (apart ? 10 : 0);\n}\n";
+    + "  return 40 + (same ? 1 : 0) + (apart ? 10 : 0);\n}\n";
   Ran r = ran(sys, src, "staticmine.wasm");
   t.isTrue(r.ok, "built and ran — " + r.error + r.stderr);
-  t.eqI32(r.status, 1, "one object for `mine<i32>` however often it runs, and another for `mine<string>`");
+  t.eqI32(r.status, 41, "one object for `mine<i32>` however often it runs, and another for `mine<string>`");
+  return t.report();
+}
+
+export string test_an_instance_static_whose_initialiser_names_the_instances_letters(Sys sys) {
+  T t = T.create();
+  // `U[]()` is a different array type per instantiation, so its initialiser is written with the instance's letters in
+  // force and its type registered while the instances are discovered.
+  string src = "struct Box<T> {\n  T v;\n"
+    + "  i32 count<U>(this, U x) { static U[] all = U[](); return all.len(); }\n}\n"
+    + "export i32 main() { Box<i32> b = Box(1); return b.count(5 as i32) + b.count(\"x\") + 40; }\n";
+  Ran r = ran(sys, src, "staticletters.wasm");
+  t.isTrue(r.ok, "built and ran — " + r.error + r.stderr);
+  t.eqI32(r.status, 40, "both instances' arrays exist, and are empty");
   return t.report();
 }
