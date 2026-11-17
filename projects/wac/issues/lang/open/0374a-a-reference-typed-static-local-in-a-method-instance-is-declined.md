@@ -49,21 +49,20 @@ the plain-struct case beside it.
 needs a global per instance, made when the instance is, and initialised at instantiation. Measured: still *the static
 `c`, of a type this emitter writes only at module level: Cell*.
 
-## A plan for the second half — wac1, 2026-11-17 (not started)
+## The second half, implemented on `wip/wac1-0374a` — wac1, 2026-11-17 (focused tests only, not gated)
 
-The pieces exist; what is missing is joining them at the right moment.
+A reference-typed static in a generic instance's body (`mine<U>`) is registered per instance while the instances are
+discovered (`instanceStaticAt`, from `bindBlockStatics`). Its table is kept apart from the constant tables, because the
+static evaluator is a snapshot of those, and growing them mid-body replaced it under the block holding its marks.
+`assignGlobals` gives it a global after the constants when its initialiser can be emitted, the start function writes it,
+and `bindBlockStatics` reads the global into the local. The letters in force at registration are kept and put back around
+the initialiser, so `static U[] all = U[]()` is one array per instantiation. Its type is the one the instance writes
+(letters bound), registered during discovery: an array type first named later shifted every function index. The local
+is typed the same way.
 
-1. **A module constant per instance.** When an instance is registered (`Env.instantiate`'s end, where `instDirty` is
-   set, inside `collectInstances`' fixpoint and so before `assignGlobals`), walk the template's body for
-   `static T name = init;` whose `T` is not a scalar, and append a constant to the `constNames`/`constTypes`/
-   `constInits`/`constInitFiles` tables (grown as `declareConsts` grows them) named `$static_<instance>_<name>`, typed
-   by the substituted `T`, with the template's `init` and the template's file.
-2. **`assignGlobals` and `emitStartFunction` then do the rest unchanged**: the constant gets a global if its initialiser
-   can be emitted, and the start function writes it once, in demand order.
-3. **`bindBlockStatics`**: where `emitValueLiteral` refuses a reference-typed static in an instance, look up
-   `$static_<instance>_<name>`; if it has a global, emit `global.get` then `local.set` instead of declining.
+`staticinstance_test.wac` covers one object per instantiation and a distinct one across instantiations, the letters case,
+and the first half. Its answers are 40–43 because a declined `main` also exits 1. Still to do before master: a full gate,
+and closing this issue.
 
-The catch is step 2 for an initialiser that names the instance's own letters (`Vec<U>.create()`): the start function
-emits it with no substitution in force. Either push the instance's substitution around that one initialiser in
-`emitStartFunction` (the instance name is in the constant's name, and `pushSubstitution` takes it), or decline such an
-initialiser by name. `Cell(0)`, the reproduction's, needs neither.
+Found on the way, not fixed: returning such a static as `const U[]` from `arr<U>` is declined as *a return between related
+reference types*, which is an emitter gap in returning a `const` array of a letter, not a static one.
