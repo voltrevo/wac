@@ -1,0 +1,63 @@
+// ipfsbench — the IPFS task of docs/footprint.md, for wac's packages/ipfs: fetch a CAR (BASE/data/content.car, 5.4 MB
+// of UnixFS made by the reference importer, js/mkcar.mjs) and the root CID it should have; import it into a memory
+// store, every block re-hashed against its CID (`importCar`); check the CAR's root is the one expected; then read the
+// whole tree back, every file reassembled from its blocks with each block hashed again on the way out (`readTree`).
+//
+//     ipfsbench BASE-URL [REPEAT]      prints `phase fetch`, `phase first`, `result ROOT BYTES`, then `phase per`
+import { Sys } from "std";
+import { Result } from "core";
+import { fetch.fetchAsync, fetch.Caps, fetch.Fetched } from "wac";
+import { Cid } from "../../../packages/ipfs/src/cid.wac";
+import { FileIn } from "../../../packages/ipfs/src/tree.wac";
+import { Store, Resolver, importCar, readTree } from "../../../packages/ipfs/src/store.wac";
+
+async i64 nanos(Sys sys) { return (await sys.clock().monotonicNanos()).orElse(0 as i64); }
+string ms(i64 ns) {
+  i64 us = ns / (1000 as i64);
+  i64 frac = us % (1000 as i64);
+  return "\{us / (1000 as i64)}.\{frac < (10 as i64) ? "00" : (frac < (100 as i64) ? "0" : "")}\{frac}";
+}
+
+async Result<u8[], string> get(Caps caps, string url) {
+  Result<Fetched, string> got = await fetchAsync(caps, "GET", url, string[](), u8[]());
+  if (got.isErr()) { return Result.Err("\{url}: \{got.err()!}"); }
+  Fetched r = got.unwrap();
+  return r.status == 200 ? Result.Ok(r.body) : Result.Err("\{url}: HTTP \{r.status}");
+}
+
+/** One verification: "ROOT BYTES", or why not. */
+string verify(u8[] car, string want) {
+  Store s = Store.memory();
+  Cid[] roots;
+  match (importCar(s, car)) { Err(e): { return "refused: \{e}"; } Ok(r): { roots = r; } }
+  if (roots.len() != 1 || roots[0].text() != want) { return "refused: the CAR's root is not \{want}"; }
+  match (readTree(Resolver(s, Store[]()), roots[0])) {
+    Err(e): { return "refused: \{e}"; }
+    Ok(fs): {
+      i32 total = 0;
+      for (i32 i = 0; i < fs.len(); i++) { total += fs[i].content.len(); }
+      return "\{want} \{total}";
+    }
+  }
+}
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  i32 repeat = 5;
+  if (a.len() >= 2) { repeat = 0; u8[] d = a[1].toBytes(); for (i32 i = 0; i < d.len(); i++) { repeat = repeat * 10 + (d[i] as i32) - 48; } }
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+  i64 t0 = await nanos(sys);
+  u8[] car; string want;
+  match (await get(caps, a[0] + "/data/content.car")) { Err(e): { sys.warn(e); return 1; } Ok(b): { car = b; } }
+  match (await get(caps, a[0] + "/data/content.cid")) { Err(e): { sys.warn(e); return 1; } Ok(b): { want = string.fromBytes(b); while (want.len() > 0 && (want.slice(want.len() - 1, want.len()) == "\n" || want.slice(want.len() - 1, want.len()) == " ")) { want = want.slice(0, want.len() - 1); } } }
+  i64 t1 = await nanos(sys);
+  sys.log("phase fetch \{ms(t1 - t0)}");
+  string result = verify(car, want);
+  i64 t2 = await nanos(sys);
+  sys.log("phase first \{ms(t2 - t1)}");
+  sys.log("result \{result}");
+  for (i32 i = 0; i < repeat; i++) { result = verify(car, want); }
+  i64 t3 = await nanos(sys);
+  sys.log("phase per \{ms((t3 - t2) / (repeat as i64))}");
+  return result.indexOf("refused") == 0 ? 1 : 0;
+}

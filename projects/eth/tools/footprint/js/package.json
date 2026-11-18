@@ -9,9 +9,19 @@
     "@ethereumjs/mpt": "10.1.3",
     "@ethereumjs/rlp": "10.1.3",
     "@ethereumjs/util": "10.1.3",
+    "@helia/verified-fetch": "8.1.2",
+    "@ipld/car": "5.4.7",
+    "@ipld/dag-cbor": "10.0.2",
     "@lodestar/light-client": "1.43.0",
     "@noble/curves": "2.4.0",
+    "@noble/hashes": "1.8.0",
+    "blockstore-core": "7.0.1",
     "buffer": "6.0.3",
-    "esbuild": "0.25.12"
+    "esbuild": "0.25.12",
+    "ethers": "6.17.0",
+    "ipfs-unixfs-exporter": "16.2.3",
+    "ipfs-unixfs-importer": "17.1.1",
+    "multiformats": "14.0.6",
+    "viem": "2.58.0"
   }
 }

@@ -1,0 +1,15 @@
+// floor — what every wac bench here carries before it verifies anything: wac's runtime, its HTTP client (and TLS
+// stack) and printing. It fetches BASE/data/proof.json and prints its length. docs/footprint.md subtracts nothing
+// automatically; this is the number to read the others against.        floor BASE-URL
+import { Sys } from "std";
+import { Result } from "core";
+import { fetch.fetchAsync, fetch.Caps, fetch.Fetched } from "wac";
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+  Result<Fetched, string> got = await fetchAsync(caps, "GET", a[0] + "/data/proof.json", string[](), u8[]());
+  if (got.isErr()) { sys.warn(got.err()!); return 1; }
+  sys.log("result \{got.unwrap().body.len()} bytes");
+  return 0;
+}

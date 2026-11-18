@@ -1,0 +1,68 @@
+// stmtbench — the statement task of docs/footprint.md, for reckon's claims (packages/reckon/src/claims.wac): for each of
+// 100 signed statements that ethers signed (BASE/data/stmts.json, js/mkstmt.mjs), decode the DAG-CBOR block
+// (`signedFrom`), recompute the statement's CID (`statementId`) and compare it, then recover the EIP-712 signature's
+// signer (`verifySigned`: keccak, secp256k1 recovery) and compare it with the one named.
+//
+//     stmtbench BASE-URL [REPEAT]      prints `phase fetch`, `phase first` (all 100 once), `result OK/100`, `phase per`
+import { Sys } from "std";
+import { Result } from "core";
+import { codec.hexDecoded, codec.hexEncode, fetch.fetchAsync, fetch.Caps, fetch.Fetched, json.parse, json.JsonValue } from "wac";
+import { Signed, signedFrom, statementId, verifySigned } from "../../../packages/reckon/src/claims.wac";
+
+string hex(u8[] b) { return "0x" + string.fromBytes(hexEncode(b)); }
+u8[] unhex(string s) { return hexDecoded(s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s); }
+async i64 nanos(Sys sys) { return (await sys.clock().monotonicNanos()).orElse(0 as i64); }
+string ms(i64 ns) {
+  i64 us = ns / (1000 as i64);
+  i64 frac = us % (1000 as i64);
+  return "\{us / (1000 as i64)}.\{frac < (10 as i64) ? "00" : (frac < (100 as i64) ? "0" : "")}\{frac}";
+}
+
+struct Item { u8[] block; string id; string signer; }
+
+/** How many of the statements check out: the right id and the named signer. */
+i32 verifyAll(Item[] items) {
+  i32 ok = 0;
+  for (i32 i = 0; i < items.len(); i++) {
+    Result<Signed, string> s = signedFrom(items[i].block);
+    if (s.isErr()) { continue; }
+    Signed sd = s.unwrap();
+    if (statementId(sd.statement).text() != items[i].id) { continue; }
+    Result<u8[], string> who = verifySigned(sd);
+    if (who.isOk() && hex(who.unwrap()) == items[i].signer) { ok++; }
+  }
+  return ok;
+}
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  i32 repeat = 10;
+  if (a.len() >= 2) { repeat = 0; u8[] d = a[1].toBytes(); for (i32 i = 0; i < d.len(); i++) { repeat = repeat * 10 + (d[i] as i32) - 48; } }
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+  i64 t0 = await nanos(sys);
+  Result<Fetched, string> got = await fetchAsync(caps, "GET", a[0] + "/data/stmts.json", string[](), u8[]());
+  if (got.isErr()) { sys.warn(got.err()!); return 1; }
+  i64 t1 = await nanos(sys);
+  sys.log("phase fetch \{ms(t1 - t0)}");
+  JsonValue doc = parse(got.unwrap().body).ok() ?? JsonValue.Null;
+  Item[] items = Item[]();
+  match (doc) {
+    Array(xs): {
+      items = Item[].filled(xs.len(), Item(u8[](), "", ""));
+      for (i32 i = 0; i < xs.len(); i++) {
+        JsonValue x = xs.get(i);
+        items[i] = Item(unhex(string.fromBytes(x.member("block")?.bytes() ?? u8[]())), string.fromBytes(x.member("id")?.bytes() ?? u8[]()),
+                        string.fromBytes(x.member("signer")?.bytes() ?? u8[]()));
+      }
+    }
+    default: { sys.warn("stmts.json is not an array"); return 1; }
+  }
+  i32 ok = verifyAll(items);
+  i64 t2 = await nanos(sys);
+  sys.log("phase first \{ms(t2 - t1)}");
+  sys.log("result \{ok}/\{items.len()}");
+  for (i32 r = 0; r < repeat; r++) { ok = verifyAll(items); }
+  i64 t3 = await nanos(sys);
+  sys.log("phase per \{ms((t3 - t2) / ((repeat * items.len()) as i64))}");
+  return ok == items.len() ? 0 : 1;
+}

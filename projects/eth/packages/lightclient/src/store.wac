@@ -35,7 +35,7 @@ import { isEmptyHeader } from "./header.wac";
 import { Schedule } from "./schedule.wac";
 import { isValidHeaderAt, upgradeHeader, upgradeUpdate, upgradeBootstrap, fieldsOfN, serializeN } from "./upgrade.wac";
 import { isValidNormalizedMerkleBranch } from "../../ssz/src/merkle.wac";
-import { bls.fastAggregateVerify } from "wac";
+import { CommitteeKeys, committeeKeys, keysAre, verifyParticipants } from "./keys.wac";
 import { syncCommitteeSigningRoot } from "./domain.wac";
 
 /** Slots per sync committee period, minimal config: SLOTS_PER_EPOCH 8 x EPOCHS_PER_PERIOD 8. */
@@ -90,6 +90,12 @@ export struct Store {
   i32 fork;
   /** When each fork begins: what a header's own epoch, a branch's gindex and a signature's version go by. */
   Schedule schedule;
+  /**
+   * The keys of the committees this store has checked signatures with, decompressed and checked once (`keys.wac`):
+   * at most the two most recent, which are the current and the next committee. Not part of what the store believes,
+   * only a cache of work: a store made without it (an empty list) checks the same signatures the same way.
+   */
+  CommitteeKeys[] keys;
 }
 
 u8[] field(i32 fork, i32 n, i32 ty, u8[] data, i32 f) {
@@ -256,7 +262,7 @@ export Store? initializeStoreWith(Schedule schedule, i32 fork, u8[] trustedBlock
   if (!isValidNormalizedMerkleBranch(leaf, branch, currentSyncCommitteeGindex(at), headerStateRoot(header))) {
     return null;
   }
-  return Store(header, committee, u8[](), u8[](), header, 0, 0, fork, schedule);
+  return Store(header, committee, u8[](), u8[](), header, 0, 0, fork, schedule, CommitteeKeys[]());
 }
 
 /**
@@ -391,23 +397,24 @@ export bool validateUpdate(Store store, u8[] update, i64 currentSlot, u8[] genes
   u8[] flat = field(k, n, TY_SYNC_COMMITTEE(), committee, COMMITTEE_PUBKEYS);
   if (flat.len() != n * 48) { return false; }
 
-  // Every member whose bit is set, out of all `n`: with fewer than all signing, bounding this loop by the
-  // participant count instead skips the last members (found on mainnet, at 511 of 512).
-  u8[][] participants = u8[][].defaulted(countBits(bits));
-  i32 at = 0;
-  for (i32 i = 0; i < n; i++) {
-    if ((bits[i >> 3] as i32 & maskFor(i & 7)) != 0) {
-      u8[] pk = u8[].filled(48, 0);
-      for (i32 b = 0; b < 48; b++) { pk[b] = flat[i * 48 + b]; }
-      participants[at] = pk;
-      at = at + 1;
-    }
-  }
   u8[]? signingRoot = syncCommitteeSigningRoot(headerBeaconRoot(attested),
                                                signatureVersion(store, signatureSlot), genesisValidatorsRoot);
   if (signingRoot is null) { return false; }
-  return fastAggregateVerify(participants, signingRoot!,
-                             field(k, n, TY_SYNC_AGGREGATE(), aggregate, AGGREGATE_SIGNATURE));
+  // FastAggregateVerify over every member whose bit is set, out of all `n` (with fewer than all signing, bounding a
+  // loop by the participant count instead skips the last members: found on mainnet, at 511 of 512), from the
+  // committee's keys decompressed once (`keys.wac`).
+  return verifyParticipants(keysIn(store, flat, n), bits, n, signingRoot!,
+                            field(k, n, TY_SYNC_AGGREGATE(), aggregate, AGGREGATE_SIGNATURE));
+}
+
+/** The keys of the committee `flat` is, from the store's cache, or decompressed now and kept (the two most recent). */
+CommitteeKeys keysIn(Store store, u8[] flat, i32 n) {
+  for (i32 i = 0; i < store.keys.len(); i++) { if (keysAre(store.keys[i], flat)) { return store.keys[i]; } }
+  CommitteeKeys made = committeeKeys(flat, n);
+  CommitteeKeys[] next = CommitteeKeys[].filled(store.keys.len() > 0 ? 2 : 1, made);
+  if (store.keys.len() > 0) { next[1] = store.keys[0]; }
+  store.keys = next;
+  return made;
 }
 
 /** `compute_fork_version(compute_epoch_at_slot(max(signature_slot, 1) - 1))`: the fork the signed block's parent is in. */

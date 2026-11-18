@@ -1,0 +1,19 @@
+// shabench — SHA-256 throughput, for docs/footprint.md's IPFS section: wac's `crypto.sha256` over 10 × 1 MiB, printed as ms per MiB.
+import { Sys } from "std";
+import { crypto.sha256 } from "wac";
+async i64 nanos(Sys sys) { return (await sys.clock().monotonicNanos()).orElse(0 as i64); }
+string ms(i64 ns) {
+  i64 us = ns / (1000 as i64);
+  i64 frac = us % (1000 as i64);
+  return "\{us / (1000 as i64)}.\{frac < (10 as i64) ? "00" : (frac < (100 as i64) ? "0" : "")}\{frac}";
+}
+export async i32 main(Sys sys) {
+  u8[] b = u8[].filled(1048576, 7);
+  u8[] d = sha256(b);
+  i64 t0 = await nanos(sys);
+  for (i32 i = 0; i < 10; i++) { d = sha256(b); }
+  i64 t1 = await nanos(sys);
+  sys.log("phase per \{ms((t1 - t0) / (10 as i64))}");
+  sys.log("result \{d[0]}");
+  return 0;
+}

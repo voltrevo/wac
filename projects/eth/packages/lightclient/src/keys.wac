@@ -1,0 +1,74 @@
+// A sync committee's keys, decompressed once.
+//
+// Verifying a sync aggregate is `FastAggregateVerify` over the members whose bits are set: decompress and check each
+// key (encoding, curve, subgroup), add them up, and check one pairing. The keys are the same for a whole period
+// (about 27 hours, every update in it), and decompressing and checking 512 of them is almost all of the work: about
+// 245 ms of 260 in wac's BLS (docs/footprint.md). So each committee's keys are decompressed and checked once, here,
+// and kept with their sum. A signature is then checked against the sum less the members who did not sign (or, when
+// fewer than half signed, the sum of those who did): a few point additions and one pairing check.
+//
+// It refuses exactly where `fastAggregateVerify` over the participants' bytes would: a participant whose key does not
+// decompress, is not on the curve or in the subgroup, or is the point at infinity; and no participants at all. A
+// member who did not sign is never looked at by `fastAggregateVerify`, and here it is only subtracted when usable,
+// since an unusable key was never added to the sum.
+
+import { bls.G1, bls.g1FromBytes, bls.g1Add, bls.g1Negate, bls.g1Infinity, bls.g1IsInfinity, bls.g1Compress, bls.verify } from "wac";
+
+/** One committee's keys, each decompressed and checked once, whether it was usable, and the sum of the usable ones. */
+export struct CommitteeKeys {
+  /** The keys as the committee's SSZ gives them, 48 bytes each: which committee this is. */
+  u8[] flat;
+  G1[] points;
+  bool[] usable;
+  G1 sum;
+}
+
+/** Decompress and check all `n` keys of `flat` (n × 48 bytes). */
+export CommitteeKeys committeeKeys(u8[] flat, i32 n) {
+  G1[] points = G1[].filled(n, g1Infinity());
+  bool[] usable = bool[].filled(n, false);
+  G1 sum = g1Infinity();
+  for (i32 i = 0; i < n; i++) {
+    u8[] pk = u8[].filled(48, 0);
+    for (i32 b = 0; b < 48; b++) { pk[b] = flat[i * 48 + b]; }
+    G1? p = g1FromBytes(pk);
+    if (p is null || g1IsInfinity(p!)) { continue; }
+    points[i] = p!;
+    usable[i] = true;
+    sum = g1Add(sum, p!);
+  }
+  return CommitteeKeys(flat, points, usable, sum);
+}
+
+/** Whether these are `flat`'s keys. */
+export bool keysAre(CommitteeKeys k, u8[] flat) {
+  if (k.flat.len() != flat.len()) { return false; }
+  for (i32 i = 0; i < flat.len(); i++) { if (k.flat[i] != flat[i]) { return false; } }
+  return true;
+}
+
+i32 maskOf(i32 bit) { return 1 << bit; }
+bool signed(u8[] bits, i32 i) { return (bits[i >> 3] as i32 & maskOf(i & 7)) != 0; }
+
+/**
+ * `FastAggregateVerify(participants' keys, message, signature)`, the participants being the members whose bits are set
+ * in `bits`, from keys already decompressed and checked.
+ */
+export bool verifyParticipants(CommitteeKeys k, u8[] bits, i32 n, u8[] message, u8[] signature) {
+  i32 count = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (!signed(bits, i)) { continue; }
+    if (!k.usable[i]) { return false; }
+    count++;
+  }
+  if (count == 0) { return false; }
+  G1 agg = g1Infinity();
+  if (count * 2 > n) {
+    agg = k.sum;
+    for (i32 i = 0; i < n; i++) { if (!signed(bits, i) && k.usable[i]) { agg = g1Add(agg, g1Negate(k.points[i])); } }
+  } else {
+    for (i32 i = 0; i < n; i++) { if (signed(bits, i)) { agg = g1Add(agg, k.points[i]); } }
+  }
+  if (g1IsInfinity(agg)) { return false; }
+  return verify(g1Compress(agg), message, signature);
+}

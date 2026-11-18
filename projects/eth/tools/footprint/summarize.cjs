@@ -76,19 +76,34 @@ if (bls.length) {
 }
 lcTable('lc-browser.jsonl', 'Light client, Chromium', true);
 
-for (const f of fs.readdirSync(dir).filter((f) => /^(mpt|ipfs|stmt)-/.test(f))) {
+// The other comparisons: first verified result (cold, and warm in a browser), time per operation (`phase per`), peak
+// memory (RSS in Node; the renderer's above a blank page in a browser).
+const titles = { mpt: 'eth_getProof', ipfs: 'IPFS content (5.4 MB CAR)', stmt: 'Statements (100, per statement)', sha: 'SHA-256 (ms per MiB)' };
+for (const f of fs.readdirSync(dir).filter((f) => /^(mpt|ipfs|stmt|sha)-(node|browser)\.jsonl$/.test(f)).sort()) {
   const rows = read(f);
   if (!rows.length) continue;
-  line(`### ${f.replace('.jsonl', '')}`); line();
-  line('| client | first result | per operation | peak memory | result |'); line('| --- | ---: | ---: | ---: | --- |');
+  const browser = f.includes('browser');
+  const blank = med(rows.filter((r) => r.label === 'blank').map((r) => r.peakRendererRssBytes)) || 0;
   const by = {};
-  for (const r of rows) (by[r.client || r.label] ||= []).push(r);
+  for (const r of rows) if (r.label !== 'blank') (by[r.client || r.label] ||= []).push(r);
+  const [kind, where] = f.replace('.jsonl', '').split('-');
+  line(`### ${titles[kind]}, ${browser ? 'Chromium' : 'Node'}`); line();
+  if (kind === 'sha') {
+    line('| implementation | ms per MiB | MB/s |'); line('| --- | ---: | ---: |');
+    for (const [n, rs] of Object.entries(by)) { const p = med(rs.map((r) => (r.phases.per || [null])[0])); line(`| ${n} | ${p.toFixed(2)} | ${Math.round(1048576 / 1e6 / (p / 1000))} |`); }
+    line(); continue;
+  }
+  line(browser ? '| client | first result, cold | first result, warm | per operation | peak renderer RSS above blank | result |'
+               : '| client | first result (fresh process) | per operation | peak RSS | result |');
+  line(browser ? '| --- | ---: | ---: | ---: | ---: | --- |' : '| --- | ---: | ---: | ---: | --- |');
   for (const [n, rs] of Object.entries(by)) {
-    if (n === 'blank') continue;
     const cold = rs.filter((r) => r.label !== 'warm');
+    const warm = rs.filter((r) => r.label === 'warm');
     const per = med(cold.map((r) => (r.phases.per || [null])[0]));
-    const peak = med(cold.map((r) => r.peakRssBytes || r.peakRendererRssBytes));
-    line(`| ${n} | ${ms(med(cold.map((r) => r.firstResultMs)))} | ${per == null ? '–' : per.toFixed(3) + ' ms'} | ${mb(peak)} | \`${String((cold.find((r) => r.result) || {}).result || '–').slice(0, 14)}\` |`);
+    const res = String((cold.find((r) => r.result) || {}).result || '–');
+    const perCell = per == null ? '–' : per < 1 ? per.toFixed(3) + ' ms' : per.toFixed(1) + ' ms';
+    if (browser) line(`| ${n} | ${ms(med(cold.map((r) => r.firstResultMs)))} | ${ms(med(warm.map((r) => r.firstResultMs)))} | ${perCell} | ${mb(med(cold.map((r) => r.peakRendererRssBytes - blank)))} | \`${res.slice(0, 16)}\` |`);
+    else line(`| ${n} | ${ms(med(cold.map((r) => r.firstResultMs)))} | ${perCell} | ${mb(med(cold.map((r) => r.peakRssBytes)))} | \`${res.slice(0, 16)}\` |`);
   }
   line();
 }

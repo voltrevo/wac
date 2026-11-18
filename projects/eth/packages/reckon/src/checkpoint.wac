@@ -36,6 +36,7 @@ import { forkNamed, forkName } from "../../ssz/src/forks.wac";
 import { Store, initializeStoreWith, processUpdate, processFinalityUpdate, headerSlot, isNextSyncCommitteeKnown,
          updateFinalizedHeaderAt } from "../../lightclient/src/store.wac";
 import { Schedule } from "../../lightclient/src/schedule.wac";
+import { CommitteeKeys } from "../../lightclient/src/keys.wac";
 import { fieldsOfN } from "../../lightclient/src/upgrade.wac";
 import { TY_LIGHT_CLIENT_FINALITY_UPDATE } from "../../ssz/src/beacon.wac";
 import { executionBlockHash, executionStateRoot } from "../../lightclient/src/header.wac";
@@ -308,7 +309,8 @@ Result<Run, string> runOf(u8[] state) {
   if (sp < 0) { return Result.Err("the light client's kept state: participants"); }
   Store s = Store(try bytesOf(text, "finalized"), try bytesOf(text, "current"), try bytesOf(text, "next"),
                   try bytesOf(text, "best"), try bytesOf(text, "optimistic"),
-                  number(parts.slice(0, sp)), number(parts.slice(sp + 1, parts.len())), fork, Schedule.mainnet());
+                  number(parts.slice(0, sp)), number(parts.slice(sp + 1, parts.len())), fork, Schedule.mainnet(),
+                  CommitteeKeys[]());
   if (headerSlot(s.finalizedHeader) < (0 as i64) || s.currentSyncCommittee.len() == 0) { return Result.Err("the light client's kept state is incomplete"); }
   return Result.Ok(Run(s, string[](), try line(text, "checkpoint"), true));
 }

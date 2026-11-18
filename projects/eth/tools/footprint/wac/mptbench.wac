@@ -3,7 +3,8 @@
 // the account's fields, and each storage proof against the account's storage root. From the JSON text each time, as
 // a wallet would get it. Fetched first from BASE/data/, so transport is timed apart.
 //
-//     mptbench BASE-URL [REPEAT]          prints `phase fetch MS`, `phase first MS`, `phase per MS`, `result …`
+//     mptbench BASE-URL [REPEAT]     prints `phase fetch MS`, `phase first MS`, `result …` (after the first one), then
+//                                    `phase per MS` (the mean over REPEAT more)
 import { Sys } from "std";
 import { Result } from "core";
 import { codec.hexDecoded, codec.hexEncode, fetch.fetchAsync, fetch.Caps, fetch.Fetched, json.parse, json.JsonValue } from "wac";
@@ -72,9 +73,9 @@ export async i32 main(Sys sys) {
   string result = verify(proof, stateRoot);
   i64 t2 = await nanos(sys);
   sys.log("phase first \{ms(t1, t2, 1 as i64)}");
+  sys.log("result \{result}");
   for (i32 i = 0; i < repeat; i++) { result = verify(proof, stateRoot); }
   i64 t3 = await nanos(sys);
   sys.log("phase per \{ms(t2, t3, repeat as i64)}");
-  sys.log("result \{result}");
   return result.indexOf("ok ") == 0 ? 0 : 1;
 }

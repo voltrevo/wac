@@ -32,7 +32,7 @@ export async function run(base, repeat = 200, log = console.log) {
   let result = await verify(proof, stateRoot);
   const t2 = performance.now();
   log(`phase first ${(t2 - t1).toFixed(3)}`);
+  log(`result ${result}`);
   for (let i = 0; i < repeat; i++) result = await verify(proof, stateRoot);
   log(`phase per ${((performance.now() - t2) / repeat).toFixed(4)}`);
-  log(`result ${result}`);
 }

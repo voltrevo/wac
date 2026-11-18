@@ -1,0 +1,3 @@
+// hello — the bare floor of a wac program: its runtime and printing, nothing else (docs/footprint.md).
+import { Sys } from "std";
+export i32 main(Sys sys) { sys.log("result hello"); return 0; }
