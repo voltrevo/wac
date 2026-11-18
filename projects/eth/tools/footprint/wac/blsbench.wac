@@ -1,0 +1,64 @@
+// blsbench — the BLS micro-benchmark of docs/footprint.md, for wac's BLS12-381 (wac's packages/bls): on mainnet's 512
+// sync-committee keys and a real aggregate signature (BASE/data/bls.bin, js/mkbls.mjs), the time for
+//   keys       decompressing and checking (curve, subgroup) all 512 keys, as `g1FromBytes`;
+//   aggregate  `aggregatePubkeys` of all 512 (which decompresses and checks each, then adds);
+//   verify     one `verify` (hash to G2 and the pairing check) against the aggregate signature. The message is not
+//              the one signed, so it answers false; what is timed is the work, which is the same either way.
+// Each the median of REPEAT runs.        blsbench BASE-URL [REPEAT]
+import { Sys } from "std";
+import { Result } from "core";
+import { fetch.fetchAsync, fetch.Caps, fetch.Fetched, bls.g1FromBytes, bls.aggregatePubkeys, bls.verify, bls.G1 } from "wac";
+
+async i64 nanos(Sys sys) { return (await sys.clock().monotonicNanos()).orElse(0 as i64); }
+string ms(i64 ns) {
+  i64 us = ns / (1000 as i64);
+  i64 frac = us % (1000 as i64);
+  return "\{us / (1000 as i64)}.\{frac < (10 as i64) ? "00" : (frac < (100 as i64) ? "0" : "")}\{frac}";
+}
+
+u8[] cut(u8[] b, i32 from, i32 to) {
+  u8[] o = u8[].filled(to - from, 0);
+  for (i32 i = from; i < to; i++) { o[i - from] = b[i]; }
+  return o;
+}
+
+i64 median(i64[] xs) {
+  i64[] s = i64[].filled(xs.len(), 0 as i64);
+  for (i32 i = 0; i < xs.len(); i++) { s[i] = xs[i]; }
+  for (i32 i = 1; i < s.len(); i++) { i64 v = s[i]; i32 j = i - 1; while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; } s[j + 1] = v; }
+  return s[(s.len() - 1) / 2];
+}
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  i32 repeat = 5;
+  if (a.len() >= 2) { repeat = 0; u8[] d = a[1].toBytes(); for (i32 i = 0; i < d.len(); i++) { repeat = repeat * 10 + (d[i] as i32) - 48; } }
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+  Result<Fetched, string> got = await fetchAsync(caps, "GET", a[0] + "/data/bls.bin", string[](), u8[]());
+  if (got.isErr()) { sys.warn(got.err()!); return 1; }
+  u8[] b = got.unwrap().body;
+  i32 n = (b.len() - 96) / 48;
+  u8[][] keys = u8[][].filled(n, u8[]());
+  for (i32 i = 0; i < n; i++) { keys[i] = cut(b, i * 48, i * 48 + 48); }
+  u8[] sig = cut(b, n * 48, n * 48 + 96);
+  u8[] msg = u8[].filled(32, 7);
+
+  i64[] tk = i64[].filled(repeat, 0 as i64); i64[] ta = i64[].filled(repeat, 0 as i64); i64[] tv = i64[].filled(repeat, 0 as i64);
+  bool ok = true;
+  bool answer = false;
+  for (i32 r = 0; r < repeat; r++) {
+    i64 t0 = await nanos(sys);
+    for (i32 i = 0; i < n; i++) { if (g1FromBytes(keys[i]) is null) { ok = false; } }
+    i64 t1 = await nanos(sys);
+    if (aggregatePubkeys(keys) is null) { ok = false; }
+    i64 t2 = await nanos(sys);
+    answer = verify(keys[0], msg, sig);
+    i64 t3 = await nanos(sys);
+    tk[r] = t1 - t0; ta[r] = t2 - t1; tv[r] = t3 - t2;
+  }
+  sys.log("phase keys \{ms(median(tk))}");
+  sys.log("phase aggregate \{ms(median(ta))}");
+  sys.log("phase verify \{ms(median(tv))}");
+  sys.log("result \{ok ? "keys-ok" : "KEYS-REFUSED"} verify=\{answer}");
+  return ok ? 0 : 1;
+}

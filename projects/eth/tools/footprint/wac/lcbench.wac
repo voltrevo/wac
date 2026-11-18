@@ -1,0 +1,112 @@
+// lcbench — the light-client task of docs/footprint.md, for wac: fetch a checkpoint's bootstrap, the period's
+// updates, and the finality and optimistic updates from a beacon node's REST API (all fetched first, so transport
+// is timed apart), then verify them in order and print the execution state root the optimistic header proves.
+//
+//     lcbench BASE-URL CHECKPOINT-ROOT FORK NOW-SLOT [REPEAT] [finalized]
+//
+// REPEAT (default 1) verifies the same data again that many times in this instance, for a warm per-update time.
+// With `finalized`, the optimistic update is left out and the result is the finalized header's state root: the steps
+// Helios takes before it calls itself synced. Prints `phase NAME MS` lines and `result STATE-ROOT`.
+
+import { Sys } from "std";
+import { Result } from "core";
+import { codec.hexDecoded, codec.hexEncode, fetch.fetchAsync, fetch.Caps, fetch.Fetched } from "wac";
+import { forkNamed } from "../../../packages/ssz/src/forks.wac";
+import { Store, initializeStoreWith, processUpdate, processFinalityUpdate, processOptimisticUpdate } from "../../../packages/lightclient/src/store.wac";
+import { Schedule } from "../../../packages/lightclient/src/schedule.wac";
+import { executionStateRoot } from "../../../packages/lightclient/src/header.wac";
+
+string hex(u8[] b) { return "0x" + string.fromBytes(hexEncode(b)); }
+u8[] unhex(string s) { return hexDecoded(s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s); }
+
+i64 decimal(string s) {
+  u8[] b = s.toBytes();
+  i64 v = 0 as i64;
+  for (i32 i = 0; i < b.len(); i++) { v = v * (10 as i64) + ((b[i] as i32 - '0') as i64); }
+  return v;
+}
+
+i64 le64(u8[] b, i32 at) {
+  i64 v = 0 as i64;
+  for (i32 i = 7; i >= 0; i--) { v = (v << (8 as i64)) | (b[at + i] as i64); }
+  return v;
+}
+
+u8[] cut(u8[] b, i32 from, i32 to) {
+  u8[] o = u8[].filled(to - from, 0);
+  for (i32 i = from; i < to; i++) { o[i - from] = b[i]; }
+  return o;
+}
+
+u8[] MAINNET_GVR() { return unhex("0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95"); }
+
+async i64 nanos(Sys sys) { return (await sys.clock().monotonicNanos()).orElse(0 as i64); }
+
+string ms(i64 a, i64 b) {
+  i64 us = (b - a) / (1000 as i64);
+  i64 frac = us % (1000 as i64);
+  return "\{us / (1000 as i64)}.\{frac < (10 as i64) ? "00" : (frac < (100 as i64) ? "0" : "")}\{frac}";
+}
+
+async Result<u8[], string> get(Caps caps, string url) {
+  Result<Fetched, string> got = await fetchAsync(caps, "GET", url, ["Accept: application/octet-stream"], u8[]());
+  if (got.isErr()) { return Result.Err("\{url}: \{got.err()!}"); }
+  Fetched r = got.unwrap();
+  return r.status == 200 ? Result.Ok(r.body) : Result.Err("\{url}: HTTP \{r.status}");
+}
+
+/** One full verification: bootstrap, every update in the chunked list, finality, optimistic. The proven state root. */
+string verify(Sys sys, i32 fork, u8[] root, u8[] boot, u8[] ups, u8[] fin, u8[] opt, i64 now, bool finalizedOnly) {
+  Schedule net = Schedule.mainnet();
+  u8[] gvr = MAINNET_GVR();
+  Store? s = initializeStoreWith(net, fork, root, boot);
+  if (s is null) { return "REFUSED bootstrap"; }
+  Store store = s!;
+  i32 at = 0;
+  while (at + 12 <= ups.len()) {
+    i32 n = le64(ups, at) as~ i32;
+    if (!processUpdate(store, cut(ups, at + 12, at + 8 + n), now, gvr)) { return "REFUSED update"; }
+    at = at + 8 + n;
+  }
+  if (!processFinalityUpdate(store, fin, now, gvr)) { return "REFUSED finality"; }
+  if (finalizedOnly) {
+    u8[]? f = executionStateRoot(store.fork, store.finalizedHeader);
+    return f is null ? "REFUSED no execution header" : hex(f!);
+  }
+  if (!processOptimisticUpdate(store, opt, now, gvr)) { return "REFUSED optimistic"; }
+  u8[]? r = executionStateRoot(store.fork, store.optimisticHeader);
+  return r is null ? "REFUSED no execution header" : hex(r!);
+}
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  if (a.len() < 4) { sys.warn("usage: lcbench BASE-URL CHECKPOINT-ROOT FORK NOW-SLOT [REPEAT]"); return 2; }
+  string base = a[0];
+  u8[] root = unhex(a[1]);
+  i32 fork = forkNamed(a[2]);
+  i64 now = decimal(a[3]);
+  i32 repeat = a.len() >= 5 ? decimal(a[4]) as~ i32 : 1;
+  bool finalizedOnly = a.len() >= 6 && a[5] == "finalized";
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+
+  i64 t0 = await nanos(sys);
+  u8[] boot; u8[] ups; u8[] fin; u8[] opt;
+  match (await get(caps, base + "/eth/v1/beacon/light_client/bootstrap/" + a[1])) { Err(e): { sys.warn(e); return 1; } Ok(b): { boot = b; } }
+  match (await get(caps, base + "/eth/v1/beacon/light_client/updates?start_period=1906&count=1")) { Err(e): { sys.warn(e); return 1; } Ok(b): { ups = b; } }
+  match (await get(caps, base + "/eth/v1/beacon/light_client/finality_update")) { Err(e): { sys.warn(e); return 1; } Ok(b): { fin = b; } }
+  if (finalizedOnly) { opt = u8[](); } else {
+    match (await get(caps, base + "/eth/v1/beacon/light_client/optimistic_update")) { Err(e): { sys.warn(e); return 1; } Ok(b): { opt = b; } }
+  }
+  i64 t1 = await nanos(sys);
+  sys.log("phase fetch \{ms(t0, t1)}");
+
+  string result = "";
+  for (i32 i = 0; i < repeat; i++) {
+    i64 v0 = await nanos(sys);
+    result = verify(sys, fork, root, boot, ups, fin, opt, now, finalizedOnly);
+    i64 v1 = await nanos(sys);
+    sys.log("phase verify \{ms(v0, v1)}");
+  }
+  sys.log("result \{result}");
+  return result.indexOf("REFUSED") == 0 ? 1 : 0;
+}

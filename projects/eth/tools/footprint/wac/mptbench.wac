@@ -1,0 +1,80 @@
+// mptbench — the proof task of docs/footprint.md, for wac: verify a recorded eth_getProof answer (the ENS registry's
+// account and two of its storage slots, mainnet block 26382137) against the block's state root: the account proof,
+// the account's fields, and each storage proof against the account's storage root. From the JSON text each time, as
+// a wallet would get it. Fetched first from BASE/data/, so transport is timed apart.
+//
+//     mptbench BASE-URL [REPEAT]          prints `phase fetch MS`, `phase first MS`, `phase per MS`, `result …`
+import { Sys } from "std";
+import { Result } from "core";
+import { codec.hexDecoded, codec.hexEncode, fetch.fetchAsync, fetch.Caps, fetch.Fetched, json.parse, json.JsonValue } from "wac";
+import { accountAt, storageAt, AccountProof, StorageProof } from "../../../packages/mpt/src/account.wac";
+import { memberData, memberQuantity, hexArray } from "../../../packages/ethrpc/src/jsonhex.wac";
+
+string hex(u8[] b) { return "0x" + string.fromBytes(hexEncode(b)); }
+u8[] unhex(string s) { return hexDecoded(s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s); }
+
+i64 decimal(string s) {
+  u8[] b = s.toBytes();
+  i64 v = 0 as i64;
+  for (i32 i = 0; i < b.len(); i++) { v = v * (10 as i64) + ((b[i] as i32 - '0') as i64); }
+  return v;
+}
+
+async i64 nanos(Sys sys) { return (await sys.clock().monotonicNanos()).orElse(0 as i64); }
+string ms(i64 a, i64 b, i64 n) {
+  i64 ns = (b - a) / n;
+  i64 us = ns / (1000 as i64);
+  i64 frac = us % (1000 as i64);
+  return "\{us / (1000 as i64)}.\{frac < (10 as i64) ? "00" : (frac < (100 as i64) ? "0" : "")}\{frac}";
+}
+
+async Result<string, string> get(Caps caps, string url) {
+  Result<Fetched, string> got = await fetchAsync(caps, "GET", url, string[](), u8[]());
+  if (got.isErr()) { return Result.Err("\{url}: \{got.err()!}"); }
+  Fetched r = got.unwrap();
+  return r.status == 200 ? Result.Ok(string.fromBytes(r.body)) : Result.Err("\{url}: HTTP \{r.status}");
+}
+
+/** One verification, from the answer's text: "ok …" or why not. */
+string verify(string proofText, u8[] stateRoot) {
+  JsonValue? doc = parse(proofText.toBytes()).ok();
+  if (doc is null) { return "not JSON"; }
+  JsonValue r = doc!.member("result") ?? JsonValue.Null;
+  AccountProof a = accountAt(stateRoot, memberData(r, "address"), hexArray(r.member("accountProof") ?? JsonValue.Null));
+  if (!a.ok || !a.present) { return "account: \{a.error}"; }
+  if (hex(a.account.storageRoot) != hex(memberData(r, "storageHash"))) { return "storage root differs"; }
+  match (r.member("storageProof") ?? JsonValue.Null) {
+    Array(items): {
+      for (i32 i = 0; i < items.len(); i++) {
+        JsonValue s = items.get(i);
+        StorageProof p = storageAt(a.account.storageRoot, memberData(s, "key"), hexArray(s.member("proof") ?? JsonValue.Null));
+        if (!p.ok) { return "slot \{i}: \{p.error}"; }
+        if (hex(p.value) != hex(memberQuantity(s, "value"))) { return "slot \{i}: value differs"; }
+      }
+    }
+    default: { return "no storageProof"; }
+  }
+  return "ok \{hex(a.account.storageRoot)}";
+}
+
+export async i32 main(Sys sys) {
+  string[] a = sys.args();
+  if (a.len() < 1) { sys.warn("usage: mptbench BASE-URL [REPEAT]"); return 2; }
+  i32 repeat = a.len() >= 2 ? decimal(a[1]) as~ i32 : 200;
+  Caps caps = Caps(sys.clock(), sys.random(), sys.env(), sys.net(), sys.files());
+  i64 t0 = await nanos(sys);
+  string proof; string block;
+  match (await get(caps, a[0] + "/data/proof.json")) { Err(e): { sys.warn(e); return 1; } Ok(t): { proof = t; } }
+  match (await get(caps, a[0] + "/data/block.json")) { Err(e): { sys.warn(e); return 1; } Ok(t): { block = t; } }
+  i64 t1 = await nanos(sys);
+  sys.log("phase fetch \{ms(t0, t1, 1 as i64)}");
+  u8[] stateRoot = memberData(parse(block.toBytes()).ok()!.member("result") ?? JsonValue.Null, "stateRoot");
+  string result = verify(proof, stateRoot);
+  i64 t2 = await nanos(sys);
+  sys.log("phase first \{ms(t1, t2, 1 as i64)}");
+  for (i32 i = 0; i < repeat; i++) { result = verify(proof, stateRoot); }
+  i64 t3 = await nanos(sys);
+  sys.log("phase per \{ms(t2, t3, repeat as i64)}");
+  sys.log("result \{result}");
+  return result.indexOf("ok ") == 0 ? 0 : 1;
+}
