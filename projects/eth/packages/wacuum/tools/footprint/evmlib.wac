@@ -1,0 +1,144 @@
+// wacuum's EVM as a library a JavaScript host loads, for the footprint comparison (docs/footprint.md): built with
+// `wac bindgen --js`, it is one module with no Sys, no store and no network, the same shape as @ethereumjs/evm
+// or revm compiled to wasm. Three calls, each taking and answering text so that every engine in the comparison
+// crosses its boundary the same way:
+//
+//   - `runStateTests(json, fork)`: every case of one execution-spec-tests state-test file for `fork`, each
+//     checked against the fixture's state root and logs hash. Answers "passed failed gasUsed".
+//   - `verifiedCall(json)`: an eth_call against state that arrives as EIP-1186 proofs, as Helios runs one. Every
+//     account and slot is checked against the state root first; the call then runs on what was proved.
+//     Answers "ok <output hex> <gas used>", or "error <why>".
+//   - `keccak` and `ecrecoverBytes`: the two primitives, for the hashing and signature comparison.
+
+import { Map } from "core";
+import { json.parse, json.JsonValue, json.JsonObject, json.JsonArray } from "wac";
+import { mpt.accountAt, mpt.storageAt, mpt.AccountProof, mpt.StorageProof } from "@/lib.wac";
+import { U256 } from "../../src/u256.wac";
+import { hexToBytes, bytesToHex } from "../../src/hex.wac";
+import { keccak256 } from "../../src/crypto/keccak.wac";
+import { num, bytes, worldFrom, blockFrom, txFrom } from "../fixture.wac";
+import { World, Account, hashU256, eqU256 } from "../../src/state/world.wac";
+import { stateRoot, logsHash } from "../../src/state/root.wac";
+import { BlockEnv, TxEnv, Evm, Message, processMessage, addressBytes } from "../../src/evm/evm.wac";
+import { Outcome } from "../../src/evm/interp.wac";
+import { Spec } from "../../src/evm/spec.wac";
+import { Transaction, Processed, processTransaction } from "../../src/tx/process.wac";
+import { ecrecover } from "../../src/precompiles/ecrecover.wac";
+
+export string runStateTests(u8[] src, string fork) {
+  Spec? s = Spec.byName(fork);
+  if (s is null) { return "0 1 0"; }
+  Spec spec = s!;
+  i32 passed = 0;
+  i32 failed = 0;
+  i64 gas = 0;
+  match (parse(src)) {
+    Err(e): { return "0 1 0"; }
+    Ok(doc): {
+      JsonObject tests = doc.object()!;
+      for (i32 i = 0; i < tests.len(); i++) {
+        JsonValue test = tests.at(i).value;
+        JsonValue? posts = test.member("post")!.member(fork);
+        if (posts is null) { continue; }
+        JsonArray cases = posts!.array()!;
+        for (i32 c = 0; c < cases.len(); c++) {
+          JsonValue post = cases.get(c);
+          World w = worldFrom(test.member("pre")!);
+          JsonValue? config = test.member("config");
+          U256 chainId = config is null ? U256.one() : num(config!.member("chainid"));
+          if (chainId.isZero()) { chainId = U256.one(); }
+          BlockEnv block = blockFrom(spec, test.member("env")!, chainId);
+          Transaction tx = txFrom(test.member("transaction")!, post.member("indexes")!);
+          i64 gl = block.gasLimit.fitsU64() ? block.gasLimit.low() as@ i64 : 0x7FFFFFFFFFFFFFFF;
+          Processed p = processTransaction(spec, w, block, tx, gl, spec.maxBlobGasPerBlock, null);
+          gas += p.gasUsed;
+          bool expectInvalid = post.member("expectException") is not null;
+          bool ok = expectInvalid == (p.invalid != "");
+          ok = ok && bytesToHex(stateRoot(w)) == post.member("hash")!.text()!;
+          ok = ok && bytesToHex(logsHash(p.logs)) == post.member("logs")!.text()!;
+          if (ok) { passed++; } else { failed++; }
+        }
+      }
+    }
+  }
+  return "\{passed} \{failed} \{gas}";
+}
+
+/** A minimal big-endian quantity as a U256: what a proved account's nonce and balance are. */
+U256 beU256(u8[] b) {
+  U256 v = U256.zero();
+  for (i32 i = 0; i < b.len(); i++) { v = v.mul(U256.ofU64(256)).add(U256.ofU64(b[i] as u64)); }
+  return v;
+}
+
+u8[][] nodesOf(JsonValue? v) {
+  JsonArray a = v!.array()!;
+  u8[][] out = u8[][].filled(a.len(), u8[].filled(0, 0));
+  for (i32 i = 0; i < a.len(); i++) { out[i] = bytes(a.get(i)); }
+  return out;
+}
+
+bool sameBytes(u8[] a, u8[] b) { return bytesToHex(a) == bytesToHex(b); }
+
+/**
+ * The fixture: `stateRoot`, `block` (coinbase, number, timestamp, gasLimit, prevRandao, baseFee, chainId),
+ * `call` (from, to, data, gas) and `accounts`, each an eth_getProof answer with the account's `code` beside it.
+ */
+export string verifiedCall(u8[] src) {
+  JsonValue doc = JsonValue.Null;
+  match (parse(src)) {
+    Err(e): { return "error not JSON"; }
+    Ok(d): { doc = d; }
+  }
+  u8[] root = bytes(doc.member("stateRoot"));
+  World w = World.create();
+  JsonArray accounts = doc.member("accounts")!.array()!;
+  for (i32 i = 0; i < accounts.len(); i++) {
+    JsonValue a = accounts.get(i);
+    u8[] address = bytes(a.member("address"));
+    AccountProof ap = accountAt(root, address, nodesOf(a.member("accountProof")));
+    if (!ap.ok) { return "error account \{bytesToHex(address)}: \{ap.error}"; }
+    u8[] code = bytes(a.member("code"));
+    if (ap.present && !sameBytes(keccak256(code), ap.account.codeHash)) { return "error code of \{bytesToHex(address)}"; }
+    U256 addr = beU256(address);
+    Account acct = w.touch(addr);
+    acct.nonce = beU256(ap.account.nonce).low();
+    acct.balance = beU256(ap.account.balance);
+    JsonArray slots = a.member("storageProof")!.array()!;
+    for (i32 k = 0; k < slots.len(); k++) {
+      JsonValue s = slots.get(k);
+      u8[] key = bytes(s.member("key"));
+      u8[] key32 = u8[].filled(32, 0);
+      for (i32 j = 0; j < key.len(); j++) { key32[32 - key.len() + j] = key[j]; }
+      StorageProof sp = storageAt(ap.account.storageRoot, key32, nodesOf(s.member("proof")));
+      if (!sp.ok) { return "error slot \{bytesToHex(key32)} of \{bytesToHex(address)}: \{sp.error}"; }
+      U256 v = beU256(sp.value);
+      if (!v.isZero()) { acct.storage.set(beU256(key32), v); }
+    }
+    w.setCode(addr, code);
+  }
+  w.endTransaction();
+
+  JsonValue b = doc.member("block")!;
+  Spec spec = Spec.byName(b.member("fork")?.text() ?? "Prague")!;
+  BlockEnv env = BlockEnv(num(b.member("coinbase")), num(b.member("number")), num(b.member("timestamp")),
+                          num(b.member("gasLimit")), num(b.member("prevRandao")), num(b.member("baseFee")),
+                          U256.one(), num(b.member("chainId")), Map.create(hashU256, eqU256));
+  JsonValue c = doc.member("call")!;
+  U256 from = num(c.member("from"));
+  U256 to = num(c.member("to"));
+  i64 gas = num(c.member("gas")).low() as@ i64;
+  Evm evm = Evm(w, env, TxEnv(from, U256.zero(), U256[].filled(0, U256.zero())), spec.table, spec, null);
+  w.warmAddress(from);
+  w.warmAddress(to);
+  Message m = Message(from, to, to, U256.zero(), bytes(c.member("data")), gas, false, 0, true, false);
+  Outcome o = processMessage(evm, m);
+  if (!o.succeeded()) { return "error reverted"; }
+  return "ok \{bytesToHex(o.output())} \{gas - o.gasLeft}";
+}
+
+/** Bytes in and out, as @noble/hashes takes them: the boundary copies a Uint8Array each way. */
+export u8[] keccak(u8[] data) { return keccak256(data); }
+
+/** The ecrecover precompile's input, 128 bytes of hash, v, r and s: answers the 32-byte padded address, or none. */
+export u8[] ecrecoverBytes(u8[] input) { return ecrecover(input); }

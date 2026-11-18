@@ -1,0 +1,60 @@
+{
+ "ecrecover": {
+  "env": {
+   "currentCoinbase": "0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba",
+   "currentGasLimit": "0x0393870000",
+   "currentNumber": "0x01",
+   "currentTimestamp": "0x03e8",
+   "currentRandom": "0x0000000000000000000000000000000000000000000000000000000000000020",
+   "currentDifficulty": "0x00",
+   "currentBaseFee": "0x07",
+   "currentExcessBlobGas": "0x00"
+  },
+  "pre": {
+   "0xa94f5374fce5edbac8e2f8b6d8b4f4e4c7c5b9a1": {
+    "nonce": "0x00",
+    "balance": "0x3635c9adc5dea00000",
+    "code": "0x",
+    "storage": {}
+   },
+   "0x00000000000000000000000000000000000c0de0": {
+    "nonce": "0x01",
+    "balance": "0x00",
+    "code": "0x7ff47606ab5b9ae57f073ca91f67b432293ac184fef0f205ac818d07a85642c7366000527f000000000000000000000000000000000000000000000000000000000000001b6020527f74f8b9454cf36104e7754162be16659617d4cb4d6daf92206441f826b2b101976040527f0fa50f43b5b546571df38cf2423a3480d114d7a516954d3b10e4c91aec0ba9396060526300001e785b602060806080600060015afa5060019003806100955700",
+    "storage": {}
+   }
+  },
+  "transaction": {
+   "nonce": "0x00",
+   "gasPrice": "0x0a",
+   "gasLimit": [
+    "0x01c9c380"
+   ],
+   "to": "0x00000000000000000000000000000000000c0de0",
+   "value": [
+    "0x00"
+   ],
+   "data": [
+    "0x"
+   ],
+   "sender": "0xa94f5374fce5edbac8e2f8b6d8b4f4e4c7c5b9a1",
+   "secretKey": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "post": {
+   "Prague": [
+    {
+     "hash": "0x55fa7e26aa83fa1313122424a4436ab1bb484148c7bfd02e530105f283e07fc0",
+     "logs": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+     "indexes": {
+      "data": 0,
+      "gas": 0,
+      "value": 0
+     }
+    }
+   ]
+  },
+  "config": {
+   "chainid": "0x01"
+  }
+ }
+}

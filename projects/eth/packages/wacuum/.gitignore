@@ -2,3 +2,4 @@ dist/
 *.wasm
 /fixtures
 /scratch
+node_modules/

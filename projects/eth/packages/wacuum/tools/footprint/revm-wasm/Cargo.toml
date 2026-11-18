@@ -1,0 +1,48 @@
+# revm compiled to WebAssembly for the footprint comparison (../INTERFACE.md). Standalone on purpose:
+# the empty [workspace] keeps it out of any parent workspace, and Cargo.lock pins every transitive version.
+[package]
+name = "revm-wasm"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+
+[dependencies]
+# revm 43.0.3, the latest release on crates.io at the time of writing.
+# default-features = false drops revm's C crypto (secp256k1 = libsecp256k1, c-kzg, blst) so every
+# precompile uses revm's pure-Rust fallback: k256, arkworks (bn254, bls12-381, KZG), aurora modexp, p256.
+#  - std: revm's normal hosted build (no_std would change allocators/maps, not what users ship).
+#  - serde + test-types: revm's own `revm-statetest-types`, the fixture model revme uses.
+#  - optional_*: compile-time switches whose runtime flags default to OFF; only verifiedCall turns them
+#    on, as eth_call does (no balance / base-fee / block-gas-limit / EIP-3607 rejections).
+revm = { version = "=43.0.3", default-features = false, features = [
+  "std", "serde", "test-types",
+  "optional_balance_check", "optional_no_base_fee", "optional_block_gas_limit", "optional_eip3607",
+] }
+# What revme uses for roots and logs: alloy-trie's HashBuilder (state root) and proof verifier (verifiedCall).
+alloy-trie = { version = "=0.9.9", default-features = false, features = ["ethereum", "std"] }
+alloy-rlp = { version = "0.3", default-features = false, features = ["std"] }
+alloy-primitives = { version = "1", default-features = false, features = ["rlp"] }
+serde_json = "1"
+# Pinned to the installed wasm-bindgen-cli (0.2.100); the two must match exactly.
+wasm-bindgen = "=0.2.100"
+# k256 -> elliptic-curve -> rand_core pulls getrandom 0.2, which refuses wasm32-unknown-unknown unless told
+# where entropy comes from. Nothing here draws randomness (verification only); "js" just makes it compile.
+getrandom = { version = "0.2", features = ["js"] }
+
+# Shared release settings; the two artifacts differ only in opt-level.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+[profile.release-s]
+inherits = "release"
+opt-level = "s"

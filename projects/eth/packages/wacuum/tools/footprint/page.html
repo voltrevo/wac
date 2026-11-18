@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>footprint</title>
+<!-- One measurement in the page: measure-browser.mjs opens /page.html?engine=…&task=… in a fresh browser and reads
+     window.__result. The same tasks.mjs and engines/load.mjs as Node, reading through fetch. -->
+<script type="module">
+const t0 = performance.now()
+const q = new URLSearchParams(location.search)
+const engine = q.get('engine'), task = q.get('task')
+try {
+  const { load } = await import('/engines/load.mjs')
+  const tasks = await import('/tasks.mjs')
+  const read = async (p) => new Uint8Array(await (await fetch(p.startsWith('/') ? p : '/dist/' + p)).arrayBuffer())
+  const subset = (await (await fetch('/subset.txt')).text()).trim().split('\n')
+  const files = {
+    subset: subset.map((f) => ['/fx/' + f, { cancun: 'Cancun', prague: 'Prague', osaka: 'Osaka' }[f.split('/')[0]]]),
+    bench: (n) => `/fixtures/bench/${n}.json`,
+    call: (n) => `/fixtures/call/${n}.json`,
+  }
+  const out = { engine, task, runtime: navigator.userAgent }
+  const ts = performance.now()
+  if (engine !== 'none') {
+    const api = globalThis.__api = await load(engine, read, '/dist/')
+    out.loadMs = performance.now() - ts
+    await tasks.first(api, read, files)
+    out.coldMs = performance.now() - ts
+    out.harnessMs = ts - t0
+    if (task === 'conformance') out.conformance = await tasks.conformance(api, read, files)
+    if (task === 'bench') { out.bench = {}; for (const b of tasks.BENCH) out.bench[b] = await tasks.bench(api, read, files, b) }
+    if (task === 'call') { out.call = {}; for (const c of tasks.CALLS) out.call[c] = await tasks.call(api, read, files, c) }
+    if (task === 'prims') {
+      const ec = await (await fetch('/fixtures/ecrecover.json')).json()
+      out.prims = await tasks.prims(api, Uint8Array.from(ec.input.match(/../g), (b) => parseInt(b, 16)), ec.address)
+    }
+  }
+  if (globalThis.__api?.linearMemory) out.linearMemoryMiB = globalThis.__api.linearMemory.buffer.byteLength / 2 ** 20
+  window.__result = out
+} catch (e) {
+  window.__result = { engine, task, error: String(e && e.stack || e) }
+}
+</script>

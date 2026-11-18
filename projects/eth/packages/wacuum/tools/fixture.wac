@@ -3,8 +3,11 @@
 
 import { Map } from "core";
 import { Sys } from "std";
-import { json.JsonValue, json.JsonObject } from "wac";
+import { json.JsonValue, json.JsonObject, json.JsonArray } from "wac";
+import { BlockEnv } from "../src/evm/evm.wac";
+import { Transaction, AccessEntry, Authorization, blobGasPrice } from "../src/tx/process.wac";
 import { U256 } from "../src/u256.wac";
+import { keccak256 } from "../src/crypto/keccak.wac";
 import { hexToBytes, bytesToHex } from "../src/hex.wac";
 import { World, Account, hashU256, eqU256 } from "../src/state/world.wac";
 import { Spec, ChainConfig, ForkAt, withBlobs } from "../src/evm/spec.wac";
@@ -120,4 +123,77 @@ export ChainConfig? configOf(JsonValue test) {
   for (i32 i = 0; i < d.len(); i++) { thousands = thousands.mul(U256.ofU64(10)).add(U256.ofU64((d[i] - 48) as u64)); }
   ForkAt[] forks = [ForkAt(a!, U256.zero()), ForkAt(b!, thousands.mul(U256.ofU64(1000)))];
   return ChainConfig(chainId, forks);
+}
+
+// The block and the transaction a state test's case runs: what the state-test runner and the footprint
+// library (tools/footprint/evmlib.wac) both build.
+
+JsonValue? at(JsonValue? v, i32 i) {
+  if (v is null) { return null; }
+  return v!.item(i);
+}
+
+export BlockEnv blockFrom(Spec spec, JsonValue env, U256 chainId) {
+  JsonValue? excess = env.member("currentExcessBlobGas");
+  // A state test has no chain: BLOCKHASH(n) of the 256 before is keccak256 of n in decimal, as the tests' tools have
+  // it (tests@v21.0.1's blockhash_zero_in_window_control reads it).
+  Map<U256, U256> hashes = Map.create(hashU256, eqU256);
+  U256 current = num(env.member("currentNumber"));
+  U256 n = current.gt(U256.ofU64(256)) ? current.sub(U256.ofU64(256)) : U256.zero();
+  while (n.lt(current)) {
+    hashes.set(n, U256.fromBytes(keccak256(n.toDecimal().toBytes()), 0, 32));
+    n = n.add(U256.one());
+  }
+  return BlockEnv(num(env.member("currentCoinbase")), current, num(env.member("currentTimestamp")),
+                  num(env.member("currentGasLimit")), num(env.member("currentRandom")), num(env.member("currentBaseFee")),
+                  blobGasPrice(spec, num(excess)), chainId, hashes, num(env.member("slotNumber")));
+}
+
+export Transaction txFrom(JsonValue t, JsonValue indexes) {
+  i32 d = num(indexes.member("data")).low() as! i32;
+  i32 g = num(indexes.member("gas")).low() as! i32;
+  i32 v = num(indexes.member("value")).low() as! i32;
+  JsonValue? hashes = t.member("blobVersionedHashes");
+  JsonValue? maxFee = t.member("maxFeePerGas");
+  JsonValue? lists = t.member("accessLists");
+  JsonValue? list = at(lists, d);
+  i32 txType = hashes is not null ? 3 : maxFee is not null ? 2 : (list is not null && !list!.isNull()) ? 1 : 0;
+  if (t.member("authorizationList") is not null) { txType = 4; }
+
+  AccessEntry[] entries = AccessEntry[].filled(0, AccessEntry(U256.zero(), U256[].filled(0, U256.zero())));
+  if (list is not null && !list!.isNull()) {
+    JsonArray arr = list!.array()!;
+    entries = AccessEntry[].filled(arr.len(), AccessEntry(U256.zero(), U256[].filled(0, U256.zero())));
+    for (i32 i = 0; i < arr.len(); i++) {
+      JsonArray keys = arr.get(i).member("storageKeys")!.array()!;
+      U256[] ks = U256[].filled(keys.len(), U256.zero());
+      for (i32 k = 0; k < keys.len(); k++) { ks[k] = num(keys.get(k)); }
+      entries[i] = AccessEntry(num(arr.get(i).member("address")), ks);
+    }
+  }
+  U256[] blobs = U256[].filled(0, U256.zero());
+  if (hashes is not null) {
+    JsonArray arr = hashes!.array()!;
+    blobs = U256[].filled(arr.len(), U256.zero());
+    for (i32 i = 0; i < arr.len(); i++) { blobs[i] = num(arr.get(i)); }
+  }
+  Authorization[] auths = Authorization[].filled(0, Authorization(U256.zero(), U256.zero(), U256.zero(), U256.zero(),
+                                                                  U256.zero(), U256.zero()));
+  JsonValue? authList = t.member("authorizationList");
+  if (authList is not null) {
+    JsonArray arr = authList!.array()!;
+    auths = Authorization[].filled(arr.len(), auths.len() == 0 ? Authorization(U256.zero(), U256.zero(), U256.zero(),
+                                                                               U256.zero(), U256.zero(), U256.zero()) : auths[0]);
+    for (i32 i = 0; i < arr.len(); i++) {
+      JsonValue e = arr.get(i);
+      // The fixture also names each `signer`; it is ignored, and the signer recovered, as a client must.
+      auths[i] = Authorization(num(e.member("chainId")), num(e.member("address")), num(e.member("nonce")),
+                               num(e.member("yParity")), num(e.member("r")), num(e.member("s")));
+    }
+  }
+  string toText = t.member("to")!.text() ?? "";
+  U256? to = toText == "" ? null : U256.fromHex(toText);
+  return Transaction(txType, num(t.member("nonce")), num(t.member("gasPrice")), num(maxFee), num(t.member("maxPriorityFeePerGas")),
+                     num(at(t.member("gasLimit"), g)), to, num(at(t.member("value"), v)), bytes(at(t.member("data"), d)),
+                     entries, num(t.member("maxFeePerBlobGas")), blobs, auths, num(t.member("sender")));
 }

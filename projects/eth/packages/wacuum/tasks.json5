@@ -14,6 +14,9 @@
   enginetests: "sh tools/enginetests.sh",
   // Block building, rebuilding every engine fixture's payloads from the mempool.
   buildtests: "sh tools/buildtests.sh",
+  // The footprint comparison (docs/footprint.md): wacuum's EVM and primitives against @ethereumjs, revm and
+  // @noble, in Node and Chromium. Builds everything, runs everything, writes tools/footprint/dist/results.md.
+  footprint: "sh tools/footprint/run.sh",
   // The node, as one executable file.
   build: "mkdir -p dist && wac app --allow-read --allow-write --allow-net cmd/wacuum.wac -o dist/wacuum",
 }

@@ -1,0 +1,13 @@
+// wacuum's two primitives alone, for the hashing and signature comparison (docs/footprint.md, part 2): built
+// once exporting only `keccak` and once with `ecrecoverBytes` too, so each size is that of what a page needing
+// just that primitive would ship.
+//
+//   keccak            keccak256 of the bytes given: src/crypto/keccak.wac
+//   ecrecoverBytes    the ecrecover precompile on its 128-byte input (hash, v, r, s): the 32-byte padded address
+
+import { keccak256 } from "../../src/crypto/keccak.wac";
+import { ecrecover } from "../../src/precompiles/ecrecover.wac";
+
+export u8[] keccak(u8[] data) { return keccak256(data); }
+
+export u8[] ecrecoverBytes(u8[] input) { return ecrecover(input); }
