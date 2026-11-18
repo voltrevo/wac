@@ -1,0 +1,4 @@
+// The baseline for the native host: a program that does nothing, so its peak RSS is the host's own.
+import { Sys } from "std";
+
+export async i32 main(Sys sys) { sys.log("{\"engine\":\"none\",\"task\":\"cold\",\"runtime\":\"wac (V8 host)\"}"); return 0; }

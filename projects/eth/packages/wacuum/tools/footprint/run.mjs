@@ -1,9 +1,10 @@
 // The whole comparison in one command (docs/footprint.md): build every engine, measure sizes, then run every
-// measurement in its own fresh process (Node) or fresh browser (Chromium), `--repeat` times, and write
+// measurement in its own fresh process (the `wac` command's host, Node) or fresh browser (Chromium), `--repeat`
+// times, and write
 // dist/results.json and dist/results.md (the tables the report quotes).
 //
 //     wac task footprint                     from packages/wacuum; or, from tools/footprint:
-//     node run.mjs [--repeat 3] [--skip-build] [--node-only] [--browser-only] [--engines a,b] [--tasks a,b]
+//     node run.mjs [--repeat 3] [--skip-build] [--node-only] [--browser-only] [--engines a,b] [--tasks a,b] [--merge]
 //
 // Needs: `wac` on PATH (built from the pin in wac.lock), the execution-spec-tests fixtures
 // (`wac task fixtures`), `npm ci` here, Rust with wasm32-unknown-unknown and wasm-bindgen-cli 0.2.100 for revm.
@@ -46,15 +47,31 @@ for (const e of PRIMS) plan.push([e, 'prims'])
 const onlyEngines = arg('--engines', null)?.split(','), onlyTasks = arg('--tasks', null)?.split(',')
 const runs = plan.filter(([e, t]) => (!onlyEngines || onlyEngines.includes(e) || e === 'none') && (!onlyTasks || onlyTasks.includes(t)))
 
-const results = []
-for (const runtime of ['node', 'chromium']) {
-  if (runtime === 'node' && flag('--browser-only')) continue
-  if (runtime === 'chromium' && flag('--node-only')) continue
+// The native host runs wac alone: its own baseline, then evmlib.wac called directly by native.wac.
+const nativeRuns = [['none', 'cold'], ...['cold', 'conformance', 'bench', 'call', 'prims'].map((t) => ['wac-native', t])]
+  .filter(([e, t]) => (!onlyEngines || onlyEngines.includes(e) || onlyEngines.includes('wac') || e === 'none') && (!onlyTasks || onlyTasks.includes(t)))
+const tests = path.resolve(here, '../../fixtures/state_tests')
+const command = (runtime, engine, task) => {
+  if (runtime === 'native') {
+    return engine === 'none' ? ['wac', path.join(dist, 'native-none.wasm')]
+      : ['wac', path.join(dist, 'native.wasm'), task, here, tests]
+  }
   const script = path.join(here, runtime === 'node' ? 'measure-node.mjs' : 'measure-browser.mjs')
-  for (const [engine, task] of runs) {
+  return ['node', '--max-old-space-size=8192', script, engine, task]
+}
+
+const results = []
+for (const runtime of ['native', 'node', 'chromium']) {
+  if (runtime !== 'chromium' && flag('--browser-only')) continue
+  if (runtime === 'chromium' && flag('--node-only')) continue
+  for (const [engine, task] of runtime === 'native' ? nativeRuns : runs) {
     for (let i = 0; i < repeat; i++) {
       process.stderr.write(`${runtime} ${engine} ${task} ${i + 1}/${repeat}\n`)
-      const text = execFileSync('node', ['--max-old-space-size=8192', script, engine, task], { encoding: 'utf8', maxBuffer: 1 << 26 })
+      // Node and the native host run under measure-proc.py, which adds the process's wall time and peak RSS.
+      const argv = command(runtime, engine, task)
+      const text = runtime === 'chromium'
+        ? execFileSync(argv[0], argv.slice(1), { encoding: 'utf8', maxBuffer: 1 << 26 })
+        : execFileSync('python3', [path.join(here, 'measure-proc.py'), ...argv], { encoding: 'utf8', maxBuffer: 1 << 26 })
       const r = JSON.parse(text.trim().split('\n').pop())
       if (r.error) throw new Error(`${runtime} ${engine} ${task}: ${r.error}`)
       results.push({ ...r, where: runtime, rep: i })
@@ -62,5 +79,13 @@ for (const runtime of ['node', 'chromium']) {
   }
 }
 
-fs.writeFileSync(path.join(dist, 'results.json'), JSON.stringify({ when: new Date().toISOString(), sizes, results }, null, 1))
+// --merge keeps an earlier results.json's runs of whatever this invocation did not run (by runtime, engine, task).
+let all = results
+const prior = path.join(dist, 'results.json')
+if (flag('--merge') && fs.existsSync(prior)) {
+  const key = (r) => `${r.where} ${r.engine} ${r.task}`
+  const ran = new Set(results.map(key))
+  all = [...JSON.parse(fs.readFileSync(prior, 'utf8')).results.filter((r) => !ran.has(key(r))), ...results]
+}
+fs.writeFileSync(prior, JSON.stringify({ when: new Date().toISOString(), sizes, results: all }, null, 1))
 execFileSync('node', [path.join(here, 'report.mjs')], { stdio: 'inherit' })

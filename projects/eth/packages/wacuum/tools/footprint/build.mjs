@@ -7,6 +7,7 @@
 //   wac-opt   the same module after binaryen's wasm-opt -O3 (WasmGC enabled): what an optimizer adds
 //   revm-s    revm, opt-level s + wasm-opt -Oz        (revm-wasm/build.sh)
 //   revm-3    revm, opt-level 3 + wasm-opt -O3        (revm-wasm/build.sh)
+//   native    native.wac and native-none.wac, for the `wac` command itself (not a page's download)
 //   ejs       @ethereumjs/vm 10.1.3 and what it needs, bundled and minified by esbuild for the browser
 //
 //     node build.mjs [--skip-revm]          (from tools/footprint, with `wac` on PATH)
@@ -69,6 +70,10 @@ fs.mkdirSync(dist, { recursive: true })
   }
   fs.rmSync(tmp)
 }
+
+// ── the native host's drivers: the tasks as wac programs, for the `wac` command's own V8 host ──
+sh('wac', ['build', '--allow-read', 'tools/footprint/native.wac', '-o', 'tools/footprint/dist/native'], { cwd: wacuum })
+sh('wac', ['build', 'tools/footprint/native-none.wac', '-o', 'tools/footprint/dist/native-none'], { cwd: wacuum })
 
 // ── revm ──
 if (!process.argv.includes('--skip-revm')) sh('sh', [path.join(here, 'revm-wasm/build.sh')])

@@ -1,0 +1,173 @@
+// The Node tasks again, as a wac program for the `wac` command's own V8 host: the primary wac runtime outside a
+// browser, since that is where a wac program runs. The same evmlib.wac, the same fixtures, the same counts and
+// medians as tasks.mjs; what differs is the host (no Node, no JavaScript glue: the program calls evmlib directly,
+// so nothing crosses a JS boundary either).
+//
+//     wac build --allow-read tools/footprint/native.wac -o dist/footprint-native
+//     wac dist/footprint-native.wasm <task> <tools/footprint dir> <state_tests dir>
+//
+// Prints one JSON line. Peak memory is not measured from inside: measure-native.py reads the process's maxrss.
+
+import { Sys } from "std";
+import { Vec } from "core";
+import { json.parse, json.JsonValue } from "wac";
+import { runStateTests, verifiedCall, keccak, ecrecoverBytes } from "./evmlib.wac";
+import { hexToBytes, bytesToHex } from "../../src/hex.wac";
+
+async f64 nowMs(Sys sys) { return ((await sys.monotonicNanos()) as~ f64) / 1000000.0; }
+
+async u8[] read(Sys sys, string path) {
+  match (await sys.readFile(path)) {
+    Ok(b): { return b; }
+    Err(e): { trap "cannot read \{path}: \{e}"; }
+  }
+}
+
+f64 median(f64[] xs) {
+  for (i32 i = 1; i < xs.len(); i++) {
+    f64 x = xs[i];
+    i32 j = i - 1;
+    while (j >= 0 && xs[j] > x) { xs[j + 1] = xs[j]; j--; }
+    xs[j + 1] = x;
+  }
+  return xs[xs.len() / 2];
+}
+
+/** "a b c" → its `i`th number. */
+f64 field(string s, i32 i) {
+  u8[] b = s.toBytes();
+  i32 at = 0;
+  for (i32 k = 0; k < i; k++) { while (b[at] != 32) { at++; } at++; }
+  f64 v = 0.0;
+  while (at < b.len() && b[at] != 32) { v = v * 10.0 + ((b[at] - 48) as f64); at++; }
+  return v;
+}
+
+string word(string s, i32 i) {
+  u8[] b = s.toBytes();
+  i32 at = 0;
+  for (i32 k = 0; k < i; k++) { while (b[at] != 32) { at++; } at++; }
+  i32 end = at;
+  while (end < b.len() && b[end] != 32) { end++; }
+  return s.slice(at, end);
+}
+
+async string bench(Sys sys, string dir, string name) {
+  u8[] src = await read(sys, "\{dir}/fixtures/bench/\{name}.json");
+  string r = runStateTests(src, "Prague");
+  if (field(r, 0) != 1.0) { trap "\{name}: \{r}"; }
+  f64[] times = f64[].filled(3, 0.0);
+  for (i32 i = 0; i < 3; i++) {
+    f64 t0 = await nowMs(sys);
+    r = runStateTests(src, "Prague");
+    times[i] = (await nowMs(sys)) - t0;
+  }
+  f64 ms = median(times);
+  f64 gas = field(r, 2);
+  return "\"\{name}\":{\"ms\":\{ms},\"gas\":\{gas},\"mgasps\":\{gas / ms / 1000.0}}";
+}
+
+async string call(Sys sys, string dir, string name) {
+  u8[] src = await read(sys, "\{dir}/fixtures/call/\{name}.json");
+  string expect = "";
+  match (parse(src)) {
+    Ok(doc): { expect = doc.member("expect")!.text()!; }
+    Err(e): { trap "not JSON"; }
+  }
+  string r = "";
+  for (i32 i = 0; i < 5; i++) { r = verifiedCall(src); }
+  if (word(r, 0) != "ok" || word(r, 1) != word(expect, 1)) { trap "\{name}: answered \{r}, @ethereumjs \{expect}"; }
+  f64[] times = f64[].filled(50, 0.0);
+  for (i32 i = 0; i < 50; i++) {
+    f64 t0 = await nowMs(sys);
+    verifiedCall(src);
+    times[i] = (await nowMs(sys)) - t0;
+  }
+  return "\"\{name}\":{\"ms\":\{median(times)},\"gas\":\{field(r, 2)}}";
+}
+
+/** ops/s of one primitive over about a second, after half a second of warm-up; `which` 0, 1, 2 as in tasks.mjs. */
+async f64 rate(Sys sys, i32 which, u8[] input) {
+  f64 end = (await nowMs(sys)) + 500.0;
+  while ((await nowMs(sys)) < end) { for (i32 i = 0; i < 64; i++) { once(which, input); } }
+  i32 n = 0;
+  f64 t0 = await nowMs(sys);
+  f64 t = t0;
+  while (t - t0 < 1000.0) {
+    for (i32 i = 0; i < 64; i++) { once(which, input); }
+    n += 64;
+    t = await nowMs(sys);
+  }
+  return (n as f64) / ((t - t0) / 1000.0);
+}
+
+void once(i32 which, u8[] input) {
+  if (which == 2) { ecrecoverBytes(input); } else { keccak(input); }
+}
+
+export async i32 main(Sys sys) {
+  f64 start = await nowMs(sys);
+  string[] args = sys.args();
+  string task = args[0];
+  string dir = args[1];
+  string tests = args[2];
+  Vec<string> out = Vec.create();
+  out.push("{\"engine\":\"wac-native\",\"task\":\"\{task}\",\"runtime\":\"wac (V8 host)\"");
+
+  // The first result, as tasks.first: a verified call.
+  string r = verifiedCall(await read(sys, "\{dir}/fixtures/call/balance.json"));
+  if (word(r, 0) != "ok") { trap r; }
+  out.push(",\"coldMs\":\{(await nowMs(sys)) - start}");
+
+  if (task == "conformance") {
+    string list = string.fromBytes(await read(sys, "\{dir}/subset.txt"));
+    Vec<u8[]> inputs = Vec.create();
+    Vec<string> forks = Vec.create();
+    u8[] lb = list.toBytes();
+    i32 at = 0;
+    while (at < lb.len()) {
+      i32 end = at;
+      while (end < lb.len() && lb[end] != 10) { end++; }
+      if (end > at) {
+        string f = list.slice(at, end);
+        inputs.push(await read(sys, "\{tests}/\{f}"));
+        forks.push(f.indexOf("cancun/") == 0 ? "Cancun" : f.indexOf("prague/") == 0 ? "Prague" : "Osaka");
+      }
+      at = end + 1;
+    }
+    f64 t0 = await nowMs(sys);
+    f64 passed = 0.0;
+    f64 failed = 0.0;
+    f64 gas = 0.0;
+    for (i32 i = 0; i < inputs.len(); i++) {
+      string s = runStateTests(inputs.get(i), forks.get(i));
+      passed += field(s, 0);
+      failed += field(s, 1);
+      gas += field(s, 2);
+    }
+    out.push(",\"conformance\":{\"passed\":\{passed},\"failed\":\{failed},\"gas\":\{gas},\"ms\":\{(await nowMs(sys)) - t0}}");
+  }
+  if (task == "bench") {
+    out.push(",\"bench\":{" + (await bench(sys, dir, "arith")) + "," + (await bench(sys, dir, "keccak")) + "," +
+             (await bench(sys, dir, "sstore")) + "," + (await bench(sys, dir, "ecrecover")) + "}");
+  }
+  if (task == "call") {
+    out.push(",\"call\":{" + (await call(sys, dir, "balance")) + "," + (await call(sys, dir, "quote")) + "}");
+  }
+  if (task == "prims") {
+    u8[] ec = u8[].filled(0, 0);
+    string want = "";
+    match (parse(await read(sys, "\{dir}/fixtures/ecrecover.json"))) {
+      Ok(doc): { ec = hexToBytes(doc.member("input")!.text()!)!; want = doc.member("address")!.text()!; }
+      Err(e): { trap "not JSON"; }
+    }
+    string got = bytesToHex(ecrecoverBytes(ec));
+    if (got != "0x" + want) { trap "ecrecover answered \{got}, want \{want}"; }
+    out.push(",\"prims\":{\"keccak32\":\{await rate(sys, 0, u8[].filled(32, 7))},\"keccak1k\":\{await rate(sys, 1, u8[].filled(1024, 7))},\"ecrecover\":\{await rate(sys, 2, ec)}}");
+  }
+  out.push("}");
+  string line = "";
+  for (i32 i = 0; i < out.len(); i++) { line = line + out.get(i); }
+  sys.log(line);
+  return 0;
+}
