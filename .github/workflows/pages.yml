@@ -80,13 +80,14 @@ jobs:
           path: ${{ runner.temp }}/site
           include-hidden-files: true
 
-  deploy:
+  # Assembling and deploying are separate jobs on purpose. deploy-pages looks the `github-pages` artifact up by
+  # name, and the listing can lag the upload by seconds, so a deploy step straight after the upload step finds
+  # nothing (actions/deploy-pages#451; it failed three runs in a row here on 2026-11-25). A job boundary gives the
+  # listing time to catch up, and a re-run of a failed deploy no longer uploads a second artifact of that name.
+  assemble:
     needs: [sites, site]
     if: always() && needs.sites.result == 'success'
     runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -114,5 +115,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out
+
+  deploy:
+    needs: assemble
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
