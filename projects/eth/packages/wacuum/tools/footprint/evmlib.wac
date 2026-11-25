@@ -19,7 +19,7 @@ import { keccak256 } from "../../src/crypto/keccak.wac";
 import { num, bytes, worldFrom, blockFrom, txFrom } from "../fixture.wac";
 import { World, Account, hashU256, eqU256 } from "../../src/state/world.wac";
 import { stateRoot, logsHash } from "../../src/state/root.wac";
-import { BlockEnv, TxEnv, Evm, Message, processMessage, addressBytes } from "../../src/evm/evm.wac";
+import { BlockEnv, TxEnv, Evm, Message, Meter, processMessage, addressBytes } from "../../src/evm/evm.wac";
 import { Outcome } from "../../src/evm/interp.wac";
 import { Spec } from "../../src/evm/spec.wac";
 import { Transaction, Processed, processTransaction } from "../../src/tx/process.wac";
@@ -123,7 +123,7 @@ export string verifiedCall(u8[] src) {
   Spec spec = Spec.byName(b.member("fork")?.text() ?? "Prague")!;
   BlockEnv env = BlockEnv(num(b.member("coinbase")), num(b.member("number")), num(b.member("timestamp")),
                           num(b.member("gasLimit")), num(b.member("prevRandao")), num(b.member("baseFee")),
-                          U256.one(), num(b.member("chainId")), Map.create(hashU256, eqU256));
+                          U256.one(), num(b.member("chainId")), Map.create(hashU256, eqU256), U256.zero());
   JsonValue c = doc.member("call")!;
   U256 from = num(c.member("from"));
   U256 to = num(c.member("to"));
@@ -131,7 +131,7 @@ export string verifiedCall(u8[] src) {
   Evm evm = Evm(w, env, TxEnv(from, U256.zero(), U256[].filled(0, U256.zero())), spec.table, spec, null);
   w.warmAddress(from);
   w.warmAddress(to);
-  Message m = Message(from, to, to, U256.zero(), bytes(c.member("data")), gas, false, 0, true, false);
+  Message m = Message(from, to, to, U256.zero(), bytes(c.member("data")), gas, false, 0, true, false, Meter.of(0));
   Outcome o = processMessage(evm, m);
   if (!o.succeeded()) { return "error reverted"; }
   return "ok \{bytesToHex(o.output())} \{gas - o.gasLeft}";
