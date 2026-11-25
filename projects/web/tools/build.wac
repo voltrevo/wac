@@ -447,12 +447,14 @@ export string programSide() {
             case 35: return send(["store", text, dec.decode(bytes), a !== 0n]);
             // The audio is the document's: its state, or a resume, goes there and back (`PAGE_AUDIO`).
             case 36: { const req = ++lastValue; audios.set(req, id); return send(["audio", req, a !== 0n]); }
-            case 23: return send(["sound", lo(a), Number(b), bytes], wacOwn(bytes));
+            case 23: return send(["sound", lo(a), Number(b), bytes, text], wacOwn(bytes));
             case 24: {
-              // When, by the page's clock, and how far in: two little-endian f64s, when the program gave them.
-              const when = bytes.length >= 16 ? new DataView(bytes.buffer, bytes.byteOffset, 16) : null;
+              // When, by the page's clock, and how far in: two little-endian f64s, when the program gave them — and a
+              // third, the voice this one follows, when it was played after one (`Sound.playAfter`).
+              const when = bytes.length >= 16 ? new DataView(bytes.buffer, bytes.byteOffset, bytes.length) : null;
               return send(["play", hi(a), lo(a), hi(b) / 1000, lo(b) !== 0,
-                           when ? when.getFloat64(0, true) : 0, when ? when.getFloat64(8, true) : 0]);
+                           when ? when.getFloat64(0, true) : 0, when ? when.getFloat64(8, true) : 0,
+                           when && bytes.length >= 24 ? when.getFloat64(16, true) : 0]);
             }
             case 25: return send(["stop", lo(a)]);
             case 26: return send(["gain", lo(a), hi(b) / 1000, lo(b)]);
@@ -1739,7 +1741,7 @@ export string documentSide() {
         // (`Page.resumeAudio`, `PAGE_AUDIO`), from a gesture's handler or when the page is seen again, as a page's own
         // script would call `AudioContext.resume()`.
         let ctx = null;
-        const sounds = new Map(), voices = new Map();
+        const sounds = new Map(), voices = new Map(), ends = new Map();
         // **A sound asked for while the audio is held** is kept until it is resumed, and played then only if it is
         // still the moment it was for: the tap that resumes it should be heard, the sounds of a minute in a hidden tab
         // should not all be heard at once. Measured against the *request* to resume, not against when the browser
@@ -2064,15 +2066,20 @@ export string documentSide() {
           },
           title: (title) => { document.title = title; },
           // **Sound**: each one decoded once into a buffer, and a voice a source playing it through its own gain.
-          sound: (id, rate, bytes) => {
+          // Two channels are interleaved, left then right; a rate of 0 forgets the sound (`Sound.forget`).
+          sound: (id, rate, bytes, channels) => {
+            if (rate === 0) { sounds.delete(id); return; }
+            const k = channels === "2" ? 2 : 1;
             const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-            const n = bytes.byteLength >> 1;
-            const buf = audio().createBuffer(1, Math.max(n, 1), rate);
-            const ch = buf.getChannelData(0);
-            for (let i = 0; i < n; i++) ch[i] = v.getInt16(i * 2, true) / 32767;
+            const n = Math.floor(bytes.byteLength / (2 * k));
+            const buf = audio().createBuffer(k, Math.max(n, 1), rate);
+            for (let c = 0; c < k; c++) {
+              const ch = buf.getChannelData(c);
+              for (let i = 0; i < n; i++) ch[i] = v.getInt16((i * k + c) * 2, true) / 32767;
+            }
             sounds.set(id, buf);
           },
-          play: (voice, sound, volume, loop, at, offset) => {
+          play: (voice, sound, volume, loop, at, offset, after) => {
             const buf = sounds.get(sound);
             if (!buf) return;
             const ctx = audio();
@@ -2082,7 +2089,7 @@ export string documentSide() {
             const gain = ctx.createGain();
             gain.gain.value = volume;
             src.connect(gain).connect(ctx.destination);
-            src.onended = () => { if (voices.get(voice)?.src === src) voices.delete(voice); };
+            src.onended = () => { if (voices.get(voice)?.src === src) { voices.delete(voice); ends.delete(voice); } };
             voices.get(voice)?.src.stop();
             voices.set(voice, !loop && ctx.state !== "running" ? { src, gain, held: performance.now() } : { src, gain });
             // **The page's clock to the audio's**: both read now, so a time on one is a time on the other. A time
@@ -2090,9 +2097,21 @@ export string documentSide() {
             const ahead = at > 0 ? (at - (batchNow ?? performance.timeOrigin + performance.now())) / 1000 : 0;
             const into = Math.max(0, offset + (ahead < 0 ? -ahead : 0));
             if (batchAudio === null) batchAudio = ctx.currentTime;
-            src.start(ahead > 0 ? batchAudio + ahead : batchAudio, loop ? into % buf.duration : Math.min(into, buf.duration));
+            // **Played after a voice** (`Sound.playAfter`): at the moment that voice's sound runs out, by the audio's
+            // clock, which is where it was scheduled to — so a stream's chunks join to the sample. Its end is taken,
+            // not kept: a voice is followed once. One already over, stopped or never played is followed from now.
+            let startAt = ahead > 0 ? batchAudio + ahead : batchAudio;
+            if (after > 0) {
+              const end = ends.get(after);
+              ends.delete(after);
+              if (end !== undefined && end > ctx.currentTime) startAt = end;
+            }
+            const from = loop ? into % buf.duration : Math.min(into, buf.duration);
+            if (!loop) ends.set(voice, startAt + buf.duration - from);
+            src.start(startAt, from);
           },
           stop: (voice) => {
+            ends.delete(voice);
             const v = voices.get(voice);
             if (v) { voices.delete(voice); v.src.stop(); }
           },

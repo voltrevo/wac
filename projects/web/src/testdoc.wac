@@ -471,9 +471,15 @@ export struct TestDoc {
       this.go(text);
       return;
     }
-    if (k == PAGE_SOUND) { this.said = this.said + "sound \{a} \{b} \{bytes.len() / 2}\n"; return; }
+    if (k == PAGE_SOUND) {
+      if (b == (0 as i64)) { this.said = this.said + "forget \{a}\n"; return; }
+      bool two = text == "2";
+      this.said = this.said + "sound \{a} \{b} \{bytes.len() / (two ? 4 : 2)}" + (two ? " stereo" : "") + "\n";
+      return;
+    }
     if (k == PAGE_PLAY) {
-      string when = bytes.len() >= 16 ? " at \{getF64(bytes, 0)} from \{getF64(bytes, 8)}" : "";
+      string when = bytes.len() >= 24 ? " after \{getF64(bytes, 16) as~ i32}"
+                  : bytes.len() >= 16 ? " at \{getF64(bytes, 0)} from \{getF64(bytes, 8)}" : "";
       this.said = this.said + "play \{highOf(a)} \{lowOf(a)} \{highOf(b)}" + (lowOf(b) != 0 ? " loop" : "") + when + "\n";
       return;
     }

@@ -1,0 +1,42 @@
+// Sound made a chunk at a time and heard as one: six quarter-second chunks in two channels, each played after the last
+// (`Sound.playAfter`) and forgotten once it is played (`Sound.forget`). The left channel climbs a scale; the right is
+// silent, so a channel that came through on the wrong side is seen. What `test/audio_live.test.ts` plays as a stream.
+
+import { ElementEvent, Node, Page, Sound, Ui, Voice, html.button, html.p, html.span } from "../src/page.wac";
+
+/** Chunk `k`: a quarter of a second of square wave on the left, a step higher each chunk, and nothing on the right. */
+Sound chunk(Page page, i32 k, i32 rate) {
+  i32 n = rate / 4;
+  f64[] left = f64[].filled(n, 0.0);
+  f64[] right = f64[].filled(n, 0.0);
+  f64 hz = 220.0 * (1.0 + (k as f64) / 6.0);
+  for (i32 i = 0; i < n; i++) {
+    f64 phase = (i as f64) * hz / (rate as f64);
+    left[i] = phase - ((phase as~ i32) as f64) < 0.5 ? 0.2 : 0.0 - 0.2;
+  }
+  return page.soundStereo(left, right, rate);
+}
+
+Node app(Ui ui, Page page) {
+  auto sent = ui.state(0);
+  return <p>
+    <button id="stream" onclick={(ElementEvent e) => {
+      page.resumeAudio();
+      Sound first = chunk(page, 0, 44100);
+      Voice last = first.play(0.5);
+      first.forget();
+      for (i32 k = 1; k < 6; k++) {
+        Sound next = chunk(page, k, 44100);
+        last = next.playAfter(last, 0.5);
+        next.forget();
+      }
+      sent.set(6);
+    }}>stream</button>
+    <span id="sent">{"\{sent.get()}"}</span>
+  </p>;
+}
+
+export async i32 main(Page page) {
+  page.mount((Ui ui) => app(ui, page));
+  return 0;
+}

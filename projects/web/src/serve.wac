@@ -290,20 +290,28 @@ export struct PageServer {
   }
 
   /** A sound made, played or stopped: the child's numbers for them, this page's sounds and voices. */
-  void audio(this, i32 k, i64 a, i64 b, u8[] bytes) {
+  void audio(this, i32 k, i64 a, i64 b, string text, u8[] bytes) {
     if (k == PAGE_SOUND) {
       i32 rate = b as~ i32;
+      // A rate of 0 is the child forgetting the sound (`Sound.forget`): this page's copy goes too.
+      if (rate == 0) {
+        Sound? gone = this.sounds.get(a as~ i32);
+        if (gone is not null) { gone!.forget(); }
+        return;
+      }
       if (rate < 3000 || rate > 192000) {
         this.refuse("sound: \{rate} is not a sample rate a page plays");
         return;
       }
-      f64[] samples = f64[].filled(bytes.len() / 2, 0.0);
-      for (i32 i = 0; i < samples.len(); i++) {
-        i32 v = (bytes[i * 2] as i32) | ((bytes[i * 2 + 1] as i32) << 8);
-        if (v >= 32768) { v = v - 65536; }
-        samples[i] = (v as f64) / 32767.0;
+      i32 channels = text == "2" ? 2 : 1;
+      i32 n = bytes.len() / (2 * channels);
+      f64[] left = f64[].filled(n, 0.0);
+      f64[] right = f64[].filled(channels == 2 ? n : 0, 0.0);
+      for (i32 i = 0; i < n; i++) {
+        left[i] = sampleAt(bytes, i * channels);
+        if (channels == 2) { right[i] = sampleAt(bytes, i * 2 + 1); }
       }
-      this.sounds.set(a as~ i32, this.page.sound(samples, rate));
+      this.sounds.set(a as~ i32, channels == 2 ? this.page.soundStereo(left, right, rate) : this.page.sound(left, rate));
       return;
     }
     if (k == PAGE_PLAY) {
@@ -314,8 +322,11 @@ export struct PageServer {
       }
       f64 asked = (highOf(b) as f64) / 1000.0;
       f64 volume = asked * this.loudness;
-      // When and from where, as the child asked: its clock and this page's are the same one.
-      Voice v = bytes.len() >= 16 ? sound!.playAt(volume, lowOf(b) != 0, getF64(bytes, 0), getF64(bytes, 8))
+      // When and from where, as the child asked: its clock and this page's are the same one. After one of its voices,
+      // when it said so (`Sound.playAfter`): this page's voice for it, followed as the child's would have been.
+      Voice? before = bytes.len() >= 24 ? this.voices.get(getF64(bytes, 16) as~ i32) : null;
+      Voice v = before is not null ? sound!.playAfter(before!, volume)
+              : bytes.len() >= 16 ? sound!.playAt(volume, lowOf(b) != 0, getF64(bytes, 0), getF64(bytes, 8))
                                   : (lowOf(b) != 0 ? sound!.loop(volume) : sound!.play(volume));
       this.voices.set(highOf(a), v);
       this.asked.set(highOf(a), asked);
@@ -395,7 +406,7 @@ export struct PageServer {
       return;
     }
     if (k == PAGE_SOUND || k == PAGE_PLAY || k == PAGE_STOP || k == PAGE_GAIN) {
-      this.audio(k, a, b, bytes);
+      this.audio(k, a, b, text, bytes);
       return;
     }
     if (k == PAGE_MAKE || k == PAGE_MAKE_TEXT) {
@@ -561,4 +572,11 @@ Ticket<Answer> done(string text) {
   Ticket<Answer> t;
   t.resolve(Answer(0, text, u8[](), 0 as i64, 0 as i64, 0));
   return t;
+}
+
+/** Sample `i` of a child's sound: a little-endian `i16`, as -1 to 1. */
+f64 sampleAt(u8[] bytes, i32 i) {
+  i32 v = (bytes[i * 2] as i32) | ((bytes[i * 2 + 1] as i32) << 8);
+  if (v >= 32768) { v = v - 65536; }
+  return (v as f64) / 32767.0;
 }

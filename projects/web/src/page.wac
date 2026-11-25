@@ -459,17 +459,25 @@ export struct Page {
    */
   Sound sound(this, f64[] samples, i32 rate) {
     u8[] b = u8[].filled(samples.len() * 2, 0 as u8);
-    for (i32 i = 0; i < samples.len(); i++) {
-      f64 x = samples[i];
-      if (x > 1.0) { x = 1.0; }
-      if (x < 0.0 - 1.0) { x = 0.0 - 1.0; }
-      i32 v = (x * 32767.0) as~ i32;
-      b[i * 2] = (v & 255) as@ u8;
-      b[i * 2 + 1] = ((v >> 8) & 255) as@ u8;
-    }
+    for (i32 i = 0; i < samples.len(); i++) { putSample(b, i, samples[i]); }
     this.played++;
     this.line.sound(this.played, rate, b);
     return Sound(this, this.played, (samples.len() as f64) / (rate as f64));
+  }
+
+  /**
+   * **A sound in two channels**: `left` and `right` from -1 to 1, as `sound` takes one. As long as the shorter of them.
+   */
+  Sound soundStereo(this, f64[] left, f64[] right, i32 rate) {
+    i32 n = left.len() < right.len() ? left.len() : right.len();
+    u8[] b = u8[].filled(n * 4, 0 as u8);
+    for (i32 i = 0; i < n; i++) {
+      putSample(b, i * 2, left[i]);
+      putSample(b, i * 2 + 1, right[i]);
+    }
+    this.played++;
+    this.line.soundStereo(this.played, rate, b);
+    return Sound(this, this.played, (n as f64) / (rate as f64));
   }
 
   /**
@@ -546,6 +554,15 @@ export struct Page {
   void drain(this) { this.runner.drain(); }
 }
 
+/** Sample `i` of `b`, a little-endian `i16`, from `x` clamped to -1..1. */
+void putSample(u8[] b, i32 i, f64 x) {
+  if (x > 1.0) { x = 1.0; }
+  if (x < 0.0 - 1.0) { x = 0.0 - 1.0; }
+  i32 v = (x * 32767.0) as~ i32;
+  b[i * 2] = (v & 255) as@ u8;
+  b[i * 2 + 1] = ((v >> 8) & 255) as@ u8;
+}
+
 /** A sound sent to the host (`Page.sound`), to play. */
 export struct Sound {
   Page page;
@@ -579,6 +596,26 @@ export struct Sound {
     p.line.playAt(p.played, this.id, (v * 1000.0) as~ i32, loop, at, offset);
     return Voice(p, p.played);
   }
+
+  /**
+   * **Played as soon as `before` ends, to the sample**: sound made as it is heard — music rendered a second at a time —
+   * is a sound per chunk, each played after the last. The host starts it on the audio's own clock where `before`'s
+   * sound runs out, so the joins have no gap and no overlap however late this arrives, as long as it arrives before
+   * then. One that arrives after `before` has ended plays at once.
+   */
+  Voice playAfter(this, Voice before, f64 volume) {
+    Page p = this.page;
+    p.played++;
+    f64 v = volume < 0.0 ? 0.0 : volume;
+    p.line.playAfter(p.played, this.id, (v * 1000.0) as~ i32, before.id);
+    return Voice(p, p.played);
+  }
+
+  /**
+   * **Let the host drop it**, once nothing will play it again — a voice already playing it plays to its end. A sound
+   * is kept until the page is gone otherwise, which is right for a game's few and wrong for a stream's thousands.
+   */
+  void forget(this) { this.page.line.forget(this.id); }
 }
 
 /** A sound playing (`Sound.play`, `Sound.loop`). */

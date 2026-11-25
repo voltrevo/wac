@@ -36,10 +36,18 @@ const WATCH = `
     return start.apply(this, a);
   };
   AudioBufferSourceNode.prototype.stop = function (...a) { window.__stopped++; return stop.apply(this, a); };
-  window.__starts = []; window.__ramps = [];
+  window.__starts = []; window.__ramps = []; window.__buffers = [];
   const realStart = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function (when, offset) {
-    if (this.buffer.length > 1) window.__starts.push([when ?? 0, offset ?? 0, this.context.currentTime]);
+    if (this.buffer.length > 1) {
+      window.__starts.push([when ?? 0, offset ?? 0, this.context.currentTime]);
+      // Each buffer's channels, and the loudest sample of each: what a stereo sound carried on which side.
+      const peaks = [];
+      for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+        peaks.push(this.buffer.getChannelData(c).reduce((m, x) => Math.max(m, Math.abs(x)), 0));
+      }
+      window.__buffers.push([this.buffer.length, this.buffer.sampleRate, peaks]);
+    }
     return realStart.call(this, when, offset);
   };
   const Real = window.AudioContext;
@@ -115,6 +123,54 @@ Deno.test({
       await page.click("#resume");
       await waitInPage(page, "document.getElementById('audio').textContent === 'running'", null, { timeout: 10_000 });
       assertEquals(await page.evaluate("window.__ctx.state"), "running", "the program's resume");
+      assertEquals(failures, [], "the page reported an error");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "a stream's chunks join to the sample, in two channels, in Chromium",
+  ignore: cannotBecause !== "",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-streamlive-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      await buildPage("example/stream.wac", dir);
+      const port = (http = serve(dir)).port;
+      browser = await chromium.launch({ executablePath: CHROMIUM.executablePath, args: ["--no-proxy-server", "--autoplay-policy=no-user-gesture-required"] });
+      const page = await browser.newPage();
+      await page.addInitScript(WATCH);
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+      page.on("console", (m: { type(): string; text(): string }) => { if (m.type() === "error") failures.push(m.text()); });
+      await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await waitInPage(page, "document.getElementById('sent') !== null", null, { timeout: 30_000 });
+      await page.click("#stream");
+      await waitInPage(page, "window.__starts.length === 6", null, { timeout: 10_000 });
+      const starts = await page.evaluate("window.__starts") as number[][];
+      const buffers = await page.evaluate("window.__buffers") as [number, number, number[]][];
+      // **Each chunk starts on the sample the one before ends on**: a quarter of a second of 44100 is 11025 samples,
+      // exactly 0.25 s, so the starts are 0.25 apart to within a rounding of the clock, and none starts part way in.
+      for (let k = 1; k < 6; k++) {
+        const gap = starts[k][0] - starts[k - 1][0];
+        if (Math.abs(gap - 0.25) > 1e-9) throw new Error(`chunk ${k} starts ${gap} s after chunk ${k - 1}, not 0.25: ${JSON.stringify(starts)}`);
+        if (starts[k][1] !== 0) throw new Error(`chunk ${k} starts ${starts[k][1]} s in`);
+      }
+      // Two channels each, the tone on the left and silence on the right, as made.
+      for (const [length, rate, peaks] of buffers) {
+        assertEquals([length, rate, peaks.length], [11025, 44100, 2], "a chunk's shape");
+        if (!(peaks[0] > 0.19 && peaks[1] === 0)) throw new Error(`a chunk's channels: peaks ${peaks}`);
+      }
+      // Forgotten as they were played, and played all the same: the last one still ends after it started.
+      await waitInPage(page, `window.__ctx.currentTime > ${starts[5][0] + 0.25}`, null, { timeout: 10_000 });
       assertEquals(failures, [], "the page reported an error");
     } finally {
       await browser?.close();

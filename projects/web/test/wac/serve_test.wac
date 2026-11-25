@@ -383,6 +383,20 @@ export string test_a_childs_sounds_play_through_the_desktop_and_stop_with_its_wi
   r.server.louder(1.0, 100);
   r.desk.turn();
   t.isTrue(r.doc.said.indexOf("gain 6 200 100\n") >= 0, "turned up again, back to what it asked: " + r.doc.said);
+  // A stream, as a child plays one: in two channels, each chunk after the last, each forgotten once it plays — the
+  // desktop's sound and voice for each, the chunk followed being the desktop's own voice for the one the child named.
+  auto one = r.child.soundStereo([0.1, 0.2], [0.0 - 0.1, 0.0 - 0.2], 22050);
+  auto two = r.child.soundStereo([0.3, 0.4], [0.0, 0.0], 22050);
+  auto first = one.play(1.0);
+  two.playAfter(first, 1.0);
+  one.forget();
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("sound 7 22050 2 stereo\n") >= 0 && r.doc.said.indexOf("sound 8 22050 2 stereo\n") >= 0,
+           "both chunks made on the desktop's page in two channels: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("play 9 7 1000\n") >= 0, "the first played: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("play 10 8 1000 after 9\n") >= 0, "the second after the desktop's voice for the first: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("forget 7\n") >= 0, "the first forgotten on the desktop's page too: " + r.doc.said);
   // A child's canvas is handed to the child's own worker — once the server knows the child — and only a canvas.
   auto canvas = r.child.root().append("canvas");
   r.child.turn();

@@ -88,8 +88,10 @@ export static i32 PAGE_LOCATION = 21;
  */
 export static i32 PAGE_BATCH = 22;
 /**
- * `a` the sound's number, `b` its sample rate, `bytes` its samples — one channel, each a little-endian `i16`: a sound
- * the page can play from now on, kept until the page is gone. Sent once, played as often as the program likes.
+ * `a` the sound's number, `b` its sample rate, `bytes` its samples, each a little-endian `i16`: a sound the page can
+ * play from now on, kept until the page is gone or forgotten. Sent once, played as often as the program likes.
+ * `text` `"2"` is two channels, the samples interleaved left then right; anything else is one. **A rate of 0 forgets
+ * the sound**: its buffer goes, which a program streaming sound a chunk at a time needs, or it keeps every chunk.
  */
 export static i32 PAGE_SOUND = 23;
 /**
@@ -97,6 +99,9 @@ export static i32 PAGE_SOUND = 23;
  * voice. A voice's number is the program's to choose, as a handle's is. `bytes`, when there are any, are two
  * little-endian `f64`s: when to start, in milliseconds by the page's clock (`Page.now`) — 0, or a time gone, for now
  * — and how far into the sound, in seconds. Voices started for the same moment start together, to the sample.
+ * **A third `f64` is a voice to follow**: the sound starts at the sample that voice's sound ends on, by the audio's
+ * own clock — no time on the page's clock comes into it — so chunks played one after another join with no gap and no
+ * overlap. A voice that is not playing, or whose end has passed, is followed from now.
  */
 export static i32 PAGE_PLAY = 24;
 /** `a` the voice: stopped, if it is still playing. */
@@ -423,6 +428,8 @@ export struct PageLine {
   void log(this, string line) { this.tell(PAGE_LOG, 0 as i64, 0 as i64, line, u8[]()); }
   void download(this, string name, u8[] bytes) { this.tell(PAGE_DOWNLOAD, 0 as i64, 0 as i64, name, bytes); }
   void sound(this, i32 id, i32 rate, u8[] samples) { this.tell(PAGE_SOUND, id as i64, rate as i64, "", samples); }
+  void soundStereo(this, i32 id, i32 rate, u8[] samples) { this.tell(PAGE_SOUND, id as i64, rate as i64, "2", samples); }
+  void forget(this, i32 id) { this.tell(PAGE_SOUND, id as i64, 0 as i64, "", u8[]()); }
   void play(this, i32 voice, i32 sound, i32 thousandths, bool loop) {
     this.tell(PAGE_PLAY, pair(voice, sound), pair(thousandths, loop ? 1 : 0), "", u8[]());
   }
@@ -432,6 +439,11 @@ export struct PageLine {
     putF64(when, 0, at);
     putF64(when, 8, offset);
     this.tell(PAGE_PLAY, pair(voice, sound), pair(thousandths, loop ? 1 : 0), "", when);
+  }
+  void playAfter(this, i32 voice, i32 sound, i32 thousandths, i32 after) {
+    u8[] when = u8[].filled(24, 0 as u8);
+    putF64(when, 16, after as f64);
+    this.tell(PAGE_PLAY, pair(voice, sound), pair(thousandths, 0), "", when);
   }
   void gain(this, i32 voice, i32 thousandths, i32 ms) { this.tell(PAGE_GAIN, voice as i64, pair(thousandths, ms), "", u8[]()); }
 
